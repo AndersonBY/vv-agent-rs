@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use vv_agent::{
     build_default_registry, load_llm_settings_from_file, resolve_model_endpoint, AgentDefinition,
     AgentRuntime, AgentSDKClient, AgentSDKOptions, AgentStatus, AgentTask, ConfigError,
-    EndpointConfig, EndpointOption, LLMResponse, Message, ResolvedModelConfig, ScriptedLlmClient,
-    ToolCall, ToolExecutionResult, ToolRegistry,
+    EndpointConfig, EndpointOption, FileInfo, LLMResponse, LocalWorkspaceBackend,
+    MemoryWorkspaceBackend, Message, ResolvedModelConfig, S3WorkspaceBackend, ScriptedLlmClient,
+    ToolCall, ToolExecutionResult, ToolRegistry, WorkspaceBackend,
 };
 
 #[test]
@@ -33,4 +34,16 @@ fn top_level_types_are_constructible() {
     let _ = load_llm_settings_from_file("missing.toml");
     let _ = resolve_model_endpoint(&serde_json::json!({}), "moonshot", "mini");
     let _registry_ref: &ToolRegistry = &_registry;
+    let _file_info = FileInfo {
+        path: "notes.md".to_string(),
+        is_file: true,
+        is_dir: false,
+        size: 5,
+        modified_at: "0".to_string(),
+        suffix: "md".to_string(),
+    };
+    let _local = LocalWorkspaceBackend::new(".");
+    let _memory = MemoryWorkspaceBackend::default();
+    let _s3 = S3WorkspaceBackend;
+    let _workspace: &dyn WorkspaceBackend = &_memory;
 }

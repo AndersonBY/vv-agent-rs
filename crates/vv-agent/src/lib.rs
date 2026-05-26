@@ -55,3 +55,6 @@ pub use types::{
     MessageRole, NoToolPolicy, SubAgentConfig, SubTaskOutcome, SubTaskRequest, TaskTokenUsage,
     TokenUsage, ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus,
 };
+pub use workspace::{
+    FileInfo, LocalWorkspaceBackend, MemoryWorkspaceBackend, S3WorkspaceBackend, WorkspaceBackend,
+};

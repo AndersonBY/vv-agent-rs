@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
+use std::io::ErrorKind;
 
 use serde_json::{json, Value};
+use vv_agent::workspace::{LocalWorkspaceBackend, MemoryWorkspaceBackend, WorkspaceBackend};
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
 #[test]
@@ -222,4 +224,58 @@ fn read_file_returns_file_info_when_requested_slice_exceeds_limits() {
         .as_str()
         .expect("message")
         .contains("exceeds limits"));
+}
+
+#[test]
+fn workspace_backends_honor_python_glob_and_missing_file_semantics() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    std::fs::create_dir_all(workspace.path().join("src/nested")).expect("dirs");
+    std::fs::write(workspace.path().join("root.rs"), "fn root() {}").expect("root");
+    std::fs::write(workspace.path().join("src/main.rs"), "fn main() {}").expect("main");
+    std::fs::write(workspace.path().join("src/readme.md"), "# readme").expect("readme");
+    std::fs::write(workspace.path().join("src/nested/lib.rs"), "fn lib() {}").expect("lib");
+    let local = LocalWorkspaceBackend::new(workspace.path());
+
+    assert_eq!(
+        local.list_files(".", "**/*.rs").expect("local root glob"),
+        vec![
+            "root.rs".to_string(),
+            "src/main.rs".to_string(),
+            "src/nested/lib.rs".to_string(),
+        ]
+    );
+    assert_eq!(
+        local.list_files("src", "*.rs").expect("local base glob"),
+        vec!["src/main.rs".to_string()]
+    );
+
+    let memory = MemoryWorkspaceBackend::default();
+    memory.mkdir("src/nested").expect("mkdir");
+    memory
+        .write_text("/src/main.rs", "fn main() {}", false)
+        .expect("write main");
+    memory
+        .write_text("src/nested/lib.rs", "fn lib() {}", false)
+        .expect("write lib");
+    memory
+        .write_text("src/readme.md", "# readme", false)
+        .expect("write readme");
+
+    assert_eq!(
+        memory.list_files(".", "**/*.rs").expect("memory root glob"),
+        vec!["src/main.rs".to_string(), "src/nested/lib.rs".to_string()]
+    );
+    assert_eq!(
+        memory.list_files("src", "*.rs").expect("memory base glob"),
+        vec!["src/main.rs".to_string()]
+    );
+    assert_eq!(
+        memory.read_text("missing.txt").expect_err("missing").kind(),
+        ErrorKind::NotFound
+    );
+    let dir_info = memory.file_info("src").expect("dir info").expect("src dir");
+    assert!(dir_info.is_dir);
+    assert!(!dir_info.is_file);
+    assert!(memory.exists("src"));
+    assert!(!memory.is_file("src"));
 }

@@ -166,6 +166,11 @@ The current Rust implementation includes:
 - Python-compatible workspace path safety: file, image, grep, and bash tools
   reject paths outside the workspace by default, with metadata-controlled
   outside-path access for trusted tasks.
+- Python-style workspace backends: `LocalWorkspaceBackend` and
+  `MemoryWorkspaceBackend` honor base-relative `**` glob matching, return
+  deterministic POSIX-style paths, preserve memory directories, and report
+  missing in-memory files with `NotFound` errors. Workspace backend types are
+  exported from the top-level crate API.
 - Python-compatible `read_file` response limiting: large reads return file
   statistics, request size, limits, and a suggested line range instead of
   flooding the LLM context.
