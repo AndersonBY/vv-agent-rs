@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -9,6 +9,26 @@ use vv_agent::{
     unregister_sub_agent_session, AgentStatus, SubAgentSession, SubAgentSessionListener,
     SubTaskManager, SubTaskOutcome, ToolCall, ToolContext, ToolResultStatus,
 };
+
+struct SubAgentRegistryTestLock {
+    _guard: MutexGuard<'static, ()>,
+}
+
+impl Drop for SubAgentRegistryTestLock {
+    fn drop(&mut self) {
+        sub_agent_session_registry().clear();
+    }
+}
+
+fn isolated_sub_agent_registry() -> SubAgentRegistryTestLock {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let guard = LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("sub-agent registry test lock");
+    sub_agent_session_registry().clear();
+    SubAgentRegistryTestLock { _guard: guard }
+}
 
 #[test]
 fn create_sub_task_runs_injected_runner_for_single_task() {
@@ -274,7 +294,7 @@ fn sub_task_status_reports_missing_and_invalid_task_ids() {
 
 #[test]
 fn sub_task_status_can_steer_registered_running_session() {
-    sub_agent_session_registry().clear();
+    let _registry_lock = isolated_sub_agent_registry();
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let manager = SubTaskManager::default();
@@ -336,18 +356,24 @@ fn sub_task_status_can_steer_registered_running_session() {
 
 #[test]
 fn sub_task_status_can_continue_completed_registered_session() {
-    sub_agent_session_registry().clear();
+    let _registry_lock = isolated_sub_agent_registry();
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let manager = SubTaskManager::default();
     let mut context = ToolContext::new(workspace.path());
     context.sub_task_manager = Some(manager.clone());
     let continued = Arc::new(Mutex::new(Vec::<String>::new()));
-    register_sub_agent_session(
+    let session = Arc::new(ContinuingSubAgentSession {
+        continued: Arc::clone(&continued),
+    });
+    register_sub_agent_session("sub-session-continued", session.clone());
+    manager.attach_session(
+        "sub-task-completed",
         "sub-session-continued",
-        Arc::new(ContinuingSubAgentSession {
-            continued: Arc::clone(&continued),
-        }),
+        "researcher",
+        "initial task",
+        context.workspace_backend.clone(),
+        session,
     );
     manager.record_outcome(
         "sub-task-completed",
@@ -399,8 +425,75 @@ fn sub_task_status_can_continue_completed_registered_session() {
 }
 
 #[test]
-fn sub_task_status_rejects_max_cycles_continuation() {
+fn sub_task_status_can_continue_completed_attached_session_without_global_registration() {
+    let _registry_lock = isolated_sub_agent_registry();
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let manager = SubTaskManager::default();
+    let mut context = ToolContext::new(workspace.path());
+    context.sub_task_manager = Some(manager.clone());
+    let continued = Arc::new(Mutex::new(Vec::<String>::new()));
+    let session = Arc::new(ContinuingSubAgentSession {
+        continued: Arc::clone(&continued),
+    });
+    manager.attach_session(
+        "sub-task-attached",
+        "sub-session-attached",
+        "researcher",
+        "initial task",
+        context.workspace_backend.clone(),
+        session,
+    );
+    manager.record_outcome(
+        "sub-task-attached",
+        SubTaskOutcome {
+            task_id: "sub-task-attached".to_string(),
+            agent_name: "researcher".to_string(),
+            status: AgentStatus::Completed,
+            session_id: Some("sub-session-attached".to_string()),
+            final_answer: Some("initial done".to_string()),
+            wait_reason: None,
+            error: None,
+            cycles: 1,
+            todo_list: Vec::new(),
+            resolved: BTreeMap::new(),
+        },
+    );
     sub_agent_session_registry().clear();
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_status_continue_attached",
+                "sub_task_status",
+                BTreeMap::from([
+                    ("task_ids".to_string(), json!(["sub-task-attached"])),
+                    ("message".to_string(), json!("add appendix")),
+                    ("wait_for_response".to_string(), json!(true)),
+                    ("detail_level".to_string(), json!("snapshot")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("sub_task_status continue");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(
+        continued.lock().expect("continued").as_slice(),
+        ["add appendix"]
+    );
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["interaction"]["action"], "continued");
+    assert_eq!(payload["tasks"][0]["status"], "completed");
+    assert_eq!(payload["tasks"][0]["final_answer"], "continued done");
+    assert!(sub_agent_session_registry()
+        .get("sub-session-attached")
+        .is_none());
+}
+
+#[test]
+fn sub_task_status_rejects_max_cycles_continuation() {
+    let _registry_lock = isolated_sub_agent_registry();
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let manager = SubTaskManager::default();

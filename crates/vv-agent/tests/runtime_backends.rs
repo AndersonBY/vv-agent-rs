@@ -1,5 +1,11 @@
+use std::sync::{Arc, Mutex};
+
 use serde_json::{json, Value};
-use vv_agent::runtime::backends::{CeleryBackend, InlineBackend, RuntimeRecipe, ThreadBackend};
+use vv_agent::runtime::backends::{
+    CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher, InlineBackend, RuntimeRecipe,
+    ThreadBackend,
+};
+use vv_agent::runtime::state::{InMemoryStateStore, StateStore};
 use vv_agent::{
     AgentResult, AgentStatus, AgentTask, CancellationToken, CycleRecord, LLMResponse, Message,
     TaskTokenUsage,
@@ -42,6 +48,26 @@ fn runtime_recipe_round_trips_through_json() {
 
     let restored: RuntimeRecipe = serde_json::from_value(payload).expect("deserialize");
     assert_eq!(restored, recipe);
+}
+
+#[test]
+fn runtime_recipe_matches_python_dict_and_default_checkpoint_path() {
+    let recipe = RuntimeRecipe::new(
+        "/tmp/settings.py",
+        "deepseek",
+        "deepseek-v4-pro",
+        "/tmp/vv-agent-workspace",
+    );
+
+    let payload = recipe.to_dict();
+    assert_eq!(payload["settings_file"], json!("/tmp/settings.py"));
+    assert_eq!(payload["timeout_seconds"], json!(90.0));
+
+    let restored = RuntimeRecipe::from_dict(&payload).expect("runtime recipe from dict");
+    assert_eq!(restored, recipe);
+    assert!(restored
+        .default_sqlite_checkpoint_path()
+        .ends_with(".vv-agent-state/checkpoints.db"));
 }
 
 #[test]
@@ -177,4 +203,212 @@ fn celery_backend_inline_execute_matches_inline_fallback() {
     assert_eq!(result.status, AgentStatus::Completed);
     assert_eq!(result.final_answer.as_deref(), Some("celery-inline"));
     assert_eq!(result.cycles[0].index, 1);
+}
+
+#[derive(Debug)]
+struct RecordingDispatcher {
+    store: Arc<InMemoryStateStore>,
+    calls: Arc<Mutex<Vec<(String, u32)>>>,
+}
+
+impl CycleTaskDispatcher for RecordingDispatcher {
+    fn dispatch_cycle(
+        &self,
+        task: &AgentTask,
+        _recipe: &RuntimeRecipe,
+        cycle_task_name: &str,
+        cycle_index: u32,
+    ) -> Result<CycleTaskDispatchResult, String> {
+        self.calls
+            .lock()
+            .expect("calls")
+            .push((cycle_task_name.to_string(), cycle_index));
+        let mut checkpoint = self
+            .store
+            .load_checkpoint(&task.task_id)
+            .expect("load checkpoint")
+            .expect("checkpoint exists");
+        if cycle_index == 1 {
+            assert_eq!(checkpoint.cycle_index, 0);
+            checkpoint.cycle_index = 1;
+            checkpoint
+                .messages
+                .push(Message::assistant("worker cycle 1"));
+            checkpoint.cycles.push(CycleRecord::from_response(
+                cycle_index,
+                &LLMResponse::new("worker cycle 1"),
+                vec![],
+            ));
+            checkpoint
+                .shared_state
+                .insert("worker_cycle".to_string(), Value::from(cycle_index));
+            self.store
+                .save_checkpoint(checkpoint)
+                .expect("save cycle 1");
+            Ok(CycleTaskDispatchResult::unfinished())
+        } else {
+            assert_eq!(checkpoint.cycle_index, 1);
+            Ok(CycleTaskDispatchResult::finished(
+                AgentResult::completed_with_shared_state(
+                    checkpoint.messages,
+                    checkpoint.cycles,
+                    "distributed done",
+                    checkpoint.shared_state,
+                ),
+            ))
+        }
+    }
+}
+
+#[test]
+fn celery_backend_distributed_dispatches_cycles_through_checkpoint_store() {
+    let recipe = RuntimeRecipe::new("settings.py", "deepseek", "deepseek-v4-pro", ".");
+    let store = Arc::new(InMemoryStateStore::new());
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let dispatcher = Arc::new(RecordingDispatcher {
+        store: store.clone(),
+        calls: calls.clone(),
+    });
+    let backend = CeleryBackend::distributed_with_dispatcher(recipe, store.clone(), dispatcher)
+        .with_cycle_task_name("custom.run_cycle");
+    let task = AgentTask::new("distributed-task", "deepseek-v4-pro", "system", "prompt");
+
+    let result = backend.execute(
+        &task,
+        vec![Message::user("hello")],
+        [("seed".to_string(), json!("state"))].into_iter().collect(),
+        |_cycle_index, _messages, _cycles, _shared_state, _cancellation| {
+            panic!("distributed backend should dispatch worker cycles")
+        },
+        None,
+        3,
+    );
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(result.final_answer.as_deref(), Some("distributed done"));
+    assert_eq!(result.cycles[0].index, 1);
+    assert_eq!(result.shared_state["worker_cycle"], json!(1));
+    assert_eq!(
+        *calls.lock().expect("calls"),
+        vec![
+            ("custom.run_cycle".to_string(), 1),
+            ("custom.run_cycle".to_string(), 2),
+        ]
+    );
+    assert!(store
+        .load_checkpoint(&task.task_id)
+        .expect("load after cleanup")
+        .is_none());
+}
+
+#[derive(Debug)]
+struct FailingDispatcher;
+
+impl CycleTaskDispatcher for FailingDispatcher {
+    fn dispatch_cycle(
+        &self,
+        _task: &AgentTask,
+        _recipe: &RuntimeRecipe,
+        _cycle_task_name: &str,
+        cycle_index: u32,
+    ) -> Result<CycleTaskDispatchResult, String> {
+        Err(format!("worker unavailable at {cycle_index}"))
+    }
+}
+
+#[test]
+fn celery_backend_distributed_returns_checkpointed_failure_and_cleans_up() {
+    let recipe = RuntimeRecipe::new("settings.py", "deepseek", "deepseek-v4-pro", ".");
+    let store = Arc::new(InMemoryStateStore::new());
+    let backend = CeleryBackend::distributed_with_dispatcher(
+        recipe,
+        store.clone(),
+        Arc::new(FailingDispatcher),
+    );
+    let task = AgentTask::new("distributed-fail", "deepseek-v4-pro", "system", "prompt");
+
+    let result = backend.execute(
+        &task,
+        vec![Message::user("hello")],
+        [("seed".to_string(), json!("state"))].into_iter().collect(),
+        |_cycle_index, _messages, _cycles, _shared_state, _cancellation| {
+            panic!("distributed backend should dispatch worker cycles")
+        },
+        None,
+        2,
+    );
+
+    assert_eq!(result.status, AgentStatus::Failed);
+    assert_eq!(
+        result.error.as_deref(),
+        Some("Celery cycle 1 failed: worker unavailable at 1")
+    );
+    assert_eq!(result.messages[0].content, "hello");
+    assert_eq!(result.shared_state["seed"], json!("state"));
+    assert!(store
+        .load_checkpoint(&task.task_id)
+        .expect("load after cleanup")
+        .is_none());
+}
+
+#[derive(Debug)]
+struct AdvancingDispatcher {
+    store: Arc<InMemoryStateStore>,
+}
+
+impl CycleTaskDispatcher for AdvancingDispatcher {
+    fn dispatch_cycle(
+        &self,
+        task: &AgentTask,
+        _recipe: &RuntimeRecipe,
+        _cycle_task_name: &str,
+        cycle_index: u32,
+    ) -> Result<CycleTaskDispatchResult, String> {
+        let mut checkpoint = self
+            .store
+            .load_checkpoint(&task.task_id)
+            .expect("load checkpoint")
+            .expect("checkpoint exists");
+        checkpoint.cycle_index = cycle_index;
+        checkpoint.cycles.push(CycleRecord::from_response(
+            cycle_index,
+            &LLMResponse::new("worker"),
+            vec![],
+        ));
+        self.store.save_checkpoint(checkpoint).expect("save cycle");
+        Ok(CycleTaskDispatchResult::unfinished())
+    }
+}
+
+#[test]
+fn celery_backend_distributed_returns_checkpointed_max_cycles_and_cleans_up() {
+    let recipe = RuntimeRecipe::new("settings.py", "deepseek", "deepseek-v4-pro", ".");
+    let store = Arc::new(InMemoryStateStore::new());
+    let dispatcher = Arc::new(AdvancingDispatcher {
+        store: store.clone(),
+    });
+    let backend = CeleryBackend::distributed_with_dispatcher(recipe, store.clone(), dispatcher);
+    let task = AgentTask::new("distributed-max", "deepseek-v4-pro", "system", "prompt");
+
+    let result = backend.execute(
+        &task,
+        vec![Message::user("hello")],
+        Default::default(),
+        |_cycle_index, _messages, _cycles, _shared_state, _cancellation| {
+            panic!("distributed backend should dispatch worker cycles")
+        },
+        None,
+        2,
+    );
+
+    assert_eq!(result.status, AgentStatus::MaxCycles);
+    assert_eq!(result.cycles.len(), 2);
+    assert_eq!(
+        result.final_answer.as_deref(),
+        Some("Reached max cycles without finish signal.")
+    );
+    assert!(store
+        .load_checkpoint(&task.task_id)
+        .expect("load after cleanup")
+        .is_none());
 }

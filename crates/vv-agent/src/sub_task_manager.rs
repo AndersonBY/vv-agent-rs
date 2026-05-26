@@ -7,7 +7,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::{json, Map, Value};
 
 use crate::sub_agent_sessions::{
-    continue_sub_agent_session, get_sub_agent_session, SubAgentSession, SubAgentSessionListener,
+    register_sub_agent_session, unregister_sub_agent_session, SubAgentSession,
+    SubAgentSessionListener,
 };
 use crate::types::{AgentStatus, SubTaskOutcome};
 use crate::workspace::WorkspaceBackend;
@@ -212,7 +213,7 @@ impl SubTaskManager {
         }
 
         let task_id = task_id.trim();
-        let (session_id, agent_name) = {
+        let (session_id, agent_name, session) = {
             let mut tasks = self.tasks.lock().expect("sub-task manager poisoned");
             let Some(record) = tasks.get_mut(task_id) else {
                 return Err(format!("Sub-task {task_id} not found."));
@@ -232,18 +233,19 @@ impl SubTaskManager {
             if record.session_id.trim().is_empty() {
                 return Err(format!("Sub-task {task_id} session is not available."));
             }
-            if get_sub_agent_session(&record.session_id).is_none() {
-                return Err(format!(
-                    "Sub-task {task_id} session {} is not registered.",
-                    record.session_id
-                ));
-            }
+            let Some(session) = record.session.clone() else {
+                return Err(format!("Sub-task {task_id} session is not attached."));
+            };
 
             record.task_title = prompt.to_string();
             record.outcome = None;
             record.recent_activity = Some(prompt.to_string());
             record.updated_at = now_millis();
-            (record.session_id.clone(), record.agent_name.clone())
+            (
+                record.session_id.clone(),
+                record.agent_name.clone(),
+                session,
+            )
         };
 
         let tasks = self.tasks.clone();
@@ -252,12 +254,14 @@ impl SubTaskManager {
         let session_id_for_thread = session_id.clone();
         let agent_name_for_thread = agent_name.clone();
         let handle = thread::spawn(move || {
-            let outcome = continue_sub_agent_session(&session_id_for_thread, &prompt_for_thread)
+            register_sub_agent_session(session_id_for_thread.clone(), session.clone());
+            let outcome = session
+                .continue_run(&prompt_for_thread)
                 .unwrap_or_else(|error| SubTaskOutcome {
                     task_id: task_id_for_thread.clone(),
                     agent_name: agent_name_for_thread,
                     status: AgentStatus::Failed,
-                    session_id: Some(session_id_for_thread),
+                    session_id: Some(session_id_for_thread.clone()),
                     final_answer: None,
                     wait_reason: None,
                     error: Some(error),
@@ -265,6 +269,7 @@ impl SubTaskManager {
                     todo_list: Vec::new(),
                     resolved: BTreeMap::new(),
                 });
+            unregister_sub_agent_session(&session_id_for_thread);
             let mut tasks = tasks.lock().expect("sub-task manager poisoned");
             if let Some(record) = tasks.get_mut(&task_id_for_thread) {
                 record.session_id = outcome

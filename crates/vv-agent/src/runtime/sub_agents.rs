@@ -9,8 +9,8 @@ use super::AgentRuntime;
 use crate::llm::LlmClient;
 use crate::runtime::RuntimeRunControls;
 use crate::sub_agent_sessions::{
-    register_sub_agent_session, SubAgentSession, SubAgentSessionListener,
-    SubAgentSessionUnsubscribe,
+    register_sub_agent_session, unregister_sub_agent_session, SubAgentSession,
+    SubAgentSessionListener, SubAgentSessionUnsubscribe,
 };
 use crate::sub_task_manager::SubTaskManager;
 use crate::tools::{SubTaskRunner, ToolRegistry};
@@ -153,19 +153,20 @@ fn run_sub_task<C: LlmClient + Clone + 'static>(
         resolved,
     }));
     let sub_agent_session: Arc<dyn SubAgentSession> = session.clone();
-    register_sub_agent_session(sub_session_id.clone(), sub_agent_session.clone());
     context.sub_task_manager.attach_session(
         sub_task_id.clone(),
         sub_session_id.clone(),
         request.agent_name.clone(),
         request.task_description.clone(),
         context.workspace_backend.clone(),
-        sub_agent_session,
+        sub_agent_session.clone(),
     );
 
+    register_sub_agent_session(sub_session_id.clone(), sub_agent_session.clone());
     let outcome = match session.continue_run(&initial_prompt) {
         Ok(outcome) => outcome,
         Err(error) => {
+            unregister_sub_agent_session(&sub_session_id);
             let outcome = SubTaskOutcome {
                 task_id: sub_task_id.clone(),
                 agent_name: request.agent_name,
@@ -184,6 +185,7 @@ fn run_sub_task<C: LlmClient + Clone + 'static>(
             return outcome;
         }
     };
+    unregister_sub_agent_session(&sub_session_id);
     context
         .sub_task_manager
         .record_outcome(&sub_task_id, outcome.clone());

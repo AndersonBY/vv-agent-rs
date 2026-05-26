@@ -37,7 +37,10 @@ pub use memory::{
     sanitize_for_resume, LocalSummary, MemoryManager, MemoryManagerConfig, SessionMemory,
     SessionMemoryConfig, SessionMemoryEntry, SessionMemoryState,
 };
-pub use runtime::backends::{CeleryBackend, InlineBackend, RuntimeRecipe, ThreadBackend};
+pub use runtime::backends::{
+    CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher, InlineBackend, RuntimeRecipe,
+    ThreadBackend,
+};
 pub use runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 pub use runtime::stores::sqlite::SqliteStateStore;
 pub use runtime::{

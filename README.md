@@ -143,6 +143,12 @@ The current Rust implementation includes:
 - Core runtime types expose Python-style `to_dict` / `from_dict` helpers for
   task, result, message, cycle, tool-call, and tool-result payloads, including
   legacy tool `status` plus `status_code` for worker interoperability.
+- `CeleryBackend` now supports a Python-style distributed execution path through
+  a pluggable `CycleTaskDispatcher` and shared `StateStore`: it writes the
+  initial checkpoint, dispatches one cycle at a time, returns worker terminal
+  results, preserves checkpointed state on errors/max-cycles, and cleans up
+  after the run. `RuntimeRecipe` also exposes Python-style dict helpers and a
+  default SQLite checkpoint path under `<workspace>/.vv-agent-state`.
 - Split `memory/` modules with Python-style compaction thresholds, local
   structured summaries, and runtime autocompaction before large follow-up LLM
   cycles.
@@ -242,14 +248,16 @@ The current Rust implementation includes:
   polling. A Python-style active sub-agent session registry exposes
   `get_sub_agent_session`, `subscribe_sub_agent_session`, and
   `steer_sub_agent_session`, and `sub_task_status(message=...)` can queue
-  steering messages for registered running sessions or continue completed
-  registered sessions, including Python-style `wait_for_response` coercion and
-  max-cycle continuation rejection. `SubTaskManager::attach_session` also
+  steering messages for sessions registered during active runs or continue
+  completed sessions attached to `SubTaskManager`, including Python-style
+  `wait_for_response` coercion and max-cycle continuation rejection.
+  `SubTaskManager::attach_session` also
   tracks Python-style session event snapshots with recent activity, latest
   cycle/tool-call metadata, and visible workspace file listings. Runtime-backed
-  sub-tasks are now session-driven and automatically registered, so completed
-  async sub-tasks can be continued through `sub_task_status(message=...)` while
-  preserving prior messages and shared state.
+  sub-tasks are now session-driven and temporarily registered only while a run
+  is active, so completed async sub-tasks can be continued through
+  `sub_task_status(message=...)` while preserving prior messages and shared
+  state without leaking stale global sessions.
 - Python-style `activate_skill` behavior for allowed skills: inline skill
   entries and `SKILL.md` locations load instructions, update `active_skills`,
   and record activation history.
