@@ -129,8 +129,9 @@ The current Rust implementation includes:
   is delegated to `vv-llm`.
 - A basic multi-cycle runtime that sends tool schemas to the LLM, executes tool
   calls, and converges on `task_finish` or `ask_user`.
-- Split `runtime/` modules for hooks, the main cycle, tool-result extraction,
-  and sub-agent execution so deeper Python parity work can stay localized.
+- Split `runtime/` modules for cancellation, hooks, shell resolution, state
+  stores, the main cycle, tool-result extraction, and sub-agent execution so
+  deeper Python parity work can stay localized.
 - Runtime hooks modeled after Python `RuntimeHookManager`: callers can patch
   LLM request messages/schemas, patch LLM responses, patch or short-circuit
   tool calls, and patch tool results.
@@ -329,8 +330,7 @@ The current Rust implementation includes:
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, schema parity, and workspace tools.
 
-Deeper parity work against the Python implementation is still pending for full
-distributed backend execution and the remaining built-in tools. The migration
-target is to copy Python
-`v-agent` behavior as completely as possible, not merely provide a minimal Rust
-wrapper.
+Deeper parity work against the Python implementation is still pending for
+production distributed-worker integrations and provider-specific edge cases such
+as prompt-cache metadata. The migration target is to copy Python `v-agent`
+behavior as completely as possible, not merely provide a minimal Rust wrapper.
