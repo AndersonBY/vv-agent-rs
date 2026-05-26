@@ -111,6 +111,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 与 Python 包对齐的顶层模块：`background_sessions`、`cli`、`config`、`constants`、`integrations`、`llm`、`memory`、`processes`、`prompt`、`runtime`、`sdk`、`skills`、`tools`、`types` 和 `workspace`。
 - 基于 crates.io 官方 `vv-llm = "0.1.0"` 的 chat client 构建，通过 `build_vv_llm_from_local_settings` 解析配置化 endpoint，并把 provider HTTP / 协议处理交给 `vv-llm`；同时保留 `ScriptedLlmClient` 用于确定性测试。
 - LLM settings 归一化已兼容 Python 的 `providers` / `backends`、默认 `VERSION`、endpoint API key 后缀提取，以及可选 base64 key 解码，然后再构造 `vv-llm` client。
+- 已支持 Python `.py` settings 字面量模板：`LLM_SETTINGS = {...}` 和 `settings: SettingsDict = {...}` 都会按 Python 风格解析布尔值、空值、注释和尾逗号，再交给 `vv-llm` 做 endpoint / backend 解析。
 - 一个基础 multi-cycle runtime，可以把 tool schemas 发给 LLM、执行工具调用，并通过 `task_finish` 或 `ask_user` 收敛。
 - `runtime/` 已拆成 hooks、主循环、工具结果解析和 sub-agent 执行模块，让后续继续补齐 Python parity 时改动更集中。
 - 已加入参考 Python `RuntimeHookManager` 的 runtime hooks：调用方可以改写 LLM 请求的 messages / schemas、改写 LLM 响应、改写或短路工具调用，并改写工具结果。

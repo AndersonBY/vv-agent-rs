@@ -121,6 +121,10 @@ The current Rust implementation includes:
 - LLM settings normalization keeps Python compatibility for `providers` /
   `backends`, default `VERSION`, endpoint API-key suffix extraction, and
   opt-in base64 key decoding before constructing `vv-llm` clients.
+- Python `.py` settings files are supported for literal config templates:
+  `LLM_SETTINGS = {...}` and `settings: SettingsDict = {...}` are parsed with
+  Python-style booleans/nulls, comments, and trailing commas before resolution
+  is delegated to `vv-llm`.
 - A basic multi-cycle runtime that sends tool schemas to the LLM, executes tool
   calls, and converges on `task_finish` or `ask_user`.
 - Split `runtime/` modules for hooks, the main cycle, tool-result extraction,

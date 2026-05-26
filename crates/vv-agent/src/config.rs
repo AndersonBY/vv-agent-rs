@@ -7,6 +7,8 @@ use thiserror::Error;
 
 use crate::llm::VvLlmClient;
 
+mod python_settings;
+
 const MODEL_ALIAS_MAP: &[(&str, &str)] = &[("kimi-k2.5", "kimi-k2-thinking")];
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -112,6 +114,12 @@ pub fn load_llm_settings_from_file(path: impl AsRef<Path>) -> Result<Value, Conf
     })?;
 
     match path.extension().and_then(|ext| ext.to_str()) {
+        Some("py") => python_settings::parse_llm_settings_source(&content).map_err(|source| {
+            ConfigError::Parse {
+                path: path.display().to_string(),
+                source: Box::new(source),
+            }
+        }),
         Some("json") => serde_json::from_str(&content).map_err(|source| ConfigError::Parse {
             path: path.display().to_string(),
             source: Box::new(source),

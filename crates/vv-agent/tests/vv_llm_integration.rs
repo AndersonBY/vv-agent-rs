@@ -2,7 +2,7 @@ use std::io::Write;
 
 use vv_agent::{
     build_openai_llm_from_local_settings, build_vv_llm_from_local_settings, decode_api_key,
-    resolve_model_endpoint,
+    load_llm_settings_from_file, resolve_model_endpoint,
 };
 
 #[test]
@@ -174,4 +174,108 @@ fn settings_resolution_accepts_providers_alias_and_decodes_api_keys() {
         "sk-deepseek-test-key"
     );
     std::env::remove_var("V_AGENT_ENABLE_BASE64_KEY_DECODE");
+}
+
+#[test]
+fn settings_loader_accepts_python_llm_settings_literal() {
+    let mut settings_file = tempfile::Builder::new()
+        .suffix(".py")
+        .tempfile()
+        .expect("settings file");
+    write!(
+        settings_file,
+        r#"
+from vv_llm.types import SettingsDict
+
+LLM_SETTINGS: SettingsDict = {{
+    "VERSION": "2",
+    "rate_limit": {{"enabled": False}},
+    "endpoints": [
+        {{
+            # Comments can contain unmatched literal delimiters like {{
+            "id": "deepseek-default",
+            "api_base": "https://api.deepseek.com",
+            "api_key": "env:sk-deepseek-test-key",
+            "response_api": True,
+        }},
+    ],
+    "backends": {{
+        "deepseek": {{
+            "models": {{
+                "deepseek-v4-pro": {{
+                    "id": "deepseek-v4-pro",
+                    "endpoints": ["deepseek-default"],
+                    "max_output_tokens": None,
+                }},
+            }},
+        }},
+    }},
+    "embedding_backends": {{}},
+    "rerank_backends": {{}},
+}}
+"#
+    )
+    .expect("write settings");
+
+    let settings = load_llm_settings_from_file(settings_file.path()).expect("load python settings");
+    assert_eq!(
+        settings["rate_limit"]["enabled"],
+        serde_json::Value::Bool(false)
+    );
+    assert_eq!(
+        settings["backends"]["deepseek"]["models"]["deepseek-v4-pro"]["max_output_tokens"],
+        serde_json::Value::Null
+    );
+
+    let resolved =
+        resolve_model_endpoint(&settings, "deepseek", "deepseek-v4-pro").expect("resolve");
+    assert_eq!(resolved.endpoint().unwrap().api_key, "sk-deepseek-test-key");
+}
+
+#[test]
+fn settings_loader_accepts_lowercase_settings_template_literal() {
+    let mut settings_file = tempfile::Builder::new()
+        .suffix(".py")
+        .tempfile()
+        .expect("settings file");
+    write!(
+        settings_file,
+        r#"
+from vv_llm.types import SettingsDict
+
+settings: SettingsDict = {{
+    "VERSION": "2",
+    "endpoints": [
+        {{
+            "id": "moonshot-default",
+            "api_base": "https://api.moonshot.cn/v1",
+            "api_key": "sk-moonshot-test-key",
+        }},
+    ],
+    "backends": {{
+        "moonshot": {{
+            "models": {{
+                "kimi-k2-thinking": {{
+                    "id": "kimi-k2-thinking",
+                    "endpoints": [
+                        {{"endpoint_id": "moonshot-default", "model_id": "kimi-k2-thinking"}},
+                    ],
+                }},
+            }},
+        }},
+    }},
+    "embedding_backends": {{}},
+    "rerank_backends": {{}},
+}}
+"#
+    )
+    .expect("write settings");
+
+    let settings =
+        load_llm_settings_from_file(settings_file.path()).expect("load lowercase settings");
+    let resolved =
+        resolve_model_endpoint(&settings, "moonshot", "kimi-k2-thinking").expect("resolve");
+
+    assert_eq!(resolved.endpoint().unwrap().endpoint_id, "moonshot-default");
+    assert_eq!(resolved.model_id, "kimi-k2-thinking");
 }
