@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::types::{ToolArguments, ToolExecutionResult};
-use crate::workspace::WorkspaceBackend;
+use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
 pub type ToolHandler =
     Arc<dyn Fn(&mut ToolContext, &ToolArguments) -> ToolExecutionResult + Send + Sync + 'static>;
@@ -75,6 +75,21 @@ impl ToolContext {
             raw_path,
             self.allow_outside_workspace_paths(),
         )
+    }
+
+    pub fn effective_workspace_backend(&self) -> Arc<dyn WorkspaceBackend> {
+        if self.allow_outside_workspace_paths() {
+            if let Some(local) = self
+                .workspace_backend
+                .as_any()
+                .downcast_ref::<LocalWorkspaceBackend>()
+            {
+                let mut local = local.clone();
+                local.allow_outside_root = true;
+                return Arc::new(local);
+            }
+        }
+        self.workspace_backend.clone()
     }
 }
 

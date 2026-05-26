@@ -279,3 +279,43 @@ fn workspace_backends_honor_python_glob_and_missing_file_semantics() {
     assert!(memory.exists("src"));
     assert!(!memory.is_file("src"));
 }
+
+#[test]
+fn local_workspace_backend_enforces_root_and_reports_allowed_outside_paths() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let outside = tempfile::tempdir().expect("outside");
+    let outside_file = outside.path().join("external.txt");
+    std::fs::write(&outside_file, "external").expect("outside file");
+
+    let local = LocalWorkspaceBackend::new(workspace.path());
+    assert_eq!(
+        local
+            .read_text(outside_file.to_str().expect("outside path"))
+            .expect_err("outside blocked")
+            .kind(),
+        ErrorKind::PermissionDenied
+    );
+
+    let mut allowed = LocalWorkspaceBackend::new(workspace.path());
+    allowed.allow_outside_root = true;
+    assert_eq!(
+        allowed
+            .read_text(outside_file.to_str().expect("outside path"))
+            .expect("outside read"),
+        "external"
+    );
+    assert_eq!(
+        allowed
+            .list_files(outside.path().to_str().expect("outside dir"), "**/*.txt")
+            .expect("outside list"),
+        vec![outside_file.to_string_lossy().to_string()]
+    );
+    assert_eq!(
+        allowed
+            .file_info(outside_file.to_str().expect("outside file"))
+            .expect("outside info")
+            .expect("outside exists")
+            .path,
+        outside_file.to_string_lossy().to_string()
+    );
+}

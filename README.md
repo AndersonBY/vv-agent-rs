@@ -163,9 +163,9 @@ The current Rust implementation includes:
   `file_str_replace`, `workspace_grep`, `read_image`), memory notes through
   `compress_memory`, and `bash` / `check_background_command` command tools with
   captured output, stdin, foreground timeout handoff, and background polling.
-- Python-compatible workspace path safety: file, image, grep, and bash tools
-  reject paths outside the workspace by default, with metadata-controlled
-  outside-path access for trusted tasks.
+- Python-compatible workspace path safety: `LocalWorkspaceBackend` rejects
+  paths outside the workspace by default, and file/image/grep/bash tools keep
+  metadata-controlled outside-path access for trusted tasks.
 - Python-style workspace backends: `LocalWorkspaceBackend` and
   `MemoryWorkspaceBackend` honor base-relative `**` glob matching, return
   deterministic POSIX-style paths, preserve memory directories, and report

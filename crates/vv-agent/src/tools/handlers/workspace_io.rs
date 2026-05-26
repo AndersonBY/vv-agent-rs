@@ -31,7 +31,8 @@ pub(crate) fn list_files_tool() -> ToolSpec {
             if let Err(error) = context.resolve_workspace_path(path) {
                 return path_escapes_workspace_error(error);
             }
-            match context.workspace_backend.list_files(path, glob) {
+            let backend = context.effective_workspace_backend();
+            match backend.list_files(path, glob) {
                 Ok(mut files) => {
                     let ignored_roots = if include_ignored || path != "." {
                         Vec::new()
@@ -92,7 +93,8 @@ pub(crate) fn file_info_tool() -> ToolSpec {
             if let Err(error) = context.resolve_workspace_path(path) {
                 return path_escapes_workspace_error(error);
             }
-            match context.workspace_backend.file_info(path) {
+            let backend = context.effective_workspace_backend();
+            match backend.file_info(path) {
                 Ok(Some(info)) => {
                     let mut payload = json!({
                         "path": info.path,
@@ -129,7 +131,8 @@ pub(crate) fn read_file_tool() -> ToolSpec {
             if let Err(error) = context.resolve_workspace_path(path) {
                 return path_escapes_workspace_error(error);
             }
-            if !context.workspace_backend.is_file(path) {
+            let backend = context.effective_workspace_backend();
+            if !backend.is_file(path) {
                 return tool_error(format!("file not found: {path}"));
             }
             let start_line = arguments
@@ -145,7 +148,7 @@ pub(crate) fn read_file_tool() -> ToolSpec {
                 .get("show_line_numbers")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            match context.workspace_backend.read_text(path) {
+            match backend.read_text(path) {
                 Ok(text) => {
                     let lines = text.lines().collect::<Vec<_>>();
                     let start_index = start_line.saturating_sub(1).min(lines.len());
@@ -236,6 +239,7 @@ pub(crate) fn write_file_tool() -> ToolSpec {
             if let Err(error) = context.resolve_workspace_path(path) {
                 return path_escapes_workspace_error(error);
             }
+            let backend = context.effective_workspace_backend();
             let content = arguments
                 .get("content")
                 .and_then(Value::as_str)
@@ -260,10 +264,7 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                 content,
                 if trailing_newline { "\n" } else { "" }
             );
-            match context
-                .workspace_backend
-                .write_text(path, &write_content, append)
-            {
+            match backend.write_text(path, &write_content, append) {
                 Ok(written) => crate::types::ToolExecutionResult::success(
                     "",
                     json!({
@@ -297,7 +298,8 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
             if let Err(error) = context.resolve_workspace_path(path) {
                 return path_escapes_workspace_error(error);
             }
-            if !context.workspace_backend.is_file(path) {
+            let backend = context.effective_workspace_backend();
+            if !backend.is_file(path) {
                 return tool_error(format!("file not found: {path}"));
             }
             let Some(old_str) = arguments.get("old_str").and_then(Value::as_str) else {
@@ -319,7 +321,7 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
                 .and_then(Value::as_u64)
                 .unwrap_or(1)
                 .max(1) as usize;
-            match context.workspace_backend.read_text(path) {
+            match backend.read_text(path) {
                 Ok(text) => {
                     let occurrence_count = text.matches(old_str).count();
                     if occurrence_count == 0 {
@@ -335,10 +337,7 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
                     } else {
                         replace_n(&text, old_str, new_str, max_replacements)
                     };
-                    match context
-                        .workspace_backend
-                        .write_text(path, &replaced_text, false)
-                    {
+                    match backend.write_text(path, &replaced_text, false) {
                         Ok(_) => crate::types::ToolExecutionResult::success(
                             "",
                             json!({

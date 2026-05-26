@@ -39,9 +39,8 @@ pub(crate) fn read_image_tool() -> ToolSpec {
             if let Err(error) = context.resolve_workspace_path(raw_path) {
                 return path_escapes_workspace_error(error);
             }
-            if !context.workspace_backend.exists(raw_path)
-                || !context.workspace_backend.is_file(raw_path)
-            {
+            let backend = context.effective_workspace_backend();
+            if !backend.exists(raw_path) || !backend.is_file(raw_path) {
                 return tool_error_with_code(
                     format!("image file not found: {raw_path}"),
                     "image_not_found",
@@ -64,7 +63,7 @@ pub(crate) fn read_image_tool() -> ToolSpec {
                     )
                 }
             };
-            let bytes = match context.workspace_backend.read_bytes(raw_path) {
+            let bytes = match backend.read_bytes(raw_path) {
                 Ok(bytes) => bytes,
                 Err(error) => return tool_error_with_code(error.to_string(), "image_not_found"),
             };

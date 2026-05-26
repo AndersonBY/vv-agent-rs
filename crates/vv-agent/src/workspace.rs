@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Error, ErrorKind};
@@ -16,7 +17,8 @@ pub struct FileInfo {
     pub suffix: String,
 }
 
-pub trait WorkspaceBackend: Send + Sync {
+pub trait WorkspaceBackend: Any + Send + Sync {
+    fn as_any(&self) -> &dyn Any;
     fn list_files(&self, base: &str, glob: &str) -> std::io::Result<Vec<String>>;
     fn read_text(&self, path: &str) -> std::io::Result<String>;
     fn read_bytes(&self, path: &str) -> std::io::Result<Vec<u8>>;
@@ -41,19 +43,52 @@ impl LocalWorkspaceBackend {
         }
     }
 
-    fn resolve_path(&self, path: &str) -> PathBuf {
+    fn resolve_path(&self, path: &str) -> std::io::Result<PathBuf> {
+        let root = self.normalized_root();
         let candidate = Path::new(path);
-        if candidate.is_absolute() {
+        let target = if candidate.is_absolute() {
             candidate.to_path_buf()
         } else {
-            self.root.join(candidate)
+            root.join(candidate)
+        };
+        let normalized = normalize_path_lexically(target);
+        if !self.allow_outside_root && normalized != root && !normalized.starts_with(&root) {
+            return Err(Error::new(
+                ErrorKind::PermissionDenied,
+                format!("Path escapes workspace: {path}"),
+            ));
+        }
+        Ok(normalized)
+    }
+
+    fn normalized_root(&self) -> PathBuf {
+        self.root
+            .canonicalize()
+            .unwrap_or_else(|_| absolutize_path(&self.root))
+    }
+
+    fn output_path(&self, path: &Path) -> String {
+        let root = self.normalized_root();
+        if let Ok(relative) = path.strip_prefix(&root) {
+            let output = path_to_posix(relative);
+            if output.is_empty() {
+                ".".to_string()
+            } else {
+                output
+            }
+        } else {
+            path.to_string_lossy().to_string()
         }
     }
 }
 
 impl WorkspaceBackend for LocalWorkspaceBackend {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn list_files(&self, base: &str, glob: &str) -> std::io::Result<Vec<String>> {
-        let root = self.resolve_path(base);
+        let root = self.resolve_path(base)?;
         let mut files = Vec::new();
         if root.exists() && root.is_dir() {
             let pattern = normalized_glob_pattern(glob);
@@ -65,9 +100,7 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
                     if !glob_match(&path_to_posix(relative_from_base), &pattern) {
                         continue;
                     }
-                    if let Ok(relative) = entry.strip_prefix(&self.root) {
-                        files.push(path_to_posix(relative));
-                    }
+                    files.push(self.output_path(&entry));
                 }
             }
         }
@@ -76,15 +109,15 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
     }
 
     fn read_text(&self, path: &str) -> std::io::Result<String> {
-        fs::read_to_string(self.resolve_path(path))
+        fs::read_to_string(self.resolve_path(path)?)
     }
 
     fn read_bytes(&self, path: &str) -> std::io::Result<Vec<u8>> {
-        fs::read(self.resolve_path(path))
+        fs::read(self.resolve_path(path)?)
     }
 
     fn write_text(&self, path: &str, content: &str, append: bool) -> std::io::Result<usize> {
-        let target = self.resolve_path(path);
+        let target = self.resolve_path(path)?;
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -103,7 +136,7 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
     }
 
     fn file_info(&self, path: &str) -> std::io::Result<Option<FileInfo>> {
-        let target = self.resolve_path(path);
+        let target = self.resolve_path(path)?;
         if !target.exists() {
             return Ok(None);
         }
@@ -115,7 +148,7 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
             .map(|duration| duration.as_secs().to_string())
             .unwrap_or_else(|| "0".to_string());
         Ok(Some(FileInfo {
-            path: path.to_string(),
+            path: self.output_path(&target),
             is_file: metadata.is_file(),
             is_dir: metadata.is_dir(),
             size: metadata.len(),
@@ -129,15 +162,19 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
     }
 
     fn exists(&self, path: &str) -> bool {
-        self.resolve_path(path).exists()
+        self.resolve_path(path)
+            .map(|path| path.exists())
+            .unwrap_or(false)
     }
 
     fn is_file(&self, path: &str) -> bool {
-        self.resolve_path(path).is_file()
+        self.resolve_path(path)
+            .map(|path| path.is_file())
+            .unwrap_or(false)
     }
 
     fn mkdir(&self, path: &str) -> std::io::Result<()> {
-        fs::create_dir_all(self.resolve_path(path))
+        fs::create_dir_all(self.resolve_path(path)?)
     }
 }
 
@@ -159,6 +196,10 @@ impl Default for MemoryWorkspaceBackend {
 }
 
 impl WorkspaceBackend for MemoryWorkspaceBackend {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn list_files(&self, base: &str, glob: &str) -> std::io::Result<Vec<String>> {
         let base = normalize_workspace_path(base);
         let glob = normalized_glob_pattern(glob);
@@ -272,6 +313,10 @@ impl MemoryWorkspaceBackend {
 pub struct S3WorkspaceBackend;
 
 impl WorkspaceBackend for S3WorkspaceBackend {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn list_files(&self, _base: &str, _glob: &str) -> std::io::Result<Vec<String>> {
         Ok(Vec::new())
     }
@@ -332,6 +377,30 @@ fn normalized_glob_pattern(glob: &str) -> String {
 
 fn path_to_posix(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+fn absolutize_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
+}
+
+fn normalize_path_lexically(path: PathBuf) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn normalize_workspace_path(path: &str) -> String {
