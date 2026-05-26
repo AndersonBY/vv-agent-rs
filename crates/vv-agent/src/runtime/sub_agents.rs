@@ -8,6 +8,10 @@ use serde_json::Value;
 use super::AgentRuntime;
 use crate::config::build_vv_llm_from_local_settings;
 use crate::llm::LlmClient;
+use crate::prompt::{
+    build_raw_system_prompt_sections, build_system_prompt_bundle_with_options,
+    BuildSystemPromptOptions,
+};
 use crate::runtime::RuntimeRunControls;
 use crate::sub_agent_sessions::{
     register_sub_agent_session, unregister_sub_agent_session, SubAgentSession,
@@ -536,9 +540,39 @@ fn build_sub_agent_task(context: &SubTaskRunContext, inputs: SubTaskBuildInputs<
     let parent_task = &context.parent_task;
     let sub_agent = inputs.sub_agent;
     let request = inputs.request;
-    let system_prompt = sub_agent.system_prompt.clone().unwrap_or_else(|| {
-        crate::prompt::build_system_prompt_bundle(&sub_agent.description).prompt
-    });
+    let (system_prompt, generated_sections) = if let Some(system_prompt) = &sub_agent.system_prompt
+    {
+        (
+            system_prompt.clone(),
+            build_raw_system_prompt_sections(system_prompt),
+        )
+    } else {
+        let language = parent_task
+            .metadata
+            .get("language")
+            .and_then(Value::as_str)
+            .unwrap_or("zh-CN")
+            .to_string();
+        let available_skills = parent_task
+            .metadata
+            .get("available_skills")
+            .filter(|value| value.is_array())
+            .cloned();
+        let prompt_bundle = build_system_prompt_bundle_with_options(
+            &sub_agent.description,
+            BuildSystemPromptOptions {
+                language,
+                allow_interruption: false,
+                use_workspace: parent_task.use_workspace,
+                enable_todo_management: true,
+                agent_type: parent_task.agent_type.clone(),
+                available_skills,
+                workspace: Some(context.workspace_path.clone()),
+                ..BuildSystemPromptOptions::default()
+            },
+        );
+        (prompt_bundle.prompt, prompt_bundle.sections)
+    };
     let mut user_prompt = request.task_description.clone();
     if !request.output_requirements.is_empty() {
         user_prompt.push_str("\n\n<Output Requirements>\n");
@@ -579,6 +613,7 @@ fn build_sub_agent_task(context: &SubTaskRunContext, inputs: SubTaskBuildInputs<
         inputs.sub_agent_name,
         request,
         &context.workspace_path,
+        generated_sections,
     );
     sub_task
 }
@@ -600,6 +635,7 @@ fn build_sub_task_metadata(
     sub_agent_name: &str,
     request: &SubTaskRequest,
     workspace_path: &std::path::Path,
+    system_prompt_sections: Vec<Value>,
 ) -> BTreeMap<String, Value> {
     let mut metadata = BTreeMap::from([
         ("is_sub_task".to_string(), Value::Bool(true)),
@@ -637,6 +673,11 @@ fn build_sub_task_metadata(
         metadata.extend(sub_agent.metadata.clone());
     }
     metadata.extend(request.metadata.clone());
+    if !system_prompt_sections.is_empty() {
+        metadata
+            .entry("system_prompt_sections".to_string())
+            .or_insert(Value::Array(system_prompt_sections));
+    }
     metadata.insert(
         "task_id".to_string(),
         Value::String(sub_task_id.to_string()),

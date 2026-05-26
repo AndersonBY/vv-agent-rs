@@ -293,6 +293,63 @@ fn runtime_rejects_sub_agent_model_mismatch_without_settings_file() {
 }
 
 #[test]
+fn runtime_adds_generated_prompt_sections_to_sub_agent_metadata() {
+    let mut sub_task_args = BTreeMap::new();
+    sub_task_args.insert("agent_id".to_string(), json!("researcher"));
+    sub_task_args.insert(
+        "task_description".to_string(),
+        json!("Inspect generated prompt sections"),
+    );
+    let mut parent_finish_args = BTreeMap::new();
+    parent_finish_args.insert("message".to_string(), json!("parent saw prompt metadata"));
+
+    let llm = InspectingSubAgentPromptLlmClient::new(vec![
+        LLMResponse::with_tool_calls(
+            "",
+            vec![ToolCall::new(
+                "parent_sub_call",
+                "create_sub_task",
+                sub_task_args,
+            )],
+        ),
+        LLMResponse::with_tool_calls(
+            "",
+            vec![ToolCall::new(
+                "parent_finish",
+                "task_finish",
+                parent_finish_args,
+            )],
+        ),
+    ]);
+    let inspector = llm.clone();
+    let runtime = AgentRuntime::new(llm);
+    let mut task = AgentTask::new("parent_prompt", "demo", "parent system", "delegate");
+    task.metadata.insert("language".to_string(), json!("zh-CN"));
+    task.metadata.insert(
+        "available_skills".to_string(),
+        json!([{"name": "review-code", "description": "Review code"}]),
+    );
+    task.sub_agents.insert(
+        "researcher".to_string(),
+        SubAgentConfig::new("demo", "research profile"),
+    );
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let metadata = inspector
+        .child_system_metadata()
+        .expect("child system metadata");
+    let sections = metadata["system_prompt_sections"]
+        .as_array()
+        .expect("system prompt sections");
+    assert!(sections
+        .iter()
+        .any(|section| section["id"] == "agent_definition"));
+    assert!(sections.iter().any(|section| section["id"] == "tools"));
+}
+
+#[test]
 fn runtime_can_poll_async_configured_sub_agent_status() {
     let mut sub_task_args = BTreeMap::new();
     sub_task_args.insert("agent_id".to_string(), json!("researcher"));
@@ -805,6 +862,62 @@ impl LlmClient for InspectingImageLlmClient {
         }) {
             *self.saw_image_message.lock().expect("inspector poisoned") = true;
         }
+        self.responses
+            .lock()
+            .map_err(|_| LlmError::Request("inspector poisoned".to_string()))?
+            .pop_front()
+            .ok_or(LlmError::ScriptExhausted)
+    }
+}
+
+#[derive(Clone)]
+struct InspectingSubAgentPromptLlmClient {
+    responses: Arc<Mutex<VecDeque<LLMResponse>>>,
+    child_system_metadata: Arc<Mutex<Option<BTreeMap<String, serde_json::Value>>>>,
+}
+
+impl InspectingSubAgentPromptLlmClient {
+    fn new(responses: Vec<LLMResponse>) -> Self {
+        Self {
+            responses: Arc::new(Mutex::new(VecDeque::from(responses))),
+            child_system_metadata: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn child_system_metadata(&self) -> Option<BTreeMap<String, serde_json::Value>> {
+        self.child_system_metadata
+            .lock()
+            .expect("child metadata poisoned")
+            .clone()
+    }
+}
+
+impl LlmClient for InspectingSubAgentPromptLlmClient {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        let is_child_request = request
+            .messages
+            .first()
+            .is_some_and(|message| message.content.contains("research profile"));
+        if is_child_request {
+            let metadata = request
+                .messages
+                .first()
+                .map(|message| message.metadata.clone())
+                .unwrap_or_default();
+            *self
+                .child_system_metadata
+                .lock()
+                .expect("child metadata poisoned") = Some(metadata);
+            return Ok(LLMResponse::with_tool_calls(
+                "",
+                vec![ToolCall::new(
+                    "child_prompt_finish",
+                    "task_finish",
+                    BTreeMap::from([("message".to_string(), json!("child saw prompt"))]),
+                )],
+            ));
+        }
+
         self.responses
             .lock()
             .map_err(|_| LlmError::Request("inspector poisoned".to_string()))?

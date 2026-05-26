@@ -276,6 +276,9 @@ The current Rust implementation includes:
   fails explicitly instead of silently reusing the parent LLM client. When
   settings are configured, resolution is delegated through the same `vv-llm`
   settings builder used by top-level clients.
+- Generated sub-agent prompts now use the Python-style prompt builder options
+  inherited from the parent task, and store `system_prompt_sections` in task
+  metadata for prompt-cache and downstream context parity.
 - Python-style `activate_skill` behavior for allowed skills: inline skill
   entries and `SKILL.md` locations load instructions, update `active_skills`,
   and record activation history.
