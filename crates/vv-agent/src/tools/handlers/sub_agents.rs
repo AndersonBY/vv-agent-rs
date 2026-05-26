@@ -354,14 +354,55 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
                 .and_then(Value::as_u64)
                 .unwrap_or(20)
                 .clamp(1, 100) as usize;
+            let message = arguments
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let mut interaction = None;
+            if let Some(message) = message {
+                let target_id = task_ids[0].clone();
+                let Some(session_id) = manager.task_session_id(&target_id) else {
+                    return tool_error_with_code(
+                        format!("Sub-task {target_id} not found."),
+                        "sub_task_not_found",
+                    );
+                };
+                let previous_status = manager
+                    .task_status_label(&target_id)
+                    .unwrap_or_else(|| "missing".to_string());
+                if manager.is_running(&target_id) {
+                    if !crate::steer_sub_agent_session(&session_id, &message) {
+                        return tool_error_with_code(
+                            format!("Failed to queue message for running sub-task {target_id}."),
+                            "sub_task_message_queue_failed",
+                        );
+                    }
+                    interaction = Some(json!({
+                        "task_id": target_id,
+                        "action": "message_queued",
+                        "previous_status": previous_status,
+                    }));
+                } else {
+                    return tool_error_with_code(
+                        format!("Sub-task {target_id} is not running and cannot be steered yet."),
+                        "sub_task_continue_not_supported",
+                    );
+                }
+            }
             let tasks =
                 manager.status_entries(&task_ids, detail_level.as_str(), workspace_file_limit);
+            let mut payload = json!({
+                "tasks": tasks,
+                "detail_level": detail_level,
+            });
+            if let Some(interaction) = interaction {
+                payload["interaction"] = interaction;
+            }
             tool_result(
                 ToolResultStatus::Success,
-                json!({
-                    "tasks": tasks,
-                    "detail_level": detail_level,
-                }),
+                payload,
                 None,
                 ToolDirective::Continue,
             )

@@ -17,6 +17,7 @@ pub mod prompt;
 pub mod runtime;
 pub mod sdk;
 pub mod skills;
+pub mod sub_agent_sessions;
 pub mod sub_task_manager;
 pub mod tools;
 pub mod types;
@@ -39,6 +40,11 @@ pub use runtime::{
 pub use sdk::{
     create_agent_session, query, run, AgentDefinition, AgentResourceLoader, AgentRun,
     AgentSDKClient, AgentSDKOptions, AgentSession, AgentSessionState,
+};
+pub use sub_agent_sessions::{
+    get_sub_agent_session, register_sub_agent_session, steer_sub_agent_session,
+    sub_agent_session_registry, subscribe_sub_agent_session, unregister_sub_agent_session,
+    SubAgentSession, SubAgentSessionListener, SubAgentSessionRegistry, SubAgentSessionUnsubscribe,
 };
 pub use sub_task_manager::SubTaskManager;
 pub use tools::{build_default_registry, ToolContext, ToolHandler, ToolRegistry, ToolSpec};

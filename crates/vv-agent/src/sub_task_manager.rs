@@ -137,6 +137,44 @@ impl SubTaskManager {
             })
             .collect()
     }
+
+    pub fn task_session_id(&self, task_id: &str) -> Option<String> {
+        self.join_finished_tasks();
+        self.tasks
+            .lock()
+            .expect("sub-task manager poisoned")
+            .get(task_id)
+            .map(|record| record.session_id.clone())
+    }
+
+    pub fn task_status_label(&self, task_id: &str) -> Option<String> {
+        self.join_finished_tasks();
+        self.tasks
+            .lock()
+            .expect("sub-task manager poisoned")
+            .get(task_id)
+            .map(|record| record.status_label().to_string())
+    }
+
+    pub fn is_running(&self, task_id: &str) -> bool {
+        self.join_finished_tasks();
+        self.tasks
+            .lock()
+            .expect("sub-task manager poisoned")
+            .get(task_id)
+            .is_some_and(ManagedSubTask::is_running)
+    }
+
+    fn join_finished_tasks(&self) {
+        let mut tasks = self.tasks.lock().expect("sub-task manager poisoned");
+        for record in tasks.values_mut() {
+            if record.handle.as_ref().is_some_and(JoinHandle::is_finished) {
+                if let Some(handle) = record.handle.take() {
+                    let _ = handle.join();
+                }
+            }
+        }
+    }
 }
 
 struct ManagedSubTask {
@@ -157,17 +195,7 @@ impl ManagedSubTask {
     }
 
     fn to_status_entry(&self, detail_level: &str) -> Value {
-        let status = self
-            .outcome
-            .as_ref()
-            .map(|outcome| status_label(outcome.status))
-            .unwrap_or_else(|| {
-                if self.is_running() {
-                    "running"
-                } else {
-                    "pending"
-                }
-            });
+        let status = self.status_label();
         let mut entry = json!({
             "task_id": self.task_id,
             "session_id": self.session_id,
@@ -217,6 +245,19 @@ impl ManagedSubTask {
             });
         }
         entry
+    }
+
+    fn status_label(&self) -> &'static str {
+        self.outcome
+            .as_ref()
+            .map(|outcome| status_label(outcome.status))
+            .unwrap_or_else(|| {
+                if self.is_running() {
+                    "running"
+                } else {
+                    "pending"
+                }
+            })
     }
 }
 

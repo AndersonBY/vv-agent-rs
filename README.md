@@ -30,6 +30,7 @@ vv-agent-rs/
         sub_agents.rs
       sdk.rs
       skills.rs
+      sub_agent_sessions.rs
       tools/
         base.rs
         common.rs
@@ -141,7 +142,10 @@ The current Rust implementation includes:
 - Runtime-backed sub-agent support for `create_sub_task` / `sub_task_status`:
   configured `AgentTask.sub_agents` can run synchronously or via async
   `wait_for_completion=false`, with batch aggregation and status/snapshot
-  polling.
+  polling. A Python-style active sub-agent session registry exposes
+  `get_sub_agent_session`, `subscribe_sub_agent_session`, and
+  `steer_sub_agent_session`, and `sub_task_status(message=...)` can queue
+  steering messages for registered running sessions.
 - Python-style `activate_skill` behavior for allowed skills: inline skill
   entries and `SKILL.md` locations load instructions, update `active_skills`,
   and record activation history.
@@ -153,7 +157,8 @@ The current Rust implementation includes:
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, schema parity, and workspace tools.
 
-Deeper parity work against the Python implementation is still pending for
-sub-agent session management and steering, distributed backends, and the
-remaining built-in tools. The migration target is to copy Python `v-agent`
-behavior as completely as possible, not merely provide a minimal Rust wrapper.
+Deeper parity work against the Python implementation is still pending for full
+sub-agent session continuation/automatic registration, distributed backends,
+and the remaining built-in tools. The migration target is to copy Python
+`v-agent` behavior as completely as possible, not merely provide a minimal Rust
+wrapper.
