@@ -200,6 +200,63 @@ fn create_sub_task_batch_uses_execution_backend_parallel_map() {
 }
 
 #[test]
+fn create_sub_task_coerces_python_style_boolean_arguments() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.task_id = "parent".to_string();
+    let manager = SubTaskManager::default();
+    context.sub_task_manager = Some(manager.clone());
+    let captured_flags = Arc::new(Mutex::new(Vec::new()));
+    let flags = Arc::clone(&captured_flags);
+    context.sub_task_runner = Some(Arc::new(move |request| {
+        flags
+            .lock()
+            .expect("captured flags")
+            .push(request.include_main_summary);
+        SubTaskOutcome {
+            task_id: "sub_task".to_string(),
+            agent_name: request.agent_name,
+            status: AgentStatus::Completed,
+            session_id: None,
+            final_answer: Some("done".to_string()),
+            wait_reason: None,
+            error: None,
+            cycles: 1,
+            todo_list: Vec::new(),
+            resolved: BTreeMap::new(),
+        }
+    }));
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_bool",
+                "create_sub_task",
+                BTreeMap::from([
+                    ("agent_id".to_string(), json!("writer-sub")),
+                    ("task_description".to_string(), json!("Write summary")),
+                    ("include_main_summary".to_string(), json!("true")),
+                    ("wait_for_completion".to_string(), json!("0")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("create_sub_task");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["wait_for_completion"], false);
+    assert_eq!(payload["status"], "running");
+    let task_id = payload["task_id"].as_str().expect("task id");
+    manager.wait(task_id, None);
+    assert_eq!(
+        captured_flags.lock().expect("captured flags").as_slice(),
+        &[true]
+    );
+}
+
+#[test]
 fn create_sub_task_errors_when_runner_is_missing() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

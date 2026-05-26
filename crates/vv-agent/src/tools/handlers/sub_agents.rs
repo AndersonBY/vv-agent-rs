@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::ToolSpec;
-use crate::tools::common::{tool_error_with_code, tool_result};
+use crate::tools::common::{coerce_bool, tool_error_with_code, tool_result};
 use crate::types::{AgentStatus, SubTaskRequest, ToolDirective, ToolResultStatus};
 
 pub(crate) fn create_sub_task_tool() -> ToolSpec {
@@ -52,16 +52,14 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
 
             let include_main_summary = arguments
                 .get("include_main_summary")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+                .is_some_and(|value| coerce_bool(Some(value), false));
             let exclude_files_pattern = arguments
                 .get("exclude_files_pattern")
                 .and_then(Value::as_str)
                 .map(str::to_string);
             let wait_for_completion = arguments
                 .get("wait_for_completion")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
+                .is_none_or(|value| coerce_bool(Some(value), true));
 
             if !task_description.is_empty() {
                 let mut request = SubTaskRequest {

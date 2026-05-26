@@ -3,25 +3,8 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::ToolSpec;
-use crate::tools::common::{tool_error_with_code, tool_result};
+use crate::tools::common::{coerce_bool, tool_error_with_code, tool_result};
 use crate::types::{ToolDirective, ToolResultStatus};
-
-fn coerce_bool(value: Option<&Value>, default: bool) -> bool {
-    match value {
-        Some(Value::Bool(value)) => *value,
-        Some(Value::Number(value)) => match value.as_i64() {
-            Some(0) => false,
-            Some(1) => true,
-            _ => default,
-        },
-        Some(Value::String(value)) => match value.trim().to_ascii_lowercase().as_str() {
-            "1" | "true" | "yes" | "on" => true,
-            "0" | "false" | "no" | "off" => false,
-            _ => default,
-        },
-        _ => default,
-    }
-}
 
 pub(crate) fn sub_task_status_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(

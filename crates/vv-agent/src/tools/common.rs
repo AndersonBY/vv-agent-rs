@@ -62,6 +62,23 @@ pub(crate) fn path_escapes_workspace_error(message: impl Into<String>) -> ToolEx
     tool_error_with_code(message, "path_escapes_workspace")
 }
 
+pub(crate) fn coerce_bool(value: Option<&Value>, default: bool) -> bool {
+    match value {
+        Some(Value::Bool(value)) => *value,
+        Some(Value::Number(value)) => match value.as_i64() {
+            Some(0) => false,
+            Some(1) => true,
+            _ => default,
+        },
+        Some(Value::String(value)) => match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => default,
+        },
+        _ => default,
+    }
+}
+
 pub(crate) fn collect_workspace_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut stack = vec![root.to_path_buf()];
     let mut files = Vec::new();
