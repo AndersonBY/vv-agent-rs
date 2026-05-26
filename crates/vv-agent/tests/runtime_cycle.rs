@@ -98,6 +98,32 @@ fn runtime_waits_when_ask_user_tool_requests_input() {
 }
 
 #[test]
+fn runtime_marks_remaining_tool_calls_skipped_after_wait_user() {
+    let ask_args = BTreeMap::from([("question".to_string(), json!("First question?"))]);
+    let second_args = BTreeMap::from([("question".to_string(), json!("Second question?"))]);
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+        "",
+        vec![
+            ToolCall::new("call_1", "ask_user", ask_args),
+            ToolCall::new("call_2", "ask_user", second_args),
+        ],
+    )]);
+    let runtime = AgentRuntime::new(llm);
+
+    let result = runtime
+        .run(AgentTask::new("task_skip_wait", "demo", "system", "ask"))
+        .expect("run");
+
+    assert_eq!(result.status, AgentStatus::WaitUser);
+    assert_eq!(result.cycles[0].tool_results.len(), 2);
+    assert_eq!(result.cycles[0].tool_results[1].tool_call_id, "call_2");
+    assert_eq!(
+        result.cycles[0].tool_results[1].error_code.as_deref(),
+        Some("skipped_due_to_wait_user")
+    );
+}
+
+#[test]
 fn runtime_injects_image_message_after_read_image() {
     let workspace = tempfile::tempdir().expect("workspace");
     std::fs::write(workspace.path().join("img.png"), PNG_1X1).expect("image");

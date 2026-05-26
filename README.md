@@ -158,6 +158,10 @@ The current Rust implementation includes:
 - Python-compatible `read_file` response limiting: large reads return file
   statistics, request size, limits, and a suggested line range instead of
   flooding the LLM context.
+- Python-compatible directive handling inside a tool-call batch: when a tool
+  asks for user input or finishes the task, later tool calls in the same LLM
+  response are recorded as skipped results instead of disappearing from the
+  transcript.
 - Runtime-backed sub-agent support for `create_sub_task` / `sub_task_status`:
   configured `AgentTask.sub_agents` can run synchronously or via async
   `wait_for_completion=false`, with batch aggregation and status/snapshot

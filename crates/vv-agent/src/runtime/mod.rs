@@ -263,7 +263,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             };
 
             let mut directive_result = None;
-            for call in &response.tool_calls {
+            for (call_index, call) in response.tool_calls.iter().enumerate() {
                 let (patched_call, short_circuit_result) =
                     hook_manager.apply_before_tool_call(&task, cycle_index, call.clone(), &context);
                 let mut result = match short_circuit_result {
@@ -299,6 +299,27 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 }
                 cycle.tool_results.push(result);
                 if directive_result.is_some() {
+                    let (error_code, message) = match directive_result
+                        .as_ref()
+                        .map(|result| result.directive)
+                        .unwrap_or(ToolDirective::Continue)
+                    {
+                        ToolDirective::WaitUser => (
+                            "skipped_due_to_wait_user",
+                            "Tool skipped because a previous tool requested user input.",
+                        ),
+                        ToolDirective::Finish => (
+                            "skipped_due_to_finish",
+                            "Tool skipped because a previous tool finished the task.",
+                        ),
+                        ToolDirective::Continue => ("skipped_due_to_directive", "Tool skipped."),
+                    };
+                    for skipped_call in response.tool_calls.iter().skip(call_index + 1) {
+                        let skipped = skipped_tool_result(skipped_call, error_code, message);
+                        self.emit_tool_result(cycle_index, skipped_call, &skipped);
+                        messages.push(skipped.to_message());
+                        cycle.tool_results.push(skipped);
+                    }
                     break;
                 }
             }
@@ -542,6 +563,24 @@ fn execute_tool_result(
             image_url: None,
             image_path: None,
         })
+}
+
+fn skipped_tool_result(call: &ToolCall, error_code: &str, message: &str) -> ToolExecutionResult {
+    ToolExecutionResult {
+        tool_call_id: call.id.clone(),
+        content: serde_json::json!({
+            "ok": false,
+            "error": message,
+            "skipped_tool": call.name,
+        })
+        .to_string(),
+        status: ToolResultStatus::Error,
+        directive: ToolDirective::Continue,
+        error_code: Some(error_code.to_string()),
+        metadata: BTreeMap::new(),
+        image_url: None,
+        image_path: None,
+    }
 }
 
 fn build_memory_manager<C>(
