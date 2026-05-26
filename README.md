@@ -129,6 +129,10 @@ The current Rust implementation includes:
   common provider context-window errors, forces normal memory compaction once,
   then falls back to emergency compaction slices that preserve system and recent
   tool context before retrying.
+- Post-compaction file context restore modeled after Python
+  `post_compact_restore`: summaries now track file actions as structured
+  `path/action/summary` entries and restore key workspace files under a bounded
+  `<Post-Compaction File Context>` block.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
   canonical `schemas`, shared `common` helpers, and focused handler modules.
 - Split `activate_skill` handling into model, parser, normalization, and shared

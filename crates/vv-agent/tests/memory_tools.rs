@@ -159,6 +159,51 @@ fn memory_manager_persists_large_tool_results_as_artifacts() {
 }
 
 #[test]
+fn memory_manager_restores_key_file_context_after_compaction() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    std::fs::write(workspace.path().join("demo.py"), "print('restored')\n").expect("demo");
+    let mut manager = MemoryManager::new(MemoryManagerConfig {
+        compact_threshold: 10,
+        model_context_window: 80,
+        reserved_output_tokens: 10,
+        autocompact_buffer_tokens: 0,
+        keep_recent_messages: 2,
+        workspace: Some(workspace.path().to_path_buf()),
+        ..MemoryManagerConfig::default()
+    });
+    let messages = vec![
+        Message::system("sys"),
+        Message::user("please update demo.py"),
+        Message {
+            tool_calls: vec![ToolCall::new(
+                "call_1",
+                "write_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("demo.py")),
+                    ("content".to_string(), json!("print('restored')\n")),
+                ]),
+            )],
+            ..Message::assistant("editing")
+        },
+        Message::tool("{\"ok\":true}", "call_1"),
+        Message::assistant("waiting for verification"),
+    ];
+
+    let (compacted, changed) = manager.compact(&messages, true);
+
+    assert!(changed);
+    assert_eq!(compacted.len(), 2);
+    assert!(compacted[1]
+        .content
+        .contains("\"files_examined_or_modified\":[{\"path\":\"demo.py\""));
+    assert!(compacted[1]
+        .content
+        .contains("<Post-Compaction File Context>"));
+    assert!(compacted[1].content.contains("path=\"demo.py\""));
+    assert!(compacted[1].content.contains("print('restored')"));
+}
+
+#[test]
 fn memory_manager_uses_microcompact_before_full_summary() {
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         compact_threshold: 1_000,

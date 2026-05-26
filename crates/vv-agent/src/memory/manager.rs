@@ -4,6 +4,7 @@ use crate::memory::artifacts::{
     compact_tool_results, render_persisted_artifacts_section, ToolResultArtifactConfig,
 };
 use crate::memory::microcompact::{microcompact, MicrocompactConfig};
+use crate::memory::post_compact_restore::{restore_key_files, PostCompactRestoreConfig};
 use crate::memory::session::SessionMemory;
 use crate::memory::summary::LocalSummary;
 use crate::memory::token_utils::{compute_compaction_threshold, count_messages_tokens};
@@ -269,6 +270,20 @@ impl MemoryManager {
         let summary =
             LocalSummary::from_messages(&messages_for_summary, self.config.summary_event_limit);
         let mut compressed_memory = summary.to_json_string();
+        if let Ok(summary_data) = serde_json::from_str(&compressed_memory) {
+            let restored_context = restore_key_files(
+                &summary_data,
+                self.config.workspace.as_deref(),
+                &PostCompactRestoreConfig {
+                    token_model: self.config.model.clone(),
+                    ..PostCompactRestoreConfig::default()
+                },
+            );
+            if !restored_context.is_empty() {
+                compressed_memory.push_str("\n\n");
+                compressed_memory.push_str(&restored_context);
+            }
+        }
         if let Some(artifact_section) = render_persisted_artifacts_section(&artifacts) {
             compressed_memory.push_str("\n\n");
             compressed_memory.push_str(&artifact_section);
