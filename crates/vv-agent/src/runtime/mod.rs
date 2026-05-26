@@ -40,7 +40,7 @@ pub use hooks::{
 };
 use results::{assistant_message_from_response, extract_final_message, extract_wait_reason};
 pub use token_usage::{normalize_token_usage, summarize_task_token_usage};
-use tool_call_runner::{execute_tool_result, skipped_tool_result};
+use tool_call_runner::{execute_tool_result, needs_tool_call_id, skipped_tool_result};
 pub use tool_planner::patch_dynamic_tool_schema_hints;
 
 pub type RuntimeLogCallback = dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static;
@@ -498,7 +498,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         Some(result) => result,
                         None => execute_tool_result(&self.tool_registry, &patched_call, &mut context),
                     };
-                    if result.tool_call_id.is_empty() {
+                    if needs_tool_call_id(&result.tool_call_id) {
                         result.tool_call_id = patched_call.id.clone();
                     }
                     result = hook_manager.apply_after_tool_call(
@@ -508,7 +508,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         &context,
                         result,
                     );
-                    if result.tool_call_id.is_empty() {
+                    if needs_tool_call_id(&result.tool_call_id) {
                         result.tool_call_id = patched_call.id.clone();
                     }
                     self.emit_tool_result(&controls, cycle_index, &patched_call, &result);

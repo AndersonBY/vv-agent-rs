@@ -11,6 +11,11 @@ pub(crate) fn execute_tool_result(
     crate::tools::dispatch_tool_call(registry, context, call)
 }
 
+pub(crate) fn needs_tool_call_id(value: &str) -> bool {
+    let stripped = value.trim();
+    stripped.is_empty() || stripped == "pending"
+}
+
 pub(crate) fn skipped_tool_result(
     call: &ToolCall,
     error_code: &str,

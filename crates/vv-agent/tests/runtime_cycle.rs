@@ -519,6 +519,44 @@ fn runtime_hooks_can_patch_llm_request_and_tool_result_flow() {
 }
 
 #[test]
+fn runtime_hooks_normalize_pending_tool_call_ids_like_python() {
+    let hook = Arc::new(PendingToolCallIdHook);
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+        "finish through pending hook",
+        vec![ToolCall::new(
+            "pending_hook_finish",
+            "task_finish",
+            BTreeMap::from([("message".to_string(), json!("original"))]),
+        )],
+    )]);
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.hooks.push(hook);
+
+    let result = runtime
+        .run(AgentTask::new(
+            "pending_hook_task",
+            "demo",
+            "system",
+            "finish",
+        ))
+        .expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(
+        result.final_answer.as_deref(),
+        Some("finished by pending hook")
+    );
+    assert_eq!(
+        result.cycles[0].tool_results[0].tool_call_id,
+        "pending_hook_finish"
+    );
+    assert_eq!(
+        result.messages.last().unwrap().tool_call_id.as_deref(),
+        Some("pending_hook_finish")
+    );
+}
+
+#[test]
 fn runtime_emits_reference_lifecycle_log_events() {
     let mut finish_args = BTreeMap::new();
     finish_args.insert("message".to_string(), json!("logged finish"));
@@ -1471,6 +1509,30 @@ impl RuntimeHook for BeforeMemoryCompactHook {
         let mut messages = event.messages.to_vec();
         messages.push(Message::user("hook-added-before-memory-compact"));
         Some(messages)
+    }
+}
+
+struct PendingToolCallIdHook;
+
+impl RuntimeHook for PendingToolCallIdHook {
+    fn before_tool_call(
+        &self,
+        event: vv_agent::BeforeToolCallEvent<'_>,
+    ) -> Option<BeforeToolCallPatch> {
+        assert_eq!(event.call.id, "pending_hook_finish");
+        let mut result = ToolExecutionResult::success(
+            "pending",
+            json!({"message": "finished by pending hook"}).to_string(),
+        );
+        result.directive = ToolDirective::Finish;
+        result.metadata.insert(
+            "final_message".to_string(),
+            json!("finished by pending hook"),
+        );
+        Some(BeforeToolCallPatch {
+            call: None,
+            result: Some(result),
+        })
     }
 }
 
