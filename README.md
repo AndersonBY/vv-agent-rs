@@ -117,6 +117,9 @@ The current Rust implementation includes:
   `build_vv_llm_from_local_settings`, settings-based endpoint resolution, and
   provider HTTP/protocol handling delegated to `vv-llm`, while keeping
   `ScriptedLlmClient` for deterministic tests.
+- LLM settings normalization keeps Python compatibility for `providers` /
+  `backends`, default `VERSION`, endpoint API-key suffix extraction, and
+  opt-in base64 key decoding before constructing `vv-llm` clients.
 - A basic multi-cycle runtime that sends tool schemas to the LLM, executes tool
   calls, and converges on `task_finish` or `ask_user`.
 - Split `runtime/` modules for hooks, the main cycle, tool-result extraction,

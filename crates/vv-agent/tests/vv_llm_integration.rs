@@ -1,7 +1,8 @@
 use std::io::Write;
 
 use vv_agent::{
-    build_openai_llm_from_local_settings, build_vv_llm_from_local_settings, resolve_model_endpoint,
+    build_openai_llm_from_local_settings, build_vv_llm_from_local_settings, decode_api_key,
+    resolve_model_endpoint,
 };
 
 #[test]
@@ -132,4 +133,45 @@ fn settings_resolution_accepts_embedded_llm_settings() {
         resolved.endpoint().unwrap().api_base,
         "https://api.openai.com/v1"
     );
+}
+
+#[test]
+fn settings_resolution_accepts_providers_alias_and_decodes_api_keys() {
+    let raw = serde_json::json!({
+        "VERSION": "2",
+        "endpoints": [{
+            "id": "deepseek-default",
+            "api_base": "https://api.deepseek.com",
+            "api_key": "env:sk-deepseek-test-key"
+        }],
+        "providers": {
+            "deepseek": {
+                "models": {
+                    "deepseek-v4-pro": {
+                        "id": "deepseek-v4-pro",
+                        "endpoints": ["deepseek-default"]
+                    }
+                }
+            }
+        },
+        "embedding_backends": {},
+        "rerank_backends": {}
+    });
+
+    let resolved =
+        resolve_model_endpoint(&raw, "deepseek", "deepseek-v4-pro").expect("resolve provider");
+
+    assert_eq!(resolved.backend, "deepseek");
+    assert_eq!(resolved.endpoint().unwrap().api_key, "sk-deepseek-test-key");
+    assert_eq!(
+        decode_api_key("env:sk-deepseek-test-key"),
+        "sk-deepseek-test-key"
+    );
+
+    std::env::set_var("V_AGENT_ENABLE_BASE64_KEY_DECODE", "1");
+    assert_eq!(
+        decode_api_key("c2stZGVlcHNlZWstdGVzdC1rZXk"),
+        "sk-deepseek-test-key"
+    );
+    std::env::remove_var("V_AGENT_ENABLE_BASE64_KEY_DECODE");
 }
