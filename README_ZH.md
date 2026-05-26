@@ -116,7 +116,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 一个基础 multi-cycle runtime，可以把 tool schemas 发给 LLM、执行工具调用，并通过 `task_finish` 或 `ask_user` 收敛。
 - `runtime/` 已拆成 cancellation、hooks、shell resolution、state stores、主循环、cycle-runner retry helper、tool-call runner helper、工具结果解析和 sub-agent 执行模块，让后续继续补齐 Python parity 时改动更集中。
 - 已加入参考 Python `RuntimeHookManager` 的 runtime hooks：调用方可以在 memory compaction 前改写 messages，改写 LLM 请求的 messages / schemas、改写 LLM 响应、改写或短路工具调用，并改写工具结果。
-- `log_handler` 已可接收 Python 风格 runtime 生命周期事件，包括 run start、cycle start、LLM response、tool result、completed、wait-user 和 max-cycles。
+- `log_handler` 已可接收 Python 风格 runtime 生命周期事件，包括 run start、cycle start、LLM response、tool result、completed、wait-user 和 max-cycles，并提供可配置的 assistant / content / final-answer preview 字段。
 - 同一 package 内的 `vv-agent` CLI 已对齐 Python `cli.py` 的核心参数：prompt、backend/model、settings file、workspace、max cycles、language、agent type、verbose logs、prompt bundle 构建和 JSON 结果输出。
 - 已补 Python 风格 runtime token usage helper：可归一化 provider 原始 usage payload 中 prompt/completion 与 input/output 命名差异，保留 raw usage，并汇总逐 cycle token totals。
 - 核心 runtime 类型已补 Python 风格 `to_dict` / `from_dict` helper，覆盖 task、result、message、cycle、tool-call 和 tool-result payload，并保留工具结果 legacy `status` + `status_code` 双字段以便 worker 互通。`Message::to_openai_message` 也已对齐 Python 的 multimodal / tool-call payload 形状，包括 assistant tool calls 的 `content: null`、可选 reasoning content 和 user image blocks。

@@ -76,6 +76,7 @@ pub struct AgentRuntime<C: LlmClient> {
     pub tool_registry: ToolRegistry,
     pub default_workspace: Option<PathBuf>,
     pub log_handler: Option<RuntimeLogHandler>,
+    pub log_preview_chars: Option<usize>,
     pub workspace_backend: Arc<dyn WorkspaceBackend>,
     pub hooks: Vec<Arc<dyn RuntimeHook>>,
     pub execution_backend: RuntimeExecutionBackend,
@@ -91,6 +92,7 @@ impl<C: LlmClient> AgentRuntime<C> {
             tool_registry: build_default_registry(),
             default_workspace: None,
             log_handler: None,
+            log_preview_chars: None,
             workspace_backend: Arc::new(LocalWorkspaceBackend::new(PathBuf::from("./workspace"))),
             hooks: Vec::new(),
             execution_backend: RuntimeExecutionBackend::default(),
@@ -120,6 +122,11 @@ impl<C: LlmClient> AgentRuntime<C> {
 
     pub fn with_default_backend(mut self, default_backend: impl Into<String>) -> Self {
         self.default_backend = Some(default_backend.into());
+        self
+    }
+
+    pub fn with_log_preview_chars(mut self, log_preview_chars: usize) -> Self {
+        self.log_preview_chars = Some(log_preview_chars);
         self
     }
 
@@ -364,7 +371,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                     ("cycle".to_string(), Value::from(cycle_index)),
                                     (
                                         "final_answer".to_string(),
-                                        Value::String(response.content.clone()),
+                                        Value::String(self.preview_text(&response.content)),
                                     ),
                                 ]),
                             );
@@ -388,7 +395,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                     ("cycle".to_string(), Value::from(cycle_index)),
                                     (
                                         "wait_reason".to_string(),
-                                        Value::String(wait_reason.clone()),
+                                        Value::String(self.preview_text(&wait_reason)),
                                     ),
                                 ]),
                             );
@@ -586,7 +593,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                     ("cycle".to_string(), Value::from(cycle_index)),
                                     (
                                         "final_answer".to_string(),
-                                        Value::String(final_message.clone()),
+                                        Value::String(self.preview_text(&final_message)),
                                     ),
                                 ]),
                             );
@@ -606,7 +613,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                     ("cycle".to_string(), Value::from(cycle_index)),
                                     (
                                         "wait_reason".to_string(),
-                                        Value::String(wait_reason.clone()),
+                                        Value::String(self.preview_text(&wait_reason)),
                                     ),
                                 ]),
                             );
@@ -640,11 +647,13 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     ("cycle".to_string(), Value::from(result.cycles.len())),
                     (
                         "final_answer".to_string(),
-                        Value::String(result.final_answer.clone().unwrap_or_default()),
+                        Value::String(
+                            self.preview_text(&result.final_answer.clone().unwrap_or_default()),
+                        ),
                     ),
                     (
                         "error".to_string(),
-                        Value::String(result.error.clone().unwrap_or_default()),
+                        Value::String(self.preview_text(&result.error.clone().unwrap_or_default())),
                     ),
                 ]),
             );
@@ -689,6 +698,10 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 (
                     "assistant_message".to_string(),
                     Value::String(cycle.assistant_message.clone()),
+                ),
+                (
+                    "assistant_preview".to_string(),
+                    Value::String(self.preview_text(&cycle.assistant_message)),
                 ),
                 (
                     "tool_calls".to_string(),
@@ -759,11 +772,30 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 ),
                 ("content".to_string(), Value::String(result.content.clone())),
                 (
+                    "content_preview".to_string(),
+                    Value::String(self.preview_text(&result.content)),
+                ),
+                (
                     "metadata".to_string(),
                     Value::Object(result.metadata.clone().into_iter().collect()),
                 ),
             ]),
         );
+    }
+
+    fn preview_text(&self, text: &str) -> String {
+        let cleaned = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let Some(limit) = self.log_preview_chars.map(|limit| limit.max(40)) else {
+            return cleaned;
+        };
+        if cleaned.chars().count() <= limit {
+            return cleaned;
+        }
+        let prefix = cleaned
+            .chars()
+            .take(limit.saturating_sub(3))
+            .collect::<String>();
+        format!("{prefix}...")
     }
 }
 

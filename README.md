@@ -138,7 +138,8 @@ The current Rust implementation includes:
   LLM responses, patch or short-circuit tool calls, and patch tool results.
 - Runtime lifecycle logging through `log_handler`, with Python-style events for
   run start, cycle start, LLM response, tool result, completion, wait-user, and
-  max-cycle exits.
+  max-cycle exits, including configurable assistant/content/final-answer
+  preview fields.
 - The in-crate `vv-agent` CLI mirrors Python `cli.py` flags for prompt,
   backend/model, settings file, workspace, max cycles, language, agent type,
   verbose logs, prompt bundle construction, and JSON result payloads.

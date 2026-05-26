@@ -17,6 +17,23 @@ const PNG_1X1: &[u8] = &[
     0x42, 0x60, 0x82,
 ];
 
+fn preview_text_for_test(text: &str, log_preview_chars: Option<usize>) -> String {
+    let cleaned = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let Some(limit) = log_preview_chars.map(|limit| limit.max(40)) else {
+        return cleaned;
+    };
+    if cleaned.chars().count() <= limit {
+        return cleaned;
+    }
+    format!(
+        "{}...",
+        cleaned
+            .chars()
+            .take(limit.saturating_sub(3))
+            .collect::<String>()
+    )
+}
+
 #[test]
 fn runtime_executes_tool_calls_until_task_finish() {
     let mut finish_args = BTreeMap::new();
@@ -517,6 +534,69 @@ fn runtime_emits_reference_lifecycle_log_events() {
     assert_eq!(events[3].1["tool_call_id"], "log_finish");
     assert_eq!(events[3].1["directive"], "finish");
     assert_eq!(events[4].1["final_answer"], "logged finish");
+}
+
+#[test]
+fn runtime_log_events_include_python_style_previews() {
+    let assistant_text = "assistant preview text ".repeat(4);
+    let final_text = "final answer preview text ".repeat(4);
+    let mut finish_args = BTreeMap::new();
+    finish_args.insert("message".to_string(), json!(final_text.clone()));
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+        assistant_text.clone(),
+        vec![ToolCall::new("preview_finish", "task_finish", finish_args)],
+    )]);
+    let events = Arc::new(Mutex::new(Vec::<(
+        String,
+        BTreeMap<String, serde_json::Value>,
+    )>::new()));
+    let sink = events.clone();
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.log_preview_chars = Some(10);
+    runtime.log_handler = Some(Arc::new(Mutex::new(Box::new(
+        move |event: &str, payload: &BTreeMap<String, serde_json::Value>| {
+            sink.lock()
+                .expect("events poisoned")
+                .push((event.to_string(), payload.clone()));
+        },
+    ))));
+
+    let result = runtime
+        .run(AgentTask::new(
+            "preview_task",
+            "demo",
+            "system",
+            "finish with previews",
+        ))
+        .expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let events = events.lock().expect("events poisoned").clone();
+    let cycle_event = events
+        .iter()
+        .find(|(event, _)| event == "cycle_llm_response")
+        .expect("cycle llm response");
+    let tool_event = events
+        .iter()
+        .find(|(event, _)| event == "tool_result")
+        .expect("tool result");
+    let completed_event = events
+        .iter()
+        .find(|(event, _)| event == "run_completed")
+        .expect("run completed");
+    assert_eq!(cycle_event.1["assistant_message"], assistant_text);
+    assert_eq!(
+        cycle_event.1["assistant_preview"],
+        preview_text_for_test(&assistant_text, Some(10))
+    );
+    assert_eq!(
+        tool_event.1["content_preview"],
+        preview_text_for_test(tool_event.1["content"].as_str().expect("content"), Some(10))
+    );
+    assert_eq!(
+        completed_event.1["final_answer"],
+        preview_text_for_test(&final_text, Some(10))
+    );
 }
 
 #[test]
