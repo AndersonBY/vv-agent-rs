@@ -114,6 +114,8 @@ The current Rust implementation includes:
 - Top-level modules aligned with the Python package: `background_sessions`,
   `cli`, `config`, `constants`, `integrations`, `llm`, `memory`, `processes`,
   `prompt`, `runtime`, `sdk`, `skills`, `tools`, `types`, and `workspace`.
+- The `integrations::SkillIntegration` public trait mirrors the Python
+  protocol with an `enabled()` capability check.
 - `vv-llm = "0.1.0"` backed chat client construction through
   `build_vv_llm_from_local_settings`, settings-based endpoint resolution, and
   provider HTTP/protocol handling delegated to `vv-llm`, while keeping

@@ -109,6 +109,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 一个库目标，暴露与 Python `vv_agent.__init__` 类似的顶层 API 类型和函数。
 - 同一 package 内的 CLI 目标。
 - 与 Python 包对齐的顶层模块：`background_sessions`、`cli`、`config`、`constants`、`integrations`、`llm`、`memory`、`processes`、`prompt`、`runtime`、`sdk`、`skills`、`tools`、`types` 和 `workspace`。
+- `integrations::SkillIntegration` 公开 trait 已对齐 Python protocol，使用 `enabled()` 作为能力开关。
 - 基于 crates.io 官方 `vv-llm = "0.1.0"` 的 chat client 构建，通过 `build_vv_llm_from_local_settings` 解析配置化 endpoint，并把 provider HTTP / 协议处理交给 `vv-llm`；同时保留 `ScriptedLlmClient` 用于确定性测试。
 - LLM settings 归一化已兼容 Python 的 `providers` / `backends`、默认 `VERSION`、endpoint API key 后缀提取，以及可选 base64 key 解码，然后再构造 `vv-llm` client。
 - 已支持 Python `.py` settings 字面量模板：`LLM_SETTINGS = {...}` 和 `settings: SettingsDict = {...}` 都会按 Python 风格解析布尔值、空值、注释和尾逗号，再交给 `vv-llm` 做 endpoint / backend 解析。

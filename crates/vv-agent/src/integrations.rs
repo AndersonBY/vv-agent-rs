@@ -1,3 +1,3 @@
 pub trait SkillIntegration: Send + Sync {
-    fn name(&self) -> &str;
+    fn enabled(&self) -> bool;
 }
