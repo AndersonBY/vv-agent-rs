@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use super::AgentRuntime;
+use crate::config::build_vv_llm_from_local_settings;
 use crate::llm::LlmClient;
 use crate::runtime::RuntimeRunControls;
 use crate::sub_agent_sessions::{
@@ -32,31 +33,39 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         if parent_task.sub_agents.is_empty() {
             return None;
         }
-        let llm_client = self.llm_client.clone();
+        let llm_client: Arc<dyn LlmClient> = Arc::new(self.llm_client.clone());
         let tool_registry = self.tool_registry.clone();
         let parent_task = parent_task.clone();
         let sub_task_context = SubTaskRunContext {
+            llm_client,
             tool_registry,
             workspace_backend,
             workspace_path,
             parent_task,
             parent_shared_state,
             sub_task_manager,
+            settings_file: self.settings_file.clone(),
+            default_backend: self.default_backend.clone(),
+            sub_agent_timeout_seconds: self.sub_agent_timeout_seconds,
         };
         Some(Arc::new(move |request| {
-            run_sub_task(llm_client.clone(), sub_task_context.clone(), request)
+            run_sub_task(sub_task_context.clone(), request)
         }))
     }
 }
 
 #[derive(Clone)]
 struct SubTaskRunContext {
+    llm_client: Arc<dyn LlmClient>,
     tool_registry: ToolRegistry,
     workspace_backend: Arc<dyn WorkspaceBackend>,
     workspace_path: PathBuf,
     parent_task: AgentTask,
     parent_shared_state: BTreeMap<String, Value>,
     sub_task_manager: SubTaskManager,
+    settings_file: Option<PathBuf>,
+    default_backend: Option<String>,
+    sub_agent_timeout_seconds: f64,
 }
 
 struct SubTaskBuildInputs<'a> {
@@ -64,14 +73,17 @@ struct SubTaskBuildInputs<'a> {
     sub_session_id: &'a str,
     sub_agent_name: &'a str,
     sub_agent: &'a SubAgentConfig,
+    resolved_model_id: &'a str,
     request: &'a SubTaskRequest,
 }
 
-fn run_sub_task<C: LlmClient + Clone + 'static>(
-    llm_client: C,
-    context: SubTaskRunContext,
-    request: SubTaskRequest,
-) -> SubTaskOutcome {
+struct ResolvedSubAgentClient {
+    llm_client: Arc<dyn LlmClient>,
+    model_id: String,
+    payload: BTreeMap<String, String>,
+}
+
+fn run_sub_task(context: SubTaskRunContext, request: SubTaskRequest) -> SubTaskOutcome {
     let parent_task = &context.parent_task;
     let sub_task_id = request
         .metadata
@@ -121,36 +133,49 @@ fn run_sub_task<C: LlmClient + Clone + 'static>(
         return outcome;
     };
 
-    let mut sub_task = build_sub_agent_task(
+    let resolved_client = match resolve_sub_agent_client(&context, parent_task, sub_agent) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            let outcome = SubTaskOutcome {
+                task_id: sub_task_id.clone(),
+                agent_name: request.agent_name,
+                status: AgentStatus::Failed,
+                session_id: Some(sub_session_id),
+                final_answer: None,
+                wait_reason: None,
+                error: Some(error),
+                cycles: 0,
+                todo_list: Vec::new(),
+                resolved: BTreeMap::new(),
+            };
+            context
+                .sub_task_manager
+                .record_outcome(&sub_task_id, outcome.clone());
+            return outcome;
+        }
+    };
+
+    let sub_task = build_sub_agent_task(
         &context,
         SubTaskBuildInputs {
             sub_task_id: &sub_task_id,
             sub_session_id: &sub_session_id,
             sub_agent_name: &request.agent_name,
             sub_agent,
+            resolved_model_id: &resolved_client.model_id,
             request: &request,
         },
     );
-    if sub_task.model.is_empty() {
-        sub_task.model = context.parent_task.model.clone();
-    }
     let initial_prompt = sub_task.user_prompt.clone();
-    let resolved = BTreeMap::from([
-        ("model".to_string(), sub_agent.model.clone()),
-        (
-            "backend".to_string(),
-            sub_agent.backend.clone().unwrap_or_default(),
-        ),
-    ]);
     let session = Arc::new(RuntimeSubAgentSession::new(RuntimeSubAgentSessionParts {
-        llm_client,
+        llm_client: resolved_client.llm_client,
         tool_registry: context.tool_registry.clone(),
         workspace_path: context.workspace_path.clone(),
         workspace_backend: context.workspace_backend.clone(),
         task_template: sub_task,
         agent_name: request.agent_name.clone(),
         session_id: sub_session_id.clone(),
-        resolved,
+        resolved: resolved_client.payload,
     }));
     let sub_agent_session: Arc<dyn SubAgentSession> = session.clone();
     context.sub_task_manager.attach_session(
@@ -192,8 +217,66 @@ fn run_sub_task<C: LlmClient + Clone + 'static>(
     outcome
 }
 
-struct RuntimeSubAgentSession<C: LlmClient + Clone + 'static> {
-    llm_client: C,
+fn resolve_sub_agent_client(
+    context: &SubTaskRunContext,
+    parent_task: &AgentTask,
+    sub_agent: &SubAgentConfig,
+) -> Result<ResolvedSubAgentClient, String> {
+    let requested_model = if sub_agent.model.trim().is_empty() {
+        parent_task.model.clone()
+    } else {
+        sub_agent.model.clone()
+    };
+
+    if let Some(settings_file) = &context.settings_file {
+        let backend = sub_agent
+            .backend
+            .clone()
+            .or_else(|| context.default_backend.clone())
+            .unwrap_or_else(|| "inline".to_string());
+        let (client, resolved) = build_vv_llm_from_local_settings(
+            settings_file,
+            &backend,
+            &requested_model,
+            context.sub_agent_timeout_seconds,
+        )
+        .map_err(|error| error.to_string())?;
+        let endpoint = resolved
+            .endpoint()
+            .map(|endpoint| endpoint.endpoint_id.clone())
+            .unwrap_or_default();
+        let resolved_payload = BTreeMap::from([
+            ("backend".to_string(), resolved.backend.clone()),
+            (
+                "selected_model".to_string(),
+                resolved.selected_model.clone(),
+            ),
+            ("model_id".to_string(), resolved.model_id.clone()),
+            ("endpoint".to_string(), endpoint),
+        ]);
+        return Ok(ResolvedSubAgentClient {
+            llm_client: Arc::new(client),
+            model_id: resolved.model_id,
+            payload: resolved_payload,
+        });
+    }
+
+    if requested_model != parent_task.model {
+        return Err(
+            "Sub-agent model resolution requires runtime settings_file when sub-agent model differs from parent model."
+                .to_string(),
+        );
+    }
+
+    Ok(ResolvedSubAgentClient {
+        llm_client: context.llm_client.clone(),
+        model_id: parent_task.model.clone(),
+        payload: BTreeMap::new(),
+    })
+}
+
+struct RuntimeSubAgentSession {
+    llm_client: Arc<dyn LlmClient>,
     tool_registry: ToolRegistry,
     workspace_path: PathBuf,
     workspace_backend: Arc<dyn WorkspaceBackend>,
@@ -209,8 +292,8 @@ struct RuntimeSubAgentSession<C: LlmClient + Clone + 'static> {
     next_listener_id: AtomicU64,
 }
 
-struct RuntimeSubAgentSessionParts<C: LlmClient + Clone + 'static> {
-    llm_client: C,
+struct RuntimeSubAgentSessionParts {
+    llm_client: Arc<dyn LlmClient>,
     tool_registry: ToolRegistry,
     workspace_path: PathBuf,
     workspace_backend: Arc<dyn WorkspaceBackend>,
@@ -226,8 +309,8 @@ struct RuntimeSubAgentSessionState {
     shared_state: Metadata,
 }
 
-impl<C: LlmClient + Clone + 'static> RuntimeSubAgentSession<C> {
-    fn new(parts: RuntimeSubAgentSessionParts<C>) -> Self {
+impl RuntimeSubAgentSession {
+    fn new(parts: RuntimeSubAgentSessionParts) -> Self {
         let task_id = parts.task_template.task_id.clone();
         Self {
             llm_client: parts.llm_client,
@@ -386,7 +469,7 @@ impl<C: LlmClient + Clone + 'static> RuntimeSubAgentSession<C> {
     }
 }
 
-impl<C: LlmClient + Clone + 'static> SubAgentSession for RuntimeSubAgentSession<C> {
+impl SubAgentSession for RuntimeSubAgentSession {
     fn steer(&self, prompt: &str) -> Result<(), String> {
         let prompt = prompt.trim();
         if prompt.is_empty() {
@@ -473,7 +556,7 @@ fn build_sub_agent_task(context: &SubTaskRunContext, inputs: SubTaskBuildInputs<
 
     let mut sub_task = AgentTask::new(
         inputs.sub_task_id,
-        sub_agent.model.clone(),
+        inputs.resolved_model_id.to_string(),
         system_prompt,
         user_prompt,
     );

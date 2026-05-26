@@ -227,6 +227,72 @@ fn runtime_executes_configured_sub_agent_with_real_runner() {
 }
 
 #[test]
+fn runtime_rejects_sub_agent_model_mismatch_without_settings_file() {
+    let mut sub_task_args = BTreeMap::new();
+    sub_task_args.insert("agent_id".to_string(), json!("researcher"));
+    sub_task_args.insert(
+        "task_description".to_string(),
+        json!("Use a different model"),
+    );
+    let mut parent_finish_args = BTreeMap::new();
+    parent_finish_args.insert(
+        "message".to_string(),
+        json!("parent recorded child failure"),
+    );
+
+    let llm = ScriptedLlmClient::new(vec![
+        LLMResponse::with_tool_calls(
+            "",
+            vec![ToolCall::new(
+                "parent_sub_call",
+                "create_sub_task",
+                sub_task_args,
+            )],
+        ),
+        LLMResponse::with_tool_calls(
+            "",
+            vec![ToolCall::new(
+                "parent_finish",
+                "task_finish",
+                parent_finish_args,
+            )],
+        ),
+    ]);
+    let runtime = AgentRuntime::new(llm);
+    let mut task = AgentTask::new(
+        "parent_mismatch",
+        "parent-model",
+        "parent system",
+        "delegate",
+    );
+    task.sub_agents.insert(
+        "researcher".to_string(),
+        SubAgentConfig::new("child-model", "research profile"),
+    );
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let sub_task_result = result
+        .cycles
+        .iter()
+        .flat_map(|cycle| &cycle.tool_results)
+        .find(|tool_result| tool_result.tool_call_id == "parent_sub_call")
+        .expect("sub-task tool result");
+    assert_eq!(sub_task_result.status, vv_agent::ToolResultStatus::Error);
+    assert_eq!(
+        sub_task_result.error_code.as_deref(),
+        Some("sub_task_failed")
+    );
+    let payload: serde_json::Value =
+        serde_json::from_str(&sub_task_result.content).expect("sub-task payload");
+    assert_eq!(payload["status"], "failed");
+    assert!(payload["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("requires runtime settings_file")));
+}
+
+#[test]
 fn runtime_can_poll_async_configured_sub_agent_status() {
     let mut sub_task_args = BTreeMap::new();
     sub_task_args.insert("agent_id".to_string(), json!("researcher"));

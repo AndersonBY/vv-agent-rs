@@ -133,6 +133,9 @@ pub struct AgentRuntime<C: LlmClient> {
     pub workspace_backend: Arc<dyn WorkspaceBackend>,
     pub hooks: Vec<Arc<dyn RuntimeHook>>,
     pub execution_backend: RuntimeExecutionBackend,
+    pub settings_file: Option<PathBuf>,
+    pub default_backend: Option<String>,
+    pub sub_agent_timeout_seconds: f64,
 }
 
 impl<C: LlmClient> AgentRuntime<C> {
@@ -145,6 +148,9 @@ impl<C: LlmClient> AgentRuntime<C> {
             workspace_backend: Arc::new(LocalWorkspaceBackend::new(PathBuf::from("./workspace"))),
             hooks: Vec::new(),
             execution_backend: RuntimeExecutionBackend::default(),
+            settings_file: None,
+            default_backend: None,
+            sub_agent_timeout_seconds: 90.0,
         }
     }
 
@@ -158,6 +164,21 @@ impl<C: LlmClient> AgentRuntime<C> {
         execution_backend: impl Into<RuntimeExecutionBackend>,
     ) -> Self {
         self.execution_backend = execution_backend.into();
+        self
+    }
+
+    pub fn with_settings_file(mut self, settings_file: impl Into<PathBuf>) -> Self {
+        self.settings_file = Some(settings_file.into());
+        self
+    }
+
+    pub fn with_default_backend(mut self, default_backend: impl Into<String>) -> Self {
+        self.default_backend = Some(default_backend.into());
+        self
+    }
+
+    pub fn with_sub_agent_timeout_seconds(mut self, timeout_seconds: f64) -> Self {
+        self.sub_agent_timeout_seconds = timeout_seconds.max(1.0);
         self
     }
 }

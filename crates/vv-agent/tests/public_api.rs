@@ -22,7 +22,10 @@ fn top_level_types_are_constructible() {
     let _registry = build_default_registry();
     let _definition = AgentDefinition::default_for_model("mini");
     let _task = AgentTask::new("task_1", "mini", "system", "user");
-    let _runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new("done")]));
+    let _runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new("done")]))
+        .with_settings_file("settings.py")
+        .with_default_backend("deepseek")
+        .with_sub_agent_timeout_seconds(30.0);
     let _token = CancellationToken::default();
     let _controls = RuntimeRunControls::default();
     let _inline_backend = InlineBackend;

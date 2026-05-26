@@ -271,6 +271,11 @@ The current Rust implementation includes:
   is active, so completed async sub-tasks can be continued through
   `sub_task_status(message=...)` while preserving prior messages and shared
   state without leaking stale global sessions.
+- Sub-agent model/backend resolution follows Python safety rules: a different
+  sub-agent model requires a runtime `settings_file`, otherwise the sub-task
+  fails explicitly instead of silently reusing the parent LLM client. When
+  settings are configured, resolution is delegated through the same `vv-llm`
+  settings builder used by top-level clients.
 - Python-style `activate_skill` behavior for allowed skills: inline skill
   entries and `SKILL.md` locations load instructions, update `active_skills`,
   and record activation history.

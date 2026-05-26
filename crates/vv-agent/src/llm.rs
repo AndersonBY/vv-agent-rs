@@ -102,6 +102,15 @@ impl LlmClient for ScriptedLlmClient {
     }
 }
 
+impl<T> LlmClient for Arc<T>
+where
+    T: LlmClient + ?Sized,
+{
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        (**self).complete(request)
+    }
+}
+
 #[derive(Clone)]
 pub struct VvLlmClient {
     pub backend: String,
