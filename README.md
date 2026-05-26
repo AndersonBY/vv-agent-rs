@@ -270,7 +270,9 @@ The current Rust implementation includes:
   API surface for ordered `parallel_map`, thread `submit`, inline Celery
   fallback, distributed runtime recipe data, and `execute` cycle loops with
   cancellation and max-cycle results. `AgentRuntime` delegates through the same
-  backend abstraction instead of running a separate internal loop.
+  backend abstraction instead of running a separate internal loop, and passes
+  that backend into tool context so synchronous batch sub-tasks can use
+  `execution_backend.parallel_map` like Python `v-agent`.
 - Runtime checkpoint stores modeled after Python `runtime.state` and
   `runtime.stores.sqlite`: `Checkpoint`, `InMemoryStateStore`, and
   `SqliteStateStore` persist messages, cycles, status, and shared state for
@@ -284,7 +286,10 @@ The current Rust implementation includes:
 - Runtime-backed sub-agent support for `create_sub_task` / `sub_task_status`:
   configured `AgentTask.sub_agents` can run synchronously or via async
   `wait_for_completion=false`, with batch aggregation and status/snapshot
-  polling. A Python-style active sub-agent session registry exposes
+  polling. `create_sub_task` also accepts Python-style boolean coercion for
+  `include_main_summary` and `wait_for_completion`, so common string values
+  such as `"true"` and `"0"` behave the same as in Python. A Python-style active
+  sub-agent session registry exposes
   `get_sub_agent_session`, `subscribe_sub_agent_session`, and
   `steer_sub_agent_session`, and `sub_task_status(message=...)` can queue
   steering messages for sessions registered during active runs or continue
