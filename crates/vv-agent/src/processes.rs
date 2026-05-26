@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -17,6 +18,15 @@ pub fn start_captured_process(
     command: &[String],
     cwd: &Path,
     stdin_text: Option<&str>,
+) -> std::io::Result<CapturedProcess> {
+    start_captured_process_with_env(command, cwd, stdin_text, None)
+}
+
+pub fn start_captured_process_with_env(
+    command: &[String],
+    cwd: &Path,
+    stdin_text: Option<&str>,
+    env: Option<&BTreeMap<String, String>>,
 ) -> std::io::Result<CapturedProcess> {
     let Some(program) = command.first() else {
         return Err(std::io::Error::new(
@@ -39,6 +49,9 @@ pub fn start_captured_process(
         })
         .stdout(Stdio::from(stdout_file))
         .stderr(Stdio::from(stderr_file));
+    if let Some(env) = env {
+        child_command.envs(env);
+    }
 
     configure_process_group(&mut child_command);
 

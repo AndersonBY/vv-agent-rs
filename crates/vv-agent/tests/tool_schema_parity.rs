@@ -25,6 +25,7 @@ fn default_tool_schemas_include_reference_quality_descriptions() {
     assert!(bash.contains("run_in_background=true"));
     assert!(bash.contains("runtime metadata"));
     assert!(bash.contains("bash_shell"));
+    assert!(bash.contains("bash_env"));
     assert!(property_description(&registry, "bash", "command").contains("configured shell"));
     assert!(property_description(&registry, "bash", "timeout").contains("default 300, max 600"));
 

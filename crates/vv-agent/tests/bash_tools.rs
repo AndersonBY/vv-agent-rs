@@ -309,6 +309,60 @@ fn bash_tool_uses_configured_shell_from_metadata() {
 }
 
 #[test]
+fn bash_tool_uses_environment_from_metadata_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.metadata.insert(
+        "bash_env".to_string(),
+        json!({"VV_AGENT_TEST_ENV": "from-metadata"}),
+    );
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "bash_env",
+                "bash",
+                BTreeMap::from([(
+                    "command".to_string(),
+                    json!("printf \"$VV_AGENT_TEST_ENV\""),
+                )]),
+            ),
+            &mut context,
+        )
+        .expect("bash env");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: Value = serde_json::from_str(&result.content).expect("env payload");
+    assert_eq!(payload["output"], "from-metadata");
+}
+
+#[test]
+fn bash_tool_rejects_invalid_environment_metadata_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context
+        .metadata
+        .insert("bash_env".to_string(), json!("not-an-object"));
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "bash_bad_env",
+                "bash",
+                BTreeMap::from([("command".to_string(), json!("echo should-not-run"))]),
+            ),
+            &mut context,
+        )
+        .expect("bash env");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("invalid_shell_config"));
+    assert!(result.content.contains("bash_env"));
+}
+
+#[test]
 fn bash_tool_rejects_exec_dir_outside_workspace_by_default() {
     let workspace = tempfile::tempdir().expect("workspace");
     let outside = tempfile::tempdir().expect("outside");

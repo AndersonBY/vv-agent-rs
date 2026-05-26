@@ -221,8 +221,8 @@ The current Rust implementation includes:
   configuration in the LLM-visible description.
 - Shell resolution now lives in `runtime::shell`, matching Python's
   `runtime/shell.py` split. Bash execution and tool-planner runtime hints share
-  the same resolver, so configured shells and auto-confirm behavior do not
-  diverge.
+  the same resolver, so configured shells, `bash_env` environment overrides,
+  and auto-confirm behavior do not diverge.
 - Built-in control tools (`task_finish`, `ask_user`, `todo_write`), with
   Python-style TODO validation, generated ids, status/priority defaults, and
   timestamp preservation; core workspace tools (`list_files`, `file_info`,
