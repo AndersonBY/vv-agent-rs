@@ -175,6 +175,53 @@ fn background_command_listener_receives_terminal_event() {
 }
 
 #[test]
+fn background_command_listener_is_notified_without_polling() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let start = registry
+        .execute(
+            &ToolCall::new(
+                "bash_bg_watch",
+                "bash",
+                BTreeMap::from([
+                    ("command".to_string(), json!("printf watched")),
+                    ("run_in_background".to_string(), json!(true)),
+                    ("timeout".to_string(), json!(5)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("bash background start");
+    let start_payload: Value = serde_json::from_str(&start.content).expect("start payload");
+    let session_id = start_payload["session_id"]
+        .as_str()
+        .expect("session_id")
+        .to_string();
+    let events = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let sink = events.clone();
+    let _subscription = background_session_manager().subscribe(
+        &session_id,
+        Arc::new(move |payload| {
+            sink.lock().expect("events").push(payload.clone());
+        }),
+    );
+
+    for _ in 0..20 {
+        if !events.lock().expect("events").is_empty() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let events = events.lock().expect("events");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["status"], "completed");
+    assert_eq!(events[0]["output"], "watched");
+}
+
+#[test]
 fn foreground_timeout_moves_command_to_background() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

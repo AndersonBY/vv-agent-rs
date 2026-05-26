@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -55,6 +56,7 @@ impl BackgroundSessionManager {
             .lock()
             .expect("background session manager poisoned")
             .insert(session_id.clone(), session);
+        self.start_watch_thread(session_id.clone());
         session_id
     }
 
@@ -98,6 +100,23 @@ impl BackgroundSessionManager {
         if let Some(session) = sessions.get_mut(session_id) {
             session.listeners.remove(&listener_id);
         }
+    }
+
+    fn start_watch_thread(&self, session_id: String) {
+        let thread_name = format!("vv-agent-bg-{session_id}");
+        let _ = thread::Builder::new()
+            .name(thread_name)
+            .spawn(move || loop {
+                thread::sleep(Duration::from_millis(200));
+                let payload = background_session_manager().check(&session_id);
+                let status = payload
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("missing");
+                if status != "running" {
+                    break;
+                }
+            });
     }
 
     pub fn check(&self, session_id: &str) -> Value {
