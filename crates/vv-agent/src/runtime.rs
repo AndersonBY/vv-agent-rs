@@ -122,6 +122,7 @@ impl<C: LlmClient> AgentRuntime<C> {
                 metadata: task.metadata.clone(),
                 workspace_backend: self.workspace_backend.clone(),
                 sub_task_runner: None,
+                sub_task_manager: None,
             };
 
             let mut directive_result = None;

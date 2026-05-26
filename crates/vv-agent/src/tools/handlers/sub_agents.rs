@@ -58,9 +58,13 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                 .get("exclude_files_pattern")
                 .and_then(Value::as_str)
                 .map(str::to_string);
+            let wait_for_completion = arguments
+                .get("wait_for_completion")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
 
             if !task_description.is_empty() {
-                let request = SubTaskRequest {
+                let mut request = SubTaskRequest {
                     agent_name,
                     task_description,
                     output_requirements: arguments
@@ -73,6 +77,47 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                     exclude_files_pattern,
                     metadata: BTreeMap::new(),
                 };
+                if !wait_for_completion {
+                    let Some(manager) = context.sub_task_manager.clone() else {
+                        return tool_error_with_code(
+                            "Sub-task manager is not available for async mode",
+                            "sub_task_manager_unavailable",
+                        );
+                    };
+                    let (task_id, session_id) =
+                        crate::sub_task_manager::SubTaskManager::next_task_identity(
+                            &context.task_id,
+                            &request.agent_name,
+                        );
+                    request
+                        .metadata
+                        .insert("task_id".to_string(), Value::String(task_id.clone()));
+                    request
+                        .metadata
+                        .insert("session_id".to_string(), Value::String(session_id.clone()));
+                    let agent_name = request.agent_name.clone();
+                    let task_description = request.task_description.clone();
+                    manager.submit(
+                        task_id.clone(),
+                        session_id.clone(),
+                        agent_name.clone(),
+                        task_description.clone(),
+                        move || runner(request),
+                    );
+                    return tool_result(
+                        ToolResultStatus::Success,
+                        json!({
+                            "task_id": task_id,
+                            "session_id": session_id,
+                            "agent_name": agent_name,
+                            "status": "running",
+                            "task_description": task_description,
+                            "wait_for_completion": false,
+                        }),
+                        None,
+                        ToolDirective::Continue,
+                    );
+                }
                 let outcome = runner(request);
                 let payload = outcome.to_value();
                 if outcome.status == AgentStatus::Completed {
@@ -101,6 +146,95 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                 return tool_error_with_code(
                     "`tasks` must be a non-empty array",
                     "invalid_tasks_payload",
+                );
+            }
+            if !wait_for_completion {
+                let Some(manager) = context.sub_task_manager.clone() else {
+                    return tool_error_with_code(
+                        "Sub-task manager is not available for async mode",
+                        "sub_task_manager_unavailable",
+                    );
+                };
+                let mut results = Vec::new();
+                let mut task_ids = Vec::new();
+                let mut started = 0usize;
+                let mut failed = 0usize;
+                for (index, item) in tasks.iter().enumerate() {
+                    let Some(task_description) = item
+                        .get("task_description")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    else {
+                        failed += 1;
+                        results.push(json!({
+                            "index": index,
+                            "status": "failed",
+                            "error": "`task_description` is required",
+                        }));
+                        continue;
+                    };
+                    let mut request = SubTaskRequest {
+                        agent_name: agent_name.clone(),
+                        task_description: task_description.to_string(),
+                        output_requirements: item
+                            .get("output_requirements")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string(),
+                        include_main_summary,
+                        exclude_files_pattern: exclude_files_pattern.clone(),
+                        metadata: BTreeMap::from([(
+                            "batch_index".to_string(),
+                            Value::Number((index as u64).into()),
+                        )]),
+                    };
+                    let (task_id, session_id) =
+                        crate::sub_task_manager::SubTaskManager::next_task_identity(
+                            &context.task_id,
+                            &agent_name,
+                        );
+                    request
+                        .metadata
+                        .insert("task_id".to_string(), Value::String(task_id.clone()));
+                    request
+                        .metadata
+                        .insert("session_id".to_string(), Value::String(session_id.clone()));
+                    let task_title = request.task_description.clone();
+                    let runner = runner.clone();
+                    manager.submit(
+                        task_id.clone(),
+                        session_id.clone(),
+                        agent_name.clone(),
+                        task_title.clone(),
+                        move || runner(request),
+                    );
+                    started += 1;
+                    task_ids.push(task_id.clone());
+                    results.push(json!({
+                        "index": index,
+                        "task_id": task_id,
+                        "session_id": session_id,
+                        "agent_name": agent_name,
+                        "status": "running",
+                        "task_description": task_title,
+                    }));
+                }
+                return tool_result(
+                    ToolResultStatus::Success,
+                    json!({
+                        "summary": {
+                            "total": tasks.len(),
+                            "accepted": started,
+                            "failed": failed,
+                        },
+                        "task_ids": task_ids,
+                        "results": results,
+                        "wait_for_completion": false,
+                    }),
+                    None,
+                    ToolDirective::Continue,
                 );
             }
             let mut results = Vec::new();
@@ -183,10 +317,53 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
         "sub_task_status",
         "Inspect status for background sub-tasks.",
-        Arc::new(|_context, _arguments| {
-            tool_error_with_code(
-                "Sub-task manager is not available for this task",
-                "sub_task_manager_unavailable",
+        Arc::new(|context, arguments| {
+            let Some(manager) = context.sub_task_manager.clone() else {
+                return tool_error_with_code(
+                    "Sub-task manager is not available for this task",
+                    "sub_task_manager_unavailable",
+                );
+            };
+            let Some(raw_task_ids) = arguments.get("task_ids").and_then(Value::as_array) else {
+                return tool_error_with_code(
+                    "`task_ids` must be a non-empty array",
+                    "invalid_task_ids",
+                );
+            };
+            let mut task_ids = Vec::new();
+            for item in raw_task_ids {
+                let task_id = item.as_str().unwrap_or_default().trim();
+                if !task_id.is_empty() && !task_ids.iter().any(|known| known == task_id) {
+                    task_ids.push(task_id.to_string());
+                }
+            }
+            if task_ids.is_empty() {
+                return tool_error_with_code(
+                    "`task_ids` must include at least one valid task id",
+                    "invalid_task_ids",
+                );
+            }
+            let detail_level = arguments
+                .get("detail_level")
+                .and_then(Value::as_str)
+                .map(|value| value.trim().to_ascii_lowercase())
+                .filter(|value| value == "basic" || value == "snapshot")
+                .unwrap_or_else(|| "basic".to_string());
+            let workspace_file_limit = arguments
+                .get("workspace_file_limit")
+                .and_then(Value::as_u64)
+                .unwrap_or(20)
+                .clamp(1, 100) as usize;
+            let tasks =
+                manager.status_entries(&task_ids, detail_level.as_str(), workspace_file_limit);
+            tool_result(
+                ToolResultStatus::Success,
+                json!({
+                    "tasks": tasks,
+                    "detail_level": detail_level,
+                }),
+                None,
+                ToolDirective::Continue,
             )
         }),
     );

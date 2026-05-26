@@ -102,7 +102,8 @@ The current Rust implementation includes:
   statistics, request size, limits, and a suggested line range instead of
   flooding the LLM context.
 - Sub-agent tool protocol support for `create_sub_task` / `sub_task_status`,
-  including injected synchronous runners and batch aggregation.
+  including injected synchronous runners, batch aggregation, async
+  `wait_for_completion=false` launches, and status/snapshot polling.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
 - SDK client, tool registry, workspace backends, and shared protocol types.

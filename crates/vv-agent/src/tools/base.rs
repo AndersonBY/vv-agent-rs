@@ -22,6 +22,7 @@ pub struct ToolContext {
     pub metadata: BTreeMap<String, Value>,
     pub workspace_backend: Arc<dyn WorkspaceBackend>,
     pub sub_task_runner: Option<SubTaskRunner>,
+    pub sub_task_manager: Option<crate::sub_task_manager::SubTaskManager>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -34,6 +35,7 @@ impl std::fmt::Debug for ToolContext {
             .field("task_id", &self.task_id)
             .field("metadata", &self.metadata)
             .field("has_sub_task_runner", &self.sub_task_runner.is_some())
+            .field("has_sub_task_manager", &self.sub_task_manager.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -49,6 +51,7 @@ impl ToolContext {
             metadata: BTreeMap::new(),
             workspace_backend: Arc::new(crate::workspace::LocalWorkspaceBackend::new(workspace)),
             sub_task_runner: None,
+            sub_task_manager: None,
         }
     }
 
