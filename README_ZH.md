@@ -17,7 +17,10 @@ vv-agent-rs/
       llm.rs
       memory.rs
       prompt.rs
-      runtime.rs
+      runtime/
+        mod.rs
+        results.rs
+        sub_agents.rs
       sdk.rs
       skills.rs
       tools/
@@ -33,7 +36,12 @@ vv-agent-rs/
           image.rs
           memory.rs
           search.rs
-          skills.rs
+          skills/
+            mod.rs
+            models.rs
+            normalize.rs
+            parser.rs
+            state.rs
           sub_agents.rs
           workspace_io.rs
       types.rs
@@ -76,7 +84,9 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 与 Python 包对齐的顶层模块：`background_sessions`、`cli`、`config`、`constants`、`integrations`、`llm`、`memory`、`processes`、`prompt`、`runtime`、`sdk`、`skills`、`tools`、`types` 和 `workspace`。
 - 基于 crates.io 官方 `vv-llm = "0.1.0"` 的 chat client 构建，通过 `build_vv_llm_from_local_settings` 解析配置化 endpoint，并把 provider HTTP / 协议处理交给 `vv-llm`；同时保留 `ScriptedLlmClient` 用于确定性测试。
 - 一个基础 multi-cycle runtime，可以把 tool schemas 发给 LLM、执行工具调用，并通过 `task_finish` 或 `ask_user` 收敛。
+- `runtime/` 已拆成主循环、工具结果解析和 sub-agent 执行模块，让后续继续补齐 Python parity 时改动更集中。
 - `tools/` 已按 Python `v-agent` 的结构拆分为 `base`、`registry`、canonical `schemas`、共享 `common` helper 和各个 handler 模块。
+- `activate_skill` handler 已拆成模型、解析、归一化和 shared state helper，更接近 Python `v-agent` 的 skill 边界。
 - 默认工具 schema 使用参考 Python `v-agent` 的高信息量描述，让模型拿到文件访问、grep、bash / 后台命令、todo、skills、图片和 sub-agent 的完整操作指引。
 - 内置控制工具（`task_finish`、`ask_user`、`todo_write`）、核心 workspace 工具（`list_files`、`file_info`、`read_file`、`write_file`、`file_str_replace`、`workspace_grep`、`read_image`）、通过 `compress_memory` 记录 memory notes，以及支持捕获输出、stdin、前台超时转后台和后台轮询的 `bash` / `check_background_command` 命令工具。
 - 与 Python 一致的 workspace 路径安全策略：文件、图片、grep 和 bash 工具默认拒绝访问 workspace 外路径，可信任务可通过 metadata 显式放行。

@@ -54,17 +54,35 @@ fn tools_module_is_split_into_handler_files() {
         "tools/handlers/bash.rs",
         "tools/handlers/image.rs",
         "tools/handlers/memory.rs",
-        "tools/handlers/skills.rs",
+        "tools/handlers/skills/mod.rs",
+        "tools/handlers/skills/models.rs",
+        "tools/handlers/skills/normalize.rs",
+        "tools/handlers/skills/parser.rs",
+        "tools/handlers/skills/state.rs",
         "tools/handlers/sub_agents.rs",
         "tools/handlers/background.rs",
+        "runtime/mod.rs",
+        "runtime/results.rs",
+        "runtime/sub_agents.rs",
     ] {
         assert!(root.join(relative).is_file(), "missing {relative}");
     }
-    let monolith = root.join("tools.rs");
-    assert!(
-        !monolith.exists(),
-        "tools.rs should be split into src/tools/ modules"
-    );
+    for (relative, message) in [
+        (
+            "tools.rs",
+            "tools.rs should be split into src/tools/ modules",
+        ),
+        (
+            "runtime.rs",
+            "runtime.rs should be split into src/runtime/ modules",
+        ),
+        (
+            "tools/handlers/skills.rs",
+            "skills.rs should be split into src/tools/handlers/skills/ modules",
+        ),
+    ] {
+        assert!(!root.join(relative).exists(), "{message}");
+    }
 }
 
 fn description(registry: &vv_agent::ToolRegistry, tool_name: &str) -> String {

@@ -17,7 +17,10 @@ vv-agent-rs/
       llm.rs
       memory.rs
       prompt.rs
-      runtime.rs
+      runtime/
+        mod.rs
+        results.rs
+        sub_agents.rs
       sdk.rs
       skills.rs
       tools/
@@ -33,7 +36,12 @@ vv-agent-rs/
           image.rs
           memory.rs
           search.rs
-          skills.rs
+          skills/
+            mod.rs
+            models.rs
+            normalize.rs
+            parser.rs
+            state.rs
           sub_agents.rs
           workspace_io.rs
       types.rs
@@ -85,8 +93,12 @@ The current Rust implementation includes:
   `ScriptedLlmClient` for deterministic tests.
 - A basic multi-cycle runtime that sends tool schemas to the LLM, executes tool
   calls, and converges on `task_finish` or `ask_user`.
+- Split `runtime/` modules for the main cycle, tool-result extraction, and
+  sub-agent execution so deeper Python parity work can stay localized.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
   canonical `schemas`, shared `common` helpers, and focused handler modules.
+- Split `activate_skill` handling into model, parser, normalization, and shared
+  state helpers, matching Python `v-agent` skill boundaries more closely.
 - Default tool schemas now use reference-quality descriptions derived from
   Python `v-agent` so the model sees the same operational guidance for file
   access, grep, bash/background commands, todos, skills, images, and sub-agents.
