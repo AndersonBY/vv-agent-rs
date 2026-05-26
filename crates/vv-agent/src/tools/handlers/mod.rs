@@ -6,4 +6,5 @@ pub mod memory;
 pub mod search;
 pub mod skills;
 pub mod sub_agents;
+pub mod sub_task_status;
 pub mod workspace_io;

@@ -76,6 +76,7 @@ fn tools_module_is_split_into_handler_files() {
         "tools/handlers/skills/mod.rs",
         "tools/handlers/skills/state.rs",
         "tools/handlers/sub_agents.rs",
+        "tools/handlers/sub_task_status.rs",
         "tools/handlers/background.rs",
         "runtime/mod.rs",
         "runtime/cancellation.rs",

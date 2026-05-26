@@ -11,7 +11,8 @@ use super::handlers::{
     memory::compress_memory_tool,
     search::workspace_grep_tool,
     skills::activate_skill_tool,
-    sub_agents::{create_sub_task_tool, sub_task_status_tool},
+    sub_agents::create_sub_task_tool,
+    sub_task_status::sub_task_status_tool,
     workspace_io::{
         file_info_tool, file_str_replace_tool, list_files_tool, read_file_tool, write_file_tool,
     },
