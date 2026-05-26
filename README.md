@@ -131,8 +131,9 @@ The current Rust implementation includes:
   calls, and converges on `task_finish` or `ask_user`.
 - Split `runtime/` modules for cancellation, hooks, shell resolution, state
   stores, the main cycle, cycle-runner retry helpers, tool-call running helpers,
-  tool-result extraction, and sub-agent execution so deeper Python parity work
-  can stay localized.
+  tool-result extraction, sub-agent execution, and Python-style
+  `runtime/backends/` submodules for inline/thread/celery/celery_tasks paths so
+  deeper Python parity work can stay localized.
 - Runtime hooks modeled after Python `RuntimeHookManager`: callers can patch
   messages before memory compaction, patch LLM request messages/schemas, patch
   LLM responses, patch or short-circuit tool calls, and patch tool results.

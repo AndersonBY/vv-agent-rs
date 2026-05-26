@@ -80,6 +80,11 @@ fn tools_module_is_split_into_handler_files() {
         "tools/handlers/sub_task_status.rs",
         "tools/handlers/background.rs",
         "runtime/mod.rs",
+        "runtime/backends/mod.rs",
+        "runtime/backends/inline.rs",
+        "runtime/backends/thread.rs",
+        "runtime/backends/celery.rs",
+        "runtime/backends/celery_tasks.rs",
         "runtime/cancellation.rs",
         "runtime/cycle_runner.rs",
         "runtime/hooks.rs",
@@ -119,6 +124,10 @@ fn tools_module_is_split_into_handler_files() {
         (
             "runtime.rs",
             "runtime.rs should be split into src/runtime/ modules",
+        ),
+        (
+            "runtime/backends.rs",
+            "runtime/backends.rs should be split into src/runtime/backends/ modules",
         ),
         (
             "memory.rs",
