@@ -134,6 +134,7 @@ pub struct AgentSessionState {
 }
 
 pub type SessionEventHandler = Arc<dyn Fn(&str, &BTreeMap<String, Value>) + Send + Sync + 'static>;
+pub type SessionListenerId = u64;
 
 pub struct AgentSession {
     execute_run: Arc<dyn Fn(String) -> Result<AgentRun, String> + Send + Sync>,
@@ -145,7 +146,8 @@ pub struct AgentSession {
     messages: Vec<crate::types::Message>,
     latest_run: Option<AgentRun>,
     running: bool,
-    _listeners: Vec<SessionEventHandler>,
+    listeners: BTreeMap<SessionListenerId, SessionEventHandler>,
+    next_listener_id: SessionListenerId,
     steering_queue: VecDeque<String>,
     follow_up_queue: VecDeque<String>,
 }
@@ -173,10 +175,22 @@ impl AgentSession {
             messages: Vec::new(),
             latest_run: None,
             running: false,
-            _listeners: Vec::new(),
+            listeners: BTreeMap::new(),
+            next_listener_id: 1,
             steering_queue: VecDeque::new(),
             follow_up_queue: VecDeque::new(),
         }
+    }
+
+    pub fn subscribe(&mut self, listener: SessionEventHandler) -> SessionListenerId {
+        let listener_id = self.next_listener_id;
+        self.next_listener_id = self.next_listener_id.saturating_add(1);
+        self.listeners.insert(listener_id, listener);
+        listener_id
+    }
+
+    pub fn unsubscribe(&mut self, listener_id: SessionListenerId) -> bool {
+        self.listeners.remove(&listener_id).is_some()
     }
 
     pub fn prompt(&mut self, prompt: impl Into<String>) -> Result<AgentRun, String> {
@@ -197,26 +211,42 @@ impl AgentSession {
             let Some(follow_up_prompt) = self.follow_up_queue.pop_front() else {
                 break;
             };
+            self.emit(
+                "session_follow_up_dequeued",
+                BTreeMap::from([(
+                    "prompt".to_string(),
+                    Value::String(follow_up_prompt.clone()),
+                )]),
+            );
             run = self.run_once(follow_up_prompt)?;
         }
         Ok(run)
     }
 
     pub fn follow_up(&mut self, prompt: impl Into<String>) -> Result<(), String> {
-        self.follow_up_queue
-            .push_back(normalize_session_prompt(prompt.into(), "follow_up prompt")?);
+        let prompt = normalize_session_prompt(prompt.into(), "follow_up prompt")?;
+        self.follow_up_queue.push_back(prompt.clone());
+        self.emit(
+            "session_follow_up_queued",
+            BTreeMap::from([("prompt".to_string(), Value::String(prompt))]),
+        );
         Ok(())
     }
 
     pub fn steer(&mut self, prompt: impl Into<String>) -> Result<(), String> {
-        self.steering_queue
-            .push_back(normalize_session_prompt(prompt.into(), "steer prompt")?);
+        let prompt = normalize_session_prompt(prompt.into(), "steer prompt")?;
+        self.steering_queue.push_back(prompt.clone());
+        self.emit(
+            "session_steer_queued",
+            BTreeMap::from([("prompt".to_string(), Value::String(prompt))]),
+        );
         Ok(())
     }
 
     pub fn clear_queues(&mut self) {
         self.steering_queue.clear();
         self.follow_up_queue.clear();
+        self.emit("session_queues_cleared", BTreeMap::new());
     }
 
     pub fn continue_run(&mut self, prompt: Option<String>) -> Result<AgentRun, String> {
@@ -280,14 +310,69 @@ impl AgentSession {
                     .to_string(),
             );
         }
+        let existing_messages = self.messages.len();
         self.running = true;
+        self.emit(
+            "session_run_start",
+            BTreeMap::from([
+                ("prompt".to_string(), Value::String(prompt.clone())),
+                (
+                    "existing_messages".to_string(),
+                    Value::from(existing_messages as u64),
+                ),
+            ]),
+        );
         let run = (self.execute_run)(prompt);
         self.running = false;
         let run = run?;
         self.messages = run.result.messages.clone();
         self.shared_state = run.result.shared_state.clone();
         self.latest_run = Some(run.clone());
+        self.emit(
+            "session_run_end",
+            BTreeMap::from([
+                (
+                    "status".to_string(),
+                    Value::String(agent_status_value(run.result.status).to_string()),
+                ),
+                (
+                    "cycles".to_string(),
+                    Value::from(run.result.cycles.len() as u64),
+                ),
+                (
+                    "final_answer".to_string(),
+                    run.result
+                        .final_answer
+                        .clone()
+                        .map(Value::String)
+                        .unwrap_or(Value::Null),
+                ),
+                (
+                    "wait_reason".to_string(),
+                    run.result
+                        .wait_reason
+                        .clone()
+                        .map(Value::String)
+                        .unwrap_or(Value::Null),
+                ),
+                (
+                    "error".to_string(),
+                    run.result
+                        .error
+                        .clone()
+                        .map(Value::String)
+                        .unwrap_or(Value::Null),
+                ),
+            ]),
+        );
         Ok(run)
+    }
+
+    fn emit(&self, event: &str, payload: BTreeMap<String, Value>) {
+        let listeners: Vec<SessionEventHandler> = self.listeners.values().cloned().collect();
+        for listener in listeners {
+            listener(event, &payload);
+        }
     }
 
     pub fn state(&self) -> AgentSessionState {

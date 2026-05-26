@@ -172,7 +172,9 @@ The current Rust implementation includes:
   queues automatic completed-run follow-ups, `steer` has priority for
   `continue_run(None)`, `clear_queues` drops pending prompts, and `query`
   returns the final answer or a status-specific error such as
-  `status=wait_user`.
+  `status=wait_user`. Sessions also support listener registration for queue and
+  run lifecycle events such as `session_run_start`, `session_run_end`,
+  `session_follow_up_queued`, and `session_steer_queued`.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,
