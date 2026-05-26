@@ -353,6 +353,81 @@ fn session_runtime_event_listener_can_queue_steering() {
 }
 
 #[test]
+fn session_auto_steers_when_background_command_finishes_during_run() {
+    let responses = vec![
+        LLMResponse {
+            content: "start background command".to_string(),
+            tool_calls: vec![
+                ToolCall::new(
+                    "bg-1",
+                    "bash",
+                    json_args(serde_json::json!({
+                        "command": "printf bgdone",
+                        "run_in_background": true,
+                        "timeout": 5
+                    })),
+                ),
+                ToolCall::new(
+                    "slow-1",
+                    "bash",
+                    json_args(serde_json::json!({
+                        "command": "sleep 1",
+                        "timeout": 2
+                    })),
+                ),
+                ToolCall::new(
+                    "finish-should-skip",
+                    "task_finish",
+                    json_args(serde_json::json!({"message": "too early"})),
+                ),
+            ],
+            raw: BTreeMap::new(),
+            token_usage: TokenUsage::default(),
+        },
+        LLMResponse {
+            content: "finish after background".to_string(),
+            tool_calls: vec![ToolCall::new(
+                "finish-2",
+                "task_finish",
+                json_args(serde_json::json!({"message": "noticed background"})),
+            )],
+            raw: BTreeMap::new(),
+            token_usage: TokenUsage::default(),
+        },
+    ];
+    let workspace = tempfile::tempdir().expect("workspace");
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().to_path_buf(),
+        ..AgentSDKOptions::default()
+    })
+    .with_runtime(AgentRuntime::new(ScriptedLlmClient::new(responses)));
+    let mut session =
+        create_agent_session(&client, "demo", AgentDefinition::default_for_model("demo"));
+    let events = recorded_events();
+    session.subscribe(recording_listener(&events));
+
+    let run = session.prompt("start").expect("prompt");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(
+        run.result.final_answer.as_deref(),
+        Some("noticed background")
+    );
+    assert_eq!(
+        run.result.cycles[0].tool_results[2].error_code.as_deref(),
+        Some("skipped_due_to_steering")
+    );
+    let events = events.lock().expect("events");
+    assert!(events
+        .iter()
+        .any(|(event, _)| event == "background_command_completed"));
+    assert!(events
+        .iter()
+        .any(|(event, _)| event == "background_command_terminal"));
+    assert!(events.iter().any(|(event, _)| event == "run_steered"));
+}
+
+#[test]
 fn sdk_runtime_uses_options_workspace_for_tool_context_and_sessions() {
     let workspace = tempfile::tempdir().expect("workspace");
     let responses = vec![LLMResponse {

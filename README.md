@@ -201,11 +201,15 @@ The current Rust implementation includes:
   a cloneable `SessionSteeringHandle` lets those listeners queue steering while
   a run is active, which injects the prompt before the next cycle or interrupts
   the current tool batch with `skipped_due_to_steering`, `session_steer_interrupt`,
-  and `run_steered` events. Runtime-backed sessions preserve prior messages and
-  shared state across prompts, so follow-up turns see the same conversation and
-  TODO/memory state instead of starting from a fresh task. SDK-created runtime
-  sessions also inherit `AgentSDKOptions.workspace` for both session state and
-  tool execution context.
+  and `run_steered` events. Sessions also subscribe to running background
+  commands reported by `bash` / `check_background_command`; terminal background
+  events emit `background_command_completed` / `background_command_terminal`
+  and queue a system notification as steering while the run is active.
+  Runtime-backed sessions preserve prior messages and shared state across
+  prompts, so follow-up turns see the same conversation and TODO/memory state
+  instead of starting from a fresh task. SDK-created runtime sessions also
+  inherit `AgentSDKOptions.workspace` for both session state and tool execution
+  context.
 - `AgentSDKClient::query` mirrors Python client query semantics: it returns the
   final answer for completed runs and reports non-completed statuses with
   snake_case status values such as `status=wait_user`.
