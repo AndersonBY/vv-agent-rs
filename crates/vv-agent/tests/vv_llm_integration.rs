@@ -1,6 +1,8 @@
 use std::io::Write;
 
-use vv_agent::{build_openai_llm_from_local_settings, resolve_model_endpoint};
+use vv_agent::{
+    build_openai_llm_from_local_settings, build_vv_llm_from_local_settings, resolve_model_endpoint,
+};
 
 #[test]
 fn settings_builder_returns_vv_llm_backed_client() {
@@ -42,7 +44,7 @@ fn settings_builder_returns_vv_llm_backed_client() {
     .expect("write settings");
 
     let (client, resolved) =
-        build_openai_llm_from_local_settings(settings_file.path(), "moonshot", "kimi-k2.5", 90.0)
+        build_vv_llm_from_local_settings(settings_file.path(), "moonshot", "kimi-k2.5", 90.0)
             .expect("build llm");
 
     assert_eq!(resolved.backend, "moonshot");
@@ -52,6 +54,49 @@ fn settings_builder_returns_vv_llm_backed_client() {
     assert_eq!(resolved.endpoint().unwrap().endpoint_id, "moonshot-default");
     assert_eq!(client.provider_name(), "openai-compatible");
     assert_eq!(client.model_id(), "kimi-k2-thinking");
+}
+
+#[test]
+fn legacy_openai_named_builder_still_delegates_to_vv_llm_builder() {
+    let mut settings_file = tempfile::NamedTempFile::new().expect("settings file");
+    write!(
+        settings_file,
+        r#"{{
+          "VERSION": "2",
+          "endpoints": [
+            {{
+              "id": "deepseek-default",
+              "api_base": "https://api.deepseek.com",
+              "api_key": "sk-test"
+            }}
+          ],
+          "backends": {{
+            "deepseek": {{
+              "models": {{
+                "deepseek-v4-pro": {{
+                  "id": "deepseek-v4-pro",
+                  "endpoints": ["deepseek-default"]
+                }}
+              }}
+            }}
+          }},
+          "embedding_backends": {{}},
+          "rerank_backends": {{}}
+        }}"#
+    )
+    .expect("write settings");
+
+    let (client, resolved) = build_openai_llm_from_local_settings(
+        settings_file.path(),
+        "deepseek",
+        "deepseek-v4-pro",
+        90.0,
+    )
+    .expect("build legacy alias");
+
+    assert_eq!(resolved.backend, "deepseek");
+    assert_eq!(resolved.model_id, "deepseek-v4-pro");
+    assert_eq!(client.provider_name(), "openai-compatible");
 }
 
 #[test]

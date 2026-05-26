@@ -20,7 +20,22 @@ vv-agent-rs/
       runtime.rs
       sdk.rs
       skills.rs
-      tools.rs
+      tools/
+        base.rs
+        common.rs
+        mod.rs
+        registry.rs
+        schemas.rs
+        handlers/
+          background.rs
+          bash.rs
+          control.rs
+          image.rs
+          memory.rs
+          search.rs
+          skills.rs
+          sub_agents.rs
+          workspace_io.rs
       types.rs
       workspace.rs
       cli.rs
@@ -64,10 +79,17 @@ The current Rust implementation includes:
 - Top-level modules aligned with the Python package: `background_sessions`,
   `cli`, `config`, `constants`, `integrations`, `llm`, `memory`, `processes`,
   `prompt`, `runtime`, `sdk`, `skills`, `tools`, `types`, and `workspace`.
-- `vv-llm` backed chat client construction and settings-based endpoint
-  resolution, while keeping `ScriptedLlmClient` for deterministic tests.
+- `vv-llm = "0.1.0"` backed chat client construction through
+  `build_vv_llm_from_local_settings`, settings-based endpoint resolution, and
+  provider HTTP/protocol handling delegated to `vv-llm`, while keeping
+  `ScriptedLlmClient` for deterministic tests.
 - A basic multi-cycle runtime that sends tool schemas to the LLM, executes tool
   calls, and converges on `task_finish` or `ask_user`.
+- Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
+  canonical `schemas`, shared `common` helpers, and focused handler modules.
+- Default tool schemas now use reference-quality descriptions derived from
+  Python `v-agent` so the model sees the same operational guidance for file
+  access, grep, bash/background commands, todos, skills, images, and sub-agents.
 - Built-in control tools (`task_finish`, `ask_user`, `todo_write`), core
   workspace tools (`list_files`, `file_info`, `read_file`, `write_file`,
   `file_str_replace`, `workspace_grep`, `read_image`), memory notes through
@@ -79,9 +101,10 @@ The current Rust implementation includes:
   discovery for `agents.json`, prompt templates, and skill directories.
 - SDK client, tool registry, workspace backends, and shared protocol types.
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
-  integration, runtime tool cycles, and workspace tools.
+  integration, runtime tool cycles, schema parity, and workspace tools.
 
 Deeper parity work against the Python implementation is still pending for hooks,
 full memory compaction, skills activation, full sub-agent runtime/session
 management, session steering, distributed backends, and the remaining built-in
-tools.
+tools. The migration target is to copy Python `v-agent` behavior as completely
+as possible, not merely provide a minimal Rust wrapper.

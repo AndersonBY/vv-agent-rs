@@ -1,6 +1,6 @@
 use std::env;
 
-use crate::config::build_openai_llm_from_local_settings;
+use crate::config::build_vv_llm_from_local_settings;
 use crate::runtime::AgentRuntime;
 use crate::sdk::{AgentDefinition, AgentSDKClient, AgentSDKOptions};
 
@@ -13,9 +13,8 @@ pub fn main() -> Result<(), String> {
 
     let settings_file =
         env::var("V_AGENT_LOCAL_SETTINGS").unwrap_or_else(|_| "local_settings.py".to_string());
-    let (llm, _) =
-        build_openai_llm_from_local_settings(settings_file, "moonshot", "kimi-k2.5", 90.0)
-            .map_err(|err| err.to_string())?;
+    let (llm, _) = build_vv_llm_from_local_settings(settings_file, "moonshot", "kimi-k2.5", 90.0)
+        .map_err(|err| err.to_string())?;
     let runtime = AgentRuntime::new(llm);
     let client = AgentSDKClient::new(AgentSDKOptions::default()).with_runtime(runtime);
     let agent = AgentDefinition::default_for_model("demo");

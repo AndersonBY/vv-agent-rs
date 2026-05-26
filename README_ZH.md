@@ -20,7 +20,22 @@ vv-agent-rs/
       runtime.rs
       sdk.rs
       skills.rs
-      tools.rs
+      tools/
+        base.rs
+        common.rs
+        mod.rs
+        registry.rs
+        schemas.rs
+        handlers/
+          background.rs
+          bash.rs
+          control.rs
+          image.rs
+          memory.rs
+          search.rs
+          skills.rs
+          sub_agents.rs
+          workspace_io.rs
       types.rs
       workspace.rs
       cli.rs
@@ -59,12 +74,15 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 一个库目标，暴露与 Python `vv_agent.__init__` 类似的顶层 API 类型和函数。
 - 同一 package 内的 CLI 目标。
 - 与 Python 包对齐的顶层模块：`background_sessions`、`cli`、`config`、`constants`、`integrations`、`llm`、`memory`、`processes`、`prompt`、`runtime`、`sdk`、`skills`、`tools`、`types` 和 `workspace`。
-- 基于 `vv-llm` 的 chat client 构建和配置化 endpoint 解析，同时保留 `ScriptedLlmClient` 用于确定性测试。
+- 基于 crates.io 官方 `vv-llm = "0.1.0"` 的 chat client 构建，通过 `build_vv_llm_from_local_settings` 解析配置化 endpoint，并把 provider HTTP / 协议处理交给 `vv-llm`；同时保留 `ScriptedLlmClient` 用于确定性测试。
 - 一个基础 multi-cycle runtime，可以把 tool schemas 发给 LLM、执行工具调用，并通过 `task_finish` 或 `ask_user` 收敛。
+- `tools/` 已按 Python `v-agent` 的结构拆分为 `base`、`registry`、canonical `schemas`、共享 `common` helper 和各个 handler 模块。
+- 默认工具 schema 使用参考 Python `v-agent` 的高信息量描述，让模型拿到文件访问、grep、bash / 后台命令、todo、skills、图片和 sub-agent 的完整操作指引。
 - 内置控制工具（`task_finish`、`ask_user`、`todo_write`）、核心 workspace 工具（`list_files`、`file_info`、`read_file`、`write_file`、`file_str_replace`、`workspace_grep`、`read_image`）、通过 `compress_memory` 记录 memory notes，以及支持捕获输出、stdin、前台超时转后台和后台轮询的 `bash` / `check_background_command` 命令工具。
 - `create_sub_task` / `sub_task_status` 的 sub-agent 工具协议支持，包括可注入同步 runner 和 batch 聚合。
 - 基于 `AgentTask` flags 的 Python 风格工具规划，以及 `.vv-agent` 下 `agents.json`、prompt templates 和 skill directories 的资源发现。
 - SDK 客户端、工具注册表、工作区后端，以及共享协议类型。
-- 覆盖公开 API 构造、Rust SDK 使用、vv-llm 集成、runtime 工具循环和 workspace 工具的 smoke tests。
+- 覆盖公开 API 构造、Rust SDK 使用、vv-llm 集成、runtime 工具循环、schema parity 和 workspace 工具的 smoke tests。
 
 对 Python 实现的更深层 parity 仍待继续补齐，包括 hooks、完整 memory compaction、skills activation、完整 sub-agent runtime/session 管理、session steering、distributed backends 和剩余内置工具。
+迁移目标是尽最大可能照搬 Python `v-agent` 的能力和行为，而不是只提供一个最小 Rust wrapper。

@@ -2,7 +2,7 @@ use std::env;
 use std::path::PathBuf;
 
 use vv_agent::{
-    build_openai_llm_from_local_settings, AgentRuntime, AgentStatus, AgentTask, NoToolPolicy,
+    build_vv_llm_from_local_settings, AgentRuntime, AgentStatus, AgentTask, NoToolPolicy,
 };
 
 #[test]
@@ -21,7 +21,7 @@ fn live_deepseek_v4_pro_finishes_agent_task() {
     );
 
     let (llm, resolved) =
-        build_openai_llm_from_local_settings(&settings_path, "deepseek", "deepseek-v4-pro", 90.0)
+        build_vv_llm_from_local_settings(&settings_path, "deepseek", "deepseek-v4-pro", 90.0)
             .expect("build DeepSeek vv-llm client");
     assert_eq!(resolved.backend, "deepseek");
     assert_eq!(resolved.requested_model, "deepseek-v4-pro");

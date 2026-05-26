@@ -22,8 +22,9 @@ pub mod types;
 pub mod workspace;
 
 pub use config::{
-    build_openai_llm_from_local_settings, load_llm_settings_from_file, resolve_model_endpoint,
-    ConfigError, EndpointConfig, EndpointOption, ResolvedModelConfig,
+    build_openai_llm_from_local_settings, build_vv_llm_from_local_settings,
+    load_llm_settings_from_file, resolve_model_endpoint, ConfigError, EndpointConfig,
+    EndpointOption, ResolvedModelConfig,
 };
 pub use llm::{EndpointTarget, LlmClient, LlmError, LlmRequest, ScriptedLlmClient, VvLlmClient};
 pub use runtime::AgentRuntime;
