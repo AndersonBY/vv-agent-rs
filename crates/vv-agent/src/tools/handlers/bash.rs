@@ -71,11 +71,19 @@ pub(crate) fn bash_tool() -> ToolSpec {
                 .get("run_in_background")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            let prepared = prepare_shell_execution(&command, auto_confirm);
-            let started = start_captured_process(&prepared.command, &cwd, stdin_text);
+            let shell = context.metadata.get("bash_shell").and_then(Value::as_str);
+            let prepared = prepare_shell_execution(&command, auto_confirm, stdin_text, shell);
+            let started =
+                start_captured_process(&prepared.command, &cwd, prepared.stdin.as_deref());
             let mut started = match started {
                 Ok(started) => started,
-                Err(error) => return tool_error_with_code(error.to_string(), "command_failed"),
+                Err(error) => {
+                    let shell = prepared.shell.unwrap_or_else(|| "shell".to_string());
+                    return tool_error_with_code(
+                        format!("Failed to start {shell}: {error}"),
+                        "command_failed",
+                    );
+                }
             };
 
             if run_in_background {
@@ -166,23 +174,133 @@ pub(crate) fn bash_tool() -> ToolSpec {
 struct PreparedShellCommand {
     command: Vec<String>,
     shell: Option<String>,
+    stdin: Option<String>,
 }
 
-fn prepare_shell_execution(command: &str, auto_confirm: bool) -> PreparedShellCommand {
-    if cfg!(target_os = "windows") {
+struct ResolvedShellInvocation {
+    kind: String,
+    name: String,
+    prefix: Vec<String>,
+}
+
+fn prepare_shell_execution(
+    command: &str,
+    auto_confirm: bool,
+    stdin: Option<&str>,
+    shell: Option<&str>,
+) -> PreparedShellCommand {
+    let resolved = resolve_shell_invocation(shell);
+    if !auto_confirm {
+        let mut prepared = resolved.prefix.clone();
+        prepared.push(command.to_string());
+        return PreparedShellCommand {
+            command: prepared,
+            shell: Some(resolved.name),
+            stdin: stdin.map(str::to_string),
+        };
+    }
+
+    if resolved.kind == "bash" {
+        let mut prepared = resolved.prefix.clone();
+        prepared.push(format!("yes | ({command})"));
         PreparedShellCommand {
-            command: vec!["cmd".to_string(), "/C".to_string(), command.to_string()],
-            shell: Some("cmd".to_string()),
+            command: prepared,
+            shell: Some(resolved.name),
+            stdin: stdin.map(str::to_string),
         }
     } else {
-        let prepared_command = if auto_confirm {
-            format!("yes | ({command})")
-        } else {
-            command.to_string()
-        };
+        let mut prepared = resolved.prefix.clone();
+        prepared.push(command.to_string());
         PreparedShellCommand {
-            command: vec!["sh".to_string(), "-lc".to_string(), prepared_command],
-            shell: Some("bash".to_string()),
+            command: prepared,
+            shell: Some(resolved.name),
+            stdin: Some(format!("{}{}", "y\n".repeat(512), stdin.unwrap_or(""))),
         }
+    }
+}
+
+fn resolve_shell_invocation(shell: Option<&str>) -> ResolvedShellInvocation {
+    if cfg!(target_os = "windows") {
+        let selected = shell
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && normalize_shell_name(value) != "auto")
+            .unwrap_or("cmd");
+        return resolve_named_shell(selected, true);
+    }
+
+    let selected = shell
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && normalize_shell_name(value) != "auto")
+        .unwrap_or("bash");
+    resolve_named_shell(selected, false)
+}
+
+fn resolve_named_shell(shell: &str, windows: bool) -> ResolvedShellInvocation {
+    let normalized = normalize_shell_name(shell);
+    if windows && matches!(normalized.as_str(), "cmd" | "cmd.exe") {
+        return ResolvedShellInvocation {
+            kind: "cmd".to_string(),
+            name: shell.to_string(),
+            prefix: vec![shell.to_string(), "/C".to_string()],
+        };
+    }
+    if matches!(normalized.as_str(), "powershell" | "powershell.exe") {
+        return ResolvedShellInvocation {
+            kind: "powershell".to_string(),
+            name: shell.to_string(),
+            prefix: vec![
+                shell.to_string(),
+                "-NoLogo".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+            ],
+        };
+    }
+    if matches!(normalized.as_str(), "pwsh" | "pwsh.exe") {
+        return ResolvedShellInvocation {
+            kind: "pwsh".to_string(),
+            name: shell.to_string(),
+            prefix: vec![
+                shell.to_string(),
+                "-NoLogo".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+            ],
+        };
+    }
+    if matches!(normalized.as_str(), "cmd" | "cmd.exe") {
+        return ResolvedShellInvocation {
+            kind: "cmd".to_string(),
+            name: shell.to_string(),
+            prefix: vec![shell.to_string(), "/c".to_string()],
+        };
+    }
+    let kind = infer_shell_kind(shell);
+    ResolvedShellInvocation {
+        kind: kind.to_string(),
+        name: shell.to_string(),
+        prefix: vec![shell.to_string(), "-lc".to_string()],
+    }
+}
+
+fn normalize_shell_name(value: &str) -> String {
+    value.trim().to_ascii_lowercase().replace('_', "-")
+}
+
+fn infer_shell_kind(executable_name: &str) -> &'static str {
+    let lowered = executable_name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(executable_name)
+        .trim()
+        .to_ascii_lowercase();
+    if matches!(lowered.as_str(), "cmd" | "cmd.exe") {
+        "cmd"
+    } else if lowered.starts_with("pwsh") {
+        "pwsh"
+    } else if lowered.contains("powershell") {
+        "powershell"
+    } else {
+        "bash"
     }
 }

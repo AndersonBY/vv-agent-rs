@@ -283,6 +283,32 @@ fn bash_tool_passes_stdin_to_command() {
 }
 
 #[test]
+fn bash_tool_uses_configured_shell_from_metadata() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.metadata.insert(
+        "bash_shell".to_string(),
+        json!("definitely-missing-vv-agent-shell"),
+    );
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "bash_missing_shell",
+                "bash",
+                BTreeMap::from([("command".to_string(), json!("echo should-not-run"))]),
+            ),
+            &mut context,
+        )
+        .expect("bash configured shell");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("command_failed"));
+    assert!(result.content.contains("definitely-missing-vv-agent-shell"));
+}
+
+#[test]
 fn bash_tool_rejects_exec_dir_outside_workspace_by_default() {
     let workspace = tempfile::tempdir().expect("workspace");
     let outside = tempfile::tempdir().expect("outside");
