@@ -2,6 +2,7 @@ pub mod backends;
 pub mod context;
 pub mod hooks;
 mod results;
+pub mod shell;
 pub mod state;
 pub mod stores;
 mod sub_agents;

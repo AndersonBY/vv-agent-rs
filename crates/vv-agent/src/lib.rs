@@ -45,6 +45,9 @@ pub use runtime::backends::{
     run_checkpointed_cycle, CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher,
     InlineBackend, RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
 };
+pub use runtime::shell::{
+    prepare_shell_execution, resolve_shell_invocation, PreparedShellCommand, ShellInvocation,
+};
 pub use runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 pub use runtime::stores::redis::RedisStateStore;
 pub use runtime::stores::sqlite::SqliteStateStore;
