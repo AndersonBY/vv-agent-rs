@@ -326,6 +326,43 @@ fn runtime_emits_reference_lifecycle_log_events() {
     assert_eq!(events[4].1["final_answer"], "logged finish");
 }
 
+#[test]
+fn runtime_compacts_memory_before_large_follow_up_cycle() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let large_tool_payload = "tool output ".repeat(300);
+    let llm = MemoryCompactionInspectingLlmClient::new(large_tool_payload);
+    let inspector = llm.clone();
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.default_workspace = Some(workspace.path().to_path_buf());
+    runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
+        workspace.path(),
+    ));
+    let mut task = AgentTask::new("memory_task", "demo", "system", "inspect memory");
+    task.memory_compact_threshold = 20;
+    task.metadata
+        .insert("model_context_window".to_string(), json!(120));
+    task.metadata
+        .insert("reserved_output_tokens".to_string(), json!(10));
+    task.metadata
+        .insert("autocompact_buffer_tokens".to_string(), json!(0));
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert!(result.cycles.iter().any(|cycle| cycle.memory_compacted));
+    let second_request = inspector.second_request_messages();
+    assert!(
+        second_request
+            .iter()
+            .any(|message| message.content.contains("<Compressed Agent Memory>")),
+        "second request did not contain compressed memory: {second_request:#?}"
+    );
+    assert!(
+        second_request.len() <= 3,
+        "compacted request should keep system, summary, and latest continuation at most"
+    );
+}
+
 #[derive(Clone)]
 struct InspectingImageLlmClient {
     responses: Arc<Mutex<VecDeque<LLMResponse>>>,
@@ -614,6 +651,68 @@ impl LlmClient for HookInspectingLlmClient {
                 "hook_finish",
                 "task_finish",
                 BTreeMap::from([("message".to_string(), json!("original finish"))]),
+            )],
+        ))
+    }
+}
+
+#[derive(Clone)]
+struct MemoryCompactionInspectingLlmClient {
+    responses_seen: Arc<Mutex<usize>>,
+    large_tool_payload: String,
+    second_request_messages: Arc<Mutex<Vec<Message>>>,
+}
+
+impl MemoryCompactionInspectingLlmClient {
+    fn new(large_tool_payload: String) -> Self {
+        Self {
+            responses_seen: Arc::new(Mutex::new(0)),
+            large_tool_payload,
+            second_request_messages: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn second_request_messages(&self) -> Vec<Message> {
+        self.second_request_messages
+            .lock()
+            .expect("messages poisoned")
+            .clone()
+    }
+}
+
+impl LlmClient for MemoryCompactionInspectingLlmClient {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        let mut responses_seen = self
+            .responses_seen
+            .lock()
+            .map_err(|_| LlmError::Request("counter poisoned".to_string()))?;
+        *responses_seen += 1;
+        if *responses_seen == 1 {
+            return Ok(LLMResponse::with_tool_calls(
+                "first cycle",
+                vec![ToolCall::new(
+                    "write_large",
+                    "write_file",
+                    BTreeMap::from([
+                        ("path".to_string(), json!("large.txt")),
+                        (
+                            "content".to_string(),
+                            json!(self.large_tool_payload.clone()),
+                        ),
+                    ]),
+                )],
+            ));
+        }
+        *self
+            .second_request_messages
+            .lock()
+            .expect("messages poisoned") = request.messages.clone();
+        Ok(LLMResponse::with_tool_calls(
+            "finish",
+            vec![ToolCall::new(
+                "finish_after_compact",
+                "task_finish",
+                BTreeMap::from([("message".to_string(), json!("memory compacted"))]),
             )],
         ))
     }

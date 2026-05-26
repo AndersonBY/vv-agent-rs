@@ -15,7 +15,11 @@ vv-agent-rs/
       constants.rs
       integrations.rs
       llm.rs
-      memory.rs
+      memory/
+        manager.rs
+        mod.rs
+        summary.rs
+        token_utils.rs
       prompt.rs
       runtime/
         hooks.rs
@@ -102,6 +106,9 @@ The current Rust implementation includes:
 - Runtime lifecycle logging through `log_handler`, with Python-style events for
   run start, cycle start, LLM response, tool result, completion, wait-user, and
   max-cycle exits.
+- Split `memory/` modules with Python-style compaction thresholds, local
+  structured summaries, and runtime autocompaction before large follow-up LLM
+  cycles.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
   canonical `schemas`, shared `common` helpers, and focused handler modules.
 - Split `activate_skill` handling into model, parser, normalization, and shared
@@ -135,8 +142,8 @@ The current Rust implementation includes:
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, schema parity, and workspace tools.
 
-Deeper parity work against the Python implementation is still pending for full
-memory compaction, richer sub-agent session management and steering,
-distributed backends, and the remaining built-in tools. The migration target is
-to copy Python `v-agent` behavior as completely as possible, not merely provide
-a minimal Rust wrapper.
+Deeper parity work against the Python implementation is still pending for
+session memory extraction, richer tool-result artifact compaction, sub-agent
+session management and steering, distributed backends, and the remaining
+built-in tools. The migration target is to copy Python `v-agent` behavior as
+completely as possible, not merely provide a minimal Rust wrapper.

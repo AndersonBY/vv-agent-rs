@@ -65,6 +65,10 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/hooks.rs",
         "runtime/results.rs",
         "runtime/sub_agents.rs",
+        "memory/mod.rs",
+        "memory/manager.rs",
+        "memory/summary.rs",
+        "memory/token_utils.rs",
     ] {
         assert!(root.join(relative).is_file(), "missing {relative}");
     }
@@ -76,6 +80,10 @@ fn tools_module_is_split_into_handler_files() {
         (
             "runtime.rs",
             "runtime.rs should be split into src/runtime/ modules",
+        ),
+        (
+            "memory.rs",
+            "memory.rs should be split into src/memory/ modules",
         ),
         (
             "tools/handlers/skills.rs",

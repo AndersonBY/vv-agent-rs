@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::llm::{LlmClient, LlmError, LlmRequest};
+use crate::memory::{MemoryManager, MemoryManagerConfig};
 use crate::sub_task_manager::SubTaskManager;
 use crate::tools::{build_default_registry, ToolContext, ToolRegistry};
 use crate::types::{
@@ -97,6 +98,8 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             ]),
         );
 
+        let memory_manager = build_memory_manager(&task);
+
         for cycle_index in 0..task.max_cycles {
             self.emit_log(
                 "cycle_started",
@@ -106,6 +109,8 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     ("message_count".to_string(), Value::from(messages.len())),
                 ]),
             );
+            let (prepared_messages, memory_compacted) = memory_manager.compact(&messages, false);
+            messages = prepared_messages;
             let tool_schemas = self.planned_tool_schemas(&task);
             let hook_manager = self.hook_manager();
             let (request_messages, request_tool_schemas) = hook_manager.apply_before_llm(
@@ -133,6 +138,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 &response,
                 Vec::<ToolExecutionResult>::new(),
             );
+            cycle.memory_compacted = memory_compacted;
             self.emit_cycle_llm_response(&cycle);
 
             if response.tool_calls.is_empty() {
@@ -441,4 +447,39 @@ fn execute_tool_result(
             image_url: None,
             image_path: None,
         })
+}
+
+fn build_memory_manager(task: &AgentTask) -> MemoryManager {
+    MemoryManager::new(MemoryManagerConfig {
+        compact_threshold: task.memory_compact_threshold,
+        keep_recent_messages: read_usize_metadata(
+            &task.metadata,
+            "memory_keep_recent_messages",
+            10,
+        ),
+        model: task.model.clone(),
+        model_context_window: read_u64_metadata(&task.metadata, "model_context_window", 200_000),
+        reserved_output_tokens: read_u64_metadata(&task.metadata, "reserved_output_tokens", 16_000),
+        autocompact_buffer_tokens: read_u64_metadata(
+            &task.metadata,
+            "autocompact_buffer_tokens",
+            13_000,
+        ),
+        summary_event_limit: read_usize_metadata(&task.metadata, "summary_event_limit", 40),
+    })
+}
+
+fn read_u64_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: u64) -> u64 {
+    metadata
+        .get(key)
+        .and_then(|value| match value {
+            Value::Number(number) => number.as_u64(),
+            Value::String(text) => text.trim().parse::<u64>().ok(),
+            _ => None,
+        })
+        .unwrap_or(default)
+}
+
+fn read_usize_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: usize) -> usize {
+    read_u64_metadata(metadata, key, default as u64) as usize
 }
