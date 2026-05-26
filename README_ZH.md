@@ -118,6 +118,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 已加入参考 Python `RuntimeHookManager` 的 runtime hooks：调用方可以改写 LLM 请求的 messages / schemas、改写 LLM 响应、改写或短路工具调用，并改写工具结果。
 - `log_handler` 已可接收 Python 风格 runtime 生命周期事件，包括 run start、cycle start、LLM response、tool result、completed、wait-user 和 max-cycles。
 - 已补 Python 风格 runtime token usage helper：可归一化 provider 原始 usage payload 中 prompt/completion 与 input/output 命名差异，保留 raw usage，并汇总逐 cycle token totals。
+- 核心 runtime 类型已补 Python 风格 `to_dict` / `from_dict` helper，覆盖 task、result、message、cycle、tool-call 和 tool-result payload，并保留工具结果 legacy `status` + `status_code` 双字段以便 worker 互通。
 - `memory/` 已拆成 manager、summary 和 token_utils，支持 Python 风格压缩阈值、本地结构化摘要，并在长上下文 follow-up cycle 前自动压缩。
 - 历史大工具结果可以持久化到 `.memory/tool_results`，并在上下文里替换为带 retrieval hint 的压缩内容，对齐 Python `v-agent` 的 artifact compaction 行为。
 - 已加入参考 Python `SessionMemory` 的持久化 session memory： durable entries 会归一化、去重、按预算裁剪，可保存到 `.memory/session`，并在 compaction 后作为 `<Session Memory>` system context 注入后续 LLM 请求。默认 runtime 可以直接使用已配置的 `LlmClient` 作为 extraction callback，因此 vv-llm-backed client 不需要额外 provider adapter。

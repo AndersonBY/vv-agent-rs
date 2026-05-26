@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod dict;
+
 pub type Metadata = BTreeMap<String, Value>;
 pub type ToolArguments = BTreeMap<String, Value>;
 pub type ToolSchema = Value;
