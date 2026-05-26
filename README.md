@@ -19,6 +19,7 @@ vv-agent-rs/
         artifacts.rs
         manager.rs
         mod.rs
+        session.rs
         summary.rs
         token_utils.rs
       prompt.rs
@@ -113,6 +114,10 @@ The current Rust implementation includes:
 - Large historical tool results can be persisted under `.memory/tool_results`
   and replaced with compact retrieval hints, matching Python `v-agent` artifact
   compaction behavior.
+- Persistent session memory modeled after Python `SessionMemory`: durable
+  entries are normalized, deduplicated, budget-pruned, optionally persisted
+  under `.memory/session`, and injected back into runtime LLM requests as a
+  `<Session Memory>` system context across compaction.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
   canonical `schemas`, shared `common` helpers, and focused handler modules.
 - Split `activate_skill` handling into model, parser, normalization, and shared
@@ -147,7 +152,7 @@ The current Rust implementation includes:
   integration, runtime tool cycles, schema parity, and workspace tools.
 
 Deeper parity work against the Python implementation is still pending for
-session memory extraction, sub-agent session management and steering,
-distributed backends, and the remaining built-in tools. The migration target is
-to copy Python `v-agent` behavior as completely as possible, not merely provide
-a minimal Rust wrapper.
+LLM-backed session-memory extraction callbacks in the default runtime,
+sub-agent session management and steering, distributed backends, and the
+remaining built-in tools. The migration target is to copy Python `v-agent`
+behavior as completely as possible, not merely provide a minimal Rust wrapper.

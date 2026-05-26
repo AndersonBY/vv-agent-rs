@@ -28,7 +28,10 @@ pub use config::{
     EndpointOption, ResolvedModelConfig,
 };
 pub use llm::{EndpointTarget, LlmClient, LlmError, LlmRequest, ScriptedLlmClient, VvLlmClient};
-pub use memory::{LocalSummary, MemoryManager, MemoryManagerConfig};
+pub use memory::{
+    LocalSummary, MemoryManager, MemoryManagerConfig, SessionMemory, SessionMemoryConfig,
+    SessionMemoryEntry, SessionMemoryState,
+};
 pub use runtime::{
     AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BeforeLlmEvent, BeforeLlmPatch,
     BeforeToolCallEvent, BeforeToolCallPatch, RuntimeHook, RuntimeHookManager,

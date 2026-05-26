@@ -3,13 +3,14 @@ use std::path::PathBuf;
 use crate::memory::artifacts::{
     compact_tool_results, render_persisted_artifacts_section, ToolResultArtifactConfig,
 };
+use crate::memory::session::SessionMemory;
 use crate::memory::summary::LocalSummary;
 use crate::memory::token_utils::{compute_compaction_threshold, count_messages_tokens};
 use crate::types::{Message, MessageRole};
 
 const MEMORY_SUMMARY_NAME: &str = "memory_summary";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct MemoryManagerConfig {
     pub compact_threshold: u64,
     pub keep_recent_messages: usize,
@@ -24,6 +25,7 @@ pub struct MemoryManagerConfig {
     pub tool_result_excerpt_tail: usize,
     pub tool_result_artifact_dir: PathBuf,
     pub workspace: Option<PathBuf>,
+    pub session_memory: Option<SessionMemory>,
 }
 
 impl Default for MemoryManagerConfig {
@@ -42,6 +44,7 @@ impl Default for MemoryManagerConfig {
             tool_result_excerpt_tail: 200,
             tool_result_artifact_dir: PathBuf::from(".memory/tool_results"),
             workspace: None,
+            session_memory: None,
         }
     }
 }
@@ -49,11 +52,16 @@ impl Default for MemoryManagerConfig {
 #[derive(Debug, Clone)]
 pub struct MemoryManager {
     pub config: MemoryManagerConfig,
+    session_memory: Option<SessionMemory>,
 }
 
 impl MemoryManager {
-    pub fn new(config: MemoryManagerConfig) -> Self {
-        Self { config }
+    pub fn new(mut config: MemoryManagerConfig) -> Self {
+        let session_memory = config.session_memory.take();
+        Self {
+            config,
+            session_memory,
+        }
     }
 
     pub fn autocompact_threshold(&self) -> u64 {
@@ -65,7 +73,7 @@ impl MemoryManager {
         )
     }
 
-    pub fn compact(&self, messages: &[Message], force: bool) -> (Vec<Message>, bool) {
+    pub fn compact(&mut self, messages: &[Message], force: bool) -> (Vec<Message>, bool) {
         if messages.is_empty() {
             return (Vec::new(), false);
         }
@@ -81,7 +89,60 @@ impl MemoryManager {
         if !force && message_length <= self.autocompact_threshold() {
             return (sanitized, changed_by_sanitize);
         }
-        self.compress_memory(&sanitized)
+        if let Some(session_memory) = self.session_memory.as_mut() {
+            let text_messages = sanitized
+                .iter()
+                .filter(|message| {
+                    !matches!(message.role, MessageRole::System | MessageRole::Tool)
+                        && !message.content.trim().is_empty()
+                })
+                .count();
+            if session_memory.should_extract(message_length, text_messages) {
+                session_memory.extract(&sanitized, 0, message_length);
+            }
+        }
+        let (compacted, changed) = self.compress_memory(&sanitized);
+        if changed {
+            if let Some(session_memory) = self.session_memory.as_mut() {
+                session_memory
+                    .on_compaction(Some(count_messages_tokens(&compacted, &self.config.model)));
+            }
+        }
+        (compacted, changed)
+    }
+
+    pub fn session_memory(&self) -> Option<&SessionMemory> {
+        self.session_memory.as_ref()
+    }
+
+    pub fn session_memory_mut(&mut self) -> Option<&mut SessionMemory> {
+        self.session_memory.as_mut()
+    }
+
+    pub fn apply_session_memory_context(&self, messages: &[Message]) -> Vec<Message> {
+        let Some(session_context) = self
+            .session_memory
+            .as_ref()
+            .map(SessionMemory::render_as_system_context)
+            .filter(|context| !context.is_empty())
+        else {
+            return messages.to_vec();
+        };
+        let mut updated = messages.to_vec();
+        if let Some(system_message) = updated
+            .iter_mut()
+            .find(|message| message.role == MessageRole::System)
+        {
+            if !system_message.content.contains("<Session Memory>") {
+                system_message.content.push_str("\n\n");
+                system_message.content.push_str(&session_context);
+            }
+            return updated;
+        }
+        let mut system_message = Message::system(session_context);
+        system_message.name = Some("session_memory".to_string());
+        updated.insert(0, system_message);
+        updated
     }
 
     fn remove_previous_summary(&self, messages: &[Message]) -> Vec<Message> {

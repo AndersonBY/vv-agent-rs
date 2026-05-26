@@ -68,6 +68,7 @@ fn tools_module_is_split_into_handler_files() {
         "memory/artifacts.rs",
         "memory/mod.rs",
         "memory/manager.rs",
+        "memory/session.rs",
         "memory/summary.rs",
         "memory/token_utils.rs",
     ] {

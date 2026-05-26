@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::llm::{LlmClient, LlmError, LlmRequest};
-use crate::memory::{MemoryManager, MemoryManagerConfig};
+use crate::memory::{MemoryManager, MemoryManagerConfig, SessionMemory, SessionMemoryConfig};
 use crate::sub_task_manager::SubTaskManager;
 use crate::tools::{build_default_registry, ToolContext, ToolRegistry};
 use crate::types::{
@@ -98,7 +98,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             ]),
         );
 
-        let memory_manager = build_memory_manager(&task, workspace_path.clone());
+        let mut memory_manager = build_memory_manager(&task, workspace_path.clone());
 
         for cycle_index in 0..task.max_cycles {
             self.emit_log(
@@ -113,10 +113,11 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             messages = prepared_messages;
             let tool_schemas = self.planned_tool_schemas(&task);
             let hook_manager = self.hook_manager();
+            let llm_messages = memory_manager.apply_session_memory_context(&messages);
             let (request_messages, request_tool_schemas) = hook_manager.apply_before_llm(
                 &task,
                 cycle_index,
-                messages.clone(),
+                llm_messages,
                 tool_schemas,
                 &shared_state,
             );
@@ -450,6 +451,7 @@ fn execute_tool_result(
 }
 
 fn build_memory_manager(task: &AgentTask, workspace_path: PathBuf) -> MemoryManager {
+    let workspace = task.use_workspace.then_some(workspace_path.clone());
     MemoryManager::new(MemoryManagerConfig {
         compact_threshold: task.memory_compact_threshold,
         keep_recent_messages: read_usize_metadata(
@@ -487,8 +489,64 @@ fn build_memory_manager(task: &AgentTask, workspace_path: PathBuf) -> MemoryMana
             "tool_result_artifact_dir",
             ".memory/tool_results",
         ),
-        workspace: task.use_workspace.then_some(workspace_path),
+        workspace: workspace.clone(),
+        session_memory: build_session_memory(task, workspace),
     })
+}
+
+fn build_session_memory(task: &AgentTask, workspace: Option<PathBuf>) -> Option<SessionMemory> {
+    if !read_bool_metadata(&task.metadata, "session_memory_enabled", false)
+        && !read_bool_metadata(&task.metadata, "enable_session_memory", false)
+        && !task.metadata.contains_key("session_memory_seed")
+    {
+        return None;
+    }
+    let mut session_memory = SessionMemory::with_workspace(
+        SessionMemoryConfig {
+            min_tokens_before_extraction: read_u64_metadata(
+                &task.metadata,
+                "session_memory_min_tokens",
+                10_000,
+            ),
+            max_tokens: read_u64_metadata(&task.metadata, "session_memory_max_tokens", 40_000),
+            min_text_messages: read_usize_metadata(
+                &task.metadata,
+                "session_memory_min_text_messages",
+                5,
+            ),
+            growth_ratio: task
+                .metadata
+                .get("session_memory_growth_ratio")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.5)
+                .max(0.0),
+            storage_dir: metadata_path(
+                &task.metadata,
+                "session_memory_storage_dir",
+                ".memory/session",
+            ),
+            extraction_callback: None,
+            extraction_backend: task
+                .metadata
+                .get("session_memory_extraction_backend")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            extraction_model: task
+                .metadata
+                .get("session_memory_extraction_model")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            token_model: task.model.clone(),
+        },
+        workspace,
+        Some(task.task_id.clone()),
+    );
+    session_memory.load();
+    seed_session_memory(
+        &mut session_memory,
+        task.metadata.get("session_memory_seed"),
+    );
+    Some(session_memory)
 }
 
 fn read_u64_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: u64) -> u64 {
@@ -506,6 +564,13 @@ fn read_usize_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: u
     read_u64_metadata(metadata, key, default as u64) as usize
 }
 
+fn read_bool_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: bool) -> bool {
+    metadata
+        .get(key)
+        .and_then(Value::as_bool)
+        .unwrap_or(default)
+}
+
 fn metadata_path(metadata: &BTreeMap<String, Value>, key: &str, default: &str) -> PathBuf {
     metadata
         .get(key)
@@ -514,4 +579,40 @@ fn metadata_path(metadata: &BTreeMap<String, Value>, key: &str, default: &str) -
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(default))
+}
+
+fn seed_session_memory(session_memory: &mut SessionMemory, value: Option<&Value>) {
+    let Some(entries) = value.and_then(Value::as_array) else {
+        return;
+    };
+    let parsed = entries
+        .iter()
+        .filter_map(|entry| {
+            let object = entry.as_object()?;
+            let content = object.get("content")?.as_str()?.trim();
+            if content.is_empty() {
+                return None;
+            }
+            let category = object
+                .get("category")
+                .and_then(Value::as_str)
+                .unwrap_or("key_fact");
+            let source_cycle = object
+                .get("source_cycle")
+                .and_then(Value::as_i64)
+                .unwrap_or(0) as i32;
+            let importance = object
+                .get("importance")
+                .and_then(Value::as_u64)
+                .unwrap_or(5)
+                .clamp(1, 10) as u8;
+            Some(crate::memory::SessionMemoryEntry::new(
+                category,
+                content,
+                source_cycle,
+                importance,
+            ))
+        })
+        .collect::<Vec<_>>();
+    session_memory.merge_entries(parsed);
 }

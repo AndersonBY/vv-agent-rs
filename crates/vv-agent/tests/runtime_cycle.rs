@@ -363,6 +363,53 @@ fn runtime_compacts_memory_before_large_follow_up_cycle() {
     );
 }
 
+#[test]
+fn runtime_injects_session_memory_context_after_compaction() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let large_tool_payload = "tool output ".repeat(300);
+    let llm = MemoryCompactionInspectingLlmClient::new(large_tool_payload);
+    let inspector = llm.clone();
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.default_workspace = Some(workspace.path().to_path_buf());
+    runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
+        workspace.path(),
+    ));
+    let mut task = AgentTask::new("session_memory_task", "demo", "system", "inspect memory");
+    task.memory_compact_threshold = 20;
+    task.metadata
+        .insert("model_context_window".to_string(), json!(120));
+    task.metadata
+        .insert("reserved_output_tokens".to_string(), json!(10));
+    task.metadata
+        .insert("autocompact_buffer_tokens".to_string(), json!(0));
+    task.metadata
+        .insert("session_memory_enabled".to_string(), json!(true));
+    task.metadata
+        .insert("session_memory_min_tokens".to_string(), json!(1));
+    task.metadata
+        .insert("session_memory_min_text_messages".to_string(), json!(1));
+    task.metadata.insert(
+        "session_memory_seed".to_string(),
+        json!([
+            {"category":"key_fact","content":"sub-agent findings survive compaction","importance":9,"source_cycle":0}
+        ]),
+    );
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let second_request = inspector.second_request_messages();
+    assert!(
+        second_request
+            .first()
+            .is_some_and(|message| message.content.contains("<Session Memory>")
+                && message
+                    .content
+                    .contains("sub-agent findings survive compaction")),
+        "second request did not include session memory context: {second_request:#?}"
+    );
+}
+
 #[derive(Clone)]
 struct InspectingImageLlmClient {
     responses: Arc<Mutex<VecDeque<LLMResponse>>>,
