@@ -78,3 +78,42 @@ fn top_level_types_are_constructible() {
     let _session_cancellation: Option<SessionCancellationHandle> = None;
     let _ = background_session_manager();
 }
+
+#[test]
+fn constants_module_exports_python_tool_names_and_workspace_tool_list() {
+    use vv_agent::constants;
+
+    assert_eq!(constants::TODO_INCOMPLETE_ERROR_CODE, "todo_incomplete");
+    assert_eq!(constants::ASK_USER_TOOL_NAME, "ask_user");
+    assert_eq!(constants::TASK_FINISH_TOOL_NAME, "task_finish");
+    assert_eq!(constants::READ_FILE_TOOL_NAME, "read_file");
+    assert_eq!(constants::WRITE_FILE_TOOL_NAME, "write_file");
+    assert_eq!(constants::LIST_FILES_TOOL_NAME, "list_files");
+    assert_eq!(constants::FILE_STR_REPLACE_TOOL_NAME, "file_str_replace");
+    assert_eq!(constants::WORKSPACE_GREP_TOOL_NAME, "workspace_grep");
+    assert_eq!(constants::BASH_TOOL_NAME, "bash");
+    assert_eq!(
+        constants::CHECK_BACKGROUND_COMMAND_TOOL_NAME,
+        "check_background_command"
+    );
+    assert_eq!(constants::CREATE_SUB_TASK_TOOL_NAME, "create_sub_task");
+    assert_eq!(constants::SUB_TASK_STATUS_TOOL_NAME, "sub_task_status");
+    assert_eq!(constants::COMPRESS_MEMORY_TOOL_NAME, "compress_memory");
+    assert_eq!(constants::TODO_WRITE_TOOL_NAME, "todo_write");
+    assert_eq!(constants::READ_IMAGE_TOOL_NAME, "read_image");
+    assert_eq!(constants::FILE_INFO_TOOL_NAME, "file_info");
+    assert_eq!(constants::ACTIVATE_SKILL_TOOL_NAME, "activate_skill");
+    assert_eq!(
+        constants::WORKSPACE_TOOLS,
+        [
+            constants::LIST_FILES_TOOL_NAME,
+            constants::FILE_INFO_TOOL_NAME,
+            constants::READ_FILE_TOOL_NAME,
+            constants::WRITE_FILE_TOOL_NAME,
+            constants::FILE_STR_REPLACE_TOOL_NAME,
+            constants::WORKSPACE_GREP_TOOL_NAME,
+            constants::COMPRESS_MEMORY_TOOL_NAME,
+            constants::TODO_WRITE_TOOL_NAME,
+        ]
+    );
+}
