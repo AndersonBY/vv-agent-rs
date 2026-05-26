@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use serde_json::json;
 use vv_agent::build_default_registry;
 
 #[test]
@@ -38,6 +39,12 @@ fn default_tool_schemas_include_reference_quality_descriptions() {
     let todo_write = description(&registry, "todo_write");
     assert!(todo_write.contains("Protocol:"));
     assert!(todo_write.contains("Only one item may have `status=in_progress`"));
+    assert!(todo_write.contains("Missing status defaults to `pending`"));
+    let todo_schema = registry.get_schema("todo_write").expect("todo schema");
+    assert_eq!(
+        todo_schema["function"]["parameters"]["properties"]["todos"]["items"]["required"],
+        json!(["title"])
+    );
 
     let activate_skill = description(&registry, "activate_skill");
     assert!(activate_skill.contains("Agent Skills specification"));

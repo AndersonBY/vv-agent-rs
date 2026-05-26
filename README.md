@@ -221,13 +221,15 @@ The current Rust implementation includes:
   `runtime/shell.py` split. Bash execution and tool-planner runtime hints share
   the same resolver, so configured shells and auto-confirm behavior do not
   diverge.
-- Built-in control tools (`task_finish`, `ask_user`, `todo_write`), core
-  workspace tools (`list_files`, `file_info`, `read_file`, `write_file`,
-  `file_str_replace`, `workspace_grep`, `read_image`), memory notes through
-  `compress_memory`, and `bash` / `check_background_command` command tools with
-  captured output, stdin, metadata-controlled shell selection via `bash_shell`,
-  foreground timeout handoff, background polling, and automatic terminal
-  background-session listener notifications.
+- Built-in control tools (`task_finish`, `ask_user`, `todo_write`), with
+  Python-style TODO validation, generated ids, status/priority defaults, and
+  timestamp preservation; core workspace tools (`list_files`, `file_info`,
+  `read_file`, `write_file`, `file_str_replace`, `workspace_grep`,
+  `read_image`); memory notes through `compress_memory`; and `bash` /
+  `check_background_command` command tools with captured output, stdin,
+  metadata-controlled shell selection via `bash_shell`, foreground timeout
+  handoff, background polling, and automatic terminal background-session
+  listener notifications.
 - Python-compatible workspace path safety: `LocalWorkspaceBackend` rejects
   paths outside the workspace by default, and file/image/grep/bash tools keep
   metadata-controlled outside-path access for trusted tasks.

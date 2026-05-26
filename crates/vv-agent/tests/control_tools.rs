@@ -54,6 +54,119 @@ fn todo_write_updates_shared_state_and_enforces_single_in_progress() {
 }
 
 #[test]
+fn todo_write_rejects_invalid_payloads_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "todo_invalid_payload",
+                "todo_write",
+                BTreeMap::from([("todos".to_string(), json!("not an array"))]),
+            ),
+            &mut context,
+        )
+        .expect("todo_write");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("invalid_todos_payload"));
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "todo_missing_title",
+                "todo_write",
+                BTreeMap::from([("todos".to_string(), json!([{"status": "pending"}]))]),
+            ),
+            &mut context,
+        )
+        .expect("todo_write");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("todo_title_required"));
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "todo_bad_status",
+                "todo_write",
+                BTreeMap::from([(
+                    "todos".to_string(),
+                    json!([{"title": "step", "status": "blocked"}]),
+                )]),
+            ),
+            &mut context,
+        )
+        .expect("todo_write");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("invalid_todo_status"));
+}
+
+#[test]
+fn todo_write_generates_python_style_ids_timestamps_and_preserves_created_at() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "todo_create",
+                "todo_write",
+                BTreeMap::from([("todos".to_string(), json!([{"title": " Draft plan " }]))]),
+            ),
+            &mut context,
+        )
+        .expect("todo_write");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: serde_json::Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["action"], "write");
+    assert_eq!(payload["count"], 1);
+    let item = payload["todos"][0].as_object().expect("todo item");
+    let generated_id = item["id"].as_str().expect("id").to_string();
+    assert_eq!(generated_id.len(), 8);
+    assert_eq!(item["title"], "Draft plan");
+    assert_eq!(item["status"], "pending");
+    assert_eq!(item["priority"], "medium");
+    let created_at = item["created_at"].as_str().expect("created_at").to_string();
+    assert!(!created_at.is_empty());
+    assert!(!item["updated_at"].as_str().expect("updated_at").is_empty());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "todo_update",
+                "todo_write",
+                BTreeMap::from([(
+                    "todos".to_string(),
+                    json!([{
+                        "id": generated_id,
+                        "title": "Draft plan",
+                        "status": "completed",
+                        "priority": "high"
+                    }]),
+                )]),
+            ),
+            &mut context,
+        )
+        .expect("todo_write");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let updated_payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("updated payload");
+    assert_eq!(updated_payload["todos"][0]["created_at"], created_at);
+    assert_eq!(
+        context.shared_state["todo_list"][0]["created_at"],
+        json!(created_at)
+    );
+    assert_eq!(context.shared_state["todo_list"][0]["status"], "completed");
+}
+
+#[test]
 fn task_finish_blocks_when_todos_are_incomplete() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
