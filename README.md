@@ -18,6 +18,7 @@ vv-agent-rs/
       memory/
         artifacts.rs
         manager.rs
+        microcompact.rs
         mod.rs
         session.rs
         summary.rs
@@ -121,6 +122,9 @@ The current Rust implementation includes:
   `<Session Memory>` system context across compaction. The default runtime can
   use the configured `LlmClient` as the extraction callback, so vv-llm-backed
   clients handle session-memory extraction without custom provider adapters.
+- Python-style microcompact support clears old, large, compactable tool results
+  before full summary compaction, preserving recent tool context while reducing
+  prompt pressure during long runs.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
   canonical `schemas`, shared `common` helpers, and focused handler modules.
 - Split `activate_skill` handling into model, parser, normalization, and shared

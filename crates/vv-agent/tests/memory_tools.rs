@@ -3,9 +3,10 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use vv_agent::{
-    build_default_registry, memory::token_utils::compute_compaction_threshold, MemoryManager,
-    MemoryManagerConfig, Message, SessionMemory, SessionMemoryConfig, SessionMemoryEntry, ToolCall,
-    ToolContext, ToolResultStatus,
+    build_default_registry,
+    memory::{token_utils::compute_compaction_threshold, CLEARED_MARKER},
+    MemoryManager, MemoryManagerConfig, Message, SessionMemory, SessionMemoryConfig,
+    SessionMemoryEntry, ToolCall, ToolContext, ToolResultStatus,
 };
 
 #[test]
@@ -155,6 +156,42 @@ fn memory_manager_persists_large_tool_results_as_artifacts() {
     assert!(compacted[1]
         .content
         .contains("retrieval_hint: use read_file on artifact_path if needed"));
+}
+
+#[test]
+fn memory_manager_uses_microcompact_before_full_summary() {
+    let mut manager = MemoryManager::new(MemoryManagerConfig {
+        compact_threshold: 1_000,
+        model_context_window: 4_000,
+        reserved_output_tokens: 0,
+        autocompact_buffer_tokens: 0,
+        microcompact_trigger_ratio: 0.01,
+        microcompact_keep_recent_cycles: 1,
+        microcompact_min_result_length: 200,
+        tool_result_compact_threshold: 2_000,
+        ..MemoryManagerConfig::default()
+    });
+    let messages = vec![
+        Message::system("sys"),
+        Message::user("start"),
+        Message {
+            tool_calls: vec![ToolCall::new("call_old", "read_file", BTreeMap::new())],
+            ..Message::assistant("old tool call")
+        },
+        Message::tool("x".repeat(600), "call_old"),
+        Message::assistant("recent reply"),
+        Message::user("latest ask"),
+    ];
+
+    let (compacted, changed) = manager.compact_for_cycle(&messages, 3, false);
+
+    assert!(changed);
+    assert!(compacted
+        .iter()
+        .any(|message| message.content == CLEARED_MARKER));
+    assert!(compacted
+        .iter()
+        .all(|message| !message.content.contains("<Compressed Agent Memory>")));
 }
 
 #[test]

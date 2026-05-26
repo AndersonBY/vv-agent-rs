@@ -113,7 +113,8 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     ("message_count".to_string(), Value::from(messages.len())),
                 ]),
             );
-            let (prepared_messages, memory_compacted) = memory_manager.compact(&messages, false);
+            let (prepared_messages, memory_compacted) =
+                memory_manager.compact_for_cycle(&messages, cycle_index, false);
             messages = prepared_messages;
             let tool_schemas = self.planned_tool_schemas(&task);
             let hook_manager = self.hook_manager();
@@ -499,6 +500,21 @@ where
             &task.metadata,
             "tool_result_artifact_dir",
             ".memory/tool_results",
+        ),
+        microcompact_trigger_ratio: task
+            .metadata
+            .get("microcompact_trigger_ratio")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.75),
+        microcompact_keep_recent_cycles: read_usize_metadata(
+            &task.metadata,
+            "microcompact_keep_recent_cycles",
+            3,
+        ),
+        microcompact_min_result_length: read_usize_metadata(
+            &task.metadata,
+            "microcompact_min_result_length",
+            500,
         ),
         workspace: workspace.clone(),
         session_memory: build_session_memory(task, workspace, memory_summary_client),

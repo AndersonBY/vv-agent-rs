@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::memory::artifacts::{
     compact_tool_results, render_persisted_artifacts_section, ToolResultArtifactConfig,
 };
+use crate::memory::microcompact::{microcompact, MicrocompactConfig};
 use crate::memory::session::SessionMemory;
 use crate::memory::summary::LocalSummary;
 use crate::memory::token_utils::{compute_compaction_threshold, count_messages_tokens};
@@ -24,6 +25,9 @@ pub struct MemoryManagerConfig {
     pub tool_result_excerpt_head: usize,
     pub tool_result_excerpt_tail: usize,
     pub tool_result_artifact_dir: PathBuf,
+    pub microcompact_trigger_ratio: f64,
+    pub microcompact_keep_recent_cycles: usize,
+    pub microcompact_min_result_length: usize,
     pub workspace: Option<PathBuf>,
     pub session_memory: Option<SessionMemory>,
 }
@@ -43,6 +47,9 @@ impl Default for MemoryManagerConfig {
             tool_result_excerpt_head: 200,
             tool_result_excerpt_tail: 200,
             tool_result_artifact_dir: PathBuf::from(".memory/tool_results"),
+            microcompact_trigger_ratio: 0.75,
+            microcompact_keep_recent_cycles: 3,
+            microcompact_min_result_length: 500,
             workspace: None,
             session_memory: None,
         }
@@ -74,6 +81,15 @@ impl MemoryManager {
     }
 
     pub fn compact(&mut self, messages: &[Message], force: bool) -> (Vec<Message>, bool) {
+        self.compact_for_cycle(messages, 0, force)
+    }
+
+    pub fn compact_for_cycle(
+        &mut self,
+        messages: &[Message],
+        cycle_index: u32,
+        force: bool,
+    ) -> (Vec<Message>, bool) {
         if messages.is_empty() {
             return (Vec::new(), false);
         }
@@ -87,6 +103,12 @@ impl MemoryManager {
                 .any(|(left, right)| left != right);
         let message_length = count_messages_tokens(&sanitized, &self.config.model);
         if !force && message_length <= self.autocompact_threshold() {
+            if self.should_preemptive_microcompact(message_length) {
+                let (microcompacted, cleared) = self.microcompact_messages(&sanitized, cycle_index);
+                if cleared > 0 {
+                    return (microcompacted, true);
+                }
+            }
             return (sanitized, changed_by_sanitize);
         }
         if let Some(session_memory) = self.session_memory.as_mut() {
@@ -109,6 +131,33 @@ impl MemoryManager {
             }
         }
         (compacted, changed)
+    }
+
+    pub fn should_preemptive_microcompact(&self, message_length: u64) -> bool {
+        let threshold = self.microcompact_trigger_threshold();
+        threshold > 0 && message_length > threshold
+    }
+
+    pub fn microcompact_messages(
+        &self,
+        messages: &[Message],
+        cycle_index: u32,
+    ) -> (Vec<Message>, usize) {
+        microcompact(
+            messages,
+            cycle_index,
+            &MicrocompactConfig {
+                trigger_ratio: self.config.microcompact_trigger_ratio,
+                keep_recent_cycles: self.config.microcompact_keep_recent_cycles,
+                min_result_length: self.config.microcompact_min_result_length,
+                compactable_tools: None,
+            },
+        )
+    }
+
+    fn microcompact_trigger_threshold(&self) -> u64 {
+        let ratio = self.config.microcompact_trigger_ratio.clamp(0.0, 1.0);
+        (self.autocompact_threshold() as f64 * ratio).floor() as u64
     }
 
     pub fn session_memory(&self) -> Option<&SessionMemory> {
