@@ -600,6 +600,38 @@ fn runtime_log_events_include_python_style_previews() {
 }
 
 #[test]
+fn runtime_controls_can_inject_messages_before_each_cycle() {
+    let mut finish_args = BTreeMap::new();
+    finish_args.insert("message".to_string(), json!("saw injected message"));
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+        "finish",
+        vec![ToolCall::new("finish_injected", "task_finish", finish_args)],
+    )]);
+    let runtime = AgentRuntime::new(llm);
+
+    let result = runtime
+        .run_with_controls(
+            AgentTask::new("before_cycle_task", "demo", "system", "start"),
+            RuntimeRunControls {
+                before_cycle_messages: Some(Arc::new(|cycle_index, messages, shared_state| {
+                    assert_eq!(cycle_index, 1);
+                    assert_eq!(messages.len(), 2);
+                    assert!(shared_state.contains_key("todo_list"));
+                    vec![Message::user("injected before cycle")]
+                })),
+                ..RuntimeRunControls::default()
+            },
+        )
+        .expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert!(result
+        .messages
+        .iter()
+        .any(|message| message.content == "injected before cycle"));
+}
+
+#[test]
 fn cancellation_token_propagates_to_children_and_runtime() {
     let parent = CancellationToken::default();
     let child = parent.child();

@@ -26,7 +26,7 @@ use crate::memory::{
 use crate::sub_task_manager::SubTaskManager;
 use crate::tools::{build_default_registry, ToolContext, ToolRegistry};
 use crate::types::{
-    AgentResult, AgentStatus, AgentTask, ToolCall, ToolDirective, ToolExecutionResult,
+    AgentResult, AgentStatus, AgentTask, Message, ToolCall, ToolDirective, ToolExecutionResult,
 };
 use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
@@ -46,10 +46,13 @@ pub use tool_planner::patch_dynamic_tool_schema_hints;
 pub type RuntimeLogCallback = dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static;
 pub type RuntimeLogHandler = Arc<Mutex<Box<RuntimeLogCallback>>>;
 pub type RuntimeEventHandler = Arc<dyn Fn(&str, &BTreeMap<String, Value>) + Send + Sync + 'static>;
+pub type BeforeCycleMessageProvider =
+    Arc<dyn Fn(u32, &[Message], &BTreeMap<String, Value>) -> Vec<Message> + Send + Sync + 'static>;
 
 #[derive(Clone, Default)]
 pub struct RuntimeRunControls {
     pub log_handler: Option<RuntimeEventHandler>,
+    pub before_cycle_messages: Option<BeforeCycleMessageProvider>,
     pub steering_queue: Option<Arc<Mutex<VecDeque<String>>>>,
     pub cancellation_token: Option<CancellationToken>,
     pub execution_context: Option<ExecutionContext>,
@@ -214,6 +217,30 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         cycles.clone(),
                         shared_state.clone(),
                     ));
+                }
+                let before_cycle_messages = controls
+                    .before_cycle_messages
+                    .as_ref()
+                    .map(|provider| provider(cycle_index, messages, shared_state))
+                    .unwrap_or_default();
+                if !before_cycle_messages.is_empty() {
+                    let message_count = before_cycle_messages.len();
+                    messages.extend(before_cycle_messages);
+                    self.emit_log(
+                        &controls,
+                        "cycle_injected_messages",
+                        BTreeMap::from([
+                            ("cycle".to_string(), Value::from(cycle_index)),
+                            (
+                                "reason".to_string(),
+                                Value::String("before_cycle_messages".to_string()),
+                            ),
+                            (
+                                "message_count".to_string(),
+                                Value::from(message_count as u64),
+                            ),
+                        ]),
+                    );
                 }
                 let cycle_steering_prompts = drain_steering_queue(&controls);
                 if !cycle_steering_prompts.is_empty() {

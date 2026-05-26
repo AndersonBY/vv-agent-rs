@@ -393,6 +393,7 @@ impl RuntimeSubAgentSession {
                 task,
                 RuntimeRunControls {
                     log_handler: Some(log_handler),
+                    before_cycle_messages: None,
                     steering_queue: Some(self.steering_queue.clone()),
                     cancellation_token: None,
                     execution_context: None,

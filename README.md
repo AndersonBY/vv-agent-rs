@@ -256,6 +256,9 @@ The current Rust implementation includes:
   values support idempotent cancellation, callback registration, parent/child
   propagation, and `RuntimeRunControls` cancellation checks before cycles and
   between tool calls, returning a failed result with a `run_cancelled` event.
+- `RuntimeRunControls` also supports Python-style before-cycle message
+  providers, allowing callers to inject messages at the start of each cycle
+  before compaction and LLM planning.
 - Python-style `ExecutionContext` is available for runtime integrations, with
   cancellation token, stream callback, state store, and metadata fields. Runtime
   cancellation checks now honor tokens supplied through the context as well as

@@ -52,10 +52,10 @@ pub use runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 pub use runtime::stores::redis::RedisStateStore;
 pub use runtime::stores::sqlite::SqliteStateStore;
 pub use runtime::{
-    AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BeforeLlmEvent, BeforeLlmPatch,
-    BeforeMemoryCompactEvent, BeforeToolCallEvent, BeforeToolCallPatch, CancellationToken,
-    ExecutionContext, RuntimeEventHandler, RuntimeHook, RuntimeHookManager, RuntimeRunControls,
-    StreamCallback,
+    AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BeforeCycleMessageProvider, BeforeLlmEvent,
+    BeforeLlmPatch, BeforeMemoryCompactEvent, BeforeToolCallEvent, BeforeToolCallPatch,
+    CancellationToken, ExecutionContext, RuntimeEventHandler, RuntimeHook, RuntimeHookManager,
+    RuntimeRunControls, StreamCallback,
 };
 pub use sdk::{
     create_agent_session, query, run, AgentDefinition, AgentResourceLoader, AgentRun,
