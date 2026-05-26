@@ -34,6 +34,6 @@ pub use sdk::{
 pub use tools::{build_default_registry, ToolContext, ToolHandler, ToolRegistry, ToolSpec};
 pub use types::{
     AgentResult, AgentStatus, AgentTask, CycleRecord, CycleStatus, LLMResponse, Message,
-    MessageRole, NoToolPolicy, TaskTokenUsage, TokenUsage, ToolCall, ToolDirective,
-    ToolExecutionResult, ToolResultStatus,
+    MessageRole, NoToolPolicy, SubTaskOutcome, SubTaskRequest, TaskTokenUsage, TokenUsage,
+    ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus,
 };

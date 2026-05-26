@@ -385,6 +385,16 @@ pub struct SubTaskOutcome {
     pub resolved: BTreeMap<String, String>,
 }
 
+impl SubTaskOutcome {
+    pub fn to_value(&self) -> Value {
+        json_value_from_serializable(self)
+    }
+}
+
+fn json_value_from_serializable<T: Serialize>(value: &T) -> Value {
+    serde_json::to_value(value).unwrap_or(Value::Null)
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentResult {
     pub status: AgentStatus,

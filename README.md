@@ -73,10 +73,13 @@ The current Rust implementation includes:
   `file_str_replace`, `workspace_grep`, `read_image`), memory notes through
   `compress_memory`, and `bash` / `check_background_command` command tools with
   captured output, stdin, foreground timeout handoff, and background polling.
+- Sub-agent tool protocol support for `create_sub_task` / `sub_task_status`,
+  including injected synchronous runners and batch aggregation.
 - SDK client, tool registry, workspace backends, and shared protocol types.
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, and workspace tools.
 
 Deeper parity work against the Python implementation is still pending for hooks,
-full memory compaction, skills activation, sub-agents, session steering,
-distributed backends, and the remaining built-in tools.
+full memory compaction, skills activation, full sub-agent runtime/session
+management, session steering, distributed backends, and the remaining built-in
+tools.

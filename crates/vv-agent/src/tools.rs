@@ -10,10 +10,15 @@ use crate::background_sessions::background_session_manager;
 use crate::processes::{
     read_captured_output, remove_captured_output, start_captured_process, wait_for_child,
 };
-use crate::types::{ToolArguments, ToolCall, ToolDirective, ToolExecutionResult};
+use crate::types::{
+    AgentStatus, SubTaskRequest, ToolArguments, ToolCall, ToolDirective, ToolExecutionResult,
+};
 use crate::workspace::WorkspaceBackend;
 pub type ToolHandler =
     Arc<dyn Fn(&mut ToolContext, &ToolArguments) -> ToolExecutionResult + Send + Sync + 'static>;
+pub type SubTaskRunner = Arc<
+    dyn Fn(crate::types::SubTaskRequest) -> crate::types::SubTaskOutcome + Send + Sync + 'static,
+>;
 
 #[derive(Clone)]
 pub struct ToolContext {
@@ -23,6 +28,7 @@ pub struct ToolContext {
     pub task_id: String,
     pub metadata: BTreeMap<String, Value>,
     pub workspace_backend: Arc<dyn WorkspaceBackend>,
+    pub sub_task_runner: Option<SubTaskRunner>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -34,6 +40,7 @@ impl std::fmt::Debug for ToolContext {
             .field("cycle_index", &self.cycle_index)
             .field("task_id", &self.task_id)
             .field("metadata", &self.metadata)
+            .field("has_sub_task_runner", &self.sub_task_runner.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -48,6 +55,7 @@ impl ToolContext {
             task_id: String::new(),
             metadata: BTreeMap::new(),
             workspace_backend: Arc::new(crate::workspace::LocalWorkspaceBackend::new(workspace)),
+            sub_task_runner: None,
         }
     }
 }
@@ -208,6 +216,12 @@ pub fn build_default_registry() -> ToolRegistry {
     registry
         .register(read_image_tool())
         .expect("default read_image registration");
+    registry
+        .register(create_sub_task_tool())
+        .expect("default create_sub_task registration");
+    registry
+        .register(sub_task_status_tool())
+        .expect("default sub_task_status registration");
     registry
         .register(bash_tool())
         .expect("default bash registration");
@@ -989,6 +1003,237 @@ fn workspace_grep_tool() -> ToolSpec {
                     "max_results": {"type": "integer"}
                 },
                 "required": ["pattern"]
+            }
+        }
+    });
+    spec
+}
+
+fn create_sub_task_tool() -> ToolSpec {
+    let mut spec = ToolSpec::new(
+        "create_sub_task",
+        "Create sub-tasks for a configured sub-agent.",
+        Arc::new(|context, arguments| {
+            let Some(runner) = context.sub_task_runner.clone() else {
+                return tool_error_with_code(
+                    "Sub-agent runtime is not available for this task",
+                    "sub_agents_not_enabled",
+                );
+            };
+
+            let agent_name = arguments
+                .get("agent_id")
+                .or_else(|| arguments.get("agent_name"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if agent_name.is_empty() {
+                return tool_error_with_code("`agent_id` is required", "agent_id_required");
+            }
+
+            let task_description = arguments
+                .get("task_description")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let raw_tasks = arguments.get("tasks").and_then(Value::as_array);
+            if !task_description.is_empty() && raw_tasks.is_some() {
+                return tool_error_with_code(
+                    "`task_description` and `tasks` are mutually exclusive",
+                    "sub_task_payload_conflict",
+                );
+            }
+            if task_description.is_empty() && raw_tasks.is_none() {
+                return tool_error_with_code(
+                    "Provide either `task_description` or `tasks`",
+                    "sub_task_payload_missing",
+                );
+            }
+
+            let include_main_summary = arguments
+                .get("include_main_summary")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let exclude_files_pattern = arguments
+                .get("exclude_files_pattern")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+
+            if !task_description.is_empty() {
+                let request = SubTaskRequest {
+                    agent_name,
+                    task_description,
+                    output_requirements: arguments
+                        .get("output_requirements")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
+                    include_main_summary,
+                    exclude_files_pattern,
+                    metadata: BTreeMap::new(),
+                };
+                let outcome = runner(request);
+                let payload = outcome.to_value();
+                if outcome.status == AgentStatus::Completed {
+                    return tool_result(
+                        crate::types::ToolResultStatus::Success,
+                        payload,
+                        None,
+                        ToolDirective::Continue,
+                    );
+                }
+                let error_code = if outcome.status == AgentStatus::WaitUser {
+                    "sub_task_wait_user"
+                } else {
+                    "sub_task_failed"
+                };
+                return tool_result(
+                    crate::types::ToolResultStatus::Error,
+                    payload,
+                    Some(error_code),
+                    ToolDirective::Continue,
+                );
+            }
+
+            let tasks = raw_tasks.expect("tasks checked");
+            if tasks.is_empty() {
+                return tool_error_with_code(
+                    "`tasks` must be a non-empty array",
+                    "invalid_tasks_payload",
+                );
+            }
+            let mut results = Vec::new();
+            let mut completed = 0usize;
+            let mut failed = 0usize;
+            for (index, item) in tasks.iter().enumerate() {
+                let Some(task_description) = item
+                    .get("task_description")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    failed += 1;
+                    results.push(json!({
+                        "index": index,
+                        "status": "failed",
+                        "error": "`task_description` is required",
+                    }));
+                    continue;
+                };
+                let request = SubTaskRequest {
+                    agent_name: agent_name.clone(),
+                    task_description: task_description.to_string(),
+                    output_requirements: item
+                        .get("output_requirements")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
+                    include_main_summary,
+                    exclude_files_pattern: exclude_files_pattern.clone(),
+                    metadata: BTreeMap::from([(
+                        "batch_index".to_string(),
+                        Value::Number((index as u64).into()),
+                    )]),
+                };
+                let outcome = runner(request);
+                if outcome.status == AgentStatus::Completed {
+                    completed += 1;
+                } else {
+                    failed += 1;
+                }
+                let mut payload = outcome.to_value();
+                payload["index"] = Value::Number((index as u64).into());
+                results.push(payload);
+            }
+
+            let payload = json!({
+                "summary": {
+                    "total": tasks.len(),
+                    "completed": completed,
+                    "failed": failed,
+                },
+                "results": results,
+                "wait_for_completion": true,
+            });
+            if completed == 0 {
+                return tool_result(
+                    crate::types::ToolResultStatus::Error,
+                    payload,
+                    Some("create_sub_task_batch_failed"),
+                    ToolDirective::Continue,
+                );
+            }
+            tool_result(
+                crate::types::ToolResultStatus::Success,
+                payload,
+                None,
+                ToolDirective::Continue,
+            )
+        }),
+    );
+    spec.schema = json!({
+        "type": "function",
+        "function": {
+            "name": "create_sub_task",
+            "description": "Create sub-tasks for a configured sub-agent.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_id": {"type": "string"},
+                    "task_description": {"type": "string"},
+                    "output_requirements": {"type": "string"},
+                    "tasks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "task_description": {"type": "string"},
+                                "output_requirements": {"type": "string"}
+                            },
+                            "required": ["task_description"]
+                        }
+                    },
+                    "include_main_summary": {"type": "boolean"},
+                    "exclude_files_pattern": {"type": "string"},
+                    "wait_for_completion": {"type": "boolean"}
+                },
+                "required": ["agent_id"]
+            }
+        }
+    });
+    spec
+}
+
+fn sub_task_status_tool() -> ToolSpec {
+    let mut spec = ToolSpec::new(
+        "sub_task_status",
+        "Inspect status for background sub-tasks.",
+        Arc::new(|_context, _arguments| {
+            tool_error_with_code(
+                "Sub-task manager is not available for this task",
+                "sub_task_manager_unavailable",
+            )
+        }),
+    );
+    spec.schema = json!({
+        "type": "function",
+        "function": {
+            "name": "sub_task_status",
+            "description": "Inspect status for background sub-tasks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_ids": {"type": "array", "items": {"type": "string"}},
+                    "detail_level": {"type": "string", "enum": ["basic", "snapshot"]},
+                    "message": {"type": "string"},
+                    "workspace_file_limit": {"type": "integer"},
+                    "wait_for_response": {"type": "boolean"}
+                },
+                "required": ["task_ids"]
             }
         }
     });
