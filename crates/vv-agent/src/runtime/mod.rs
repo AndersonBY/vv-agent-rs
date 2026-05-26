@@ -5,6 +5,7 @@ mod tool_planner;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -38,20 +39,83 @@ const MAX_PROMPT_TOO_LONG_RETRIES: u32 = 3;
 pub struct RuntimeRunControls {
     pub log_handler: Option<RuntimeEventHandler>,
     pub steering_queue: Option<Arc<Mutex<VecDeque<String>>>>,
+    pub cancellation_token: Option<CancellationToken>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct CancellationToken {
-    cancelled: bool,
+    inner: Arc<CancellationState>,
+}
+
+#[derive(Default)]
+struct CancellationState {
+    cancelled: AtomicBool,
+    callbacks: Mutex<Vec<Arc<dyn Fn() + Send + Sync + 'static>>>,
+}
+
+impl std::fmt::Debug for CancellationToken {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CancellationToken")
+            .field("cancelled", &self.is_cancelled())
+            .finish()
+    }
 }
 
 impl CancellationToken {
-    pub fn cancel(&mut self) {
-        self.cancelled = true;
+    pub fn cancel(&self) {
+        if self.inner.cancelled.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let callbacks = std::mem::take(
+            &mut *self
+                .inner
+                .callbacks
+                .lock()
+                .expect("cancellation callbacks lock"),
+        );
+        for callback in callbacks {
+            callback();
+        }
     }
 
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled
+        self.inner.cancelled.load(Ordering::SeqCst)
+    }
+
+    pub fn check(&self) -> Result<(), String> {
+        if self.is_cancelled() {
+            Err("Operation was cancelled".to_string())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn on_cancel(&self, callback: impl Fn() + Send + Sync + 'static) {
+        let callback: Arc<dyn Fn() + Send + Sync + 'static> = Arc::new(callback);
+        let call_immediately = {
+            let mut callbacks = self
+                .inner
+                .callbacks
+                .lock()
+                .expect("cancellation callbacks lock");
+            if self.is_cancelled() {
+                true
+            } else {
+                callbacks.push(callback.clone());
+                false
+            }
+        };
+        if call_immediately {
+            callback();
+        }
+    }
+
+    pub fn child(&self) -> Self {
+        let child = Self::default();
+        let child_to_cancel = child.clone();
+        self.on_cancel(move || child_to_cancel.cancel());
+        child
     }
 }
 
@@ -121,7 +185,33 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         let mut memory_manager =
             build_memory_manager(&task, workspace_path.clone(), Some(self.llm_client.clone()));
 
+        if controls_cancelled(&controls) {
+            self.emit_log(
+                &controls,
+                "run_cancelled",
+                BTreeMap::from([(
+                    "error".to_string(),
+                    Value::String("Operation was cancelled".to_string()),
+                )]),
+            );
+            return Ok(cancelled_agent_result(messages, cycles, shared_state));
+        }
+
         for cycle_index in 0..task.max_cycles {
+            if controls_cancelled(&controls) {
+                self.emit_log(
+                    &controls,
+                    "run_cancelled",
+                    BTreeMap::from([
+                        ("cycle".to_string(), Value::from(cycle_index)),
+                        (
+                            "error".to_string(),
+                            Value::String("Operation was cancelled".to_string()),
+                        ),
+                    ]),
+                );
+                return Ok(cancelled_agent_result(messages, cycles, shared_state));
+            }
             let cycle_steering_prompts = drain_steering_queue(&controls);
             if !cycle_steering_prompts.is_empty() {
                 for prompt in &cycle_steering_prompts {
@@ -312,6 +402,22 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
 
             let mut directive_result = None;
             for (call_index, call) in response.tool_calls.iter().enumerate() {
+                if controls_cancelled(&controls) {
+                    shared_state = context.shared_state.clone();
+                    cycles.push(cycle);
+                    self.emit_log(
+                        &controls,
+                        "run_cancelled",
+                        BTreeMap::from([
+                            ("cycle".to_string(), Value::from(cycle_index)),
+                            (
+                                "error".to_string(),
+                                Value::String("Operation was cancelled".to_string()),
+                            ),
+                        ]),
+                    );
+                    return Ok(cancelled_agent_result(messages, cycles, shared_state));
+                }
                 let (patched_call, short_circuit_result) =
                     hook_manager.apply_before_tool_call(&task, cycle_index, call.clone(), &context);
                 let mut result = match short_circuit_result {
@@ -625,6 +731,30 @@ fn drain_steering_queue(controls: &RuntimeRunControls) -> Vec<String> {
         return Vec::new();
     };
     queue.drain(..).collect()
+}
+
+fn controls_cancelled(controls: &RuntimeRunControls) -> bool {
+    controls
+        .cancellation_token
+        .as_ref()
+        .is_some_and(CancellationToken::is_cancelled)
+}
+
+fn cancelled_agent_result(
+    messages: Vec<crate::types::Message>,
+    cycles: Vec<crate::types::CycleRecord>,
+    shared_state: BTreeMap<String, Value>,
+) -> AgentResult {
+    AgentResult {
+        status: AgentStatus::Failed,
+        messages,
+        cycles,
+        final_answer: None,
+        wait_reason: None,
+        error: Some("Operation was cancelled".to_string()),
+        shared_state,
+        token_usage: crate::types::TaskTokenUsage::default(),
+    }
 }
 
 fn is_prompt_too_long_error(error: &LlmError) -> bool {

@@ -3,10 +3,10 @@ use std::collections::BTreeMap;
 use vv_agent::{
     background_session_manager, build_default_registry, load_llm_settings_from_file,
     resolve_model_endpoint, AgentDefinition, AgentRuntime, AgentSDKClient, AgentSDKOptions,
-    AgentStatus, AgentTask, BackgroundSessionListener, ConfigError, EndpointConfig, EndpointOption,
-    FileInfo, LLMResponse, LocalWorkspaceBackend, MemoryWorkspaceBackend, Message,
-    ResolvedModelConfig, S3WorkspaceBackend, ScriptedLlmClient, ToolCall, ToolExecutionResult,
-    ToolRegistry, WorkspaceBackend,
+    AgentStatus, AgentTask, BackgroundSessionListener, CancellationToken, ConfigError,
+    EndpointConfig, EndpointOption, FileInfo, LLMResponse, LocalWorkspaceBackend,
+    MemoryWorkspaceBackend, Message, ResolvedModelConfig, RuntimeRunControls, S3WorkspaceBackend,
+    ScriptedLlmClient, ToolCall, ToolExecutionResult, ToolRegistry, WorkspaceBackend,
 };
 
 #[test]
@@ -20,6 +20,8 @@ fn top_level_types_are_constructible() {
     let _definition = AgentDefinition::default_for_model("mini");
     let _task = AgentTask::new("task_1", "mini", "system", "user");
     let _runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new("done")]));
+    let _token = CancellationToken::default();
+    let _controls = RuntimeRunControls::default();
     let _options = AgentSDKOptions::default();
     let _client = AgentSDKClient::new(_options);
     let _config_error = ConfigError::MissingSettingsFile("missing".to_string());

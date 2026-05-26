@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use vv_agent::{
     memory::CLEARED_MARKER, AgentRuntime, AgentStatus, AgentTask, BeforeLlmPatch,
-    BeforeToolCallPatch, LLMResponse, LlmClient, LlmError, LlmRequest, Message, RuntimeHook,
-    ScriptedLlmClient, SubAgentConfig, ToolCall, ToolDirective, ToolExecutionResult,
+    BeforeToolCallPatch, CancellationToken, LLMResponse, LlmClient, LlmError, LlmRequest, Message,
+    RuntimeHook, RuntimeRunControls, ScriptedLlmClient, SubAgentConfig, ToolCall, ToolDirective,
+    ToolExecutionResult,
 };
 
 const PNG_1X1: &[u8] = &[
@@ -350,6 +351,85 @@ fn runtime_emits_reference_lifecycle_log_events() {
     assert_eq!(events[3].1["tool_call_id"], "log_finish");
     assert_eq!(events[3].1["directive"], "finish");
     assert_eq!(events[4].1["final_answer"], "logged finish");
+}
+
+#[test]
+fn cancellation_token_propagates_to_children_and_runtime() {
+    let parent = CancellationToken::default();
+    let child = parent.child();
+    assert!(!parent.is_cancelled());
+    assert!(!child.is_cancelled());
+
+    parent.cancel();
+
+    assert!(parent.is_cancelled());
+    assert!(child.is_cancelled());
+
+    let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new(
+        "should not be used",
+    )]));
+    let result = runtime
+        .run_with_controls(
+            AgentTask::new("cancel_task", "demo", "system", "start"),
+            RuntimeRunControls {
+                cancellation_token: Some(parent),
+                ..RuntimeRunControls::default()
+            },
+        )
+        .expect("cancelled result");
+
+    assert_eq!(result.status, AgentStatus::Failed);
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("cancelled"));
+    assert!(result.cycles.is_empty());
+}
+
+#[test]
+fn cancellation_token_callbacks_match_python_semantics() {
+    let token = CancellationToken::default();
+    assert!(token.check().is_ok());
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let callback_calls = Arc::clone(&calls);
+    token.on_cancel(move || {
+        callback_calls
+            .lock()
+            .expect("callback calls lock")
+            .push("first");
+    });
+    assert!(calls.lock().expect("callback calls lock").is_empty());
+
+    token.cancel();
+    token.cancel();
+
+    assert_eq!(*calls.lock().expect("callback calls lock"), vec!["first"]);
+    assert!(token.check().is_err());
+
+    let immediate_calls = Arc::new(Mutex::new(Vec::new()));
+    let callback_calls = Arc::clone(&immediate_calls);
+    token.on_cancel(move || {
+        callback_calls
+            .lock()
+            .expect("immediate callback calls lock")
+            .push("immediate");
+    });
+    assert_eq!(
+        *immediate_calls
+            .lock()
+            .expect("immediate callback calls lock"),
+        vec!["immediate"]
+    );
+
+    let parent = CancellationToken::default();
+    let child = parent.child();
+    let grandchild = child.child();
+    child.cancel();
+    assert!(child.is_cancelled());
+    assert!(grandchild.is_cancelled());
+    assert!(!parent.is_cancelled());
 }
 
 #[test]

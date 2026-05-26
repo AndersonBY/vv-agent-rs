@@ -39,8 +39,8 @@ pub use memory::{
 };
 pub use runtime::{
     AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BeforeLlmEvent, BeforeLlmPatch,
-    BeforeToolCallEvent, BeforeToolCallPatch, RuntimeEventHandler, RuntimeHook, RuntimeHookManager,
-    RuntimeRunControls,
+    BeforeToolCallEvent, BeforeToolCallPatch, CancellationToken, RuntimeEventHandler, RuntimeHook,
+    RuntimeHookManager, RuntimeRunControls,
 };
 pub use sdk::{
     create_agent_session, query, run, AgentDefinition, AgentResourceLoader, AgentRun,
