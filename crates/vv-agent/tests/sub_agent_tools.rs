@@ -1,13 +1,17 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex, MutexGuard, OnceLock,
+};
 use std::thread;
 use std::time::Duration;
 
 use serde_json::{json, Value};
 use vv_agent::{
     build_default_registry, register_sub_agent_session, sub_agent_session_registry,
-    unregister_sub_agent_session, AgentStatus, SubAgentSession, SubAgentSessionListener,
-    SubTaskManager, SubTaskOutcome, ToolCall, ToolContext, ToolResultStatus,
+    unregister_sub_agent_session, AgentStatus, RuntimeExecutionBackend, SubAgentSession,
+    SubAgentSessionListener, SubTaskManager, SubTaskOutcome, ThreadBackend, ToolCall, ToolContext,
+    ToolResultStatus,
 };
 
 struct SubAgentRegistryTestLock {
@@ -135,6 +139,63 @@ fn create_sub_task_batch_aggregates_results() {
     assert_eq!(
         payload["results"][1]["final_answer"],
         "done: Write section B"
+    );
+}
+
+#[test]
+fn create_sub_task_batch_uses_execution_backend_parallel_map() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.execution_backend = Some(RuntimeExecutionBackend::Thread(ThreadBackend::new(2)));
+
+    let current_concurrent = Arc::new(AtomicUsize::new(0));
+    let max_concurrent = Arc::new(AtomicUsize::new(0));
+    let observed_max = Arc::clone(&max_concurrent);
+    context.sub_task_runner = Some(Arc::new(move |request| {
+        let active = current_concurrent.fetch_add(1, Ordering::SeqCst) + 1;
+        max_concurrent.fetch_max(active, Ordering::SeqCst);
+        thread::sleep(Duration::from_millis(80));
+        current_concurrent.fetch_sub(1, Ordering::SeqCst);
+        SubTaskOutcome {
+            task_id: format!("sub_{}", request.task_description.replace(' ', "_")),
+            agent_name: request.agent_name,
+            status: AgentStatus::Completed,
+            session_id: None,
+            final_answer: Some(format!("done: {}", request.task_description)),
+            wait_reason: None,
+            error: None,
+            cycles: 1,
+            todo_list: Vec::new(),
+            resolved: BTreeMap::new(),
+        }
+    }));
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_batch_parallel",
+                "create_sub_task",
+                BTreeMap::from([
+                    ("agent_id".to_string(), json!("writer-sub")),
+                    (
+                        "tasks".to_string(),
+                        json!([
+                            {"task_description": "Write section A"},
+                            {"task_description": "Write section B"},
+                            {"task_description": "Write section C"}
+                        ]),
+                    ),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("create_sub_task");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert!(
+        observed_max.load(Ordering::SeqCst) >= 2,
+        "expected batch sub-tasks to run through execution_backend.parallel_map"
     );
 }
 

@@ -128,6 +128,19 @@ impl RuntimeExecutionBackend {
             ),
         }
     }
+
+    pub fn parallel_map<T, R, F>(&self, function: F, items: Vec<T>) -> Vec<R>
+    where
+        T: Send + 'static,
+        R: Send + 'static,
+        F: Fn(T) -> R + Send + Sync + 'static,
+    {
+        match self {
+            Self::Inline(backend) => backend.parallel_map(function, items),
+            Self::Thread(backend) => backend.parallel_map(function, items),
+            Self::Celery(backend) => backend.parallel_map(function, items),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

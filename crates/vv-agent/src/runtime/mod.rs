@@ -462,6 +462,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     workspace_backend: self.workspace_backend.clone(),
                     sub_task_runner,
                     sub_task_manager: Some(sub_task_manager.clone()),
+                    execution_backend: Some(self.execution_backend.clone()),
                 };
 
                 let mut directive_result = None;

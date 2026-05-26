@@ -23,6 +23,7 @@ pub struct ToolContext {
     pub workspace_backend: Arc<dyn WorkspaceBackend>,
     pub sub_task_runner: Option<SubTaskRunner>,
     pub sub_task_manager: Option<crate::sub_task_manager::SubTaskManager>,
+    pub execution_backend: Option<crate::runtime::backends::RuntimeExecutionBackend>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -36,6 +37,7 @@ impl std::fmt::Debug for ToolContext {
             .field("metadata", &self.metadata)
             .field("has_sub_task_runner", &self.sub_task_runner.is_some())
             .field("has_sub_task_manager", &self.sub_task_manager.is_some())
+            .field("has_execution_backend", &self.execution_backend.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -52,6 +54,7 @@ impl ToolContext {
             workspace_backend: Arc::new(crate::workspace::LocalWorkspaceBackend::new(workspace)),
             sub_task_runner: None,
             sub_task_manager: None,
+            execution_backend: None,
         }
     }
 

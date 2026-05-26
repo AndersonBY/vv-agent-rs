@@ -239,9 +239,8 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                     ToolDirective::Continue,
                 );
             }
-            let mut results = Vec::new();
-            let mut completed = 0usize;
-            let mut failed = 0usize;
+            let mut prepared_requests = Vec::new();
+            let mut invalid_results = BTreeMap::new();
             for (index, item) in tasks.iter().enumerate() {
                 let Some(task_description) = item
                     .get("task_description")
@@ -249,12 +248,14 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                 else {
-                    failed += 1;
-                    results.push(json!({
-                        "index": index,
-                        "status": "failed",
-                        "error": "`task_description` is required",
-                    }));
+                    invalid_results.insert(
+                        index,
+                        json!({
+                            "index": index,
+                            "status": "failed",
+                            "error": "`task_description` is required",
+                        }),
+                    );
                     continue;
                 };
                 let request = SubTaskRequest {
@@ -273,7 +274,34 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                         Value::Number((index as u64).into()),
                     )]),
                 };
-                let outcome = runner(request);
+                prepared_requests.push((index, request));
+            }
+
+            let outcomes = if let Some(backend) = context.execution_backend.clone() {
+                let runner = runner.clone();
+                backend.parallel_map(
+                    move |(index, request)| (index, runner(request)),
+                    prepared_requests,
+                )
+            } else {
+                prepared_requests
+                    .into_iter()
+                    .map(|(index, request)| (index, runner(request)))
+                    .collect()
+            };
+            let outcome_map: BTreeMap<_, _> = outcomes.into_iter().collect();
+            let mut results = Vec::new();
+            let mut completed = 0usize;
+            let mut failed = 0usize;
+            for index in 0..tasks.len() {
+                if let Some(payload) = invalid_results.remove(&index) {
+                    failed += 1;
+                    results.push(payload);
+                    continue;
+                }
+                let outcome = outcome_map
+                    .get(&index)
+                    .expect("valid sub-task request should have an outcome");
                 if outcome.status == AgentStatus::Completed {
                     completed += 1;
                 } else {
