@@ -204,7 +204,9 @@ The current Rust implementation includes:
   polling. A Python-style active sub-agent session registry exposes
   `get_sub_agent_session`, `subscribe_sub_agent_session`, and
   `steer_sub_agent_session`, and `sub_task_status(message=...)` can queue
-  steering messages for registered running sessions.
+  steering messages for registered running sessions or continue completed
+  registered sessions, including Python-style `wait_for_response` coercion and
+  max-cycle continuation rejection.
 - Python-style `activate_skill` behavior for allowed skills: inline skill
   entries and `SKILL.md` locations load instructions, update `active_skills`,
   and record activation history.
@@ -241,7 +243,7 @@ The current Rust implementation includes:
   integration, runtime tool cycles, schema parity, and workspace tools.
 
 Deeper parity work against the Python implementation is still pending for full
-sub-agent session continuation/automatic registration, distributed backends,
+sub-agent automatic registration/event snapshot parity, distributed backends,
 and the remaining built-in tools. The migration target is to copy Python
 `v-agent` behavior as completely as possible, not merely provide a minimal Rust
 wrapper.

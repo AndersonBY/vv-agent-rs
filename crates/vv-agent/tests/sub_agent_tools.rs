@@ -334,6 +334,115 @@ fn sub_task_status_can_steer_registered_running_session() {
     assert_eq!(payload["interaction"]["action"], "message_queued");
 }
 
+#[test]
+fn sub_task_status_can_continue_completed_registered_session() {
+    sub_agent_session_registry().clear();
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let manager = SubTaskManager::default();
+    let mut context = ToolContext::new(workspace.path());
+    context.sub_task_manager = Some(manager.clone());
+    let continued = Arc::new(Mutex::new(Vec::<String>::new()));
+    register_sub_agent_session(
+        "sub-session-continued",
+        Arc::new(ContinuingSubAgentSession {
+            continued: Arc::clone(&continued),
+        }),
+    );
+    manager.record_outcome(
+        "sub-task-completed",
+        SubTaskOutcome {
+            task_id: "sub-task-completed".to_string(),
+            agent_name: "researcher".to_string(),
+            status: AgentStatus::Completed,
+            session_id: Some("sub-session-continued".to_string()),
+            final_answer: Some("initial done".to_string()),
+            wait_reason: None,
+            error: None,
+            cycles: 1,
+            todo_list: Vec::new(),
+            resolved: BTreeMap::new(),
+        },
+    );
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_status_continue",
+                "sub_task_status",
+                BTreeMap::from([
+                    ("task_ids".to_string(), json!(["sub-task-completed"])),
+                    ("message".to_string(), json!("add appendix")),
+                    ("wait_for_response".to_string(), json!("yes")),
+                    ("detail_level".to_string(), json!("snapshot")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("sub_task_status continue");
+
+    unregister_sub_agent_session("sub-session-continued");
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(
+        continued.lock().expect("continued").as_slice(),
+        ["add appendix"]
+    );
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["interaction"]["task_id"], "sub-task-completed");
+    assert_eq!(payload["interaction"]["action"], "continued");
+    assert_eq!(payload["tasks"][0]["status"], "completed");
+    assert_eq!(payload["tasks"][0]["final_answer"], "continued done");
+    assert_eq!(
+        payload["tasks"][0]["snapshot"]["recent_activity"],
+        "continued done"
+    );
+}
+
+#[test]
+fn sub_task_status_rejects_max_cycles_continuation() {
+    sub_agent_session_registry().clear();
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let manager = SubTaskManager::default();
+    let mut context = ToolContext::new(workspace.path());
+    context.sub_task_manager = Some(manager.clone());
+    manager.record_outcome(
+        "sub-task-max-cycles",
+        SubTaskOutcome {
+            task_id: "sub-task-max-cycles".to_string(),
+            agent_name: "researcher".to_string(),
+            status: AgentStatus::MaxCycles,
+            session_id: Some("sub-session-max-cycles".to_string()),
+            final_answer: None,
+            wait_reason: None,
+            error: Some("max cycles".to_string()),
+            cycles: 8,
+            todo_list: Vec::new(),
+            resolved: BTreeMap::new(),
+        },
+    );
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_status_max_cycles",
+                "sub_task_status",
+                BTreeMap::from([
+                    ("task_ids".to_string(), json!(["sub-task-max-cycles"])),
+                    ("message".to_string(), json!("try again")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("sub_task_status max cycles");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("sub_task_max_cycles_reached")
+    );
+}
+
 struct RecordingSubAgentSession {
     received: Arc<Mutex<Vec<String>>>,
 }
@@ -345,5 +454,35 @@ impl SubAgentSession for RecordingSubAgentSession {
             .expect("received")
             .push(prompt.to_string());
         Ok(())
+    }
+}
+
+struct ContinuingSubAgentSession {
+    continued: Arc<Mutex<Vec<String>>>,
+}
+
+impl SubAgentSession for ContinuingSubAgentSession {
+    fn steer(&self, prompt: &str) -> Result<(), String> {
+        self.continue_run(prompt).map(|_| ())
+    }
+
+    fn continue_run(&self, prompt: &str) -> Result<SubTaskOutcome, String> {
+        self.continued
+            .lock()
+            .expect("continued")
+            .push(prompt.to_string());
+        thread::sleep(Duration::from_millis(25));
+        Ok(SubTaskOutcome {
+            task_id: "sub-task-completed".to_string(),
+            agent_name: "researcher".to_string(),
+            status: AgentStatus::Completed,
+            session_id: Some("sub-session-continued".to_string()),
+            final_answer: Some("continued done".to_string()),
+            wait_reason: None,
+            error: None,
+            cycles: 2,
+            todo_list: Vec::new(),
+            resolved: BTreeMap::new(),
+        })
     }
 }

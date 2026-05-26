@@ -3,12 +3,18 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
 
+use crate::types::SubTaskOutcome;
+
 pub type SubAgentSessionListener =
     Arc<dyn Fn(&str, &BTreeMap<String, Value>) + Send + Sync + 'static>;
 pub type SubAgentSessionUnsubscribe = Box<dyn FnOnce() + Send + 'static>;
 
 pub trait SubAgentSession: Send + Sync {
     fn steer(&self, prompt: &str) -> Result<(), String>;
+
+    fn continue_run(&self, _prompt: &str) -> Result<SubTaskOutcome, String> {
+        Err("Sub-agent session continuation is not supported.".to_string())
+    }
 
     fn subscribe(&self, _listener: SubAgentSessionListener) -> Option<SubAgentSessionUnsubscribe> {
         None
@@ -95,6 +101,24 @@ pub fn steer_sub_agent_session(session_id: &str, prompt: &str) -> bool {
         return false;
     };
     session.steer(prompt).is_ok()
+}
+
+pub fn continue_sub_agent_session(
+    session_id: &str,
+    prompt: &str,
+) -> Result<SubTaskOutcome, String> {
+    let session_id = session_id.trim();
+    let prompt = prompt.trim();
+    if session_id.is_empty() {
+        return Err("Sub-agent session id cannot be empty.".to_string());
+    }
+    if prompt.is_empty() {
+        return Err("Follow-up prompt cannot be empty.".to_string());
+    }
+    let Some(session) = get_sub_agent_session(session_id) else {
+        return Err(format!("Sub-agent session {session_id} is not registered."));
+    };
+    session.continue_run(prompt)
 }
 
 pub fn subscribe_sub_agent_session(

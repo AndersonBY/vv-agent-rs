@@ -2,10 +2,11 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
+use crate::sub_agent_sessions::{continue_sub_agent_session, get_sub_agent_session};
 use crate::types::{AgentStatus, SubTaskOutcome};
 
 static SUB_TASK_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -109,6 +110,86 @@ impl SubTaskManager {
         }
     }
 
+    pub fn continue_task(&self, task_id: &str, prompt: &str) -> Result<(), String> {
+        let prompt = prompt.trim();
+        if prompt.is_empty() {
+            return Err("Follow-up prompt cannot be empty.".to_string());
+        }
+
+        let task_id = task_id.trim();
+        let (session_id, agent_name) = {
+            let mut tasks = self.tasks.lock().expect("sub-task manager poisoned");
+            let Some(record) = tasks.get_mut(task_id) else {
+                return Err(format!("Sub-task {task_id} not found."));
+            };
+            if record.is_running() {
+                return Err(format!("Sub-task {task_id} is already running."));
+            }
+            if record
+                .outcome
+                .as_ref()
+                .is_some_and(|outcome| outcome.status == AgentStatus::MaxCycles)
+            {
+                return Err(format!(
+                    "Sub-task {task_id} reached max cycles and cannot continue."
+                ));
+            }
+            if record.session_id.trim().is_empty() {
+                return Err(format!("Sub-task {task_id} session is not available."));
+            }
+            if get_sub_agent_session(&record.session_id).is_none() {
+                return Err(format!(
+                    "Sub-task {task_id} session {} is not registered.",
+                    record.session_id
+                ));
+            }
+
+            record.task_title = prompt.to_string();
+            record.outcome = None;
+            record.updated_at = now_millis();
+            (record.session_id.clone(), record.agent_name.clone())
+        };
+
+        let tasks = self.tasks.clone();
+        let task_id_for_thread = task_id.to_string();
+        let prompt_for_thread = prompt.to_string();
+        let session_id_for_thread = session_id.clone();
+        let agent_name_for_thread = agent_name.clone();
+        let handle = thread::spawn(move || {
+            let outcome = continue_sub_agent_session(&session_id_for_thread, &prompt_for_thread)
+                .unwrap_or_else(|error| SubTaskOutcome {
+                    task_id: task_id_for_thread.clone(),
+                    agent_name: agent_name_for_thread,
+                    status: AgentStatus::Failed,
+                    session_id: Some(session_id_for_thread),
+                    final_answer: None,
+                    wait_reason: None,
+                    error: Some(error),
+                    cycles: 0,
+                    todo_list: Vec::new(),
+                    resolved: BTreeMap::new(),
+                });
+            let mut tasks = tasks.lock().expect("sub-task manager poisoned");
+            if let Some(record) = tasks.get_mut(&task_id_for_thread) {
+                record.session_id = outcome
+                    .session_id
+                    .clone()
+                    .unwrap_or_else(|| record.session_id.clone());
+                record.agent_name = outcome.agent_name.clone();
+                record.outcome = Some(outcome);
+                record.updated_at = now_millis();
+                record.handle = None;
+            }
+        });
+
+        let mut tasks = self.tasks.lock().expect("sub-task manager poisoned");
+        if let Some(record) = tasks.get_mut(task_id) {
+            record.handle = Some(handle);
+            record.updated_at = now_millis();
+        }
+        Ok(())
+    }
+
     pub fn status_entries(
         &self,
         task_ids: &[String],
@@ -163,6 +244,35 @@ impl SubTaskManager {
             .expect("sub-task manager poisoned")
             .get(task_id)
             .is_some_and(ManagedSubTask::is_running)
+    }
+
+    pub fn wait(&self, task_id: &str, timeout: Option<Duration>) -> bool {
+        let deadline = timeout.map(|duration| Instant::now() + duration);
+        loop {
+            let handle = {
+                let mut tasks = self.tasks.lock().expect("sub-task manager poisoned");
+                let Some(record) = tasks.get_mut(task_id) else {
+                    return false;
+                };
+                match record.handle.as_ref() {
+                    Some(handle) if timeout.is_none() || handle.is_finished() => {
+                        record.handle.take()
+                    }
+                    Some(_) => None,
+                    None => return true,
+                }
+            };
+
+            if let Some(handle) = handle {
+                let _ = handle.join();
+                return true;
+            }
+
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn join_finished_tasks(&self) {

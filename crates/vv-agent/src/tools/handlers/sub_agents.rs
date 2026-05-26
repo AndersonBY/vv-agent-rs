@@ -7,6 +7,23 @@ use crate::tools::base::ToolSpec;
 use crate::tools::common::{tool_error_with_code, tool_result};
 use crate::types::{AgentStatus, SubTaskRequest, ToolDirective, ToolResultStatus};
 
+fn coerce_bool(value: Option<&Value>, default: bool) -> bool {
+    match value {
+        Some(Value::Bool(value)) => *value,
+        Some(Value::Number(value)) => match value.as_i64() {
+            Some(0) => false,
+            Some(1) => true,
+            _ => default,
+        },
+        Some(Value::String(value)) => match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => default,
+        },
+        _ => default,
+    }
+}
+
 pub(crate) fn create_sub_task_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
         "create_sub_task",
@@ -360,6 +377,7 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_string);
+            let wait_for_response = coerce_bool(arguments.get("wait_for_response"), false);
             let mut interaction = None;
             if let Some(message) = message {
                 let target_id = task_ids[0].clone();
@@ -385,10 +403,23 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
                         "previous_status": previous_status,
                     }));
                 } else {
-                    return tool_error_with_code(
-                        format!("Sub-task {target_id} is not running and cannot be steered yet."),
-                        "sub_task_continue_not_supported",
-                    );
+                    if previous_status == "max_cycles" {
+                        return tool_error_with_code(
+                            format!("Sub-task {target_id} reached max cycles and cannot continue."),
+                            "sub_task_max_cycles_reached",
+                        );
+                    }
+                    if let Err(error) = manager.continue_task(&target_id, &message) {
+                        return tool_error_with_code(error, "sub_task_continue_failed");
+                    }
+                    interaction = Some(json!({
+                        "task_id": target_id,
+                        "action": "continued",
+                        "previous_status": previous_status,
+                    }));
+                }
+                if wait_for_response {
+                    manager.wait(&target_id, None);
                 }
             }
             let tasks =
