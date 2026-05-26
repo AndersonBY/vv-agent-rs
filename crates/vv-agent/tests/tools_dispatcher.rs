@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 use vv_agent::tools::{build_default_registry, dispatch_tool_call, ToolContext, ToolSpec};
-use vv_agent::{ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus};
+use vv_agent::{ToolCall, ToolDirective, ToolExecutionResult, ToolRegistry, ToolResultStatus};
 
 #[test]
 fn dispatcher_returns_structured_errors_for_invalid_arguments_and_unknown_tools() {
@@ -78,4 +78,59 @@ fn dispatcher_normalizes_tool_call_id_and_wait_response_status_like_python() {
     assert_eq!(result.tool_call_id, "ask");
     assert_eq!(result.directive, ToolDirective::WaitUser);
     assert_eq!(result.status, ToolResultStatus::WaitResponse);
+}
+
+#[test]
+fn register_tool_with_parameters_creates_schema_and_handler_like_python() {
+    let mut registry = ToolRegistry::new();
+    registry
+        .register_tool_with_parameters(
+            "_echo",
+            "Echo arguments back.",
+            json!({
+                "type": "object",
+                "properties": {"msg": {"type": "string"}},
+                "required": ["msg"],
+            }),
+            Arc::new(|_context, arguments| {
+                ToolExecutionResult::success("", json!(arguments).to_string())
+            }),
+        )
+        .expect("register tool");
+
+    assert!(registry.has_tool("_echo"));
+    assert!(registry.has_schema("_echo"));
+    let schema = registry.get_schema("_echo").expect("schema");
+    assert_eq!(schema["function"]["name"], "_echo");
+    assert_eq!(schema["function"]["description"], "Echo arguments back.");
+    assert_eq!(schema["function"]["parameters"]["required"], json!(["msg"]));
+
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut context = ToolContext::new(workspace.path());
+    let result = registry
+        .execute(
+            &ToolCall::from_raw_arguments("_call", "_echo", json!({"msg": "hi"})),
+            &mut context,
+        )
+        .expect("execute");
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert!(result.content.contains("\"msg\":\"hi\""));
+}
+
+#[test]
+fn register_tool_keeps_python_default_empty_object_schema() {
+    let mut registry = ToolRegistry::new();
+    registry
+        .register_tool(
+            "_noop",
+            "No-op tool.",
+            Arc::new(|_context, _arguments| ToolExecutionResult::success("", "{}")),
+        )
+        .expect("register tool");
+
+    let schema = registry.get_schema("_noop").expect("schema");
+    assert_eq!(
+        schema["function"]["parameters"],
+        json!({"type": "object", "properties": {}, "required": []})
+    );
 }

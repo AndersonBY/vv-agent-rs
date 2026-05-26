@@ -197,7 +197,9 @@ The current Rust implementation includes:
   templates, available skills rendering, and prompt-cache break tracking.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
   dispatcher, canonical `schemas/` domain modules, shared `common` helpers, and
-  focused handler modules.
+  focused handler modules. `ToolRegistry` supports Python-style custom tool
+  registration with default empty parameters or explicit JSON Schema
+  parameters.
 - Python-style tool dispatch normalizes raw LLM tool arguments into structured
   error tool results, fills missing / pending tool call ids, maps wait-user
   directives to `WAIT_RESPONSE`, and returns `tool_not_found` without dropping

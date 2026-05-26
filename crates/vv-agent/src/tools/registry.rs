@@ -151,7 +151,32 @@ impl ToolRegistry {
         description: impl Into<String>,
         handler: ToolHandler,
     ) -> Result<(), String> {
-        let spec = ToolSpec::new(name, description, handler);
+        self.register_tool_with_parameters(
+            name,
+            description,
+            serde_json::json!({"type": "object", "properties": {}, "required": []}),
+            handler,
+        )
+    }
+
+    pub fn register_tool_with_parameters(
+        &mut self,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: Value,
+        handler: ToolHandler,
+    ) -> Result<(), String> {
+        let name = name.into();
+        let description = description.into();
+        let mut spec = ToolSpec::new(name.clone(), description.clone(), handler);
+        spec.schema = serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": parameters,
+                }
+        });
         self.register(spec)
     }
 
