@@ -1,6 +1,7 @@
 pub mod backends;
 pub mod cancellation;
 pub mod context;
+mod cycle_runner;
 pub mod hooks;
 mod results;
 pub mod shell;
@@ -32,6 +33,7 @@ use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 use self::backends::RuntimeExecutionBackend;
 pub use cancellation::CancellationToken;
 pub use context::{ExecutionContext, StreamCallback};
+use cycle_runner::{is_prompt_too_long_error, MAX_PROMPT_TOO_LONG_RETRIES};
 pub use hooks::{
     AfterLlmEvent, AfterToolCallEvent, BeforeLlmEvent, BeforeLlmPatch, BeforeToolCallEvent,
     BeforeToolCallPatch, RuntimeHook, RuntimeHookManager,
@@ -44,7 +46,6 @@ pub use tool_planner::patch_dynamic_tool_schema_hints;
 pub type RuntimeLogCallback = dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static;
 pub type RuntimeLogHandler = Arc<Mutex<Box<RuntimeLogCallback>>>;
 pub type RuntimeEventHandler = Arc<dyn Fn(&str, &BTreeMap<String, Value>) + Send + Sync + 'static>;
-const MAX_PROMPT_TOO_LONG_RETRIES: u32 = 3;
 
 #[derive(Clone, Default)]
 pub struct RuntimeRunControls {
@@ -809,20 +810,6 @@ fn failed_agent_result(
         shared_state,
         token_usage,
     }
-}
-
-fn is_prompt_too_long_error(error: &LlmError) -> bool {
-    let text = error.to_string().to_ascii_lowercase();
-    [
-        "prompt is too long",
-        "prompt_too_long",
-        "context_length_exceeded",
-        "maximum context length",
-        "request too large",
-        "too many tokens",
-    ]
-    .iter()
-    .any(|pattern| text.contains(pattern))
 }
 
 fn build_initial_messages(task: &AgentTask) -> Vec<crate::types::Message> {

@@ -79,6 +79,7 @@ fn tools_module_is_split_into_handler_files() {
         "tools/handlers/background.rs",
         "runtime/mod.rs",
         "runtime/cancellation.rs",
+        "runtime/cycle_runner.rs",
         "runtime/hooks.rs",
         "runtime/results.rs",
         "runtime/shell.rs",
