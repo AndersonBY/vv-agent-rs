@@ -60,5 +60,6 @@ pub use types::{
     TokenUsage, ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus,
 };
 pub use workspace::{
-    FileInfo, LocalWorkspaceBackend, MemoryWorkspaceBackend, S3WorkspaceBackend, WorkspaceBackend,
+    FileInfo, LocalWorkspaceBackend, MemoryWorkspaceBackend, S3WorkspaceBackend, S3WorkspaceConfig,
+    WorkspaceBackend,
 };

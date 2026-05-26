@@ -1,8 +1,11 @@
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
 
+use object_store::memory::InMemory;
 use serde_json::{json, Value};
-use vv_agent::workspace::{LocalWorkspaceBackend, MemoryWorkspaceBackend, WorkspaceBackend};
+use vv_agent::workspace::{
+    LocalWorkspaceBackend, MemoryWorkspaceBackend, S3WorkspaceBackend, WorkspaceBackend,
+};
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
 #[test]
@@ -106,7 +109,7 @@ fn file_info_reports_file_metadata() {
     assert_eq!(info.status, ToolResultStatus::Success);
     assert!(info.content.contains("\"exists\":true"));
     assert!(info.content.contains("\"size\":5"));
-    assert!(info.content.contains("\"suffix\":\"md\""));
+    assert!(info.content.contains("\"suffix\":\".md\""));
 }
 
 #[test]
@@ -278,6 +281,62 @@ fn workspace_backends_honor_python_glob_and_missing_file_semantics() {
     assert!(!dir_info.is_file);
     assert!(memory.exists("src"));
     assert!(!memory.is_file("src"));
+}
+
+#[test]
+fn s3_workspace_backend_uses_prefix_and_object_store_semantics() {
+    let backend = S3WorkspaceBackend::from_object_store(InMemory::new(), "tenant/workspace")
+        .expect("s3 backend");
+
+    backend
+        .write_text("notes/a.txt", "one", false)
+        .expect("write");
+    backend
+        .write_text("notes/a.txt", "+two", true)
+        .expect("append");
+    backend
+        .write_text("src/main.rs", "fn main() {}", false)
+        .expect("write rust");
+    backend
+        .write_text("src/readme.md", "# readme", false)
+        .expect("write markdown");
+
+    assert_eq!(backend.read_text("notes/a.txt").expect("read"), "one+two");
+    assert_eq!(
+        backend.read_bytes("notes/a.txt").expect("read bytes"),
+        b"one+two"
+    );
+    assert_eq!(
+        backend.list_files(".", "**/*.rs").expect("root glob"),
+        vec!["src/main.rs".to_string()]
+    );
+    assert_eq!(
+        backend.list_files("src", "*.rs").expect("base glob"),
+        vec!["src/main.rs".to_string()]
+    );
+
+    let info = backend
+        .file_info("notes/a.txt")
+        .expect("file info")
+        .expect("exists");
+    assert_eq!(info.path, "notes/a.txt");
+    assert!(info.is_file);
+    assert!(!info.is_dir);
+    assert_eq!(info.size, 7);
+    assert_eq!(info.suffix, ".txt");
+    assert!(!info.modified_at.is_empty());
+    assert!(backend.exists("notes/a.txt"));
+    assert!(backend.is_file("notes/a.txt"));
+    assert!(!backend.exists("missing.txt"));
+    assert_eq!(
+        backend
+            .read_text("missing.txt")
+            .expect_err("missing")
+            .kind(),
+        ErrorKind::NotFound
+    );
+
+    backend.mkdir("empty/dir").expect("mkdir no-op");
 }
 
 #[test]

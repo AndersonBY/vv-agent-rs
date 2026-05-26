@@ -170,8 +170,11 @@ The current Rust implementation includes:
 - Python-style workspace backends: `LocalWorkspaceBackend` and
   `MemoryWorkspaceBackend` honor base-relative `**` glob matching, return
   deterministic POSIX-style paths, preserve memory directories, and report
-  missing in-memory files with `NotFound` errors. Workspace backend types are
-  exported from the top-level crate API.
+  missing in-memory files with `NotFound` errors. `S3WorkspaceBackend` is backed
+  by the Rust `object_store` S3 client for S3-compatible buckets, supports
+  workspace prefixes, append, glob listing, metadata lookup, and Python-style
+  dotted suffixes. Workspace backend types are exported from the top-level crate
+  API.
 - Python-compatible `read_file` response limiting: large reads return file
   statistics, request size, limits, and a suggested line range instead of
   flooding the LLM context.
