@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::memory::CompactionExhaustedError;
 use crate::types::{LLMResponse, Message, MessageRole, TokenUsage, ToolCall};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +30,8 @@ impl LlmRequest {
 pub enum LlmError {
     #[error("scripted response queue is empty")]
     ScriptExhausted,
+    #[error("{0}")]
+    CompactionExhausted(CompactionExhaustedError),
     #[error("llm request failed: {0}")]
     Request(String),
 }

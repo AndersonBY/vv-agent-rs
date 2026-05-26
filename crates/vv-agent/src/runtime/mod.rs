@@ -16,8 +16,8 @@ use serde_json::Value;
 
 use crate::llm::{LlmClient, LlmError, LlmRequest};
 use crate::memory::{
-    MemoryManager, MemoryManagerConfig, SessionMemory, SessionMemoryConfig,
-    SessionMemoryExtractionCallback,
+    CompactionExhaustedError, MemoryManager, MemoryManagerConfig, SessionMemory,
+    SessionMemoryConfig, SessionMemoryExtractionCallback,
 };
 use crate::sub_task_manager::SubTaskManager;
 use crate::tools::{build_default_registry, ToolContext, ToolRegistry};
@@ -280,7 +280,12 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     Err(error) if is_prompt_too_long_error(&error) => {
                         prompt_too_long_retries += 1;
                         if prompt_too_long_retries > MAX_PROMPT_TOO_LONG_RETRIES {
-                            return Err(error);
+                            return Err(LlmError::CompactionExhausted(
+                                CompactionExhaustedError::new(
+                                    prompt_too_long_retries,
+                                    Some(error.to_string()),
+                                ),
+                            ));
                         }
                         memory_compacted = true;
                         let retry_messages = if prompt_too_long_retries == 1 {

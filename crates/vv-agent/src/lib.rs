@@ -34,8 +34,9 @@ pub use config::{
 };
 pub use llm::{EndpointTarget, LlmClient, LlmError, LlmRequest, ScriptedLlmClient, VvLlmClient};
 pub use memory::{
-    sanitize_for_resume, LocalSummary, MemoryManager, MemoryManagerConfig, SessionMemory,
-    SessionMemoryConfig, SessionMemoryEntry, SessionMemoryState,
+    sanitize_for_resume, CompactionExhaustedError, LocalSummary, MemoryManager,
+    MemoryManagerConfig, SessionMemory, SessionMemoryConfig, SessionMemoryEntry,
+    SessionMemoryState,
 };
 pub use runtime::backends::{
     run_checkpointed_cycle, CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher,

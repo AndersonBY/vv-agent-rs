@@ -170,7 +170,9 @@ The current Rust implementation includes:
 - Prompt-too-long retries modeled after Python `CycleRunner`: runtime detects
   common provider context-window errors, forces normal memory compaction once,
   then falls back to emergency compaction slices that preserve system and recent
-  tool context before retrying.
+  tool context before retrying. If all PTL retries are exhausted, runtime now
+  returns a Python-style `CompactionExhaustedError` with the attempt count and
+  last provider error.
 - Post-compaction file context restore modeled after Python
   `post_compact_restore`: summaries now track file actions as structured
   `path/action/summary` entries and restore key workspace files under a bounded
