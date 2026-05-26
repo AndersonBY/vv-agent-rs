@@ -376,7 +376,7 @@ pub trait RunAgent {
     fn run(&self, definition: &AgentDefinition, prompt: String) -> Result<AgentRun, String>;
 }
 
-impl<C: LlmClient + 'static> RunAgent for AgentRuntime<C> {
+impl<C: LlmClient + Clone + 'static> RunAgent for AgentRuntime<C> {
     fn run(&self, definition: &AgentDefinition, prompt: String) -> Result<AgentRun, String> {
         let task = task_from_definition(definition, prompt);
         let result = AgentRuntime::run(self, task).map_err(|err| err.to_string())?;
@@ -454,7 +454,10 @@ impl AgentSDKClient {
         }
     }
 
-    pub fn with_runtime<C: LlmClient + 'static>(mut self, runtime: AgentRuntime<C>) -> Self {
+    pub fn with_runtime<C: LlmClient + Clone + 'static>(
+        mut self,
+        runtime: AgentRuntime<C>,
+    ) -> Self {
         self.runtime = Arc::new(runtime);
         self
     }

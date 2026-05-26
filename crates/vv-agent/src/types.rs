@@ -413,6 +413,15 @@ impl AgentResult {
         cycles: Vec<CycleRecord>,
         final_answer: impl Into<String>,
     ) -> Self {
+        Self::completed_with_shared_state(messages, cycles, final_answer, Metadata::new())
+    }
+
+    pub fn completed_with_shared_state(
+        messages: Vec<Message>,
+        cycles: Vec<CycleRecord>,
+        final_answer: impl Into<String>,
+        shared_state: Metadata,
+    ) -> Self {
         let mut token_usage = TaskTokenUsage::default();
         for cycle in &cycles {
             token_usage.add_cycle(cycle.index, cycle.token_usage.clone());
@@ -424,7 +433,7 @@ impl AgentResult {
             final_answer: Some(final_answer.into()),
             wait_reason: None,
             error: None,
-            shared_state: Metadata::new(),
+            shared_state,
             token_usage,
         }
     }

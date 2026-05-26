@@ -101,9 +101,10 @@ The current Rust implementation includes:
 - Python-compatible `read_file` response limiting: large reads return file
   statistics, request size, limits, and a suggested line range instead of
   flooding the LLM context.
-- Sub-agent tool protocol support for `create_sub_task` / `sub_task_status`,
-  including injected synchronous runners, batch aggregation, async
-  `wait_for_completion=false` launches, and status/snapshot polling.
+- Runtime-backed sub-agent support for `create_sub_task` / `sub_task_status`:
+  configured `AgentTask.sub_agents` can run synchronously or via async
+  `wait_for_completion=false`, with batch aggregation and status/snapshot
+  polling.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
 - SDK client, tool registry, workspace backends, and shared protocol types.
@@ -111,7 +112,7 @@ The current Rust implementation includes:
   integration, runtime tool cycles, schema parity, and workspace tools.
 
 Deeper parity work against the Python implementation is still pending for hooks,
-full memory compaction, skills activation, full sub-agent runtime/session
-management, session steering, distributed backends, and the remaining built-in
-tools. The migration target is to copy Python `v-agent` behavior as completely
-as possible, not merely provide a minimal Rust wrapper.
+full memory compaction, skills activation, richer sub-agent session management
+and steering, distributed backends, and the remaining built-in tools. The
+migration target is to copy Python `v-agent` behavior as completely as possible,
+not merely provide a minimal Rust wrapper.

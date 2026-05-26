@@ -79,6 +79,36 @@ impl SubTaskManager {
         }
     }
 
+    pub fn record_outcome(&self, task_id: &str, outcome: SubTaskOutcome) {
+        let mut tasks = self.tasks.lock().expect("sub-task manager poisoned");
+        let task_id = task_id.to_string();
+        match tasks.get_mut(&task_id) {
+            Some(record) => {
+                record.session_id = outcome
+                    .session_id
+                    .clone()
+                    .unwrap_or_else(|| record.session_id.clone());
+                record.agent_name = outcome.agent_name.clone();
+                record.outcome = Some(outcome);
+                record.updated_at = now_millis();
+            }
+            None => {
+                tasks.insert(
+                    task_id.clone(),
+                    ManagedSubTask {
+                        session_id: outcome.session_id.clone().unwrap_or_default(),
+                        agent_name: outcome.agent_name.clone(),
+                        task_title: String::new(),
+                        outcome: Some(outcome),
+                        task_id,
+                        handle: None,
+                        updated_at: now_millis(),
+                    },
+                );
+            }
+        }
+    }
+
     pub fn status_entries(
         &self,
         task_ids: &[String],

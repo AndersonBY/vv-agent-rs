@@ -81,10 +81,10 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 内置控制工具（`task_finish`、`ask_user`、`todo_write`）、核心 workspace 工具（`list_files`、`file_info`、`read_file`、`write_file`、`file_str_replace`、`workspace_grep`、`read_image`）、通过 `compress_memory` 记录 memory notes，以及支持捕获输出、stdin、前台超时转后台和后台轮询的 `bash` / `check_background_command` 命令工具。
 - 与 Python 一致的 workspace 路径安全策略：文件、图片、grep 和 bash 工具默认拒绝访问 workspace 外路径，可信任务可通过 metadata 显式放行。
 - 与 Python 一致的 `read_file` 大文件响应限制：超出行数 / 字符数限制时返回文件统计、请求大小、限制值和建议行范围，不再把大文件直接塞进 LLM 上下文。
-- `create_sub_task` / `sub_task_status` 的 sub-agent 工具协议支持，包括可注入同步 runner、batch 聚合、`wait_for_completion=false` 异步启动和状态 / snapshot 轮询。
+- `create_sub_task` / `sub_task_status` 已接入 runtime-backed sub-agent：配置在 `AgentTask.sub_agents` 里的子 Agent 可以同步运行，也可以通过 `wait_for_completion=false` 异步启动，支持 batch 聚合和状态 / snapshot 轮询。
 - 基于 `AgentTask` flags 的 Python 风格工具规划，以及 `.vv-agent` 下 `agents.json`、prompt templates 和 skill directories 的资源发现。
 - SDK 客户端、工具注册表、工作区后端，以及共享协议类型。
 - 覆盖公开 API 构造、Rust SDK 使用、vv-llm 集成、runtime 工具循环、schema parity 和 workspace 工具的 smoke tests。
 
-对 Python 实现的更深层 parity 仍待继续补齐，包括 hooks、完整 memory compaction、skills activation、完整 sub-agent runtime/session 管理、session steering、distributed backends 和剩余内置工具。
+对 Python 实现的更深层 parity 仍待继续补齐，包括 hooks、完整 memory compaction、skills activation、更完整的 sub-agent session 管理与 steering、distributed backends 和剩余内置工具。
 迁移目标是尽最大可能照搬 Python `v-agent` 的能力和行为，而不是只提供一个最小 Rust wrapper。
