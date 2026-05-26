@@ -8,6 +8,7 @@ pub mod state;
 pub mod stores;
 mod sub_agents;
 pub mod token_usage;
+mod tool_call_runner;
 mod tool_planner;
 
 use std::collections::{BTreeMap, VecDeque};
@@ -25,7 +26,6 @@ use crate::sub_task_manager::SubTaskManager;
 use crate::tools::{build_default_registry, ToolContext, ToolRegistry};
 use crate::types::{
     AgentResult, AgentStatus, AgentTask, ToolCall, ToolDirective, ToolExecutionResult,
-    ToolResultStatus,
 };
 use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
@@ -38,6 +38,7 @@ pub use hooks::{
 };
 use results::{assistant_message_from_response, extract_final_message, extract_wait_reason};
 pub use token_usage::{normalize_token_usage, summarize_task_token_usage};
+use tool_call_runner::{execute_tool_result, skipped_tool_result};
 pub use tool_planner::patch_dynamic_tool_schema_hints;
 
 pub type RuntimeLogCallback = dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static;
@@ -857,32 +858,6 @@ fn system_message_from_task(task: &AgentTask) -> crate::types::Message {
     let mut message = crate::types::Message::system(task.system_prompt.clone());
     message.metadata = task.metadata.clone();
     message
-}
-
-fn execute_tool_result(
-    registry: &ToolRegistry,
-    call: &ToolCall,
-    context: &mut ToolContext,
-) -> ToolExecutionResult {
-    crate::tools::dispatch_tool_call(registry, context, call)
-}
-
-fn skipped_tool_result(call: &ToolCall, error_code: &str, message: &str) -> ToolExecutionResult {
-    ToolExecutionResult {
-        tool_call_id: call.id.clone(),
-        content: serde_json::json!({
-            "ok": false,
-            "error": message,
-            "skipped_tool": call.name,
-        })
-        .to_string(),
-        status: ToolResultStatus::Error,
-        directive: ToolDirective::Continue,
-        error_code: Some(error_code.to_string()),
-        metadata: BTreeMap::new(),
-        image_url: None,
-        image_path: None,
-    }
 }
 
 fn build_memory_manager<C>(

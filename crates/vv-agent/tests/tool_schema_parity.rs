@@ -84,6 +84,7 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/shell.rs",
         "runtime/sub_agents.rs",
         "runtime/token_usage.rs",
+        "runtime/tool_call_runner.rs",
         "runtime/tool_planner.rs",
         "skills/mod.rs",
         "skills/errors.rs",
