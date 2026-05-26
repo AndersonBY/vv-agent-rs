@@ -34,6 +34,8 @@ vv-agent-rs/
         errors.rs
         mod.rs
         models.rs
+        normalize.rs
+        parser.rs
         prompt.rs
         validator.rs
       sub_agent_sessions.rs
@@ -60,9 +62,6 @@ vv-agent-rs/
           search.rs
           skills/
             mod.rs
-            models.rs
-            normalize.rs
-            parser.rs
             state.rs
           sub_agents.rs
           workspace_io.rs
@@ -153,11 +152,12 @@ The current Rust implementation includes:
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
   canonical `schemas/` domain modules, shared `common` helpers, and focused
   handler modules.
-- Split `activate_skill` handling into model, parser, normalization, and shared
-  state helpers, matching Python `v-agent` skill boundaries more closely.
-- Split public `skills/` modules for Python-style skill models, validation
-  modes, diagnostics, and `<available_skills>` prompt rendering with the same
+- Split public `skills/` modules for Python-style skill models, directory
+  discovery, frontmatter parsing, metadata normalization, validation modes,
+  diagnostics, and `<available_skills>` prompt rendering with the same
   progressive budget degradation used by `v-agent`.
+- `activate_skill` now reuses the public skill parser / normalization layer and
+  keeps handler-local state helpers for activation tracking.
 - Default tool schemas now use reference-quality descriptions derived from
   Python `v-agent`, with extra actionable guidance for high-impact tools such
   as `task_finish`, `file_str_replace`, `file_info`, `compress_memory`, and

@@ -1,18 +1,15 @@
-mod models;
-mod normalize;
-mod parser;
 mod state;
 
 use std::sync::Arc;
 
 use serde_json::{json, Value};
 
+use crate::skills::normalize_skill_list;
 use crate::tools::base::ToolSpec;
 use crate::tools::common::{tool_error_with_code, tool_result};
 use crate::tools::schemas;
 use crate::types::{ToolDirective, ToolResultStatus};
 
-use normalize::normalize_skill_list;
 use state::{append_activation_log, append_unique_string};
 
 pub(crate) fn activate_skill_tool() -> ToolSpec {
@@ -38,7 +35,7 @@ pub(crate) fn activate_skill_tool() -> ToolSpec {
                 .shared_state
                 .get("available_skills")
                 .or_else(|| context.metadata.get("available_skills"));
-            let entries = normalize_skill_list(raw_skills, &context.workspace, true);
+            let entries = normalize_skill_list(raw_skills, Some(&context.workspace), true);
             if entries.is_empty() {
                 return tool_error_with_code(
                     "No skills are configured for this task",

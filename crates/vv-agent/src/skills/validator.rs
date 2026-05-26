@@ -4,6 +4,7 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::errors::SkillValidationError;
+use super::parser::{find_skill_md, parse_frontmatter};
 
 const MAX_SKILL_NAME_LENGTH: usize = 64;
 const MAX_DESCRIPTION_LENGTH: usize = 1024;
@@ -16,12 +17,24 @@ const ALLOWED_FIELDS: &[&str] = &[
     "allowed-tools",
     "metadata",
 ];
+pub const DEFAULT_VALIDATION_MODE: &str = "strict";
+pub const VALIDATION_MODES: [&str; 3] = ["strict", "compat", "minimal"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationMode {
     Strict,
     Compat,
     Minimal,
+}
+
+impl ValidationMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Strict => "strict",
+            Self::Compat => "compat",
+            Self::Minimal => "minimal",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -34,7 +47,7 @@ pub fn normalize_validation_mode(
     validation_mode: Option<&str>,
 ) -> Result<ValidationMode, SkillValidationError> {
     match validation_mode
-        .unwrap_or("strict")
+        .unwrap_or(DEFAULT_VALIDATION_MODE)
         .trim()
         .to_ascii_lowercase()
         .as_str()
@@ -104,6 +117,51 @@ pub fn validate_metadata(
     validation_mode: Option<&str>,
 ) -> Result<Vec<String>, SkillValidationError> {
     Ok(validate_metadata_with_diagnostics(metadata, skill_dir, validation_mode)?.errors)
+}
+
+pub fn validate_with_diagnostics(
+    skill_dir: impl AsRef<Path>,
+    validation_mode: Option<&str>,
+) -> Result<ValidationDiagnostics, SkillValidationError> {
+    let mode = normalize_validation_mode(validation_mode)?;
+    let skill_dir = skill_dir.as_ref();
+    let mut diagnostics = ValidationDiagnostics::default();
+    if !skill_dir.exists() {
+        diagnostics
+            .errors
+            .push(format!("Path does not exist: {}", skill_dir.display()));
+        return Ok(diagnostics);
+    }
+    if !skill_dir.is_dir() {
+        diagnostics
+            .errors
+            .push(format!("Not a directory: {}", skill_dir.display()));
+        return Ok(diagnostics);
+    }
+
+    let Some(skill_md) = find_skill_md(skill_dir) else {
+        diagnostics
+            .errors
+            .push("Missing required file: SKILL.md".to_string());
+        return Ok(diagnostics);
+    };
+    let content =
+        read_utf8_lossy(&skill_md).map_err(|error| SkillValidationError::new(error.to_string()))?;
+    let (metadata, _) = match parse_frontmatter(&content) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            diagnostics.errors.push(error.to_string());
+            return Ok(diagnostics);
+        }
+    };
+    validate_metadata_with_diagnostics(&metadata, Some(skill_dir), Some(mode.as_str()))
+}
+
+pub fn validate(
+    skill_dir: impl AsRef<Path>,
+    validation_mode: Option<&str>,
+) -> Result<Vec<String>, SkillValidationError> {
+    Ok(validate_with_diagnostics(skill_dir, validation_mode)?.errors)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,4 +296,9 @@ fn validate_compatibility(
             severity,
         );
     }
+}
+
+fn read_utf8_lossy(path: &Path) -> Result<String, std::io::Error> {
+    let bytes = std::fs::read(path)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }

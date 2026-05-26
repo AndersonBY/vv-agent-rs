@@ -92,7 +92,7 @@ fn task_finish_blocks_when_todos_are_incomplete() {
 #[test]
 fn activate_skill_loads_skill_md_and_updates_shared_state() {
     let workspace = tempfile::tempdir().expect("workspace");
-    let skill_dir = workspace.path().join("skills/demo");
+    let skill_dir = workspace.path().join("skills/demo-skill");
     std::fs::create_dir_all(&skill_dir).expect("skill dir");
     std::fs::write(
         skill_dir.join("SKILL.md"),

@@ -12,6 +12,24 @@ impl SkillError {
     }
 }
 
+impl From<SkillParseError> for SkillError {
+    fn from(error: SkillParseError) -> Self {
+        Self::new(error.to_string())
+    }
+}
+
+impl From<SkillValidationError> for SkillError {
+    fn from(error: SkillValidationError) -> Self {
+        Self::new(error.to_string())
+    }
+}
+
+impl From<std::io::Error> for SkillError {
+    fn from(error: std::io::Error) -> Self {
+        Self::new(error.to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{message}")]
 pub struct SkillParseError {

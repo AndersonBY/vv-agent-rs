@@ -1,4 +1,11 @@
+use std::path::{Path, PathBuf};
+
+use serde_json::Value;
+
+use super::errors::SkillError;
 use super::models::SkillEntry;
+use super::normalize::normalize_skill_list;
+use super::parser::{find_skill_md, read_properties};
 
 pub const MAX_SKILLS_PROMPT_CHARS: usize = 8000;
 
@@ -61,6 +68,40 @@ pub fn render_skills_xml(entries: &[SkillEntry], budget: usize) -> String {
     }
     lines.push("</available_skills>".to_string());
     lines.join("\n")
+}
+
+pub fn to_available_skills_xml(skill_dirs: &[PathBuf]) -> Result<String, SkillError> {
+    if skill_dirs.is_empty() {
+        return Ok("<available_skills>\n</available_skills>".to_string());
+    }
+
+    let mut lines = vec!["<available_skills>".to_string()];
+    for skill_dir in skill_dirs {
+        let normalized_dir = skill_dir
+            .canonicalize()
+            .unwrap_or_else(|_| skill_dir.clone());
+        let properties = read_properties(&normalized_dir)?;
+        let skill_md = find_skill_md(&normalized_dir);
+        let entry = SkillEntry {
+            name: properties.name,
+            description: properties.description,
+            location: skill_md.map(|path| path.to_string_lossy().replace('\\', "/")),
+            compatibility: properties.compatibility,
+            allowed_tools: properties.allowed_tools,
+            metadata: properties.metadata,
+            ..SkillEntry::default()
+        };
+        lines.push(skill_entry_to_xml(&entry, true));
+    }
+    lines.push("</available_skills>".to_string());
+    Ok(lines.join("\n"))
+}
+
+pub fn metadata_to_prompt_entries(
+    available_skills: Option<&Value>,
+    workspace: Option<&Path>,
+) -> Vec<SkillEntry> {
+    normalize_skill_list(available_skills, workspace, false)
 }
 
 fn render_all(entries: &[SkillEntry], include_location: bool) -> String {

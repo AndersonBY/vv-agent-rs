@@ -65,9 +65,6 @@ fn tools_module_is_split_into_handler_files() {
         "tools/handlers/image.rs",
         "tools/handlers/memory.rs",
         "tools/handlers/skills/mod.rs",
-        "tools/handlers/skills/models.rs",
-        "tools/handlers/skills/normalize.rs",
-        "tools/handlers/skills/parser.rs",
         "tools/handlers/skills/state.rs",
         "tools/handlers/sub_agents.rs",
         "tools/handlers/background.rs",
@@ -79,6 +76,8 @@ fn tools_module_is_split_into_handler_files() {
         "skills/mod.rs",
         "skills/errors.rs",
         "skills/models.rs",
+        "skills/normalize.rs",
+        "skills/parser.rs",
         "skills/prompt.rs",
         "skills/validator.rs",
         "sub_agent_sessions.rs",
@@ -112,6 +111,18 @@ fn tools_module_is_split_into_handler_files() {
         (
             "tools/handlers/skills.rs",
             "skills.rs should be split into src/tools/handlers/skills/ modules",
+        ),
+        (
+            "tools/handlers/skills/models.rs",
+            "skill models should live in the public src/skills/ module",
+        ),
+        (
+            "tools/handlers/skills/normalize.rs",
+            "skill normalization should live in the public src/skills/ module",
+        ),
+        (
+            "tools/handlers/skills/parser.rs",
+            "skill parsing should live in the public src/skills/ module",
         ),
         (
             "skills.rs",
