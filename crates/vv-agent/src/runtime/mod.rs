@@ -1,6 +1,7 @@
 pub mod hooks;
 mod results;
 mod sub_agents;
+mod tool_planner;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -26,6 +27,7 @@ pub use hooks::{
     BeforeToolCallPatch, RuntimeHook, RuntimeHookManager,
 };
 use results::{assistant_message_from_response, extract_final_message, extract_wait_reason};
+pub use tool_planner::patch_dynamic_tool_schema_hints;
 
 pub type RuntimeLogCallback = dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static;
 pub type RuntimeLogHandler = Arc<Mutex<Box<RuntimeLogCallback>>>;

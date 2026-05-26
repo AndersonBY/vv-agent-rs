@@ -54,3 +54,52 @@ fn planned_tool_schemas_exclude_tools() {
     assert!(!names.contains(&"write_file".to_string()));
     assert!(names.contains(&"task_finish".to_string()));
 }
+
+#[test]
+fn planned_tool_schemas_inject_runtime_shell_hint_for_bash() {
+    let registry = build_default_registry();
+    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    task.agent_type = Some("computer".to_string());
+    task.metadata
+        .insert("bash_shell".to_string(), json!("powershell"));
+    task.metadata.insert(
+        "windows_shell_priority".to_string(),
+        json!(["git-bash", "powershell", "cmd"]),
+    );
+
+    let schemas = registry.planned_openai_schemas(&task);
+    let bash = schemas
+        .iter()
+        .find(|schema| schema["function"]["name"] == "bash")
+        .expect("bash schema");
+    let description = bash["function"]["description"]
+        .as_str()
+        .expect("description");
+
+    assert!(description.contains("Runtime shell hint:"));
+    assert!(description.contains("powershell"));
+    assert!(description.contains("-NoProfile"));
+}
+
+#[test]
+fn planned_tool_schemas_reports_invalid_windows_shell_priority_config() {
+    let registry = build_default_registry();
+    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    task.agent_type = Some("computer".to_string());
+    task.metadata.insert(
+        "windows_shell_priority".to_string(),
+        json!("git-bash,powershell,cmd"),
+    );
+
+    let schemas = registry.planned_openai_schemas(&task);
+    let bash = schemas
+        .iter()
+        .find(|schema| schema["function"]["name"] == "bash")
+        .expect("bash schema");
+    let description = bash["function"]["description"]
+        .as_str()
+        .expect("description");
+
+    assert!(description.contains("Runtime shell hint:"));
+    assert!(description.contains("invalid shell config"));
+}

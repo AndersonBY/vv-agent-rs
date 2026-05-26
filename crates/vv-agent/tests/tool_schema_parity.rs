@@ -65,6 +65,7 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/hooks.rs",
         "runtime/results.rs",
         "runtime/sub_agents.rs",
+        "runtime/tool_planner.rs",
         "sub_agent_sessions.rs",
         "memory/artifacts.rs",
         "memory/microcompact.rs",

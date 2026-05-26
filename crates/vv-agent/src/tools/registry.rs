@@ -139,7 +139,10 @@ impl ToolRegistry {
 
     pub fn planned_openai_schemas(&self, task: &AgentTask) -> Vec<Value> {
         let names = self.planned_tool_names(task);
-        self.list_openai_schemas(Some(&names))
+        crate::runtime::patch_dynamic_tool_schema_hints(
+            task,
+            self.list_openai_schemas(Some(&names)),
+        )
     }
 
     pub fn register_tool(

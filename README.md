@@ -144,6 +144,9 @@ The current Rust implementation includes:
 - Default tool schemas now use reference-quality descriptions derived from
   Python `v-agent` so the model sees the same operational guidance for file
   access, grep, bash/background commands, todos, skills, images, and sub-agents.
+- Planned tool schemas include Python-style dynamic runtime hints for shell
+  execution, so `bash` advertises the actual shell prefix or invalid shell
+  configuration in the LLM-visible description.
 - Built-in control tools (`task_finish`, `ask_user`, `todo_write`), core
   workspace tools (`list_files`, `file_info`, `read_file`, `write_file`,
   `file_str_replace`, `workspace_grep`, `read_image`), memory notes through
