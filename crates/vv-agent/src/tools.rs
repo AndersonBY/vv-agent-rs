@@ -11,7 +11,8 @@ use crate::processes::{
     read_captured_output, remove_captured_output, start_captured_process, wait_for_child,
 };
 use crate::types::{
-    AgentStatus, SubTaskRequest, ToolArguments, ToolCall, ToolDirective, ToolExecutionResult,
+    AgentStatus, AgentTask, SubTaskRequest, ToolArguments, ToolCall, ToolDirective,
+    ToolExecutionResult,
 };
 use crate::workspace::WorkspaceBackend;
 pub type ToolHandler =
@@ -161,6 +162,62 @@ impl ToolRegistry {
         }
     }
 
+    pub fn planned_tool_names(&self, task: &AgentTask) -> Vec<String> {
+        let mut names = vec!["task_finish".to_string()];
+        if task.allow_interruption {
+            names.push("ask_user".to_string());
+        }
+        if task.use_workspace {
+            names.extend(
+                [
+                    "list_files",
+                    "file_info",
+                    "read_file",
+                    "write_file",
+                    "file_str_replace",
+                    "workspace_grep",
+                    "compress_memory",
+                ]
+                .into_iter()
+                .map(str::to_string),
+            );
+        }
+        if task.agent_type.as_deref() == Some("computer") {
+            names.push("bash".to_string());
+            names.push("check_background_command".to_string());
+        }
+        if task.sub_agents_enabled() {
+            names.push("create_sub_task".to_string());
+            names.push("sub_task_status".to_string());
+        }
+        if task
+            .metadata
+            .get("available_skills")
+            .is_some_and(|value| !value.is_null())
+        {
+            names.push("activate_skill".to_string());
+        }
+        if task.native_multimodal {
+            names.push("read_image".to_string());
+        }
+        names.extend(task.extra_tool_names.clone());
+        if !task.exclude_tools.is_empty() {
+            names.retain(|name| !task.exclude_tools.contains(name));
+        }
+        let mut deduped = Vec::new();
+        for name in names {
+            if self.has_schema(&name) && !deduped.contains(&name) {
+                deduped.push(name);
+            }
+        }
+        deduped
+    }
+
+    pub fn planned_openai_schemas(&self, task: &AgentTask) -> Vec<Value> {
+        let names = self.planned_tool_names(task);
+        self.list_openai_schemas(Some(&names))
+    }
+
     pub fn register_tool(
         &mut self,
         name: impl Into<String>,
@@ -195,6 +252,9 @@ pub fn build_default_registry() -> ToolRegistry {
     registry
         .register(compress_memory_tool())
         .expect("default compress_memory registration");
+    registry
+        .register(activate_skill_tool())
+        .expect("default activate_skill registration");
     registry
         .register(list_files_tool())
         .expect("default list_files registration");
@@ -539,6 +599,71 @@ fn compress_memory_tool() -> ToolSpec {
                     "core_information": {"type": "string"}
                 },
                 "required": ["core_information"]
+            }
+        }
+    });
+    spec
+}
+
+fn activate_skill_tool() -> ToolSpec {
+    let mut spec = ToolSpec::new(
+        "activate_skill",
+        "Activate a skill from the current task's available skill list.",
+        Arc::new(|context, arguments| {
+            let skill_name = arguments
+                .get("skill_name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            if skill_name.is_empty() {
+                return tool_error_with_code("`skill_name` is required", "skill_name_required");
+            }
+            let available = context
+                .metadata
+                .get("available_skills")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let found = available.iter().find(|skill| match skill {
+                Value::String(name) => name == skill_name,
+                Value::Object(object) => object
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| name == skill_name),
+                _ => false,
+            });
+            let Some(skill) = found else {
+                return tool_error_with_code(
+                    format!("skill not available: {skill_name}"),
+                    "skill_not_available",
+                );
+            };
+            let payload = json!({
+                "ok": true,
+                "skill_name": skill_name,
+                "skill": skill,
+                "reason": arguments.get("reason").cloned().unwrap_or(Value::Null),
+            });
+            tool_result(
+                crate::types::ToolResultStatus::Success,
+                payload,
+                None,
+                ToolDirective::Continue,
+            )
+        }),
+    );
+    spec.schema = json!({
+        "type": "function",
+        "function": {
+            "name": "activate_skill",
+            "description": "Activate a skill from the current task's available skill list.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_name": {"type": "string"},
+                    "reason": {"type": "string"}
+                },
+                "required": ["skill_name"]
             }
         }
     });

@@ -75,6 +75,8 @@ The current Rust implementation includes:
   captured output, stdin, foreground timeout handoff, and background polling.
 - Sub-agent tool protocol support for `create_sub_task` / `sub_task_status`,
   including injected synchronous runners and batch aggregation.
+- Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
+  discovery for `agents.json`, prompt templates, and skill directories.
 - SDK client, tool registry, workspace backends, and shared protocol types.
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, and workspace tools.

@@ -63,6 +63,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 一个基础 multi-cycle runtime，可以把 tool schemas 发给 LLM、执行工具调用，并通过 `task_finish` 或 `ask_user` 收敛。
 - 内置控制工具（`task_finish`、`ask_user`、`todo_write`）、核心 workspace 工具（`list_files`、`file_info`、`read_file`、`write_file`、`file_str_replace`、`workspace_grep`、`read_image`）、通过 `compress_memory` 记录 memory notes，以及支持捕获输出、stdin、前台超时转后台和后台轮询的 `bash` / `check_background_command` 命令工具。
 - `create_sub_task` / `sub_task_status` 的 sub-agent 工具协议支持，包括可注入同步 runner 和 batch 聚合。
+- 基于 `AgentTask` flags 的 Python 风格工具规划，以及 `.vv-agent` 下 `agents.json`、prompt templates 和 skill directories 的资源发现。
 - SDK 客户端、工具注册表、工作区后端，以及共享协议类型。
 - 覆盖公开 API 构造、Rust SDK 使用、vv-llm 集成、runtime 工具循环和 workspace 工具的 smoke tests。
 

@@ -220,13 +220,148 @@ impl AgentResourceLoader {
         }
     }
 
+    pub fn with_resource_dirs(
+        workspace: impl Into<PathBuf>,
+        project_resource_dir: impl Into<PathBuf>,
+        global_resource_dir: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            workspace: workspace.into(),
+            project_resource_dir: project_resource_dir.into(),
+            global_resource_dir: global_resource_dir.into(),
+            cached: None,
+        }
+    }
+
     pub fn discover(&mut self) -> DiscoveredResources {
         if let Some(cached) = &self.cached {
             return cached.clone();
         }
-        let discovered = DiscoveredResources::default();
+        let mut discovered = DiscoveredResources::default();
+        for root in [
+            self.global_resource_dir.clone(),
+            self.project_resource_dir.clone(),
+        ] {
+            if root.is_dir() {
+                self.load_agents(&root, &mut discovered);
+                self.load_prompts(&root, &mut discovered);
+                self.load_skills(&root, &mut discovered);
+            }
+        }
         self.cached = Some(discovered.clone());
         discovered
+    }
+
+    fn load_agents(&self, root: &std::path::Path, discovered: &mut DiscoveredResources) {
+        let config_file = root.join("agents.json");
+        if !config_file.is_file() {
+            return;
+        }
+        let raw = match std::fs::read_to_string(&config_file)
+            .ok()
+            .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+        {
+            Some(raw) => raw,
+            None => {
+                discovered
+                    .diagnostics
+                    .push(format!("Invalid agents.json in {}", root.display()));
+                return;
+            }
+        };
+        let profiles = raw
+            .get("profiles")
+            .and_then(Value::as_object)
+            .or_else(|| raw.as_object());
+        let Some(profiles) = profiles else {
+            discovered.diagnostics.push(format!(
+                "agents.json in {} must be an object or contain `profiles` object.",
+                root.display()
+            ));
+            return;
+        };
+        for (name, payload) in profiles {
+            let Some(payload) = payload.as_object() else {
+                continue;
+            };
+            let Some(description) = payload.get("description").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(model) = payload.get("model").and_then(Value::as_str) else {
+                continue;
+            };
+            let mut definition = AgentDefinition::default_for_model(model);
+            definition.description = description.to_string();
+            definition.backend = payload
+                .get("backend")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            definition.system_prompt = payload
+                .get("system_prompt")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            definition.system_prompt_template = payload
+                .get("system_prompt_template")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            definition.bash_env = payload
+                .get("bash_env")
+                .and_then(Value::as_object)
+                .map(|object| {
+                    object
+                        .iter()
+                        .filter_map(|(key, value)| {
+                            value.as_str().map(|value| (key.clone(), value.to_string()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            definition.skill_directories = payload
+                .get("skill_directories")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(|path| root.join(path).to_string_lossy().to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            discovered.agents.insert(name.clone(), definition);
+        }
+    }
+
+    fn load_prompts(&self, root: &std::path::Path, discovered: &mut DiscoveredResources) {
+        let prompts_dir = root.join("prompts");
+        if !prompts_dir.is_dir() {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(prompts_dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+                continue;
+            }
+            if let (Some(stem), Ok(content)) = (
+                path.file_stem().and_then(|stem| stem.to_str()),
+                std::fs::read_to_string(&path),
+            ) {
+                discovered.prompts.insert(stem.to_string(), content);
+            }
+        }
+    }
+
+    fn load_skills(&self, root: &std::path::Path, discovered: &mut DiscoveredResources) {
+        let skills_dir = root.join("skills");
+        if !skills_dir.is_dir() {
+            return;
+        }
+        let path = skills_dir.to_string_lossy().to_string();
+        if !discovered.skill_directories.contains(&path) {
+            discovered.skill_directories.push(path);
+        }
     }
 }
 

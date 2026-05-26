@@ -204,26 +204,7 @@ impl<C: LlmClient> AgentRuntime<C> {
     }
 
     fn planned_tool_schemas(&self, task: &AgentTask) -> Vec<Value> {
-        let names = if task.exclude_tools.is_empty() && task.extra_tool_names.is_empty() {
-            None
-        } else {
-            let mut names = self
-                .tool_registry
-                .list_openai_schemas(None)
-                .into_iter()
-                .filter_map(|schema| {
-                    schema
-                        .get("function")
-                        .and_then(|function| function.get("name"))
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                })
-                .collect::<Vec<_>>();
-            names.extend(task.extra_tool_names.clone());
-            names.retain(|name| !task.exclude_tools.contains(name));
-            Some(names)
-        };
-        self.tool_registry.list_openai_schemas(names.as_deref())
+        self.tool_registry.planned_openai_schemas(task)
     }
 }
 
