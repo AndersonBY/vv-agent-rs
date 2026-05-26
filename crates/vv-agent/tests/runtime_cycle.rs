@@ -745,7 +745,7 @@ impl LlmClient for InspectingSubTaskStatusLlmClient {
         let is_child_request = request
             .messages
             .first()
-            .is_some_and(|message| message.content == "research profile");
+            .is_some_and(|message| message.content.contains("research profile"));
         if is_child_request {
             return Ok(LLMResponse::with_tool_calls(
                 "",
@@ -881,7 +881,7 @@ impl LlmClient for InspectingSubTaskContinuationLlmClient {
         let is_child_request = request
             .messages
             .first()
-            .is_some_and(|message| message.content == "research profile");
+            .is_some_and(|message| message.content.contains("research profile"));
         if is_child_request {
             let is_follow_up = request.messages.iter().any(|message| {
                 message.role == vv_agent::MessageRole::User

@@ -88,6 +88,10 @@ fn tools_module_is_split_into_handler_files() {
         "memory/session.rs",
         "memory/summary.rs",
         "memory/token_utils.rs",
+        "prompt/mod.rs",
+        "prompt/builder.rs",
+        "prompt/cache_tracker.rs",
+        "prompt/templates.rs",
     ] {
         assert!(root.join(relative).is_file(), "missing {relative}");
     }
@@ -103,6 +107,10 @@ fn tools_module_is_split_into_handler_files() {
         (
             "memory.rs",
             "memory.rs should be split into src/memory/ modules",
+        ),
+        (
+            "prompt.rs",
+            "prompt.rs should be split into src/prompt/ modules",
         ),
         (
             "tools/schemas.rs",

@@ -1,0 +1,161 @@
+use std::collections::BTreeMap;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
+
+use serde_json::json;
+use vv_agent::prompt::{
+    build_raw_system_prompt_sections, build_system_prompt_bundle_with_options,
+    build_system_prompt_sections_with_options, build_system_prompt_with_options,
+    hash_system_prompt_sections, hash_tool_payload, BuildSystemPromptOptions, CacheBreakTracker,
+    PromptSection, SystemPromptBuilder,
+};
+
+#[test]
+fn prompt_public_api_builds_python_style_system_prompt_bundle() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let skill_dir = workspace.path().join("skills/review-code");
+    std::fs::create_dir_all(&skill_dir).expect("skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        r#"---
+name: review-code
+description: Review code safely
+---
+Review code.
+"#,
+    )
+    .expect("skill");
+
+    let options = BuildSystemPromptOptions {
+        current_time_utc: Some("2026-05-26T00:00:00Z".to_string()),
+        session_memory_context: "<Session Memory>\nRemember alpha\n</Session Memory>".to_string(),
+        available_sub_agents: BTreeMap::from([(
+            "reviewer".to_string(),
+            "Reviews source changes".to_string(),
+        )]),
+        available_skills: Some(json!(["skills"])),
+        workspace: Some(workspace.path().to_path_buf()),
+        ..BuildSystemPromptOptions::default()
+    };
+
+    let bundle = build_system_prompt_bundle_with_options("You are careful.", options.clone());
+    assert!(bundle
+        .prompt
+        .contains("<Agent Definition>\nYou are careful."));
+    assert!(bundle.prompt.contains("<Session Memory>"));
+    assert!(bundle.prompt.contains("<Tools>"));
+    assert!(bundle.prompt.contains("ask_user"));
+    assert!(bundle.prompt.contains("create_sub_task"));
+    assert!(bundle.prompt.contains("review-code"));
+    assert!(bundle.prompt.contains("task_finish"));
+    assert!(bundle.prompt.contains("<Current Time>"));
+    assert!(bundle.prompt.contains("2026-05-26T00:00:00Z"));
+    assert_eq!(bundle.stable_hash.len(), 64);
+
+    let section_ids = bundle
+        .sections
+        .iter()
+        .map(|section| section["id"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        section_ids,
+        vec![
+            "agent_definition",
+            "session_memory",
+            "tools",
+            "current_time"
+        ]
+    );
+    assert_eq!(bundle.sections[1]["stable"], false);
+
+    let prompt = build_system_prompt_with_options("You are careful.", options.clone());
+    assert_eq!(prompt, bundle.prompt);
+    let sections = build_system_prompt_sections_with_options("You are careful.", options);
+    assert_eq!(sections, bundle.sections);
+
+    let raw = build_raw_system_prompt_sections("  raw system  ");
+    assert_eq!(raw[0]["id"], "raw_system_prompt");
+    assert_eq!(raw[0]["text"], "raw system");
+    assert_eq!(raw[0]["stable"], true);
+}
+
+#[test]
+fn prompt_public_api_tracks_section_and_tool_cache_breaks() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_section = Arc::clone(&calls);
+    let stable = PromptSection::new(
+        "stable",
+        move || {
+            calls_for_section.fetch_add(1, Ordering::SeqCst);
+            "stable body".to_string()
+        },
+        true,
+    );
+    assert_eq!(stable.get_value(), "stable body");
+    assert_eq!(stable.get_value(), "stable body");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(stable.to_metadata().expect("metadata")["id"], "stable");
+    stable.invalidate();
+    assert_eq!(stable.get_value(), "stable body");
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    let volatile_calls = Arc::new(AtomicUsize::new(0));
+    let volatile_calls_for_section = Arc::clone(&volatile_calls);
+    let volatile = PromptSection::new(
+        "volatile",
+        move || {
+            volatile_calls_for_section.fetch_add(1, Ordering::SeqCst);
+            "volatile body".to_string()
+        },
+        false,
+    );
+
+    let mut builder = SystemPromptBuilder::default();
+    builder.add_section(stable);
+    builder.add_section(volatile);
+    assert!(builder.build().contains("stable body"));
+    assert_eq!(volatile_calls.load(Ordering::SeqCst), 1);
+    assert!(builder.build().contains("volatile body"));
+    assert_eq!(volatile_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(builder.metadata_sections().len(), 2);
+    assert_eq!(builder.stable_hash().len(), 64);
+    let result = builder.build_result();
+    assert!(result.prompt.contains("stable body"));
+    assert_eq!(result.sections.len(), 2);
+
+    let system_sections = vec![
+        json!({"id": "a", "text": " hello ", "stable": true}),
+        json!({"id": "empty", "text": ""}),
+        json!("ignored"),
+    ];
+    let system_hash = hash_system_prompt_sections(&system_sections);
+    assert_eq!(system_hash.len(), 64);
+    assert_eq!(hash_system_prompt_sections(&[]), "");
+
+    let tool_hash = hash_tool_payload(&[json!({"name": "read_file"})]);
+    assert_eq!(tool_hash.len(), 64);
+    assert_eq!(hash_tool_payload(&[]), "");
+
+    let mut tracker = CacheBreakTracker::default();
+    assert!(tracker
+        .check(system_hash.clone(), tool_hash.clone())
+        .is_empty());
+    assert!(tracker.check(system_hash.clone(), tool_hash).is_empty());
+    let reasons = tracker.check("changed".to_string(), "tools-changed".to_string());
+    assert_eq!(
+        reasons,
+        vec!["system_prompt_changed", "tool_schemas_changed"]
+    );
+    assert_eq!(tracker.total_requests(), 3);
+    assert_eq!(tracker.cache_breaks(), 1);
+    assert_eq!(
+        tracker.break_reasons(),
+        vec![
+            "system_prompt_changed".to_string(),
+            "tool_schemas_changed".to_string()
+        ]
+    );
+    assert!((tracker.cache_hit_rate() - (2.0 / 3.0)).abs() < f64::EPSILON);
+}

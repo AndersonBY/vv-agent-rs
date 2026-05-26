@@ -23,7 +23,11 @@ vv-agent-rs/
         session.rs
         summary.rs
         token_utils.rs
-      prompt.rs
+      prompt/
+        builder.rs
+        cache_tracker.rs
+        mod.rs
+        templates.rs
       runtime/
         hooks.rs
         mod.rs
@@ -115,6 +119,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 已加入参考 Python `CycleRunner` 的 prompt-too-long 重试：runtime 会识别常见 provider 上下文超限错误，先强制 normal memory compaction，再退到 emergency compaction 切片，并保留 system message 和近期工具上下文后重试。
 - 已加入参考 Python `post_compact_restore` 的 compaction 后关键文件恢复：summary 会用结构化 `path/action/summary` 记录文件动作，并在预算内把关键 workspace 文件内容放回 `<Post-Compaction File Context>`。
 - 已加入 Python 风格 resume / compaction message sanitizer：会移除空 assistant、thinking-only assistant、孤儿 tool result 和未完成的尾部 tool calls，并在 memory compaction 前归一化陈旧 tool-call 边界。
+- `prompt/` 已按 Python `vv_agent.prompt` 拆分：支持 system prompt builder sections、stable prompt hash、raw section metadata、本地化工具模板、available skills 渲染和 prompt-cache break tracking。
 - `tools/` 已按 Python `v-agent` 的结构拆分为 `base`、`registry`、canonical `schemas/` domain modules、共享 `common` helper 和各个 handler 模块。
 - 公开 `skills/` 模块已拆成 Python 风格的 skill model、目录发现、frontmatter 解析、metadata 归一化、validation mode、diagnostics 和 `<available_skills>` prompt 渲染，并支持与 `v-agent` 一致的预算降级策略。
 - `activate_skill` 现在复用公开 skill parser / normalization 层，handler 内只保留 activation state helper。

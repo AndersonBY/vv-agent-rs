@@ -23,7 +23,11 @@ vv-agent-rs/
         session.rs
         summary.rs
         token_utils.rs
-      prompt.rs
+      prompt/
+        builder.rs
+        cache_tracker.rs
+        mod.rs
+        templates.rs
       runtime/
         hooks.rs
         mod.rs
@@ -149,6 +153,9 @@ The current Rust implementation includes:
   thinking-only assistant messages are removed, orphan tool results and
   unresolved tail tool calls are pruned, and memory compaction normalizes stale
   tool-call boundaries before summarizing.
+- Split `prompt/` modules modeled after Python `vv_agent.prompt`: system prompt
+  builder sections, stable prompt hashes, raw section metadata, localized tool
+  templates, available skills rendering, and prompt-cache break tracking.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
   canonical `schemas/` domain modules, shared `common` helpers, and focused
   handler modules.
