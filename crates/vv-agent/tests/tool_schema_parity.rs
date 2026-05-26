@@ -22,6 +22,9 @@ fn default_tool_schemas_include_reference_quality_descriptions() {
     let bash = description(&registry, "bash");
     assert!(bash.contains("Guidelines:"));
     assert!(bash.contains("run_in_background=true"));
+    assert!(bash.contains("runtime metadata"));
+    assert!(bash.contains("bash_shell"));
+    assert!(property_description(&registry, "bash", "command").contains("configured shell"));
     assert!(property_description(&registry, "bash", "timeout").contains("default 300, max 600"));
 
     let create_sub_task = description(&registry, "create_sub_task");
