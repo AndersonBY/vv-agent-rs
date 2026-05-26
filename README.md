@@ -117,7 +117,9 @@ The current Rust implementation includes:
 - Persistent session memory modeled after Python `SessionMemory`: durable
   entries are normalized, deduplicated, budget-pruned, optionally persisted
   under `.memory/session`, and injected back into runtime LLM requests as a
-  `<Session Memory>` system context across compaction.
+  `<Session Memory>` system context across compaction. The default runtime can
+  use the configured `LlmClient` as the extraction callback, so vv-llm-backed
+  clients handle session-memory extraction without custom provider adapters.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
   canonical `schemas`, shared `common` helpers, and focused handler modules.
 - Split `activate_skill` handling into model, parser, normalization, and shared
@@ -152,7 +154,6 @@ The current Rust implementation includes:
   integration, runtime tool cycles, schema parity, and workspace tools.
 
 Deeper parity work against the Python implementation is still pending for
-LLM-backed session-memory extraction callbacks in the default runtime,
 sub-agent session management and steering, distributed backends, and the
 remaining built-in tools. The migration target is to copy Python `v-agent`
 behavior as completely as possible, not merely provide a minimal Rust wrapper.

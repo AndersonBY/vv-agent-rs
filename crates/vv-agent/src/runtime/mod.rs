@@ -9,7 +9,10 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::llm::{LlmClient, LlmError, LlmRequest};
-use crate::memory::{MemoryManager, MemoryManagerConfig, SessionMemory, SessionMemoryConfig};
+use crate::memory::{
+    MemoryManager, MemoryManagerConfig, SessionMemory, SessionMemoryConfig,
+    SessionMemoryExtractionCallback,
+};
 use crate::sub_task_manager::SubTaskManager;
 use crate::tools::{build_default_registry, ToolContext, ToolRegistry};
 use crate::types::{
@@ -98,7 +101,8 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             ]),
         );
 
-        let mut memory_manager = build_memory_manager(&task, workspace_path.clone());
+        let mut memory_manager =
+            build_memory_manager(&task, workspace_path.clone(), Some(self.llm_client.clone()));
 
         for cycle_index in 0..task.max_cycles {
             self.emit_log(
@@ -450,7 +454,14 @@ fn execute_tool_result(
         })
 }
 
-fn build_memory_manager(task: &AgentTask, workspace_path: PathBuf) -> MemoryManager {
+fn build_memory_manager<C>(
+    task: &AgentTask,
+    workspace_path: PathBuf,
+    memory_summary_client: Option<C>,
+) -> MemoryManager
+where
+    C: LlmClient + Clone + 'static,
+{
     let workspace = task.use_workspace.then_some(workspace_path.clone());
     MemoryManager::new(MemoryManagerConfig {
         compact_threshold: task.memory_compact_threshold,
@@ -490,17 +501,38 @@ fn build_memory_manager(task: &AgentTask, workspace_path: PathBuf) -> MemoryMana
             ".memory/tool_results",
         ),
         workspace: workspace.clone(),
-        session_memory: build_session_memory(task, workspace),
+        session_memory: build_session_memory(task, workspace, memory_summary_client),
     })
 }
 
-fn build_session_memory(task: &AgentTask, workspace: Option<PathBuf>) -> Option<SessionMemory> {
+fn build_session_memory<C>(
+    task: &AgentTask,
+    workspace: Option<PathBuf>,
+    memory_summary_client: Option<C>,
+) -> Option<SessionMemory>
+where
+    C: LlmClient + Clone + 'static,
+{
     if !read_bool_metadata(&task.metadata, "session_memory_enabled", false)
         && !read_bool_metadata(&task.metadata, "enable_session_memory", false)
         && !task.metadata.contains_key("session_memory_seed")
     {
         return None;
     }
+    let extraction_model = task
+        .metadata
+        .get("session_memory_extraction_model")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            task.metadata
+                .get("memory_summary_model")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| task.model.clone());
+    let extraction_callback =
+        memory_summary_client.map(|client| build_session_memory_extraction_callback(client));
     let mut session_memory = SessionMemory::with_workspace(
         SessionMemoryConfig {
             min_tokens_before_extraction: read_u64_metadata(
@@ -525,17 +557,13 @@ fn build_session_memory(task: &AgentTask, workspace: Option<PathBuf>) -> Option<
                 "session_memory_storage_dir",
                 ".memory/session",
             ),
-            extraction_callback: None,
+            extraction_callback,
             extraction_backend: task
                 .metadata
                 .get("session_memory_extraction_backend")
                 .and_then(Value::as_str)
                 .map(str::to_string),
-            extraction_model: task
-                .metadata
-                .get("session_memory_extraction_model")
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            extraction_model: Some(extraction_model),
             token_model: task.model.clone(),
         },
         workspace,
@@ -547,6 +575,23 @@ fn build_session_memory(task: &AgentTask, workspace: Option<PathBuf>) -> Option<
         task.metadata.get("session_memory_seed"),
     );
     Some(session_memory)
+}
+
+fn build_session_memory_extraction_callback<C>(client: C) -> SessionMemoryExtractionCallback
+where
+    C: LlmClient + Clone + 'static,
+{
+    Arc::new(move |prompt, _backend, model| {
+        let request = LlmRequest::new(
+            model.unwrap_or_default(),
+            vec![crate::types::Message::user(prompt.to_string())],
+        );
+        client
+            .complete(request)
+            .ok()
+            .map(|response| response.content.trim().to_string())
+            .filter(|content| !content.is_empty())
+    })
 }
 
 fn read_u64_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: u64) -> u64 {

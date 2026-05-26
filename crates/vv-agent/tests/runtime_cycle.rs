@@ -410,6 +410,53 @@ fn runtime_injects_session_memory_context_after_compaction() {
     );
 }
 
+#[test]
+fn runtime_extracts_session_memory_with_default_llm_callback() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let large_tool_payload = "tool output ".repeat(300);
+    let llm = SessionMemoryExtractingLlmClient::new(large_tool_payload);
+    let inspector = llm.clone();
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.default_workspace = Some(workspace.path().to_path_buf());
+    runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
+        workspace.path(),
+    ));
+    let mut task = AgentTask::new(
+        "session_memory_extract_task",
+        "demo",
+        "system",
+        "inspect memory",
+    );
+    task.memory_compact_threshold = 20;
+    task.metadata
+        .insert("model_context_window".to_string(), json!(120));
+    task.metadata
+        .insert("reserved_output_tokens".to_string(), json!(10));
+    task.metadata
+        .insert("autocompact_buffer_tokens".to_string(), json!(0));
+    task.metadata
+        .insert("session_memory_enabled".to_string(), json!(true));
+    task.metadata
+        .insert("session_memory_min_tokens".to_string(), json!(1));
+    task.metadata
+        .insert("session_memory_min_text_messages".to_string(), json!(1));
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(inspector.extraction_prompt_count(), 1);
+    let second_request = inspector.second_request_messages();
+    assert!(
+        second_request
+            .first()
+            .is_some_and(|message| message.content.contains("<Session Memory>")
+                && message
+                    .content
+                    .contains("default callback preserved this fact")),
+        "second request did not include extracted session memory: {second_request:#?}"
+    );
+}
+
 #[derive(Clone)]
 struct InspectingImageLlmClient {
     responses: Arc<Mutex<VecDeque<LLMResponse>>>,
@@ -729,6 +776,92 @@ impl MemoryCompactionInspectingLlmClient {
 
 impl LlmClient for MemoryCompactionInspectingLlmClient {
     fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        let mut responses_seen = self
+            .responses_seen
+            .lock()
+            .map_err(|_| LlmError::Request("counter poisoned".to_string()))?;
+        *responses_seen += 1;
+        if *responses_seen == 1 {
+            return Ok(LLMResponse::with_tool_calls(
+                "first cycle",
+                vec![ToolCall::new(
+                    "write_large",
+                    "write_file",
+                    BTreeMap::from([
+                        ("path".to_string(), json!("large.txt")),
+                        (
+                            "content".to_string(),
+                            json!(self.large_tool_payload.clone()),
+                        ),
+                    ]),
+                )],
+            ));
+        }
+        *self
+            .second_request_messages
+            .lock()
+            .expect("messages poisoned") = request.messages.clone();
+        Ok(LLMResponse::with_tool_calls(
+            "finish",
+            vec![ToolCall::new(
+                "finish_after_compact",
+                "task_finish",
+                BTreeMap::from([("message".to_string(), json!("memory compacted"))]),
+            )],
+        ))
+    }
+}
+
+#[derive(Clone)]
+struct SessionMemoryExtractingLlmClient {
+    responses_seen: Arc<Mutex<usize>>,
+    extraction_prompt_count: Arc<Mutex<usize>>,
+    large_tool_payload: String,
+    second_request_messages: Arc<Mutex<Vec<Message>>>,
+}
+
+impl SessionMemoryExtractingLlmClient {
+    fn new(large_tool_payload: String) -> Self {
+        Self {
+            responses_seen: Arc::new(Mutex::new(0)),
+            extraction_prompt_count: Arc::new(Mutex::new(0)),
+            large_tool_payload,
+            second_request_messages: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn extraction_prompt_count(&self) -> usize {
+        *self
+            .extraction_prompt_count
+            .lock()
+            .expect("extraction count poisoned")
+    }
+
+    fn second_request_messages(&self) -> Vec<Message> {
+        self.second_request_messages
+            .lock()
+            .expect("messages poisoned")
+            .clone()
+    }
+}
+
+impl LlmClient for SessionMemoryExtractingLlmClient {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        if request.tools.is_empty()
+            && request.messages.len() == 1
+            && request.messages[0]
+                .content
+                .contains("extract durable facts that should survive context compression")
+        {
+            *self
+                .extraction_prompt_count
+                .lock()
+                .expect("extraction count poisoned") += 1;
+            return Ok(LLMResponse::new(
+                r#"[{"category":"key_fact","content":"default callback preserved this fact","importance":9}]"#,
+            ));
+        }
+
         let mut responses_seen = self
             .responses_seen
             .lock()
