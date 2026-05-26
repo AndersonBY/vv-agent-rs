@@ -177,6 +177,40 @@ fn runtime_injects_image_message_after_read_image() {
 }
 
 #[test]
+fn runtime_does_not_inject_image_message_for_text_only_task() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    std::fs::write(workspace.path().join("img.png"), PNG_1X1).expect("image");
+
+    let mut read_image_args = BTreeMap::new();
+    read_image_args.insert("path".to_string(), json!("img.png"));
+    let mut finish_args = BTreeMap::new();
+    finish_args.insert("message".to_string(), json!("ok"));
+
+    let llm = InspectingImageLlmClient::new(
+        LLMResponse::with_tool_calls(
+            "read image",
+            vec![ToolCall::new("call_1", "read_image", read_image_args)],
+        ),
+        LLMResponse::with_tool_calls(
+            "done",
+            vec![ToolCall::new("call_2", "task_finish", finish_args)],
+        ),
+    );
+    let inspector = llm.clone();
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.default_workspace = Some(workspace.path().to_path_buf());
+    runtime.workspace_backend = std::sync::Arc::new(
+        vv_agent::workspace::LocalWorkspaceBackend::new(workspace.path()),
+    );
+
+    let task = AgentTask::new("task_img_text_only", "demo", "system", "read image");
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert!(!inspector.saw_image_message());
+}
+
+#[test]
 fn runtime_executes_configured_sub_agent_with_real_runner() {
     let mut sub_task_args = BTreeMap::new();
     sub_task_args.insert("agent_id".to_string(), json!("researcher"));

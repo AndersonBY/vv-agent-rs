@@ -518,14 +518,20 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         directive_result = Some(result.clone());
                     }
                     messages.push(result.to_message());
-                    if let Some(image_url) = &result.image_url {
-                        let image_path =
-                            result.image_path.as_deref().unwrap_or("image").to_string();
-                        let mut image_message =
-                            crate::types::Message::user(format!("[Image loaded] {image_path}"));
-                        image_message.image_url = Some(image_url.clone());
-                        image_message.metadata = result.metadata.clone();
-                        messages.push(image_message);
+                    if task.native_multimodal {
+                        if let Some(image_url) = &result.image_url {
+                            let image_path =
+                                result.image_path.as_deref().unwrap_or("image").to_string();
+                            let mut image_message =
+                                crate::types::Message::user(format!("[Image loaded] {image_path}"));
+                            image_message.image_url = Some(image_url.clone());
+                            image_message.metadata = result.metadata.clone();
+                            messages.push(image_message);
+                        } else if let Some(image_path) = &result.image_path {
+                            messages.push(crate::types::Message::user(format!(
+                                "[Image loaded] {image_path}"
+                            )));
+                        }
                     }
                     cycle.tool_results.push(result);
                     if !steering_prompts.is_empty() {
