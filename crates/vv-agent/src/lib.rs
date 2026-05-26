@@ -5,12 +5,14 @@
 //! using a stable library API while deeper runtime parity is filled in module by
 //! module.
 
+pub mod background_sessions;
 pub mod cli;
 pub mod config;
 pub mod constants;
 pub mod integrations;
 pub mod llm;
 pub mod memory;
+pub mod processes;
 pub mod prompt;
 pub mod runtime;
 pub mod sdk;

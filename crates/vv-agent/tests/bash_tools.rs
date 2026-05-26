@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
+use std::thread;
+use std::time::Duration;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
 #[test]
@@ -45,4 +47,130 @@ fn bash_tool_blocks_dangerous_command() {
 
     assert_eq!(result.status, ToolResultStatus::Error);
     assert_eq!(result.error_code.as_deref(), Some("dangerous_command"));
+}
+
+#[test]
+fn background_command_lifecycle_can_be_polled() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let start = registry
+        .execute(
+            &ToolCall::new(
+                "bash_bg_1",
+                "bash",
+                BTreeMap::from([
+                    (
+                        "command".to_string(),
+                        json!("printf start; sleep 0.2; printf done"),
+                    ),
+                    ("run_in_background".to_string(), json!(true)),
+                    ("timeout".to_string(), json!(5)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("bash background start");
+
+    assert_eq!(start.status, ToolResultStatus::Running);
+    let start_payload: Value = serde_json::from_str(&start.content).expect("start payload");
+    let session_id = start_payload["session_id"]
+        .as_str()
+        .expect("session_id")
+        .to_string();
+    assert_eq!(start_payload["status"], "running");
+    assert!(start_payload.get("command").is_none());
+
+    let mut final_payload = None;
+    for _ in 0..20 {
+        let probe = registry
+            .execute(
+                &ToolCall::new(
+                    "bash_bg_check_1",
+                    "check_background_command",
+                    BTreeMap::from([("session_id".to_string(), json!(session_id))]),
+                ),
+                &mut context,
+            )
+            .expect("check background command");
+        let payload: Value = serde_json::from_str(&probe.content).expect("probe payload");
+        if probe.status == ToolResultStatus::Running {
+            thread::sleep(Duration::from_millis(50));
+            continue;
+        }
+        assert_eq!(probe.status, ToolResultStatus::Success);
+        final_payload = Some(payload);
+        break;
+    }
+
+    let final_payload = final_payload.expect("background command finished");
+    assert_eq!(final_payload["status"], "completed");
+    assert_eq!(final_payload["exit_code"], 0);
+    assert!(final_payload["command"]
+        .as_str()
+        .expect("command")
+        .contains("printf start"));
+    assert_eq!(final_payload["output"], "startdone");
+}
+
+#[test]
+fn foreground_timeout_moves_command_to_background() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "bash_timeout_1",
+                "bash",
+                BTreeMap::from([
+                    ("command".to_string(), json!("printf partial; sleep 2")),
+                    ("timeout".to_string(), json!(1)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("bash timeout");
+
+    assert_eq!(result.status, ToolResultStatus::Running);
+    let payload: Value = serde_json::from_str(&result.content).expect("timeout payload");
+    assert_eq!(payload["status"], "running");
+    assert_eq!(payload["transitioned_to_background"], true);
+    assert!(payload["session_id"].as_str().is_some());
+    assert!(payload["message"]
+        .as_str()
+        .expect("message")
+        .contains("check_background_command"));
+    assert!(payload["output"]
+        .as_str()
+        .expect("output")
+        .contains("partial"));
+}
+
+#[test]
+fn bash_tool_passes_stdin_to_command() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "bash_stdin_1",
+                "bash",
+                BTreeMap::from([
+                    ("command".to_string(), json!("cat")),
+                    ("stdin".to_string(), json!("hello from stdin\n")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("bash stdin");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: Value = serde_json::from_str(&result.content).expect("stdin payload");
+    assert_eq!(payload["exit_code"], 0);
+    assert_eq!(payload["output"], "hello from stdin\n");
 }

@@ -1,10 +1,14 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use crate::background_sessions::background_session_manager;
+use crate::processes::{
+    read_captured_output, remove_captured_output, start_captured_process, wait_for_child,
+};
 use crate::types::{ToolArguments, ToolCall, ToolDirective, ToolExecutionResult};
 use crate::workspace::WorkspaceBackend;
 pub type ToolHandler =
@@ -197,6 +201,9 @@ pub fn build_default_registry() -> ToolRegistry {
     registry
         .register(bash_tool())
         .expect("default bash registration");
+    registry
+        .register(check_background_command_tool())
+        .expect("default check_background_command registration");
     registry
 }
 
@@ -853,49 +860,101 @@ fn bash_tool() -> ToolSpec {
                     "invalid_exec_dir",
                 );
             }
-            let output = if cfg!(target_os = "windows") {
-                Command::new("cmd")
-                    .args(["/C", &command])
-                    .current_dir(&cwd)
-                    .output()
-            } else {
-                Command::new("sh")
-                    .args(["-lc", &command])
-                    .current_dir(&cwd)
-                    .output()
+            let timeout_seconds = arguments
+                .get("timeout")
+                .and_then(Value::as_u64)
+                .unwrap_or(300)
+                .clamp(1, 600);
+            let stdin_text = arguments.get("stdin").and_then(Value::as_str);
+            let auto_confirm = arguments
+                .get("auto_confirm")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let run_in_background = arguments
+                .get("run_in_background")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let prepared = prepare_shell_execution(&command, auto_confirm);
+            let started = start_captured_process(&prepared.command, &cwd, stdin_text);
+            let mut started = match started {
+                Ok(started) => started,
+                Err(error) => return tool_error_with_code(error.to_string(), "command_failed"),
             };
-            match output {
-                Ok(output) => {
-                    let mut combined = String::new();
-                    combined.push_str(&String::from_utf8_lossy(&output.stdout));
-                    combined.push_str(&String::from_utf8_lossy(&output.stderr));
-                    let exit_code = output.status.code().unwrap_or(-1);
-                    let cwd_payload = if cwd == context.workspace {
-                        ".".to_string()
-                    } else {
-                        cwd.strip_prefix(&context.workspace)
-                            .map(|path| path.to_string_lossy().replace('\\', "/"))
-                            .unwrap_or_else(|_| cwd.to_string_lossy().to_string())
-                    };
-                    let payload = json!({
-                        "cwd": cwd_payload,
+
+            if run_in_background {
+                let session_id = background_session_manager().adopt_running_process(
+                    command,
+                    cwd,
+                    timeout_seconds,
+                    started.child,
+                    started.output_path,
+                    prepared.shell,
+                );
+                let payload = json!({
+                    "status": "running",
+                    "session_id": session_id,
+                });
+                return tool_result(
+                    crate::types::ToolResultStatus::Running,
+                    payload,
+                    None,
+                    ToolDirective::Continue,
+                );
+            }
+
+            match wait_for_child(&mut started.child, Duration::from_secs(timeout_seconds)) {
+                Ok(Some(exit_status)) => {
+                    let output = read_captured_output(&started.output_path, 50_000);
+                    remove_captured_output(&started.output_path);
+                    let exit_code = exit_status.code().unwrap_or(-1);
+                    let mut payload = json!({
+                        "cwd": workspace_relative_path_or_absolute(&context.workspace, &cwd),
                         "exit_code": exit_code,
-                        "output": combined.chars().take(50_000).collect::<String>(),
+                        "output": output,
                     });
+                    if let Some(shell) = prepared.shell {
+                        payload["shell"] = Value::String(shell);
+                    }
                     if exit_code == 0 {
                         ToolExecutionResult::success("", payload.to_string())
                     } else {
-                        ToolExecutionResult {
-                            tool_call_id: String::new(),
-                            content: payload.to_string(),
-                            status: crate::types::ToolResultStatus::Error,
-                            directive: ToolDirective::Continue,
-                            error_code: Some("command_failed".to_string()),
-                            metadata: BTreeMap::new(),
-                            image_url: None,
-                            image_path: None,
-                        }
+                        tool_result(
+                            crate::types::ToolResultStatus::Error,
+                            payload,
+                            Some("command_failed"),
+                            ToolDirective::Continue,
+                        )
                     }
+                }
+                Ok(None) => {
+                    let output = read_captured_output(&started.output_path, 50_000);
+                    let session_id = background_session_manager().adopt_running_process(
+                        command,
+                        cwd,
+                        timeout_seconds,
+                        started.child,
+                        started.output_path,
+                        prepared.shell.clone(),
+                    );
+                    let mut payload = json!({
+                        "status": "running",
+                        "session_id": session_id,
+                        "cwd": exec_dir,
+                        "message": format!(
+                            "command exceeded foreground timeout after {timeout_seconds} seconds and continues in background; use `check_background_command` with this session_id to inspect progress"
+                        ),
+                        "output": output,
+                        "transitioned_to_background": true,
+                    });
+                    if let Some(shell) = prepared.shell {
+                        payload["shell"] = Value::String(shell);
+                    }
+                    tool_result(
+                        crate::types::ToolResultStatus::Running,
+                        payload,
+                        None,
+                        ToolDirective::Continue,
+                    )
                 }
                 Err(error) => tool_error_with_code(error.to_string(), "command_failed"),
             }
@@ -923,8 +982,107 @@ fn bash_tool() -> ToolSpec {
     spec
 }
 
+fn check_background_command_tool() -> ToolSpec {
+    let mut spec = ToolSpec::new(
+        "check_background_command",
+        "Check status and output for a background command.",
+        Arc::new(|_context, arguments| {
+            let session_id = arguments
+                .get("session_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            if session_id.is_empty() {
+                return tool_error_with_code("`session_id` is required", "session_id_required");
+            }
+            let payload = background_session_manager().check(session_id);
+            match payload.get("status").and_then(Value::as_str) {
+                Some("running") => tool_result(
+                    crate::types::ToolResultStatus::Running,
+                    payload,
+                    None,
+                    ToolDirective::Continue,
+                ),
+                Some("completed") => ToolExecutionResult::success("", payload.to_string()),
+                _ => tool_result(
+                    crate::types::ToolResultStatus::Error,
+                    payload,
+                    Some("background_command_failed"),
+                    ToolDirective::Continue,
+                ),
+            }
+        }),
+    );
+    spec.schema = json!({
+        "type": "function",
+        "function": {
+            "name": "check_background_command",
+            "description": "Check status/output for a background command.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"}
+                },
+                "required": ["session_id"]
+            }
+        }
+    });
+    spec
+}
+
+struct PreparedShellCommand {
+    command: Vec<String>,
+    shell: Option<String>,
+}
+
+fn prepare_shell_execution(command: &str, auto_confirm: bool) -> PreparedShellCommand {
+    if cfg!(target_os = "windows") {
+        PreparedShellCommand {
+            command: vec!["cmd".to_string(), "/C".to_string(), command.to_string()],
+            shell: Some("cmd".to_string()),
+        }
+    } else {
+        let prepared_command = if auto_confirm {
+            format!("yes | ({command})")
+        } else {
+            command.to_string()
+        };
+        PreparedShellCommand {
+            command: vec!["sh".to_string(), "-lc".to_string(), prepared_command],
+            shell: Some("bash".to_string()),
+        }
+    }
+}
+
 fn tool_error(message: impl Into<String>) -> ToolExecutionResult {
     tool_error_with_code(message, "")
+}
+
+fn tool_result(
+    status: crate::types::ToolResultStatus,
+    content: Value,
+    error_code: Option<&str>,
+    directive: ToolDirective,
+) -> ToolExecutionResult {
+    let metadata = content
+        .as_object()
+        .map(|object| {
+            object
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    ToolExecutionResult {
+        tool_call_id: String::new(),
+        content: content.to_string(),
+        status,
+        directive,
+        error_code: error_code.map(str::to_string),
+        metadata,
+        image_url: None,
+        image_path: None,
+    }
 }
 
 fn tool_error_with_code(
@@ -956,6 +1114,15 @@ fn resolve_workspace_path(workspace: &Path, path: &str) -> PathBuf {
     } else {
         workspace.join(candidate)
     }
+}
+
+fn workspace_relative_path_or_absolute(workspace: &Path, path: &Path) -> String {
+    if path == workspace {
+        return ".".to_string();
+    }
+    path.strip_prefix(workspace)
+        .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"))
 }
 
 fn replace_n(text: &str, old_str: &str, new_str: &str, max_replacements: usize) -> String {

@@ -58,11 +58,11 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 一个可用的 Cargo workspace，包含主 `vv-agent` 包。
 - 一个库目标，暴露与 Python `vv_agent.__init__` 类似的顶层 API 类型和函数。
 - 同一 package 内的 CLI 目标。
-- 与 Python 包对齐的顶层模块：`config`、`constants`、`integrations`、`llm`、`memory`、`prompt`、`runtime`、`sdk`、`skills`、`tools`、`types`、`workspace` 和 `cli`。
+- 与 Python 包对齐的顶层模块：`background_sessions`、`cli`、`config`、`constants`、`integrations`、`llm`、`memory`、`processes`、`prompt`、`runtime`、`sdk`、`skills`、`tools`、`types` 和 `workspace`。
 - 基于 `vv-llm` 的 chat client 构建和配置化 endpoint 解析，同时保留 `ScriptedLlmClient` 用于确定性测试。
 - 一个基础 multi-cycle runtime，可以把 tool schemas 发给 LLM、执行工具调用，并通过 `task_finish` 或 `ask_user` 收敛。
-- 内置控制工具（`task_finish`、`ask_user`、`todo_write`）、核心 workspace 工具（`list_files`、`file_info`、`read_file`、`write_file`、`file_str_replace`），以及前台 `bash` 命令工具。
+- 内置控制工具（`task_finish`、`ask_user`、`todo_write`）、核心 workspace 工具（`list_files`、`file_info`、`read_file`、`write_file`、`file_str_replace`），以及支持捕获输出、stdin、前台超时转后台和后台轮询的 `bash` / `check_background_command` 命令工具。
 - SDK 客户端、工具注册表、工作区后端，以及共享协议类型。
 - 覆盖公开 API 构造、Rust SDK 使用、vv-llm 集成、runtime 工具循环和 workspace 工具的 smoke tests。
 
-对 Python 实现的更深层 parity 仍待继续补齐，包括 hooks、memory compaction、skills activation、background command sessions、sub-agents、session steering、distributed backends 和剩余内置工具。
+对 Python 实现的更深层 parity 仍待继续补齐，包括 hooks、memory compaction、skills activation、sub-agents、session steering、distributed backends 和剩余内置工具。

@@ -1,0 +1,207 @@
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::process::Child;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+use serde_json::{json, Value};
+
+use crate::processes::{kill_process_tree, read_captured_output, remove_captured_output};
+
+const OUTPUT_LIMIT: usize = 50_000;
+
+static MANAGER: OnceLock<BackgroundSessionManager> = OnceLock::new();
+
+pub fn background_session_manager() -> &'static BackgroundSessionManager {
+    MANAGER.get_or_init(BackgroundSessionManager::default)
+}
+
+#[derive(Default)]
+pub struct BackgroundSessionManager {
+    sessions: Mutex<BTreeMap<String, BackgroundSession>>,
+    next_id: AtomicU64,
+}
+
+impl BackgroundSessionManager {
+    pub fn adopt_running_process(
+        &self,
+        command: impl Into<String>,
+        cwd: impl Into<PathBuf>,
+        timeout_seconds: u64,
+        child: Child,
+        output_path: PathBuf,
+        shell: Option<String>,
+    ) -> String {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let session_id = format!("bg_{id:012x}");
+        let session = BackgroundSession {
+            session_id: session_id.clone(),
+            command: command.into(),
+            shell,
+            cwd: cwd.into(),
+            started_at: Instant::now(),
+            timeout_seconds: timeout_seconds.max(1),
+            child: Some(child),
+            output_path,
+            status: BackgroundStatus::Running,
+            output: String::new(),
+            exit_code: None,
+        };
+        self.sessions
+            .lock()
+            .expect("background session manager poisoned")
+            .insert(session_id.clone(), session);
+        session_id
+    }
+
+    pub fn check(&self, session_id: &str) -> Value {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .expect("background session manager poisoned");
+        let Some(session) = sessions.get_mut(session_id) else {
+            return json!({
+                "status": "missing",
+                "session_id": session_id,
+                "error": "Background session not found",
+            });
+        };
+
+        if session.status.is_terminal() {
+            return session.snapshot();
+        }
+
+        let elapsed = session.started_at.elapsed();
+        if elapsed > Duration::from_secs(session.timeout_seconds) {
+            session.finalize_timeout();
+            return session.snapshot();
+        }
+
+        let Some(child) = session.child.as_mut() else {
+            session.finalize_completed(0);
+            return session.snapshot();
+        };
+
+        match child.try_wait() {
+            Ok(Some(exit_status)) => {
+                session.finalize_completed(exit_status.code().unwrap_or(-1));
+                session.snapshot()
+            }
+            Ok(None) => session.running_snapshot(elapsed),
+            Err(error) => {
+                session.status = BackgroundStatus::Failed;
+                session.exit_code = Some(-1);
+                session.output = error.to_string();
+                session.snapshot()
+            }
+        }
+    }
+}
+
+struct BackgroundSession {
+    session_id: String,
+    command: String,
+    shell: Option<String>,
+    cwd: PathBuf,
+    started_at: Instant,
+    timeout_seconds: u64,
+    child: Option<Child>,
+    output_path: PathBuf,
+    status: BackgroundStatus,
+    output: String,
+    exit_code: Option<i32>,
+}
+
+impl BackgroundSession {
+    fn running_snapshot(&self, elapsed: Duration) -> Value {
+        let mut payload = json!({
+            "status": "running",
+            "session_id": self.session_id,
+            "command": self.command,
+            "elapsed_seconds": (elapsed.as_millis() as f64) / 1000.0,
+            "cwd": display_path(&self.cwd),
+        });
+        if let Some(shell) = &self.shell {
+            payload["shell"] = Value::String(shell.clone());
+        }
+        payload
+    }
+
+    fn snapshot(&self) -> Value {
+        let mut payload = json!({
+            "status": self.status.as_str(),
+            "session_id": self.session_id,
+            "command": self.command,
+            "cwd": display_path(&self.cwd),
+            "exit_code": self.exit_code,
+            "output": self.output,
+        });
+        if let Some(shell) = &self.shell {
+            payload["shell"] = Value::String(shell.clone());
+        }
+        payload
+    }
+
+    fn finalize_completed(&mut self, exit_code: i32) {
+        self.exit_code = Some(exit_code);
+        self.status = if exit_code == 0 {
+            BackgroundStatus::Completed
+        } else {
+            BackgroundStatus::Failed
+        };
+        self.output = read_captured_output(&self.output_path, OUTPUT_LIMIT);
+        remove_captured_output(&self.output_path);
+        self.child = None;
+    }
+
+    fn finalize_timeout(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            kill_process_tree(child);
+            self.exit_code = Some(
+                child
+                    .try_wait()
+                    .ok()
+                    .flatten()
+                    .and_then(|s| s.code())
+                    .unwrap_or(-9),
+            );
+        } else {
+            self.exit_code = Some(-9);
+        }
+        self.status = BackgroundStatus::Timeout;
+        self.output = read_captured_output(&self.output_path, OUTPUT_LIMIT);
+        if self.output.is_empty() {
+            self.output = "Command timed out in background session".to_string();
+        }
+        remove_captured_output(&self.output_path);
+        self.child = None;
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BackgroundStatus {
+    Running,
+    Completed,
+    Failed,
+    Timeout,
+}
+
+impl BackgroundStatus {
+    fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Timeout)
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Timeout => "timeout",
+        }
+    }
+}
+
+fn display_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
