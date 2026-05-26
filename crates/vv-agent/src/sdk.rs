@@ -8,6 +8,7 @@ use crate::config::ResolvedModelConfig;
 use crate::llm::{LlmClient, ScriptedLlmClient};
 use crate::runtime::AgentRuntime;
 use crate::types::{AgentResult, AgentStatus, AgentTask, Metadata, NoToolPolicy, SubAgentConfig};
+use crate::workspace::LocalWorkspaceBackend;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentDefinition {
@@ -868,8 +869,13 @@ impl AgentSDKClient {
 
     pub fn with_runtime<C: LlmClient + Clone + 'static>(
         mut self,
-        runtime: AgentRuntime<C>,
+        mut runtime: AgentRuntime<C>,
     ) -> Self {
+        if runtime.default_workspace.is_none() {
+            let workspace = self.options.workspace.clone();
+            runtime.default_workspace = Some(workspace.clone());
+            runtime.workspace_backend = Arc::new(LocalWorkspaceBackend::new(workspace));
+        }
         self.runtime = Arc::new(runtime);
         self
     }
@@ -917,7 +923,12 @@ pub fn create_agent_session(
     let execute_run = Arc::new(move |request: AgentSessionRunRequest| {
         runtime.run_with_session(&definition_for_run, request)
     });
-    AgentSession::new_with_context(execute_run, agent_name, definition, "./workspace")
+    AgentSession::new_with_context(
+        execute_run,
+        agent_name,
+        definition,
+        client.options.workspace.clone(),
+    )
 }
 
 pub fn run(client: &AgentSDKClient, prompt: impl Into<String>) -> Result<AgentRun, String> {

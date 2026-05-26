@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use vv_agent::{
     create_agent_session, AgentDefinition, AgentRun, AgentRuntime, AgentSDKClient, AgentSDKOptions,
-    AgentSession, AgentStatus, BeforeLlmEvent, CycleRecord, LLMResponse, ResolvedModelConfig,
-    RuntimeHook, ScriptedLlmClient, SessionEventHandler, TokenUsage, ToolCall,
+    AgentSession, AgentStatus, BeforeLlmEvent, BeforeToolCallEvent, BeforeToolCallPatch,
+    CycleRecord, LLMResponse, ResolvedModelConfig, RuntimeHook, ScriptedLlmClient,
+    SessionEventHandler, TokenUsage, ToolCall,
 };
 
 #[test]
@@ -283,6 +284,43 @@ fn session_runtime_receives_previous_messages_and_shared_state() {
     );
 }
 
+#[test]
+fn sdk_runtime_uses_options_workspace_for_tool_context_and_sessions() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let responses = vec![LLMResponse {
+        content: "finish".to_string(),
+        tool_calls: vec![ToolCall::new(
+            "finish-1",
+            "task_finish",
+            json_args(serde_json::json!({"message": "ok"})),
+        )],
+        raw: BTreeMap::new(),
+        token_usage: TokenUsage::default(),
+    }];
+    let workspaces = Arc::new(Mutex::new(Vec::new()));
+    let mut runtime = AgentRuntime::new(ScriptedLlmClient::new(responses));
+    runtime.hooks.push(Arc::new(WorkspaceRecordingHook {
+        workspaces: Arc::clone(&workspaces),
+    }));
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().to_path_buf(),
+        ..AgentSDKOptions::default()
+    })
+    .with_runtime(runtime);
+    let session = create_agent_session(&client, "demo", AgentDefinition::default_for_model("demo"));
+
+    let run = client
+        .run_with_agent(AgentDefinition::default_for_model("demo"), "finish")
+        .expect("run");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(session.state().workspace, workspace.path());
+    assert_eq!(
+        workspaces.lock().expect("workspaces").as_slice(),
+        &[workspace.path().to_path_buf()]
+    );
+}
+
 fn fake_run(prompt: &str, status: AgentStatus) -> AgentRun {
     let mut result = vv_agent::AgentResult::completed(vec![], vec![], prompt.to_string());
     result.status = status;
@@ -338,6 +376,20 @@ impl RuntimeHook for RecordingRuntimeHook {
                     .collect(),
                 shared_state: event.shared_state.clone(),
             });
+        None
+    }
+}
+
+struct WorkspaceRecordingHook {
+    workspaces: Arc<Mutex<Vec<std::path::PathBuf>>>,
+}
+
+impl RuntimeHook for WorkspaceRecordingHook {
+    fn before_tool_call(&self, event: BeforeToolCallEvent<'_>) -> Option<BeforeToolCallPatch> {
+        self.workspaces
+            .lock()
+            .expect("workspaces")
+            .push(event.context.workspace.clone());
         None
     }
 }

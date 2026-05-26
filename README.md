@@ -178,7 +178,8 @@ The current Rust implementation includes:
   includes structured aggregate and per-cycle token usage. Runtime-backed
   sessions preserve prior messages and shared state across prompts, so follow-up
   turns see the same conversation and TODO/memory state instead of starting from
-  a fresh task.
+  a fresh task. SDK-created runtime sessions also inherit
+  `AgentSDKOptions.workspace` for both session state and tool execution context.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,
