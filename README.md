@@ -99,6 +99,9 @@ The current Rust implementation includes:
 - Runtime hooks modeled after Python `RuntimeHookManager`: callers can patch
   LLM request messages/schemas, patch LLM responses, patch or short-circuit
   tool calls, and patch tool results.
+- Runtime lifecycle logging through `log_handler`, with Python-style events for
+  run start, cycle start, LLM response, tool result, completion, wait-user, and
+  max-cycle exits.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
   canonical `schemas`, shared `common` helpers, and focused handler modules.
 - Split `activate_skill` handling into model, parser, normalization, and shared

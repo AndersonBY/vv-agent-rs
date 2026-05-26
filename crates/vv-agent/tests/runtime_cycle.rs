@@ -274,6 +274,58 @@ fn runtime_hooks_can_patch_llm_request_and_tool_result_flow() {
         .contains("final answer patched by after_tool_call"));
 }
 
+#[test]
+fn runtime_emits_reference_lifecycle_log_events() {
+    let mut finish_args = BTreeMap::new();
+    finish_args.insert("message".to_string(), json!("logged finish"));
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+        "assistant log",
+        vec![ToolCall::new("log_finish", "task_finish", finish_args)],
+    )]);
+    let events = Arc::new(Mutex::new(Vec::<(
+        String,
+        BTreeMap<String, serde_json::Value>,
+    )>::new()));
+    let sink = events.clone();
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.log_handler = Some(Arc::new(Mutex::new(Box::new(
+        move |event: &str, payload: &BTreeMap<String, serde_json::Value>| {
+            sink.lock()
+                .expect("events poisoned")
+                .push((event.to_string(), payload.clone()));
+        },
+    ))));
+
+    let result = runtime
+        .run(AgentTask::new("log_task", "demo", "system", "finish"))
+        .expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let events = events.lock().expect("events poisoned").clone();
+    let event_names = events
+        .iter()
+        .map(|(event, _)| event.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        event_names,
+        vec![
+            "run_started",
+            "cycle_started",
+            "cycle_llm_response",
+            "tool_result",
+            "run_completed"
+        ]
+    );
+    assert_eq!(events[0].1["task_id"], "log_task");
+    assert_eq!(events[0].1["model"], "demo");
+    assert_eq!(events[2].1["assistant_message"], "assistant log");
+    assert_eq!(events[2].1["tool_call_count"], 1);
+    assert_eq!(events[3].1["tool_name"], "task_finish");
+    assert_eq!(events[3].1["tool_call_id"], "log_finish");
+    assert_eq!(events[3].1["directive"], "finish");
+    assert_eq!(events[4].1["final_answer"], "logged finish");
+}
+
 #[derive(Clone)]
 struct InspectingImageLlmClient {
     responses: Arc<Mutex<VecDeque<LLMResponse>>>,

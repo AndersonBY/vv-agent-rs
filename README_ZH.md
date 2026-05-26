@@ -87,6 +87,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 一个基础 multi-cycle runtime，可以把 tool schemas 发给 LLM、执行工具调用，并通过 `task_finish` 或 `ask_user` 收敛。
 - `runtime/` 已拆成 hooks、主循环、工具结果解析和 sub-agent 执行模块，让后续继续补齐 Python parity 时改动更集中。
 - 已加入参考 Python `RuntimeHookManager` 的 runtime hooks：调用方可以改写 LLM 请求的 messages / schemas、改写 LLM 响应、改写或短路工具调用，并改写工具结果。
+- `log_handler` 已可接收 Python 风格 runtime 生命周期事件，包括 run start、cycle start、LLM response、tool result、completed、wait-user 和 max-cycles。
 - `tools/` 已按 Python `v-agent` 的结构拆分为 `base`、`registry`、canonical `schemas`、共享 `common` helper 和各个 handler 模块。
 - `activate_skill` handler 已拆成模型、解析、归一化和 shared state helper，更接近 Python `v-agent` 的 skill 边界。
 - 默认工具 schema 使用参考 Python `v-agent` 的高信息量描述，让模型拿到文件访问、grep、bash / 后台命令、todo、skills、图片和 sub-agent 的完整操作指引。

@@ -4,7 +4,7 @@ mod sub_agents;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
@@ -23,7 +23,8 @@ pub use hooks::{
 };
 use results::{assistant_message_from_response, extract_final_message, extract_wait_reason};
 
-pub type RuntimeLogHandler = Box<dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static>;
+pub type RuntimeLogCallback = dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static;
+pub type RuntimeLogHandler = Arc<Mutex<Box<RuntimeLogCallback>>>;
 
 #[derive(Debug, Clone, Default)]
 pub struct CancellationToken {
@@ -83,8 +84,28 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             .clone()
             .unwrap_or_else(|| PathBuf::from("./workspace"));
         let sub_task_manager = SubTaskManager::default();
+        self.emit_log(
+            "run_started",
+            BTreeMap::from([
+                ("task_id".to_string(), Value::String(task.task_id.clone())),
+                ("model".to_string(), Value::String(task.model.clone())),
+                (
+                    "workspace".to_string(),
+                    Value::String(workspace_path.display().to_string()),
+                ),
+                ("max_cycles".to_string(), Value::from(task.max_cycles)),
+            ]),
+        );
 
         for cycle_index in 0..task.max_cycles {
+            self.emit_log(
+                "cycle_started",
+                BTreeMap::from([
+                    ("cycle".to_string(), Value::from(cycle_index)),
+                    ("max_cycles".to_string(), Value::from(task.max_cycles)),
+                    ("message_count".to_string(), Value::from(messages.len())),
+                ]),
+            );
             let tool_schemas = self.planned_tool_schemas(&task);
             let hook_manager = self.hook_manager();
             let (request_messages, request_tool_schemas) = hook_manager.apply_before_llm(
@@ -112,11 +133,22 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 &response,
                 Vec::<ToolExecutionResult>::new(),
             );
+            self.emit_cycle_llm_response(&cycle);
 
             if response.tool_calls.is_empty() {
                 cycles.push(cycle);
                 match task.no_tool_policy {
                     crate::types::NoToolPolicy::Finish => {
+                        self.emit_log(
+                            "run_completed",
+                            BTreeMap::from([
+                                ("cycle".to_string(), Value::from(cycle_index)),
+                                (
+                                    "final_answer".to_string(),
+                                    Value::String(response.content.clone()),
+                                ),
+                            ]),
+                        );
                         return Ok(AgentResult::completed_with_shared_state(
                             messages,
                             cycles,
@@ -125,16 +157,27 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         ));
                     }
                     crate::types::NoToolPolicy::WaitUser => {
+                        let wait_reason = if response.content.is_empty() {
+                            "No tool call and runtime is waiting for user.".to_string()
+                        } else {
+                            response.content.clone()
+                        };
+                        self.emit_log(
+                            "run_wait_user",
+                            BTreeMap::from([
+                                ("cycle".to_string(), Value::from(cycle_index)),
+                                (
+                                    "wait_reason".to_string(),
+                                    Value::String(wait_reason.clone()),
+                                ),
+                            ]),
+                        );
                         return Ok(AgentResult {
                             status: AgentStatus::WaitUser,
                             messages,
                             cycles,
                             final_answer: None,
-                            wait_reason: Some(if response.content.is_empty() {
-                                "No tool call and runtime is waiting for user.".to_string()
-                            } else {
-                                response.content.clone()
-                            }),
+                            wait_reason: Some(wait_reason),
                             error: None,
                             shared_state,
                             token_usage: crate::types::TaskTokenUsage::default(),
@@ -188,6 +231,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 if result.tool_call_id.is_empty() {
                     result.tool_call_id = patched_call.id.clone();
                 }
+                self.emit_tool_result(cycle_index, &patched_call, &result);
 
                 if result.directive != ToolDirective::Continue {
                     directive_result = Some(result.clone());
@@ -212,20 +256,42 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             if let Some(result) = directive_result {
                 match result.directive {
                     ToolDirective::Finish => {
+                        let final_message = extract_final_message(&result);
+                        self.emit_log(
+                            "run_completed",
+                            BTreeMap::from([
+                                ("cycle".to_string(), Value::from(cycle_index)),
+                                (
+                                    "final_answer".to_string(),
+                                    Value::String(final_message.clone()),
+                                ),
+                            ]),
+                        );
                         return Ok(AgentResult::completed_with_shared_state(
                             messages,
                             cycles,
-                            extract_final_message(&result),
+                            final_message,
                             shared_state,
                         ));
                     }
                     ToolDirective::WaitUser => {
+                        let wait_reason = extract_wait_reason(&result);
+                        self.emit_log(
+                            "run_wait_user",
+                            BTreeMap::from([
+                                ("cycle".to_string(), Value::from(cycle_index)),
+                                (
+                                    "wait_reason".to_string(),
+                                    Value::String(wait_reason.clone()),
+                                ),
+                            ]),
+                        );
                         return Ok(AgentResult {
                             status: AgentStatus::WaitUser,
                             messages,
                             cycles,
                             final_answer: None,
-                            wait_reason: Some(extract_wait_reason(&result)),
+                            wait_reason: Some(wait_reason),
                             error: None,
                             shared_state,
                             token_usage: crate::types::TaskTokenUsage::default(),
@@ -236,6 +302,16 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             }
         }
 
+        self.emit_log(
+            "run_max_cycles",
+            BTreeMap::from([
+                ("cycle".to_string(), Value::from(cycles.len())),
+                (
+                    "error".to_string(),
+                    Value::String("maximum cycle count reached".to_string()),
+                ),
+            ]),
+        );
         Ok(AgentResult {
             status: AgentStatus::MaxCycles,
             messages,
@@ -254,6 +330,93 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
 
     fn hook_manager(&self) -> RuntimeHookManager {
         RuntimeHookManager::new(self.hooks.clone())
+    }
+
+    fn emit_log(&self, event: &str, payload: BTreeMap<String, Value>) {
+        let Some(handler) = &self.log_handler else {
+            return;
+        };
+        if let Ok(mut handler) = handler.lock() {
+            (handler)(event, &payload);
+        }
+    }
+
+    fn emit_cycle_llm_response(&self, cycle: &crate::types::CycleRecord) {
+        self.emit_log(
+            "cycle_llm_response",
+            BTreeMap::from([
+                ("cycle".to_string(), Value::from(cycle.index)),
+                (
+                    "assistant_message".to_string(),
+                    Value::String(cycle.assistant_message.clone()),
+                ),
+                (
+                    "tool_calls".to_string(),
+                    serde_json::to_value(&cycle.tool_calls).unwrap_or(Value::Null),
+                ),
+                (
+                    "tool_call_names".to_string(),
+                    Value::Array(
+                        cycle
+                            .tool_calls
+                            .iter()
+                            .map(|call| Value::String(call.name.clone()))
+                            .collect(),
+                    ),
+                ),
+                (
+                    "tool_call_count".to_string(),
+                    Value::from(cycle.tool_calls.len()),
+                ),
+                (
+                    "memory_compacted".to_string(),
+                    Value::Bool(cycle.memory_compacted),
+                ),
+                (
+                    "token_usage".to_string(),
+                    serde_json::to_value(&cycle.token_usage).unwrap_or(Value::Null),
+                ),
+            ]),
+        );
+    }
+
+    fn emit_tool_result(&self, cycle_index: u32, call: &ToolCall, result: &ToolExecutionResult) {
+        self.emit_log(
+            "tool_result",
+            BTreeMap::from([
+                ("cycle".to_string(), Value::from(cycle_index)),
+                ("tool_name".to_string(), Value::String(call.name.clone())),
+                (
+                    "tool_arguments".to_string(),
+                    Value::Object(call.arguments.clone().into_iter().collect()),
+                ),
+                (
+                    "tool_call_id".to_string(),
+                    Value::String(result.tool_call_id.clone()),
+                ),
+                (
+                    "status".to_string(),
+                    serde_json::to_value(result.status).unwrap_or(Value::Null),
+                ),
+                (
+                    "directive".to_string(),
+                    serde_json::to_value(result.directive).unwrap_or(Value::Null),
+                ),
+                (
+                    "error_code".to_string(),
+                    result
+                        .error_code
+                        .clone()
+                        .map(Value::String)
+                        .unwrap_or(Value::Null),
+                ),
+                ("content".to_string(), Value::String(result.content.clone())),
+                (
+                    "metadata".to_string(),
+                    Value::Object(result.metadata.clone().into_iter().collect()),
+                ),
+            ]),
+        );
     }
 }
 
