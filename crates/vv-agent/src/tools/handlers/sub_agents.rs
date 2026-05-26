@@ -114,11 +114,12 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                         .insert("session_id".to_string(), Value::String(session_id.clone()));
                     let agent_name = request.agent_name.clone();
                     let task_description = request.task_description.clone();
-                    manager.submit(
+                    manager.submit_with_workspace(
                         task_id.clone(),
                         session_id.clone(),
                         agent_name.clone(),
                         task_description.clone(),
+                        Some(context.workspace_backend.clone()),
                         move || runner(request),
                     );
                     return tool_result(
@@ -220,11 +221,12 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                         .insert("session_id".to_string(), Value::String(session_id.clone()));
                     let task_title = request.task_description.clone();
                     let runner = runner.clone();
-                    manager.submit(
+                    manager.submit_with_workspace(
                         task_id.clone(),
                         session_id.clone(),
                         agent_name.clone(),
                         task_title.clone(),
+                        Some(context.workspace_backend.clone()),
                         move || runner(request),
                     );
                     started += 1;

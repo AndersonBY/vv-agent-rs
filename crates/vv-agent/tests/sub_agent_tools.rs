@@ -6,8 +6,8 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use vv_agent::{
     build_default_registry, register_sub_agent_session, sub_agent_session_registry,
-    unregister_sub_agent_session, AgentStatus, SubAgentSession, SubTaskManager, SubTaskOutcome,
-    ToolCall, ToolContext, ToolResultStatus,
+    unregister_sub_agent_session, AgentStatus, SubAgentSession, SubAgentSessionListener,
+    SubTaskManager, SubTaskOutcome, ToolCall, ToolContext, ToolResultStatus,
 };
 
 #[test]
@@ -443,6 +443,102 @@ fn sub_task_status_rejects_max_cycles_continuation() {
     );
 }
 
+#[test]
+fn sub_task_status_snapshot_tracks_session_activity_and_workspace_files() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    std::fs::write(workspace.path().join("notes.md"), "# Notes\n").expect("notes");
+    std::fs::create_dir(workspace.path().join(".internal")).expect("internal dir");
+    std::fs::write(workspace.path().join(".internal/secret.txt"), "secret").expect("secret");
+    let registry = build_default_registry();
+    let manager = SubTaskManager::default();
+    let mut context = ToolContext::new(workspace.path());
+    context.sub_task_manager = Some(manager.clone());
+    let session = Arc::new(EventingSubAgentSession::default());
+    manager.submit(
+        "sub-task-snapshot",
+        "sub-session-snapshot",
+        "researcher",
+        "Inspect docs",
+        || {
+            thread::sleep(Duration::from_millis(100));
+            SubTaskOutcome {
+                task_id: "sub-task-snapshot".to_string(),
+                agent_name: "researcher".to_string(),
+                status: AgentStatus::Completed,
+                session_id: Some("sub-session-snapshot".to_string()),
+                final_answer: Some("done".to_string()),
+                wait_reason: None,
+                error: None,
+                cycles: 1,
+                todo_list: Vec::new(),
+                resolved: BTreeMap::new(),
+            }
+        },
+    );
+    manager.attach_session(
+        "sub-task-snapshot",
+        "sub-session-snapshot",
+        "researcher",
+        "Inspect docs",
+        context.workspace_backend.clone(),
+        session.clone(),
+    );
+    session.emit(
+        "session_run_start",
+        BTreeMap::from([("prompt".to_string(), json!("Inspect docs"))]),
+    );
+    session.emit(
+        "cycle_started",
+        BTreeMap::from([("cycle".to_string(), json!(1))]),
+    );
+    session.emit(
+        "cycle_llm_response",
+        BTreeMap::from([
+            ("cycle".to_string(), json!(1)),
+            (
+                "assistant_preview".to_string(),
+                json!("Reading the workspace files"),
+            ),
+        ]),
+    );
+    session.emit(
+        "tool_result",
+        BTreeMap::from([
+            ("tool_name".to_string(), json!("read_file")),
+            ("tool_call_id".to_string(), json!("tool-1")),
+            ("status".to_string(), json!("SUCCESS")),
+        ]),
+    );
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_status_snapshot",
+                "sub_task_status",
+                BTreeMap::from([
+                    ("task_ids".to_string(), json!(["sub-task-snapshot"])),
+                    ("detail_level".to_string(), json!("snapshot")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("sub_task_status snapshot");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    let task = &payload["tasks"][0];
+    assert_eq!(task["status"], "running");
+    assert_eq!(
+        task["snapshot"]["recent_activity"],
+        "Reading the workspace files"
+    );
+    assert_eq!(task["snapshot"]["latest_tool_call"]["name"], "read_file");
+    assert_eq!(task["snapshot"]["latest_cycle"]["cycle_index"], 1);
+    assert_eq!(task["snapshot"]["workspace_files"], json!(["notes.md"]));
+    assert_eq!(task["snapshot"]["workspace_file_count"], 1);
+    assert_eq!(task["snapshot"]["workspace_files_truncated"], false);
+}
+
 struct RecordingSubAgentSession {
     received: Arc<Mutex<Vec<String>>>,
 }
@@ -484,5 +580,33 @@ impl SubAgentSession for ContinuingSubAgentSession {
             todo_list: Vec::new(),
             resolved: BTreeMap::new(),
         })
+    }
+}
+
+#[derive(Default)]
+struct EventingSubAgentSession {
+    listeners: Mutex<Vec<SubAgentSessionListener>>,
+}
+
+impl EventingSubAgentSession {
+    fn emit(&self, event: &str, payload: BTreeMap<String, Value>) {
+        let listeners = self.listeners.lock().expect("listeners").clone();
+        for listener in listeners {
+            listener(event, &payload);
+        }
+    }
+}
+
+impl SubAgentSession for EventingSubAgentSession {
+    fn steer(&self, _prompt: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn subscribe(
+        &self,
+        listener: SubAgentSessionListener,
+    ) -> Option<vv_agent::SubAgentSessionUnsubscribe> {
+        self.listeners.lock().expect("listeners").push(listener);
+        Some(Box::new(|| {}))
     }
 }
