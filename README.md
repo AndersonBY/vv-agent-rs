@@ -37,7 +37,15 @@ vv-agent-rs/
         common.rs
         mod.rs
         registry.rs
-        schemas.rs
+        schemas/
+          command.rs
+          control.rs
+          media.rs
+          memory.rs
+          mod.rs
+          sub_agents.rs
+          todo.rs
+          workspace.rs
         handlers/
           background.rs
           bash.rs
@@ -138,11 +146,14 @@ The current Rust implementation includes:
   unresolved tail tool calls are pruned, and memory compaction normalizes stale
   tool-call boundaries before summarizing.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
-  canonical `schemas`, shared `common` helpers, and focused handler modules.
+  canonical `schemas/` domain modules, shared `common` helpers, and focused
+  handler modules.
 - Split `activate_skill` handling into model, parser, normalization, and shared
   state helpers, matching Python `v-agent` skill boundaries more closely.
 - Default tool schemas now use reference-quality descriptions derived from
-  Python `v-agent` so the model sees the same operational guidance for file
+  Python `v-agent`, with extra actionable guidance for high-impact tools such
+  as `task_finish`, `file_str_replace`, `file_info`, `compress_memory`, and
+  `read_image`, so the model sees complete operational guidance for file
   access, grep, bash/background commands, todos, skills, images, and sub-agents.
 - Planned tool schemas include Python-style dynamic runtime hints for shell
   execution, so `bash` advertises the actual shell prefix or invalid shell

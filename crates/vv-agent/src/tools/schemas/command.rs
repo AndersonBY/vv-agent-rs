@@ -1,0 +1,38 @@
+use serde_json::{json, Value};
+
+pub(super) fn bash_schema() -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": "bash",
+            "description": "Execute bash command in workspace.\n\nGuidelines:\n- Prefer specialized read/write/search/edit tools when possible.\n- Use this tool for command execution, package install, scripts, and piped workflows.\n- For commands that may prompt for confirmation, pass `auto_confirm=true` or provide explicit `stdin`.\n- Use `run_in_background=true` for long-running commands and poll with check tool.\n- If a foreground command hits its timeout, it is automatically moved to a background\n  session and returns a `session_id` for polling.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Bash command string."},
+                    "exec_dir": {"type": "string", "description": "Execution directory (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
+                    "timeout": {"type": "integer", "description": "Timeout seconds, default 300, max 600."},
+                    "stdin": {"type": "string", "description": "Optional stdin content."},
+                    "auto_confirm": {"type": "boolean", "description": "Pipe yes to command when true."},
+                    "run_in_background": {"type": "boolean", "description": "Run command in background and return session_id for polling."}
+                },
+                "required": ["command"]
+            }
+        }
+    })
+}
+
+pub(super) fn check_background_command_schema() -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": "check_background_command",
+            "description": "Check status/output for command launched in background mode, including sessions auto-detached after foreground timeout.",
+            "parameters": {
+                "type": "object",
+                "properties": {"session_id": {"type": "string", "description": "Background session identifier."}},
+                "required": ["session_id"]
+            }
+        }
+    })
+}

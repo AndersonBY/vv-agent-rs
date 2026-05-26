@@ -47,7 +47,14 @@ fn tools_module_is_split_into_handler_files() {
     for relative in [
         "tools/base.rs",
         "tools/registry.rs",
-        "tools/schemas.rs",
+        "tools/schemas/mod.rs",
+        "tools/schemas/command.rs",
+        "tools/schemas/control.rs",
+        "tools/schemas/media.rs",
+        "tools/schemas/memory.rs",
+        "tools/schemas/sub_agents.rs",
+        "tools/schemas/todo.rs",
+        "tools/schemas/workspace.rs",
         "tools/handlers/control.rs",
         "tools/handlers/workspace_io.rs",
         "tools/handlers/search.rs",
@@ -91,12 +98,46 @@ fn tools_module_is_split_into_handler_files() {
             "memory.rs should be split into src/memory/ modules",
         ),
         (
+            "tools/schemas.rs",
+            "schemas.rs should be split into src/tools/schemas/ domain modules",
+        ),
+        (
             "tools/handlers/skills.rs",
             "skills.rs should be split into src/tools/handlers/skills/ modules",
         ),
     ] {
         assert!(!root.join(relative).exists(), "{message}");
     }
+}
+
+#[test]
+fn critical_tool_schemas_include_actionable_agent_guidance() {
+    let registry = build_default_registry();
+
+    let task_finish = description(&registry, "task_finish");
+    assert!(task_finish.contains("Only call this when"));
+    assert!(task_finish.contains("unfinished TODO"));
+    assert!(
+        property_description(&registry, "task_finish", "require_all_todos_completed")
+            .contains("Keep true")
+    );
+
+    let file_str_replace = description(&registry, "file_str_replace");
+    assert!(file_str_replace.contains("exact `old_str`"));
+    assert!(file_str_replace.contains("Call `read_file` first"));
+    assert!(file_str_replace.contains("fails if `old_str` is not found"));
+
+    let compress_memory = description(&registry, "compress_memory");
+    assert!(compress_memory.contains("durable memory note"));
+    assert!(compress_memory.contains("future compaction"));
+
+    let file_info = description(&registry, "file_info");
+    assert!(file_info.contains("Use before reading"));
+    assert!(file_info.contains("large or binary"));
+
+    let read_image = description(&registry, "read_image");
+    assert!(read_image.contains("multimodal"));
+    assert!(read_image.contains("Use this before reasoning about image content"));
 }
 
 fn description(registry: &vv_agent::ToolRegistry, tool_name: &str) -> String {
