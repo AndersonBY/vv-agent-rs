@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine as _;
 use serde_json::{json, Value};
 
 use crate::background_sessions::background_session_manager;
@@ -184,6 +185,9 @@ pub fn build_default_registry() -> ToolRegistry {
         .register(todo_write_tool())
         .expect("default todo_write registration");
     registry
+        .register(compress_memory_tool())
+        .expect("default compress_memory registration");
+    registry
         .register(list_files_tool())
         .expect("default list_files registration");
     registry
@@ -196,8 +200,14 @@ pub fn build_default_registry() -> ToolRegistry {
         .register(file_str_replace_tool())
         .expect("default file_str_replace registration");
     registry
+        .register(workspace_grep_tool())
+        .expect("default workspace_grep registration");
+    registry
         .register(file_info_tool())
         .expect("default file_info registration");
+    registry
+        .register(read_image_tool())
+        .expect("default read_image registration");
     registry
         .register(bash_tool())
         .expect("default bash registration");
@@ -458,6 +468,69 @@ fn todo_write_tool() -> ToolSpec {
     spec
 }
 
+fn compress_memory_tool() -> ToolSpec {
+    let mut spec = ToolSpec::new(
+        "compress_memory",
+        "Store key summary notes to reduce future context load.",
+        Arc::new(|context, arguments| {
+            let core_information = arguments
+                .get("core_information")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if core_information.is_empty() {
+                return tool_error_with_code(
+                    "`core_information` is required",
+                    "core_information_required",
+                );
+            }
+
+            let note = json!({
+                "cycle_index": context.cycle_index,
+                "core_information": core_information,
+            });
+            let notes = context
+                .shared_state
+                .entry("memory_notes".to_string())
+                .or_insert_with(|| Value::Array(Vec::new()));
+            if !notes.is_array() {
+                *notes = Value::Array(Vec::new());
+            }
+            let saved_notes = {
+                let notes = notes.as_array_mut().expect("memory_notes array");
+                notes.push(note);
+                notes.len()
+            };
+            let payload = json!({
+                "ok": true,
+                "saved_notes": saved_notes,
+            });
+            tool_result(
+                crate::types::ToolResultStatus::Success,
+                payload,
+                None,
+                ToolDirective::Continue,
+            )
+        }),
+    );
+    spec.schema = json!({
+        "type": "function",
+        "function": {
+            "name": "compress_memory",
+            "description": "Store key summary notes to reduce future context load.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "core_information": {"type": "string"}
+                },
+                "required": ["core_information"]
+            }
+        }
+    });
+    spec
+}
+
 fn list_files_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
         "list_files",
@@ -576,6 +649,346 @@ fn file_info_tool() -> ToolSpec {
                 "type": "object",
                 "properties": {"path": {"type": "string"}},
                 "required": ["path"]
+            }
+        }
+    });
+    spec
+}
+
+fn read_image_tool() -> ToolSpec {
+    let mut spec = ToolSpec::new(
+        "read_image",
+        "Read image from workspace path or HTTP URL for multimodal follow-up.",
+        Arc::new(|context, arguments| {
+            let raw_path = arguments
+                .get("path")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            if raw_path.is_empty() {
+                return tool_error_with_code("`path` is required", "path_required");
+            }
+            if raw_path.starts_with("http://") || raw_path.starts_with("https://") {
+                let payload = json!({
+                    "status": "loaded",
+                    "source": "url",
+                    "image_url": raw_path,
+                });
+                let mut result = tool_result(
+                    crate::types::ToolResultStatus::Success,
+                    payload,
+                    None,
+                    ToolDirective::Continue,
+                );
+                result.image_url = Some(raw_path.to_string());
+                return result;
+            }
+            if !context.workspace_backend.exists(raw_path)
+                || !context.workspace_backend.is_file(raw_path)
+            {
+                return tool_error_with_code(
+                    format!("image file not found: {raw_path}"),
+                    "image_not_found",
+                );
+            }
+            let suffix = Path::new(raw_path)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| format!(".{}", ext.to_ascii_lowercase()))
+                .unwrap_or_default();
+            let mime_type = match suffix.as_str() {
+                ".jpg" | ".jpeg" => "image/jpeg",
+                ".png" => "image/png",
+                ".webp" => "image/webp",
+                ".bmp" => "image/bmp",
+                _ => {
+                    return tool_error_with_code(
+                        format!("unsupported image format: {suffix}"),
+                        "unsupported_image_format",
+                    )
+                }
+            };
+            let bytes = match context.workspace_backend.read_bytes(raw_path) {
+                Ok(bytes) => bytes,
+                Err(error) => return tool_error_with_code(error.to_string(), "image_not_found"),
+            };
+            const MAX_INLINE_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+            if bytes.len() > MAX_INLINE_IMAGE_BYTES {
+                return tool_result(
+                    crate::types::ToolResultStatus::Error,
+                    json!({
+                        "error": "image is too large for inline message transport",
+                        "max_bytes": MAX_INLINE_IMAGE_BYTES,
+                        "actual_bytes": bytes.len(),
+                    }),
+                    Some("image_too_large"),
+                    ToolDirective::Continue,
+                );
+            }
+            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+            let image_url = format!("data:{mime_type};base64,{encoded}");
+            let payload = json!({
+                "status": "loaded",
+                "source": "workspace",
+                "image_path": raw_path,
+                "mime_type": mime_type,
+                "inline_transport": true,
+            });
+            let mut result = tool_result(
+                crate::types::ToolResultStatus::Success,
+                payload,
+                None,
+                ToolDirective::Continue,
+            );
+            result.image_url = Some(image_url);
+            result.image_path = Some(raw_path.to_string());
+            result
+        }),
+    );
+    spec.schema = json!({
+        "type": "function",
+        "function": {
+            "name": "read_image",
+            "description": "Read image from workspace path or HTTP URL, then attach the image payload to the next LLM turn.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"}
+                },
+                "required": ["path"]
+            }
+        }
+    });
+    spec
+}
+
+fn workspace_grep_tool() -> ToolSpec {
+    let mut spec = ToolSpec::new(
+        "workspace_grep",
+        "Search workspace files with grep-style semantics.",
+        Arc::new(|context, arguments| {
+            let pattern = arguments
+                .get("pattern")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if pattern.is_empty() {
+                return tool_error("Search pattern is required");
+            }
+            let output_mode = arguments
+                .get("output_mode")
+                .and_then(Value::as_str)
+                .unwrap_or("content");
+            if !matches!(output_mode, "content" | "files_with_matches" | "count") {
+                return tool_error(format!(
+                    "Invalid `output_mode`: {output_mode}. Supported: content, count, files_with_matches"
+                ));
+            }
+            let file_type = arguments
+                .get("type")
+                .and_then(Value::as_str)
+                .map(|value| value.trim().to_ascii_lowercase())
+                .filter(|value| !value.is_empty());
+            if let Some(file_type) = &file_type {
+                if !is_supported_file_type(file_type) {
+                    return tool_error(format!("Unsupported file type: {file_type}"));
+                }
+            }
+            let path = arguments.get("path").and_then(Value::as_str).unwrap_or(".");
+            let include_hidden = arguments
+                .get("include_hidden")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let include_ignored = arguments
+                .get("include_ignored")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let multiline = arguments
+                .get("multiline")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let show_line_numbers = arguments.get("n").and_then(Value::as_bool).unwrap_or(true);
+            let context_lines = arguments
+                .get("c")
+                .and_then(Value::as_u64)
+                .map(|value| value as usize);
+            let before_context = context_lines
+                .or_else(|| {
+                    arguments
+                        .get("b")
+                        .and_then(Value::as_u64)
+                        .map(|v| v as usize)
+                })
+                .unwrap_or(0);
+            let after_context = context_lines
+                .or_else(|| {
+                    arguments
+                        .get("a")
+                        .and_then(Value::as_u64)
+                        .map(|v| v as usize)
+                })
+                .unwrap_or(0);
+            let head_limit = arguments
+                .get("head_limit")
+                .or_else(|| arguments.get("max_results"))
+                .and_then(Value::as_u64)
+                .map(|value| value.max(1) as usize);
+            let case_insensitive = if let Some(case_sensitive) =
+                arguments.get("case_sensitive").and_then(Value::as_bool)
+            {
+                !case_sensitive
+            } else if let Some(force_insensitive) = arguments.get("i").and_then(Value::as_bool) {
+                force_insensitive
+            } else {
+                !pattern.chars().any(char::is_uppercase)
+            };
+
+            let target_path = resolve_workspace_path(&context.workspace, path);
+            let mut candidate_files = Vec::new();
+            if target_path.is_file() {
+                candidate_files.push(target_path);
+            } else {
+                match collect_workspace_files(&target_path) {
+                    Ok(files) => candidate_files = files,
+                    Err(error) => return tool_error(error.to_string()),
+                }
+            }
+
+            let mut searched_files = 0usize;
+            let mut total_matches = 0usize;
+            let mut files_with_matches = Vec::<String>::new();
+            let mut file_counts = BTreeMap::<String, usize>::new();
+            let mut rows = Vec::<Value>::new();
+
+            for file_path in candidate_files {
+                let relative_path =
+                    workspace_relative_path_or_absolute(&context.workspace, &file_path);
+                if !include_hidden && is_hidden_path(&relative_path) {
+                    continue;
+                }
+                if !include_ignored
+                    && path == "."
+                    && relative_path.split('/').next().is_some_and(is_ignored_root)
+                {
+                    continue;
+                }
+                if !matches_file_type(&relative_path, file_type.as_deref()) {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&file_path) else {
+                    continue;
+                };
+                searched_files += 1;
+                let grep_options = GrepTextOptions {
+                    case_insensitive,
+                    multiline,
+                    before_context,
+                    after_context,
+                    show_line_numbers,
+                };
+                let file_match_rows = grep_text(&relative_path, &text, &pattern, grep_options);
+                let match_count = file_match_rows
+                    .iter()
+                    .filter(|row| {
+                        row.get("is_match")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                    })
+                    .count();
+                if match_count == 0 {
+                    continue;
+                }
+                total_matches += match_count;
+                files_with_matches.push(relative_path.clone());
+                file_counts.insert(relative_path, match_count);
+                rows.extend(file_match_rows);
+            }
+
+            files_with_matches.sort();
+            let total_result_items = match output_mode {
+                "files_with_matches" => files_with_matches.len(),
+                "count" => file_counts.len(),
+                _ => rows.len(),
+            };
+            let mut head_limited = false;
+            if let Some(limit) = head_limit {
+                match output_mode {
+                    "files_with_matches" => {
+                        head_limited = files_with_matches.len() > limit;
+                        files_with_matches.truncate(limit);
+                    }
+                    "count" => {
+                        head_limited = file_counts.len() > limit;
+                        if head_limited {
+                            file_counts = file_counts.into_iter().take(limit).collect();
+                        }
+                    }
+                    _ => {
+                        head_limited = rows.len() > limit;
+                        rows.truncate(limit);
+                    }
+                }
+            }
+
+            let summary = json!({
+                "files_searched": searched_files,
+                "files_with_matches": file_counts.len(),
+                "total_matches": total_matches,
+            });
+            let mut payload = json!({
+                "summary": summary,
+                "pattern": pattern,
+                "output_mode": output_mode,
+                "head_limit": head_limit,
+                "head_limited": head_limited,
+                "total_result_items": total_result_items,
+                "returned_count": match output_mode {
+                    "files_with_matches" => files_with_matches.len(),
+                    "count" => file_counts.len(),
+                    _ => rows.len(),
+                },
+                "truncated": head_limited,
+            });
+            match output_mode {
+                "files_with_matches" => payload["files"] = json!(files_with_matches),
+                "count" => payload["file_counts"] = json!(file_counts),
+                _ => payload["matches"] = Value::Array(rows),
+            }
+            tool_result(
+                crate::types::ToolResultStatus::Success,
+                payload,
+                None,
+                ToolDirective::Continue,
+            )
+        }),
+    );
+    spec.schema = json!({
+        "type": "function",
+        "function": {
+            "name": "workspace_grep",
+            "description": "Search workspace files with regex-like grep semantics.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string"},
+                    "path": {"type": "string"},
+                    "glob": {"type": "string"},
+                    "include_hidden": {"type": "boolean"},
+                    "include_ignored": {"type": "boolean"},
+                    "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"]},
+                    "b": {"type": "integer"},
+                    "a": {"type": "integer"},
+                    "c": {"type": "integer"},
+                    "n": {"type": "boolean"},
+                    "i": {"type": "boolean"},
+                    "case_sensitive": {"type": "boolean"},
+                    "type": {"type": "string"},
+                    "multiline": {"type": "boolean"},
+                    "head_limit": {"type": "integer"},
+                    "max_results": {"type": "integer"}
+                },
+                "required": ["pattern"]
             }
         }
     });
@@ -1114,6 +1527,229 @@ fn resolve_workspace_path(workspace: &Path, path: &str) -> PathBuf {
     } else {
         workspace.join(candidate)
     }
+}
+
+fn collect_workspace_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut stack = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(path) = stack.pop() {
+        if path.is_file() {
+            files.push(path);
+            continue;
+        }
+        if !path.is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(&path)? {
+            let entry = entry?;
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                stack.push(entry_path);
+            } else if entry_path.is_file() {
+                files.push(entry_path);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+#[derive(Clone, Copy)]
+struct GrepTextOptions {
+    case_insensitive: bool,
+    multiline: bool,
+    before_context: usize,
+    after_context: usize,
+    show_line_numbers: bool,
+}
+
+fn grep_text(
+    relative_path: &str,
+    text: &str,
+    pattern: &str,
+    options: GrepTextOptions,
+) -> Vec<Value> {
+    if options.multiline {
+        let haystack = if options.case_insensitive {
+            text.to_ascii_lowercase()
+        } else {
+            text.to_string()
+        };
+        let needle = if options.case_insensitive {
+            pattern.to_ascii_lowercase()
+        } else {
+            pattern.to_string()
+        };
+        if !haystack.contains(&needle) {
+            return Vec::new();
+        }
+        let line = text[..haystack.find(&needle).unwrap_or(0)]
+            .chars()
+            .filter(|ch| *ch == '\n')
+            .count()
+            + 1;
+        return vec![json!({
+            "path": relative_path,
+            "line": line,
+            "text": pattern,
+            "is_match": true,
+        })];
+    }
+
+    let lines = text.lines().collect::<Vec<_>>();
+    let mut include_lines = BTreeMap::<usize, bool>::new();
+    for (index, line) in lines.iter().enumerate() {
+        let matched = line_contains(line, pattern, options.case_insensitive);
+        if !matched {
+            continue;
+        }
+        let start = index.saturating_sub(options.before_context);
+        let end = (index + options.after_context).min(lines.len().saturating_sub(1));
+        for row_index in start..=end {
+            include_lines.entry(row_index).or_insert(false);
+        }
+        include_lines.insert(index, true);
+    }
+
+    include_lines
+        .into_iter()
+        .map(|(index, is_match)| {
+            let line_number = index + 1;
+            let mut row = json!({
+                "path": relative_path,
+                "line": line_number,
+                "text": lines[index],
+                "is_match": is_match,
+            });
+            if !options.show_line_numbers {
+                row.as_object_mut().expect("row object").remove("line");
+            }
+            row
+        })
+        .collect()
+}
+
+fn line_contains(line: &str, pattern: &str, case_insensitive: bool) -> bool {
+    if case_insensitive {
+        line.to_ascii_lowercase()
+            .contains(&pattern.to_ascii_lowercase())
+    } else {
+        line.contains(pattern)
+    }
+}
+
+fn is_hidden_path(path: &str) -> bool {
+    path.split('/').any(|part| part.starts_with('.'))
+}
+
+fn is_supported_file_type(file_type: &str) -> bool {
+    matches!(
+        file_type,
+        "py" | "js"
+            | "ts"
+            | "html"
+            | "css"
+            | "java"
+            | "c"
+            | "cpp"
+            | "rust"
+            | "go"
+            | "php"
+            | "rb"
+            | "sh"
+            | "sql"
+            | "json"
+            | "xml"
+            | "yaml"
+            | "md"
+            | "txt"
+            | "log"
+            | "ini"
+            | "dockerfile"
+            | "makefile"
+    )
+}
+
+fn matches_file_type(path: &str, file_type: Option<&str>) -> bool {
+    let Some(file_type) = file_type else {
+        return !is_binary_path(path);
+    };
+    let lower = path.to_ascii_lowercase();
+    let filename = Path::new(&lower)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let suffix = Path::new(&lower)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| format!(".{ext}"))
+        .unwrap_or_default();
+    match file_type {
+        "py" => matches!(suffix.as_str(), ".py" | ".pyw" | ".pyi"),
+        "js" => matches!(suffix.as_str(), ".js" | ".jsx" | ".mjs"),
+        "ts" => matches!(suffix.as_str(), ".ts" | ".tsx"),
+        "html" => matches!(suffix.as_str(), ".html" | ".htm" | ".xhtml"),
+        "css" => matches!(suffix.as_str(), ".css" | ".scss" | ".sass" | ".less"),
+        "java" => suffix == ".java",
+        "c" => matches!(suffix.as_str(), ".c" | ".h"),
+        "cpp" => matches!(
+            suffix.as_str(),
+            ".cpp" | ".cc" | ".cxx" | ".c++" | ".hpp" | ".hh" | ".hxx" | ".h++"
+        ),
+        "rust" => suffix == ".rs",
+        "go" => suffix == ".go",
+        "php" => matches!(suffix.as_str(), ".php" | ".php3" | ".php4" | ".php5"),
+        "rb" => matches!(suffix.as_str(), ".rb" | ".rbx" | ".rhtml" | ".ruby"),
+        "sh" => matches!(suffix.as_str(), ".sh" | ".bash" | ".zsh" | ".fish"),
+        "sql" => suffix == ".sql",
+        "json" => suffix == ".json",
+        "xml" => matches!(suffix.as_str(), ".xml" | ".xsl" | ".xsd"),
+        "yaml" => matches!(suffix.as_str(), ".yaml" | ".yml"),
+        "md" => matches!(suffix.as_str(), ".md" | ".markdown" | ".mdown" | ".mkd"),
+        "txt" => suffix == ".txt",
+        "log" => suffix == ".log",
+        "ini" => matches!(suffix.as_str(), ".ini" | ".cfg" | ".conf"),
+        "dockerfile" => filename == "dockerfile",
+        "makefile" => matches!(filename, "makefile" | "gnumakefile"),
+        _ => false,
+    }
+}
+
+fn is_binary_path(path: &str) -> bool {
+    let suffix = Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| format!(".{}", ext.to_ascii_lowercase()))
+        .unwrap_or_default();
+    matches!(
+        suffix.as_str(),
+        ".png"
+            | ".jpg"
+            | ".jpeg"
+            | ".gif"
+            | ".webp"
+            | ".bmp"
+            | ".ico"
+            | ".pdf"
+            | ".zip"
+            | ".tar"
+            | ".gz"
+            | ".bz2"
+            | ".xz"
+            | ".7z"
+            | ".rar"
+            | ".mp3"
+            | ".wav"
+            | ".mp4"
+            | ".mov"
+            | ".avi"
+            | ".mkv"
+            | ".exe"
+            | ".dll"
+            | ".so"
+            | ".dylib"
+            | ".bin"
+    )
 }
 
 fn workspace_relative_path_or_absolute(workspace: &Path, path: &Path) -> String {

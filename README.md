@@ -61,24 +61,22 @@ The current Rust implementation includes:
 - A library target exposing top-level API types and functions comparable to
   Python's `vv_agent.__init__`.
 - A CLI target inside the same package.
-- Top-level modules aligned with the Python package: `config`, `constants`,
-  `integrations`, `llm`, `memory`, `prompt`, `runtime`, `sdk`, `skills`,
-  `background_sessions`, `cli`, `config`, `constants`, `integrations`, `llm`,
-  `memory`, `processes`, `prompt`, `runtime`, `sdk`, `skills`, `tools`,
-  `types`, and `workspace`.
+- Top-level modules aligned with the Python package: `background_sessions`,
+  `cli`, `config`, `constants`, `integrations`, `llm`, `memory`, `processes`,
+  `prompt`, `runtime`, `sdk`, `skills`, `tools`, `types`, and `workspace`.
 - `vv-llm` backed chat client construction and settings-based endpoint
   resolution, while keeping `ScriptedLlmClient` for deterministic tests.
 - A basic multi-cycle runtime that sends tool schemas to the LLM, executes tool
   calls, and converges on `task_finish` or `ask_user`.
 - Built-in control tools (`task_finish`, `ask_user`, `todo_write`), core
   workspace tools (`list_files`, `file_info`, `read_file`, `write_file`,
-  `file_str_replace`), and `bash` / `check_background_command` command tools
-  with captured output, stdin, foreground timeout handoff, and background
-  polling.
+  `file_str_replace`, `workspace_grep`, `read_image`), memory notes through
+  `compress_memory`, and `bash` / `check_background_command` command tools with
+  captured output, stdin, foreground timeout handoff, and background polling.
 - SDK client, tool registry, workspace backends, and shared protocol types.
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, and workspace tools.
 
 Deeper parity work against the Python implementation is still pending for hooks,
-memory compaction, skills activation, sub-agents, session steering, distributed
-backends, and the remaining built-in tools.
+full memory compaction, skills activation, sub-agents, session steering,
+distributed backends, and the remaining built-in tools.

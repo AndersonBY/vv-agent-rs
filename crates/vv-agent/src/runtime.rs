@@ -149,6 +149,13 @@ impl<C: LlmClient> AgentRuntime<C> {
                     directive_result = Some(result.clone());
                 }
                 messages.push(result.to_message());
+                if let Some(image_url) = &result.image_url {
+                    let image_path = result.image_path.as_deref().unwrap_or("image").to_string();
+                    let mut image_message = Message::user(format!("[Image loaded] {image_path}"));
+                    image_message.image_url = Some(image_url.clone());
+                    image_message.metadata = result.metadata.clone();
+                    messages.push(image_message);
+                }
                 cycle.tool_results.push(result);
                 if directive_result.is_some() {
                     break;
