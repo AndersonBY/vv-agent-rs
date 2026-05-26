@@ -83,7 +83,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 与 Python 一致的 `read_file` 大文件响应限制：超出行数 / 字符数限制时返回文件统计、请求大小、限制值和建议行范围，不再把大文件直接塞进 LLM 上下文。
 - `create_sub_task` / `sub_task_status` 已接入 runtime-backed sub-agent：配置在 `AgentTask.sub_agents` 里的子 Agent 可以同步运行，也可以通过 `wait_for_completion=false` 异步启动，支持 batch 聚合和状态 / snapshot 轮询。
 - Python 风格的 `activate_skill`：允许的 inline skill 和 `SKILL.md` location 会加载 instructions，更新 `active_skills`，并记录 activation history。
-- 基于 `AgentTask` flags 的 Python 风格工具规划，以及 `.vv-agent` 下 `agents.json`、prompt templates 和 skill directories 的资源发现。
+- 基于 `AgentTask` flags 的 Python 风格工具规划，以及 `.vv-agent` 下 `agents.json`、prompt templates 和 skill directories 的资源发现；`agents.json` 已支持完整 agent 字段，包括 sub-agent definitions、tool flags、shell defaults、metadata 和资源路径。
 - SDK 客户端、工具注册表、工作区后端，以及共享协议类型。
 - 覆盖公开 API 构造、Rust SDK 使用、vv-llm 集成、runtime 工具循环、schema parity 和 workspace 工具的 smoke tests。
 

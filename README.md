@@ -110,6 +110,8 @@ The current Rust implementation includes:
   and record activation history.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
+  `agents.json` now carries full agent fields including sub-agent definitions,
+  tool flags, shell defaults, metadata, and resource paths.
 - SDK client, tool registry, workspace backends, and shared protocol types.
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, schema parity, and workspace tools.
