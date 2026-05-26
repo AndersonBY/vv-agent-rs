@@ -324,7 +324,8 @@ The current Rust implementation includes:
   prompts, so follow-up turns see the same conversation and TODO/memory state
   instead of starting from a fresh task. SDK-created runtime sessions also
   inherit `AgentSDKOptions.workspace` for both session state and tool execution
-  context.
+  context, and `AgentSDKOptions.log_preview_chars` for forwarded runtime event
+  previews.
 - `AgentSDKClient::query` mirrors Python client query semantics: it returns the
   final answer for completed runs and reports non-completed statuses with
   snake_case status values such as `status=wait_user`.

@@ -9,6 +9,23 @@ use vv_agent::{
     SessionEventHandler, TokenUsage, ToolCall,
 };
 
+fn preview_text_for_test(text: &str, log_preview_chars: Option<usize>) -> String {
+    let cleaned = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let Some(limit) = log_preview_chars.map(|limit| limit.max(40)) else {
+        return cleaned;
+    };
+    if cleaned.chars().count() <= limit {
+        return cleaned;
+    }
+    format!(
+        "{}...",
+        cleaned
+            .chars()
+            .take(limit.saturating_sub(3))
+            .collect::<String>()
+    )
+}
+
 #[test]
 fn session_prompt_supports_follow_up_queue() {
     let calls = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -391,6 +408,52 @@ fn session_runtime_event_listener_can_queue_steering() {
         .iter()
         .any(|(event, _)| event == "session_steer_interrupt"));
     assert!(events.iter().any(|(event, _)| event == "run_steered"));
+}
+
+#[test]
+fn sdk_options_log_preview_chars_configure_runtime_event_previews() {
+    let assistant_text = "assistant sdk preview text ".repeat(4);
+    let final_text = "final sdk preview text ".repeat(4);
+    let responses = vec![LLMResponse {
+        content: assistant_text.clone(),
+        tool_calls: vec![ToolCall::new(
+            "preview-finish",
+            "task_finish",
+            json_args(serde_json::json!({"message": final_text})),
+        )],
+        raw: BTreeMap::new(),
+        token_usage: TokenUsage::default(),
+    }];
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        log_preview_chars: Some(10),
+        ..AgentSDKOptions::default()
+    })
+    .with_runtime(AgentRuntime::new(ScriptedLlmClient::new(responses)));
+    let mut session =
+        create_agent_session(&client, "demo", AgentDefinition::default_for_model("demo"));
+    let events = recorded_events();
+    session.subscribe(recording_listener(&events));
+
+    let run = session.prompt("start").expect("prompt");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    let events = events.lock().expect("events");
+    let cycle_event = events
+        .iter()
+        .find(|(event, _)| event == "cycle_llm_response")
+        .expect("cycle llm response");
+    let completed_event = events
+        .iter()
+        .find(|(event, _)| event == "run_completed")
+        .expect("run completed");
+    assert_eq!(
+        cycle_event.1["assistant_preview"],
+        preview_text_for_test(&assistant_text, Some(10))
+    );
+    assert_eq!(
+        completed_event.1["final_answer"],
+        preview_text_for_test(run.result.final_answer.as_deref().expect("final"), Some(10))
+    );
 }
 
 #[test]

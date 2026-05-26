@@ -1239,6 +1239,9 @@ impl AgentSDKClient {
         mut self,
         mut runtime: AgentRuntime<C>,
     ) -> Self {
+        if runtime.log_preview_chars.is_none() {
+            runtime.log_preview_chars = self.options.log_preview_chars;
+        }
         if runtime.default_workspace.is_none() {
             let workspace = self.options.workspace.clone();
             runtime.default_workspace = Some(workspace.clone());
