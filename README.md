@@ -33,6 +33,7 @@ vv-agent-rs/
         mod.rs
         results.rs
         sub_agents.rs
+        token_usage.rs
       sdk.rs
       skills/
         errors.rs
@@ -130,6 +131,9 @@ The current Rust implementation includes:
 - Runtime lifecycle logging through `log_handler`, with Python-style events for
   run start, cycle start, LLM response, tool result, completion, wait-user, and
   max-cycle exits.
+- Python-style runtime token usage helpers normalize raw provider usage payloads
+  across prompt/completion and input/output naming variants, preserve the raw
+  usage payload, and summarize per-cycle totals.
 - Split `memory/` modules with Python-style compaction thresholds, local
   structured summaries, and runtime autocompaction before large follow-up LLM
   cycles.

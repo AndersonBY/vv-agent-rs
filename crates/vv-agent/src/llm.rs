@@ -261,12 +261,14 @@ fn from_vv_llm_tool_call(tool_call: vv_llm::ToolCall) -> ToolCall {
 }
 
 fn from_vv_llm_usage(usage: vv_llm::ChatUsage) -> TokenUsage {
+    let raw = serde_json::to_value(&usage).unwrap_or(Value::Null);
     TokenUsage {
         prompt_tokens: usage.prompt_tokens.unwrap_or_default() as u64,
         completion_tokens: usage.completion_tokens.unwrap_or_default() as u64,
         total_tokens: usage.total_tokens.unwrap_or_default() as u64,
         input_tokens: usage.prompt_tokens.unwrap_or_default() as u64,
         output_tokens: usage.completion_tokens.unwrap_or_default() as u64,
+        raw,
         ..TokenUsage::default()
     }
 }

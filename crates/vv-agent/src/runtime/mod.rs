@@ -4,6 +4,7 @@ mod results;
 pub mod state;
 pub mod stores;
 mod sub_agents;
+pub mod token_usage;
 mod tool_planner;
 
 use std::collections::{BTreeMap, VecDeque};
@@ -31,6 +32,7 @@ pub use hooks::{
     BeforeToolCallPatch, RuntimeHook, RuntimeHookManager,
 };
 use results::{assistant_message_from_response, extract_final_message, extract_wait_reason};
+pub use token_usage::{normalize_token_usage, summarize_task_token_usage};
 pub use tool_planner::patch_dynamic_tool_schema_hints;
 
 pub type RuntimeLogCallback = dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static;
