@@ -184,6 +184,9 @@ The current Rust implementation includes:
   turns see the same conversation and TODO/memory state instead of starting from
   a fresh task. SDK-created runtime sessions also inherit
   `AgentSDKOptions.workspace` for both session state and tool execution context.
+- `AgentSDKClient::query` mirrors Python client query semantics: it returns the
+  final answer for completed runs and reports non-completed statuses with
+  snake_case status values such as `status=wait_user`.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,

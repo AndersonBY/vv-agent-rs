@@ -321,6 +321,27 @@ fn sdk_runtime_uses_options_workspace_for_tool_context_and_sessions() {
     );
 }
 
+#[test]
+fn sdk_client_query_reports_wait_user_status() {
+    let responses = vec![LLMResponse {
+        content: "ask".to_string(),
+        tool_calls: vec![ToolCall::new(
+            "ask-1",
+            "ask_user",
+            json_args(serde_json::json!({"question": "choose one"})),
+        )],
+        raw: BTreeMap::new(),
+        token_usage: TokenUsage::default(),
+    }];
+    let client = AgentSDKClient::new(AgentSDKOptions::default())
+        .with_runtime(AgentRuntime::new(ScriptedLlmClient::new(responses)));
+
+    let error = client.query("ask").expect_err("query error");
+
+    assert!(error.contains("status=wait_user"));
+    assert!(error.contains("choose one"));
+}
+
 fn fake_run(prompt: &str, status: AgentStatus) -> AgentRun {
     let mut result = vv_agent::AgentResult::completed(vec![], vec![], prompt.to_string());
     result.status = status;

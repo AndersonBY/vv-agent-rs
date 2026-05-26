@@ -899,6 +899,19 @@ impl AgentSDKClient {
             .unwrap_or_else(|| AgentDefinition::default_for_model("demo"));
         self.run_with_agent(agent, prompt)
     }
+
+    pub fn query(&self, prompt: impl Into<String>) -> Result<String, String> {
+        self.query_with_require_completed(prompt, true)
+    }
+
+    pub fn query_with_require_completed(
+        &self,
+        prompt: impl Into<String>,
+        require_completed: bool,
+    ) -> Result<String, String> {
+        let run = self.run(prompt)?;
+        query_text_from_run(run, require_completed, "Agent query failed")
+    }
 }
 
 struct NullRunAgent;
@@ -936,10 +949,35 @@ pub fn run(client: &AgentSDKClient, prompt: impl Into<String>) -> Result<AgentRu
 }
 
 pub fn query(client: &AgentSDKClient, prompt: impl Into<String>) -> Result<String, String> {
-    let run = client.run(prompt)?;
+    client.query(prompt)
+}
+
+fn query_text_from_run(
+    run: AgentRun,
+    require_completed: bool,
+    error_prefix: &str,
+) -> Result<String, String> {
     if run.result.status == AgentStatus::Completed {
-        Ok(run.result.final_answer.unwrap_or_default())
-    } else {
-        Err(format!("agent did not complete: {:?}", run.result.status))
+        return Ok(run.result.final_answer.unwrap_or_default());
     }
+    if require_completed {
+        let reason = run
+            .result
+            .error
+            .clone()
+            .or(run.result.wait_reason.clone())
+            .or(run.result.final_answer.clone())
+            .unwrap_or_else(|| "query did not complete successfully".to_string());
+        return Err(format!(
+            "{error_prefix} with status={}: {}",
+            agent_status_value(run.result.status),
+            reason
+        ));
+    }
+    Ok(run
+        .result
+        .final_answer
+        .or(run.result.wait_reason)
+        .or(run.result.error)
+        .unwrap_or_default())
 }
