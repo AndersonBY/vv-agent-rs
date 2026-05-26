@@ -68,6 +68,7 @@ fn tools_module_is_split_into_handler_files() {
         "tools/schemas/todo.rs",
         "tools/schemas/workspace.rs",
         "tools/handlers/control.rs",
+        "tools/handlers/todo.rs",
         "tools/handlers/workspace_io.rs",
         "tools/handlers/search.rs",
         "tools/handlers/bash.rs",

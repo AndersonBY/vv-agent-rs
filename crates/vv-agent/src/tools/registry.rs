@@ -6,13 +6,14 @@ use super::base::{ToolContext, ToolHandler, ToolNotFoundError, ToolSpec};
 use super::handlers::{
     background::check_background_command_tool,
     bash::bash_tool,
-    control::{ask_user_tool, task_finish_tool, todo_write_tool},
+    control::{ask_user_tool, task_finish_tool},
     image::read_image_tool,
     memory::compress_memory_tool,
     search::workspace_grep_tool,
     skills::activate_skill_tool,
     sub_agents::create_sub_task_tool,
     sub_task_status::sub_task_status_tool,
+    todo::todo_write_tool,
     workspace_io::{
         file_info_tool, file_str_replace_tool, list_files_tool, read_file_tool, write_file_tool,
     },
