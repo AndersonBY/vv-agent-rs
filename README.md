@@ -105,6 +105,9 @@ The current Rust implementation includes:
   configured `AgentTask.sub_agents` can run synchronously or via async
   `wait_for_completion=false`, with batch aggregation and status/snapshot
   polling.
+- Python-style `activate_skill` behavior for allowed skills: inline skill
+  entries and `SKILL.md` locations load instructions, update `active_skills`,
+  and record activation history.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
 - SDK client, tool registry, workspace backends, and shared protocol types.
@@ -112,7 +115,7 @@ The current Rust implementation includes:
   integration, runtime tool cycles, schema parity, and workspace tools.
 
 Deeper parity work against the Python implementation is still pending for hooks,
-full memory compaction, skills activation, richer sub-agent session management
-and steering, distributed backends, and the remaining built-in tools. The
-migration target is to copy Python `v-agent` behavior as completely as possible,
-not merely provide a minimal Rust wrapper.
+full memory compaction, richer sub-agent session management and steering,
+distributed backends, and the remaining built-in tools. The migration target is
+to copy Python `v-agent` behavior as completely as possible, not merely provide
+a minimal Rust wrapper.
