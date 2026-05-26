@@ -111,7 +111,7 @@ impl<C: LlmClient> AgentRuntime<C> {
                 }
             }
 
-            let context = ToolContext {
+            let mut context = ToolContext {
                 workspace: self
                     .default_workspace
                     .clone()
@@ -125,23 +125,23 @@ impl<C: LlmClient> AgentRuntime<C> {
 
             let mut directive_result = None;
             for call in &response.tool_calls {
-                let mut result =
-                    self.tool_registry
-                        .execute(call, &context)
-                        .unwrap_or_else(|error| ToolExecutionResult {
-                            tool_call_id: call.id.clone(),
-                            content: serde_json::json!({
-                                "ok": false,
-                                "error": error.to_string(),
-                            })
-                            .to_string(),
-                            status: ToolResultStatus::Error,
-                            directive: ToolDirective::Continue,
-                            error_code: Some("tool_not_found".to_string()),
-                            metadata: BTreeMap::new(),
-                            image_url: None,
-                            image_path: None,
-                        });
+                let mut result = self
+                    .tool_registry
+                    .execute(call, &mut context)
+                    .unwrap_or_else(|error| ToolExecutionResult {
+                        tool_call_id: call.id.clone(),
+                        content: serde_json::json!({
+                            "ok": false,
+                            "error": error.to_string(),
+                        })
+                        .to_string(),
+                        status: ToolResultStatus::Error,
+                        directive: ToolDirective::Continue,
+                        error_code: Some("tool_not_found".to_string()),
+                        metadata: BTreeMap::new(),
+                        image_url: None,
+                        image_path: None,
+                    });
                 if result.tool_call_id.is_empty() {
                     result.tool_call_id = call.id.clone();
                 }
@@ -154,6 +154,7 @@ impl<C: LlmClient> AgentRuntime<C> {
                     break;
                 }
             }
+            shared_state = context.shared_state.clone();
 
             cycles.push(cycle);
             if let Some(result) = directive_result {

@@ -68,12 +68,13 @@ The current Rust implementation includes:
   resolution, while keeping `ScriptedLlmClient` for deterministic tests.
 - A basic multi-cycle runtime that sends tool schemas to the LLM, executes tool
   calls, and converges on `task_finish` or `ask_user`.
-- Built-in control tools (`task_finish`, `ask_user`) and core workspace tools
-  (`list_files`, `read_file`, `write_file`, `file_str_replace`).
+- Built-in control tools (`task_finish`, `ask_user`, `todo_write`), core
+  workspace tools (`list_files`, `file_info`, `read_file`, `write_file`,
+  `file_str_replace`), and a foreground `bash` command tool.
 - SDK client, tool registry, workspace backends, and shared protocol types.
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, and workspace tools.
 
 Deeper parity work against the Python implementation is still pending for hooks,
-memory compaction, skills activation, background commands, sub-agents, session
-steering, distributed backends, and the remaining built-in tools.
+memory compaction, skills activation, background command sessions, sub-agents,
+session steering, distributed backends, and the remaining built-in tools.

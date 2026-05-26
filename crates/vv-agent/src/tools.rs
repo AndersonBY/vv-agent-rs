@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
@@ -7,7 +8,7 @@ use serde_json::{json, Value};
 use crate::types::{ToolArguments, ToolCall, ToolDirective, ToolExecutionResult};
 use crate::workspace::WorkspaceBackend;
 pub type ToolHandler =
-    Arc<dyn Fn(&ToolContext, &ToolArguments) -> ToolExecutionResult + Send + Sync + 'static>;
+    Arc<dyn Fn(&mut ToolContext, &ToolArguments) -> ToolExecutionResult + Send + Sync + 'static>;
 
 #[derive(Clone)]
 pub struct ToolContext {
@@ -160,7 +161,7 @@ impl ToolRegistry {
     pub fn execute(
         &self,
         call: &ToolCall,
-        context: &ToolContext,
+        context: &mut ToolContext,
     ) -> Result<ToolExecutionResult, ToolNotFoundError> {
         let tool = self.get(&call.name)?;
         Ok((tool.handler)(context, &call.arguments))
@@ -176,6 +177,9 @@ pub fn build_default_registry() -> ToolRegistry {
         .register(ask_user_tool())
         .expect("default ask_user registration");
     registry
+        .register(todo_write_tool())
+        .expect("default todo_write registration");
+    registry
         .register(list_files_tool())
         .expect("default list_files registration");
     registry
@@ -188,12 +192,18 @@ pub fn build_default_registry() -> ToolRegistry {
         .register(file_str_replace_tool())
         .expect("default file_str_replace registration");
     registry
+        .register(file_info_tool())
+        .expect("default file_info registration");
+    registry
+        .register(bash_tool())
+        .expect("default bash registration");
+    registry
 }
 
 pub fn dispatch_tool_call(
     registry: &ToolRegistry,
     call: &ToolCall,
-    context: &ToolContext,
+    context: &mut ToolContext,
 ) -> Result<ToolExecutionResult, ToolNotFoundError> {
     registry.execute(call, context)
 }
@@ -202,12 +212,67 @@ fn task_finish_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
         "task_finish",
         "Finish the current task and return the final answer to the user.",
-        Arc::new(|_context, arguments| {
+        Arc::new(|context, arguments| {
             let message = arguments
                 .get("message")
                 .and_then(Value::as_str)
                 .unwrap_or("Task completed")
                 .to_string();
+            let require_all_done = arguments
+                .get("require_all_todos_completed")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            if require_all_done {
+                let incomplete_todos = context
+                    .shared_state
+                    .get("todo_list")
+                    .and_then(Value::as_array)
+                    .map(|todos| {
+                        todos
+                            .iter()
+                            .filter_map(|todo| {
+                                let status = todo
+                                    .get("status")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_ascii_lowercase();
+                                let done =
+                                    todo.get("done").and_then(Value::as_bool).unwrap_or(false);
+                                if matches!(status.as_str(), "completed" | "done" | "finished")
+                                    || done
+                                {
+                                    None
+                                } else {
+                                    Some(
+                                        todo.get("title")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("Untitled TODO")
+                                            .to_string(),
+                                    )
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if !incomplete_todos.is_empty() {
+                    return ToolExecutionResult {
+                        tool_call_id: String::new(),
+                        content: json!({
+                            "ok": false,
+                            "error_code": "todo_incomplete",
+                            "error": "Cannot finish task while todo items are incomplete",
+                            "incomplete_todos": incomplete_todos,
+                        })
+                        .to_string(),
+                        status: crate::types::ToolResultStatus::Error,
+                        directive: ToolDirective::Continue,
+                        error_code: Some("todo_incomplete".to_string()),
+                        metadata: BTreeMap::new(),
+                        image_url: None,
+                        image_path: None,
+                    };
+                }
+            }
             let mut metadata = BTreeMap::new();
             metadata.insert("final_message".to_string(), Value::String(message.clone()));
             if let Some(exposed_files) = arguments.get("exposed_files").and_then(Value::as_array) {
@@ -309,6 +374,83 @@ fn ask_user_tool() -> ToolSpec {
     spec
 }
 
+fn todo_write_tool() -> ToolSpec {
+    let mut spec = ToolSpec::new(
+        "todo_write",
+        "Replace the current todo list for the task.",
+        Arc::new(|context, arguments| {
+            let todos = arguments
+                .get("todos")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let in_progress_count = todos
+                .iter()
+                .filter(|todo| {
+                    todo.get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|status| status == "in_progress")
+                })
+                .count();
+            if in_progress_count > 1 {
+                return ToolExecutionResult {
+                    tool_call_id: String::new(),
+                    content: json!({
+                        "ok": false,
+                        "error_code": "multiple_in_progress_todos",
+                        "error": "Only one todo item can be in progress at a time",
+                    })
+                    .to_string(),
+                    status: crate::types::ToolResultStatus::Error,
+                    directive: ToolDirective::Continue,
+                    error_code: Some("multiple_in_progress_todos".to_string()),
+                    metadata: BTreeMap::new(),
+                    image_url: None,
+                    image_path: None,
+                };
+            }
+            context
+                .shared_state
+                .insert("todo_list".to_string(), Value::Array(todos.clone()));
+            ToolExecutionResult::success(
+                "",
+                json!({
+                    "ok": true,
+                    "todo_count": todos.len(),
+                    "todos": todos,
+                })
+                .to_string(),
+            )
+        }),
+    );
+    spec.schema = json!({
+        "type": "function",
+        "function": {
+            "name": "todo_write",
+            "description": "Replace the task todo list. At most one item may be in_progress.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "todos": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": "string"},
+                                "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+                                "priority": {"type": "string", "enum": ["low", "medium", "high"]}
+                            },
+                            "required": ["title", "status"]
+                        }
+                    }
+                },
+                "required": ["todos"]
+            }
+        }
+    });
+    spec
+}
+
 fn list_files_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
         "list_files",
@@ -324,21 +466,49 @@ fn list_files_tool() -> ToolSpec {
                 .and_then(Value::as_u64)
                 .unwrap_or(500)
                 .clamp(1, 5_000) as usize;
+            let include_ignored = arguments
+                .get("include_ignored")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             match context.workspace_backend.list_files(path, glob) {
-                Ok(files) => {
+                Ok(mut files) => {
+                    let ignored_roots = if include_ignored || path != "." {
+                        Vec::new()
+                    } else {
+                        collect_ignored_roots(&files)
+                    };
+                    if !include_ignored && path == "." {
+                        files.retain(|path| {
+                            path.split('/')
+                                .next()
+                                .is_none_or(|root| !is_ignored_root(root))
+                        });
+                    }
                     let count = files.len();
                     let returned = files.into_iter().take(max_results).collect::<Vec<_>>();
-                    ToolExecutionResult::success(
-                        "",
-                        json!({
-                            "files": returned,
-                            "count": count,
-                            "returned_count": count.min(max_results),
-                            "truncated": count > max_results,
-                            "max_results": max_results,
-                        })
-                        .to_string(),
-                    )
+                    let mut payload = json!({
+                        "files": returned,
+                        "count": count,
+                        "returned_count": count.min(max_results),
+                        "truncated": count > max_results,
+                        "max_results": max_results,
+                    });
+                    if count > max_results {
+                        payload["remaining_count"] = Value::Number((count - max_results).into());
+                    }
+                    if !ignored_roots.is_empty() {
+                        payload["ignored_roots"] = Value::Array(
+                            ignored_roots
+                                .into_iter()
+                                .map(|path| json!({"path": path}))
+                                .collect(),
+                        );
+                        payload["message"] = Value::String(
+                            "Common dependency/cache directories are summarized by default."
+                                .to_string(),
+                        );
+                    }
+                    ToolExecutionResult::success("", payload.to_string())
                 }
                 Err(error) => tool_error(error.to_string()),
             }
@@ -356,6 +526,49 @@ fn list_files_tool() -> ToolSpec {
                     "glob": {"type": "string"},
                     "max_results": {"type": "integer"}
                 }
+            }
+        }
+    });
+    spec
+}
+
+fn file_info_tool() -> ToolSpec {
+    let mut spec = ToolSpec::new(
+        "file_info",
+        "Return metadata for a workspace path.",
+        Arc::new(|context, arguments| {
+            let Some(path) = arguments.get("path").and_then(Value::as_str) else {
+                return tool_error("missing required argument: path");
+            };
+            match context.workspace_backend.file_info(path) {
+                Ok(Some(info)) => {
+                    let mut payload = json!({
+                        "path": info.path,
+                        "exists": true,
+                        "is_file": info.is_file,
+                        "is_dir": info.is_dir,
+                        "size": info.size,
+                        "modified_at": info.modified_at,
+                    });
+                    if info.is_file {
+                        payload["suffix"] = Value::String(info.suffix);
+                    }
+                    ToolExecutionResult::success("", payload.to_string())
+                }
+                Ok(None) => tool_error(format!("path not found: {path}")),
+                Err(error) => tool_error(error.to_string()),
+            }
+        }),
+    );
+    spec.schema = json!({
+        "type": "function",
+        "function": {
+            "name": "file_info",
+            "description": "Return metadata for a workspace path.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"]
             }
         }
     });
@@ -600,16 +813,148 @@ fn file_str_replace_tool() -> ToolSpec {
     spec
 }
 
+fn bash_tool() -> ToolSpec {
+    let mut spec = ToolSpec::new(
+        "bash",
+        "Run a shell command in the current workspace.",
+        Arc::new(|context, arguments| {
+            let command = arguments
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if command.is_empty() {
+                return tool_error_with_code("`command` is required", "command_required");
+            }
+            let lowered = command.to_ascii_lowercase();
+            for snippet in [
+                "rm -rf /",
+                "shutdown",
+                "reboot",
+                "mkfs",
+                "dd if=/dev/zero of=/dev/",
+            ] {
+                if lowered.contains(snippet) {
+                    return tool_error_with_code(
+                        format!("dangerous command blocked: {snippet}"),
+                        "dangerous_command",
+                    );
+                }
+            }
+            let exec_dir = arguments
+                .get("exec_dir")
+                .and_then(Value::as_str)
+                .unwrap_or(".");
+            let cwd = resolve_workspace_path(&context.workspace, exec_dir);
+            if !cwd.is_dir() {
+                return tool_error_with_code(
+                    format!("exec_dir not found: {exec_dir}"),
+                    "invalid_exec_dir",
+                );
+            }
+            let output = if cfg!(target_os = "windows") {
+                Command::new("cmd")
+                    .args(["/C", &command])
+                    .current_dir(&cwd)
+                    .output()
+            } else {
+                Command::new("sh")
+                    .args(["-lc", &command])
+                    .current_dir(&cwd)
+                    .output()
+            };
+            match output {
+                Ok(output) => {
+                    let mut combined = String::new();
+                    combined.push_str(&String::from_utf8_lossy(&output.stdout));
+                    combined.push_str(&String::from_utf8_lossy(&output.stderr));
+                    let exit_code = output.status.code().unwrap_or(-1);
+                    let cwd_payload = if cwd == context.workspace {
+                        ".".to_string()
+                    } else {
+                        cwd.strip_prefix(&context.workspace)
+                            .map(|path| path.to_string_lossy().replace('\\', "/"))
+                            .unwrap_or_else(|_| cwd.to_string_lossy().to_string())
+                    };
+                    let payload = json!({
+                        "cwd": cwd_payload,
+                        "exit_code": exit_code,
+                        "output": combined.chars().take(50_000).collect::<String>(),
+                    });
+                    if exit_code == 0 {
+                        ToolExecutionResult::success("", payload.to_string())
+                    } else {
+                        ToolExecutionResult {
+                            tool_call_id: String::new(),
+                            content: payload.to_string(),
+                            status: crate::types::ToolResultStatus::Error,
+                            directive: ToolDirective::Continue,
+                            error_code: Some("command_failed".to_string()),
+                            metadata: BTreeMap::new(),
+                            image_url: None,
+                            image_path: None,
+                        }
+                    }
+                }
+                Err(error) => tool_error_with_code(error.to_string(), "command_failed"),
+            }
+        }),
+    );
+    spec.schema = json!({
+        "type": "function",
+        "function": {
+            "name": "bash",
+            "description": "Run a shell command in the workspace.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "exec_dir": {"type": "string"},
+                    "timeout": {"type": "integer"},
+                    "stdin": {"type": "string"},
+                    "auto_confirm": {"type": "boolean"},
+                    "run_in_background": {"type": "boolean"}
+                },
+                "required": ["command"]
+            }
+        }
+    });
+    spec
+}
+
 fn tool_error(message: impl Into<String>) -> ToolExecutionResult {
+    tool_error_with_code(message, "")
+}
+
+fn tool_error_with_code(
+    message: impl Into<String>,
+    error_code: impl Into<String>,
+) -> ToolExecutionResult {
+    let error_code = error_code.into();
     ToolExecutionResult {
         tool_call_id: String::new(),
-        content: json!({"ok": false, "error": message.into()}).to_string(),
+        content: json!({"ok": false, "error": message.into(), "error_code": error_code})
+            .to_string(),
         status: crate::types::ToolResultStatus::Error,
         directive: ToolDirective::Continue,
-        error_code: None,
+        error_code: if error_code.is_empty() {
+            None
+        } else {
+            Some(error_code)
+        },
         metadata: BTreeMap::new(),
         image_url: None,
         image_path: None,
+    }
+}
+
+fn resolve_workspace_path(workspace: &Path, path: &str) -> PathBuf {
+    let candidate = Path::new(path);
+    if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        workspace.join(candidate)
     }
 }
 
@@ -628,6 +973,41 @@ fn replace_n(text: &str, old_str: &str, new_str: &str, max_replacements: usize) 
     }
     replaced.push_str(remaining);
     replaced
+}
+
+fn collect_ignored_roots(files: &[String]) -> Vec<String> {
+    let mut roots = files
+        .iter()
+        .filter_map(|path| path.split('/').next())
+        .filter(|root| is_ignored_root(root))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+fn is_ignored_root(root: &str) -> bool {
+    matches!(
+        root.to_ascii_lowercase().as_str(),
+        ".venv"
+            | "venv"
+            | "node_modules"
+            | ".git"
+            | "__pycache__"
+            | ".pytest_cache"
+            | ".mypy_cache"
+            | ".ruff_cache"
+            | ".idea"
+            | ".vscode"
+            | "dist"
+            | "build"
+            | ".next"
+            | ".nuxt"
+            | ".cache"
+            | "target"
+            | "vendor"
+    )
 }
 
 #[allow(dead_code)]
