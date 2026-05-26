@@ -255,7 +255,9 @@ The current Rust implementation includes:
 - Runtime checkpoint stores modeled after Python `runtime.state` and
   `runtime.stores.sqlite`: `Checkpoint`, `InMemoryStateStore`, and
   `SqliteStateStore` persist messages, cycles, status, and shared state for
-  distributed / resumable execution plumbing.
+  distributed / resumable execution plumbing. `RedisStateStore` also mirrors
+  Python's `vv_agent:checkpoint:{task_id}` key layout for Celery-adjacent
+  checkpoint persistence.
 - SDK sessions expose Python-style cancellation through `cancel()` and a
   cloneable `SessionCancellationHandle`; active session runs receive the
   cancellation token, queued steering/follow-up prompts are cleared, and

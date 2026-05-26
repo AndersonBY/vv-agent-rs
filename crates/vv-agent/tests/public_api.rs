@@ -6,10 +6,10 @@ use vv_agent::{
     AgentStatus, AgentTask, BackgroundSessionListener, CancellationToken, CeleryBackend,
     Checkpoint, ConfigError, EndpointConfig, EndpointOption, ExecutionContext, FileInfo,
     InMemoryStateStore, InlineBackend, LLMResponse, LocalWorkspaceBackend, MemoryWorkspaceBackend,
-    Message, ResolvedModelConfig, RuntimeExecutionBackend, RuntimeRecipe, RuntimeRunControls,
-    S3WorkspaceBackend, S3WorkspaceConfig, ScriptedLlmClient, SessionCancellationHandle,
-    SqliteStateStore, StateStore, ThreadBackend, ToolCall, ToolExecutionResult, ToolRegistry,
-    WorkspaceBackend,
+    Message, RedisStateStore, ResolvedModelConfig, RuntimeExecutionBackend, RuntimeRecipe,
+    RuntimeRunControls, S3WorkspaceBackend, S3WorkspaceConfig, ScriptedLlmClient,
+    SessionCancellationHandle, SqliteStateStore, StateStore, ThreadBackend, ToolCall,
+    ToolExecutionResult, ToolRegistry, WorkspaceBackend,
 };
 
 #[test]
@@ -45,6 +45,7 @@ fn top_level_types_are_constructible() {
     let _state_store = InMemoryStateStore::default();
     let _state_store_ref: &dyn StateStore = &_state_store;
     let _sqlite_state_store = SqliteStateStore::new(":memory:");
+    let _redis_key = RedisStateStore::checkpoint_key("task");
     let _options = AgentSDKOptions::default();
     let _client = AgentSDKClient::new(_options);
     let _config_error = ConfigError::MissingSettingsFile("missing".to_string());

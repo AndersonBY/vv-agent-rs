@@ -1,5 +1,6 @@
 use serde_json::json;
 use vv_agent::runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
+use vv_agent::runtime::stores::redis::RedisStateStore;
 use vv_agent::runtime::stores::sqlite::SqliteStateStore;
 use vv_agent::{AgentStatus, CycleRecord, Message, ToolCall, ToolExecutionResult};
 
@@ -103,4 +104,52 @@ fn sqlite_state_store_round_trips_checkpoints() {
     store.delete_checkpoint("task-1").expect("delete");
     assert!(store.load_checkpoint("task-1").expect("missing").is_none());
     store.close().expect("close");
+}
+
+#[test]
+fn redis_state_store_matches_python_key_and_payload_shape() {
+    let checkpoint = checkpoint("task-redis", 7);
+    let payload = RedisStateStore::checkpoint_to_json(&checkpoint).expect("payload");
+    let parsed: serde_json::Value = serde_json::from_str(&payload).expect("json payload");
+
+    assert_eq!(
+        RedisStateStore::checkpoint_key("task-redis"),
+        "vv_agent:checkpoint:task-redis"
+    );
+    assert_eq!(parsed["task_id"], "task-redis");
+    assert_eq!(parsed["cycle_index"], 7);
+    assert_eq!(parsed["status"], "running");
+    assert!(parsed["messages"].is_array());
+    assert!(parsed["cycles"].is_array());
+    assert_eq!(parsed["shared_state"]["counter"], json!(42));
+
+    let round_trip = RedisStateStore::checkpoint_from_json(&payload).expect("round trip");
+    assert_eq!(round_trip, checkpoint);
+}
+
+#[test]
+#[ignore = "requires VV_AGENT_REDIS_URL and a live Redis instance"]
+fn redis_state_store_round_trips_checkpoints_against_live_redis() {
+    let redis_url = std::env::var("VV_AGENT_REDIS_URL").expect("VV_AGENT_REDIS_URL");
+    let store = RedisStateStore::new(redis_url).expect("redis store");
+    store.delete_checkpoint("task-live-redis").expect("cleanup");
+
+    store
+        .save_checkpoint(checkpoint("task-live-redis", 4))
+        .expect("save");
+    let loaded = store
+        .load_checkpoint("task-live-redis")
+        .expect("load")
+        .expect("exists");
+    assert_eq!(loaded.cycle_index, 4);
+    assert!(store
+        .list_checkpoints()
+        .expect("list")
+        .contains(&"task-live-redis".to_string()));
+
+    store.delete_checkpoint("task-live-redis").expect("delete");
+    assert!(store
+        .load_checkpoint("task-live-redis")
+        .expect("missing")
+        .is_none());
 }

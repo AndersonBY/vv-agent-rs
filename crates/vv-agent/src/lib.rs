@@ -46,6 +46,7 @@ pub use runtime::backends::{
     InlineBackend, RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
 };
 pub use runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
+pub use runtime::stores::redis::RedisStateStore;
 pub use runtime::stores::sqlite::SqliteStateStore;
 pub use runtime::{
     AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BeforeLlmEvent, BeforeLlmPatch,
