@@ -206,9 +206,10 @@ The current Rust implementation includes:
   keeps handler-local state helpers for activation tracking.
 - Default tool schemas now use reference-quality descriptions derived from
   Python `v-agent`, with extra actionable guidance for high-impact tools such
-  as `task_finish`, `file_str_replace`, `file_info`, `compress_memory`, and
-  `read_image`, so the model sees complete operational guidance for file
-  access, grep, bash/background commands, todos, skills, images, and sub-agents.
+  as `task_finish`, `list_files`, `write_file`, `file_str_replace`,
+  `file_info`, `compress_memory`, `check_background_command`, and `read_image`,
+  so the model sees complete operational guidance for file access, grep,
+  bash/background commands, todos, skills, images, and sub-agents.
 - Planned tool schemas include Python-style dynamic runtime hints for shell
   execution, so `bash` advertises the actual shell prefix or invalid shell
   configuration in the LLM-visible description.

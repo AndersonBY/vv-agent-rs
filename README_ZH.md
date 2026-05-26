@@ -133,7 +133,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 已补 Python 风格 tool dispatch：会把 LLM 原始工具参数解析错误转换成结构化 tool result，补齐 missing / pending tool call id，把 wait-user directive 映射为 `WAIT_RESPONSE`，并在未知工具时返回 `tool_not_found`，避免 transcript 丢失工具结果。
 - 公开 `skills/` 模块已拆成 Python 风格的 skill model、目录发现、frontmatter 解析、metadata 归一化、validation mode、diagnostics 和 `<available_skills>` prompt 渲染，并支持与 `v-agent` 一致的预算降级策略。
 - `activate_skill` 现在复用公开 skill parser / normalization 层，handler 内只保留 activation state helper。
-- 默认工具 schema 使用参考 Python `v-agent` 的高信息量描述，并对 `task_finish`、`file_str_replace`、`file_info`、`compress_memory`、`read_image` 等高影响工具补充更具体的操作约束，让模型拿到文件访问、grep、bash / 后台命令、todo、skills、图片和 sub-agent 的完整操作指引。
+- 默认工具 schema 使用参考 Python `v-agent` 的高信息量描述，并对 `task_finish`、`list_files`、`write_file`、`file_str_replace`、`file_info`、`compress_memory`、`check_background_command`、`read_image` 等高影响工具补充更具体的操作约束，让模型拿到文件访问、grep、bash / 后台命令、todo、skills、图片和 sub-agent 的完整操作指引。
 - planned tool schemas 已加入 Python 风格动态 runtime shell hint，`bash` 会在 LLM 可见 description 里提示实际 shell 前缀或 shell 配置错误。
 - 内置控制工具（`task_finish`、`ask_user`、`todo_write`）、核心 workspace 工具（`list_files`、`file_info`、`read_file`、`write_file`、`file_str_replace`、`workspace_grep`、`read_image`）、通过 `compress_memory` 记录 memory notes，以及支持捕获输出、stdin、通过 `bash_shell` metadata 选择 shell、前台超时转后台、后台轮询和后台命令终态 listener 自动通知的 `bash` / `check_background_command` 命令工具。
 - 与 Python 一致的 workspace 路径安全策略：`LocalWorkspaceBackend` 默认拒绝访问 workspace 外路径，文件、图片、grep 和 bash 工具仍支持可信任务通过 metadata 显式放行。

@@ -27,10 +27,10 @@ pub(super) fn check_background_command_schema() -> Value {
         "type": "function",
         "function": {
             "name": "check_background_command",
-            "description": "Check status/output for command launched in background mode, including sessions auto-detached after foreground timeout.",
+            "description": "Check status/output for a command launched in background mode, including sessions auto-detached after foreground timeout.\n\nResponses can be `running`, `completed`, or an error with `background_command_failed`. Running responses include recent captured output when available; completed responses include final exit information and output. Poll this after `bash` returns a `session_id`, and stop polling once a terminal status is returned.",
             "parameters": {
                 "type": "object",
-                "properties": {"session_id": {"type": "string", "description": "Background session identifier."}},
+                "properties": {"session_id": {"type": "string", "description": "Background session identifier returned by `bash` when `run_in_background=true` or when a foreground command times out."}},
                 "required": ["session_id"]
             }
         }

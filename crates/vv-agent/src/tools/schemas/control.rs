@@ -34,7 +34,7 @@ pub(super) fn ask_user_schema() -> Value {
         "type": "function",
         "function": {
             "name": "ask_user",
-            "description": "Pause execution and ask the user for required clarification or a decision.\n\nUse this only when you cannot safely choose a reasonable default from the current context. Keep the question concrete and include options when the decision space is clear.",
+            "description": "Pause execution and ask the user for required clarification or a decision.\n\nUse this only when you cannot safely choose a reasonable default from the current context. Do not use this for facts you can discover with available tools, files, or command output. This blocks the runtime until the user responds, so keep the question concrete and include options when the decision space is clear.",
             "parameters": {
                 "type": "object",
                 "properties": {

@@ -173,6 +173,42 @@ fn critical_tool_schemas_include_actionable_agent_guidance() {
     assert!(read_image.contains("Use this before reasoning about image content"));
 }
 
+#[test]
+fn every_builtin_tool_schema_has_operational_guidance_not_just_labels() {
+    let registry = build_default_registry();
+
+    let list_files = description(&registry, "list_files");
+    assert!(list_files.contains("Use `path`"));
+    assert!(list_files.contains("ignored_roots"));
+    assert!(list_files.contains("truncated"));
+    assert!(
+        property_description(&registry, "list_files", "scan_limit").contains("count_is_estimate")
+    );
+
+    let write_file = description(&registry, "write_file");
+    assert!(write_file.contains("Prefer `file_str_replace`"));
+    assert!(write_file.contains("create parent directories"));
+    assert!(write_file.contains("append=true"));
+
+    let ask_user = description(&registry, "ask_user");
+    assert!(ask_user.contains("Do not use this for facts"));
+    assert!(ask_user.contains("blocks the runtime"));
+
+    let check_background = description(&registry, "check_background_command");
+    assert!(check_background.contains("running"));
+    assert!(check_background.contains("completed"));
+    assert!(check_background.contains("background_command_failed"));
+    assert!(
+        property_description(&registry, "check_background_command", "session_id")
+            .contains("returned by `bash`")
+    );
+
+    let read_image = description(&registry, "read_image");
+    assert!(read_image.contains("Supported formats"));
+    assert!(read_image.contains("5 MiB"));
+    assert!(read_image.contains("HTTP URLs are passed through"));
+}
+
 fn description(registry: &vv_agent::ToolRegistry, tool_name: &str) -> String {
     registry
         .get_schema(tool_name)

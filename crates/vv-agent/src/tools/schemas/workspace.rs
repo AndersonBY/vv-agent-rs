@@ -25,7 +25,7 @@ pub(super) fn write_file_schema() -> Value {
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Write content to a file in workspace.\n\nMODES:\n- Overwrite (default): Replaces entire file content.\n- Append: Adds to existing content (`append=true`).\n\nWARNING:\n- By default, this OVERWRITES the entire file.\n- Use `append=true` to add content instead.\n\nPARAMETERS:\n- `path` (required): Workspace-relative path by default. Absolute path is allowed when outside-workspace access is enabled.\n- `content` (required): Content to write.\n- `append` (optional): Set true to append instead of overwrite.\n- `leading_newline`/`trailing_newline` (optional): Add newlines when appending.",
+            "description": "Write content to a file in workspace.\n\nMODES:\n- Overwrite (default): Replaces entire file content.\n- Append: Adds to existing content (`append=true`).\n\nWARNING:\n- By default, this OVERWRITES the entire file.\n- Prefer `file_str_replace` for small or surgical edits to existing files.\n- Use `append=true` to add content instead of replacing content.\n\nBehavior:\n- This can create parent directories when the workspace backend supports them.\n- The result reports `written_chars`, `append`, and newline flags.\n\nPARAMETERS:\n- `path` (required): Workspace-relative path by default. Absolute path is allowed when outside-workspace access is enabled.\n- `content` (required): Content to write.\n- `append` (optional): Set true to append instead of overwrite.\n- `leading_newline`/`trailing_newline` (optional): Add newlines when appending.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -46,7 +46,7 @@ pub(super) fn list_files_schema() -> Value {
         "type": "function",
         "function": {
             "name": "list_files",
-            "description": "List files in workspace with optional path and glob filtering. Large results are truncated, and common dependency/cache directories (like node_modules/.venv) are summarized by default when listing from workspace root.",
+            "description": "List files in workspace with optional path and glob filtering.\n\nUse `path` to narrow the search root and `glob` to narrow file names before broad scans. Large results are truncated and report `truncated`, `returned_count`, `max_results`, and `remaining_count` so you can request a smaller scope. Common dependency/cache directories such as node_modules and .venv are skipped by default from workspace-root listings and summarized in `ignored_roots`; set `include_ignored=true` only when you specifically need those files.\n\nWhen a backend scan limit is reached, the response can include `count_is_estimate=true`.",
             "parameters": {
                 "type": "object",
                 "properties": {
