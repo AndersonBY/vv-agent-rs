@@ -128,8 +128,8 @@ pub(crate) fn ask_user_tool() -> ToolSpec {
                 "allow_custom_options".to_string(),
                 Value::Bool(allow_custom_options),
             );
-            if let Some(options) = arguments.get("options").and_then(Value::as_array) {
-                payload.insert("options".to_string(), Value::Array(options.clone()));
+            if let Some(options) = normalize_ask_user_options(arguments.get("options")) {
+                payload.insert("options".to_string(), Value::Array(options));
             }
             ToolExecutionResult {
                 tool_call_id: String::new(),
@@ -147,6 +147,25 @@ pub(crate) fn ask_user_tool() -> ToolSpec {
         spec.schema = schema;
     }
     spec
+}
+
+fn normalize_ask_user_options(raw: Option<&Value>) -> Option<Vec<Value>> {
+    let options = raw?.as_array()?;
+    let mut normalized = Vec::new();
+    for option in options {
+        let option_text = todo_value_to_string(option);
+        if option_text.is_empty() {
+            continue;
+        }
+        if normalized
+            .iter()
+            .any(|seen: &Value| seen.as_str() == Some(option_text.as_str()))
+        {
+            continue;
+        }
+        normalized.push(Value::String(option_text));
+    }
+    (!normalized.is_empty()).then_some(normalized)
 }
 
 pub(crate) fn todo_write_tool() -> ToolSpec {

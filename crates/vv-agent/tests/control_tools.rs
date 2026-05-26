@@ -203,6 +203,38 @@ fn task_finish_blocks_when_todos_are_incomplete() {
 }
 
 #[test]
+fn ask_user_returns_python_style_selection_metadata_and_dedupes_options() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "ask_1",
+                "ask_user",
+                BTreeMap::from([
+                    ("question".to_string(), json!("Choose")),
+                    ("options".to_string(), json!(["A", "B", "B", ""])),
+                    ("selection_type".to_string(), json!("multi")),
+                    ("allow_custom_options".to_string(), json!(true)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("ask_user");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.directive, ToolDirective::WaitUser);
+    let payload: serde_json::Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["question"], "Choose");
+    assert_eq!(payload["selection_type"], "multi");
+    assert_eq!(payload["allow_custom_options"], true);
+    assert_eq!(payload["options"], json!(["A", "B"]));
+    assert_eq!(result.metadata["options"], json!(["A", "B"]));
+}
+
+#[test]
 fn activate_skill_loads_skill_md_and_updates_shared_state() {
     let workspace = tempfile::tempdir().expect("workspace");
     let skill_dir = workspace.path().join("skills/demo-skill");
