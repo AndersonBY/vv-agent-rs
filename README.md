@@ -175,7 +175,10 @@ The current Rust implementation includes:
   `status=wait_user`. Sessions also support listener registration for queue and
   run lifecycle events such as `session_run_start`, `session_run_end`,
   `session_follow_up_queued`, and `session_steer_queued`, and `AgentRun::to_dict`
-  includes structured aggregate and per-cycle token usage.
+  includes structured aggregate and per-cycle token usage. Runtime-backed
+  sessions preserve prior messages and shared state across prompts, so follow-up
+  turns see the same conversation and TODO/memory state instead of starting from
+  a fresh task.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,

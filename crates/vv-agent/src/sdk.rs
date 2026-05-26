@@ -140,8 +140,25 @@ pub struct AgentSessionState {
 pub type SessionEventHandler = Arc<dyn Fn(&str, &BTreeMap<String, Value>) + Send + Sync + 'static>;
 pub type SessionListenerId = u64;
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AgentSessionRunRequest {
+    pub prompt: String,
+    pub initial_messages: Vec<crate::types::Message>,
+    pub shared_state: Metadata,
+}
+
+impl AgentSessionRunRequest {
+    pub fn new(prompt: impl Into<String>) -> Self {
+        Self {
+            prompt: prompt.into(),
+            initial_messages: Vec::new(),
+            shared_state: Metadata::new(),
+        }
+    }
+}
+
 pub struct AgentSession {
-    execute_run: Arc<dyn Fn(String) -> Result<AgentRun, String> + Send + Sync>,
+    execute_run: Arc<dyn Fn(AgentSessionRunRequest) -> Result<AgentRun, String> + Send + Sync>,
     _session_id: String,
     _agent_name: String,
     _definition: AgentDefinition,
@@ -159,6 +176,17 @@ pub struct AgentSession {
 impl AgentSession {
     pub fn new(
         execute_run: Arc<dyn Fn(String) -> Result<AgentRun, String> + Send + Sync>,
+        agent_name: impl Into<String>,
+        definition: AgentDefinition,
+        workspace: impl Into<PathBuf>,
+    ) -> Self {
+        let execute_run =
+            Arc::new(move |request: AgentSessionRunRequest| execute_run(request.prompt));
+        Self::new_with_context(execute_run, agent_name, definition, workspace)
+    }
+
+    pub fn new_with_context(
+        execute_run: Arc<dyn Fn(AgentSessionRunRequest) -> Result<AgentRun, String> + Send + Sync>,
         agent_name: impl Into<String>,
         definition: AgentDefinition,
         workspace: impl Into<PathBuf>,
@@ -326,7 +354,11 @@ impl AgentSession {
                 ),
             ]),
         );
-        let run = (self.execute_run)(prompt);
+        let run = (self.execute_run)(AgentSessionRunRequest {
+            prompt,
+            initial_messages: self.messages.clone(),
+            shared_state: self.shared_state.clone(),
+        });
         self.running = false;
         let run = run?;
         self.messages = run.result.messages.clone();
@@ -733,12 +765,26 @@ pub struct AgentSDKClient {
 }
 
 pub trait RunAgent {
-    fn run(&self, definition: &AgentDefinition, prompt: String) -> Result<AgentRun, String>;
+    fn run(&self, definition: &AgentDefinition, prompt: String) -> Result<AgentRun, String> {
+        self.run_with_session(definition, AgentSessionRunRequest::new(prompt))
+    }
+
+    fn run_with_session(
+        &self,
+        definition: &AgentDefinition,
+        request: AgentSessionRunRequest,
+    ) -> Result<AgentRun, String>;
 }
 
 impl<C: LlmClient + Clone + 'static> RunAgent for AgentRuntime<C> {
-    fn run(&self, definition: &AgentDefinition, prompt: String) -> Result<AgentRun, String> {
-        let task = task_from_definition(definition, prompt);
+    fn run_with_session(
+        &self,
+        definition: &AgentDefinition,
+        request: AgentSessionRunRequest,
+    ) -> Result<AgentRun, String> {
+        let mut task = task_from_definition(definition, request.prompt);
+        task.initial_messages = request.initial_messages;
+        task.initial_shared_state = request.shared_state;
         let result = AgentRuntime::run(self, task).map_err(|err| err.to_string())?;
         let resolved = ResolvedModelConfig::new(
             definition
@@ -759,9 +805,15 @@ impl<C: LlmClient + Clone + 'static> RunAgent for AgentRuntime<C> {
 }
 
 impl RunAgent for ScriptedLlmClient {
-    fn run(&self, definition: &AgentDefinition, prompt: String) -> Result<AgentRun, String> {
+    fn run_with_session(
+        &self,
+        definition: &AgentDefinition,
+        request: AgentSessionRunRequest,
+    ) -> Result<AgentRun, String> {
         let runtime = AgentRuntime::new(self.clone());
-        let task = task_from_definition(definition, prompt);
+        let mut task = task_from_definition(definition, request.prompt);
+        task.initial_messages = request.initial_messages;
+        task.initial_shared_state = request.shared_state;
         runtime
             .run(task)
             .map_err(|err| err.to_string())
@@ -846,7 +898,11 @@ impl AgentSDKClient {
 struct NullRunAgent;
 
 impl RunAgent for NullRunAgent {
-    fn run(&self, _definition: &AgentDefinition, _prompt: String) -> Result<AgentRun, String> {
+    fn run_with_session(
+        &self,
+        _definition: &AgentDefinition,
+        _request: AgentSessionRunRequest,
+    ) -> Result<AgentRun, String> {
         Err("runtime not configured".to_string())
     }
 }
@@ -858,8 +914,10 @@ pub fn create_agent_session(
 ) -> AgentSession {
     let runtime = client.runtime.clone();
     let definition_for_run = definition.clone();
-    let execute_run = Arc::new(move |prompt: String| runtime.run(&definition_for_run, prompt));
-    AgentSession::new(execute_run, agent_name, definition, "./workspace")
+    let execute_run = Arc::new(move |request: AgentSessionRunRequest| {
+        runtime.run_with_session(&definition_for_run, request)
+    });
+    AgentSession::new_with_context(execute_run, agent_name, definition, "./workspace")
 }
 
 pub fn run(client: &AgentSDKClient, prompt: impl Into<String>) -> Result<AgentRun, String> {

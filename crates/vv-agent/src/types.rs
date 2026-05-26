@@ -325,6 +325,8 @@ pub struct AgentTask {
     pub native_multimodal: bool,
     pub extra_tool_names: Vec<String>,
     pub exclude_tools: Vec<String>,
+    pub initial_messages: Vec<Message>,
+    pub initial_shared_state: Metadata,
     pub metadata: Metadata,
 }
 
@@ -352,6 +354,8 @@ impl AgentTask {
             native_multimodal: false,
             extra_tool_names: Vec::new(),
             exclude_tools: Vec::new(),
+            initial_messages: Vec::new(),
+            initial_shared_state: Metadata::new(),
             metadata: Metadata::new(),
         }
     }

@@ -77,15 +77,13 @@ impl<C: LlmClient> AgentRuntime<C> {
 
 impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
     pub fn run(&self, task: AgentTask) -> Result<AgentResult, LlmError> {
-        let mut messages = Vec::new();
-        if !task.system_prompt.is_empty() {
-            messages.push(crate::types::Message::system(task.system_prompt.clone()));
-        }
-        messages.push(crate::types::Message::user(task.user_prompt.clone()));
+        let mut messages = build_initial_messages(&task);
 
         let mut cycles = Vec::new();
-        let mut shared_state = BTreeMap::new();
-        shared_state.insert("todo_list".to_string(), Value::Array(Vec::new()));
+        let mut shared_state = task.initial_shared_state.clone();
+        shared_state
+            .entry("todo_list".to_string())
+            .or_insert_with(|| Value::Array(Vec::new()));
         let workspace_path = self
             .default_workspace
             .clone()
@@ -486,6 +484,41 @@ fn is_prompt_too_long_error(error: &LlmError) -> bool {
     ]
     .iter()
     .any(|pattern| text.contains(pattern))
+}
+
+fn build_initial_messages(task: &AgentTask) -> Vec<crate::types::Message> {
+    if !task.initial_messages.is_empty() {
+        let mut messages = task.initial_messages.clone();
+        let starts_with_system = messages
+            .first()
+            .is_some_and(|message| message.role == crate::types::MessageRole::System);
+        if !starts_with_system && !task.system_prompt.is_empty() {
+            messages.insert(0, system_message_from_task(task));
+        } else if starts_with_system && !task.metadata.is_empty() {
+            if let Some(system_message) = messages.first_mut() {
+                let mut metadata = task.metadata.clone();
+                metadata.extend(system_message.metadata.clone());
+                system_message.metadata = metadata;
+            }
+        }
+        if !task.user_prompt.is_empty() {
+            messages.push(crate::types::Message::user(task.user_prompt.clone()));
+        }
+        return messages;
+    }
+
+    let mut messages = Vec::new();
+    if !task.system_prompt.is_empty() {
+        messages.push(system_message_from_task(task));
+    }
+    messages.push(crate::types::Message::user(task.user_prompt.clone()));
+    messages
+}
+
+fn system_message_from_task(task: &AgentTask) -> crate::types::Message {
+    let mut message = crate::types::Message::system(task.system_prompt.clone());
+    message.metadata = task.metadata.clone();
+    message
 }
 
 fn execute_tool_result(

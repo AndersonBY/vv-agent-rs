@@ -3,8 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use vv_agent::{
-    AgentDefinition, AgentRun, AgentSession, AgentStatus, CycleRecord, ResolvedModelConfig,
-    SessionEventHandler, TokenUsage,
+    create_agent_session, AgentDefinition, AgentRun, AgentRuntime, AgentSDKClient, AgentSDKOptions,
+    AgentSession, AgentStatus, BeforeLlmEvent, CycleRecord, LLMResponse, ResolvedModelConfig,
+    RuntimeHook, ScriptedLlmClient, SessionEventHandler, TokenUsage, ToolCall,
 };
 
 #[test]
@@ -217,6 +218,71 @@ fn session_run_to_dict_contains_structured_token_usage() {
     assert_eq!(usage["cycles"][0]["usage"]["total_tokens"], Value::from(18));
 }
 
+#[test]
+fn session_runtime_receives_previous_messages_and_shared_state() {
+    let responses = vec![
+        LLMResponse {
+            content: "record todo".to_string(),
+            tool_calls: vec![ToolCall::new(
+                "todo-1",
+                "todo_write",
+                json_args(serde_json::json!({
+                    "todos": [
+                        {"title": "carry context", "status": "completed", "priority": "medium"}
+                    ]
+                })),
+            )],
+            raw: BTreeMap::new(),
+            token_usage: TokenUsage::default(),
+        },
+        LLMResponse {
+            content: "finish first".to_string(),
+            tool_calls: vec![ToolCall::new(
+                "finish-1",
+                "task_finish",
+                json_args(serde_json::json!({"message": "first"})),
+            )],
+            raw: BTreeMap::new(),
+            token_usage: TokenUsage::default(),
+        },
+        LLMResponse {
+            content: "finish second".to_string(),
+            tool_calls: vec![ToolCall::new(
+                "finish-2",
+                "task_finish",
+                json_args(serde_json::json!({"message": "second"})),
+            )],
+            raw: BTreeMap::new(),
+            token_usage: TokenUsage::default(),
+        },
+    ];
+    let snapshots = Arc::new(Mutex::new(Vec::<RuntimeSnapshot>::new()));
+    let mut runtime = AgentRuntime::new(ScriptedLlmClient::new(responses));
+    runtime.hooks.push(Arc::new(RecordingRuntimeHook {
+        snapshots: Arc::clone(&snapshots),
+    }));
+    let client = AgentSDKClient::new(AgentSDKOptions::default()).with_runtime(runtime);
+    let mut session =
+        create_agent_session(&client, "demo", AgentDefinition::default_for_model("demo"));
+
+    let first = session.prompt("first").expect("first");
+    let second = session.prompt("second").expect("second");
+
+    assert_eq!(first.result.final_answer.as_deref(), Some("first"));
+    assert_eq!(second.result.final_answer.as_deref(), Some("second"));
+    let snapshots = snapshots.lock().expect("snapshots");
+    let second_run_start = snapshots.last().expect("second run snapshot");
+    assert!(
+        second_run_start.messages.len() > 2,
+        "second run should include previous session messages"
+    );
+    assert_eq!(second_run_start.messages.last().unwrap(), "user:second");
+    assert_eq!(
+        second_run_start.shared_state["todo_list"][0]["title"],
+        Value::String("carry context".to_string())
+    );
+}
+
 fn fake_run(prompt: &str, status: AgentStatus) -> AgentRun {
     let mut result = vv_agent::AgentResult::completed(vec![], vec![], prompt.to_string());
     result.status = status;
@@ -245,4 +311,42 @@ fn recording_listener(events: &RecordedEvents) -> SessionEventHandler {
             .expect("events")
             .push((event.to_string(), payload.clone()));
     })
+}
+
+#[derive(Debug)]
+struct RuntimeSnapshot {
+    messages: Vec<String>,
+    shared_state: BTreeMap<String, Value>,
+}
+
+struct RecordingRuntimeHook {
+    snapshots: Arc<Mutex<Vec<RuntimeSnapshot>>>,
+}
+
+impl RuntimeHook for RecordingRuntimeHook {
+    fn before_llm(&self, event: BeforeLlmEvent<'_>) -> Option<vv_agent::BeforeLlmPatch> {
+        self.snapshots
+            .lock()
+            .expect("snapshots")
+            .push(RuntimeSnapshot {
+                messages: event
+                    .messages
+                    .iter()
+                    .map(|message| {
+                        format!("{:?}:{}", message.role, message.content).to_ascii_lowercase()
+                    })
+                    .collect(),
+                shared_state: event.shared_state.clone(),
+            });
+        None
+    }
+}
+
+fn json_args(value: Value) -> BTreeMap<String, Value> {
+    value
+        .as_object()
+        .expect("object args")
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
 }
