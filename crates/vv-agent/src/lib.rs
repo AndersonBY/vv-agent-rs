@@ -35,12 +35,13 @@ pub use memory::{
 };
 pub use runtime::{
     AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BeforeLlmEvent, BeforeLlmPatch,
-    BeforeToolCallEvent, BeforeToolCallPatch, RuntimeHook, RuntimeHookManager,
+    BeforeToolCallEvent, BeforeToolCallPatch, RuntimeEventHandler, RuntimeHook, RuntimeHookManager,
+    RuntimeRunControls,
 };
 pub use sdk::{
     create_agent_session, query, run, AgentDefinition, AgentResourceLoader, AgentRun,
     AgentSDKClient, AgentSDKOptions, AgentSession, AgentSessionRunRequest, AgentSessionState,
-    SessionEventHandler, SessionListenerId,
+    SessionEventHandler, SessionListenerId, SessionSteeringHandle,
 };
 pub use sub_agent_sessions::{
     get_sub_agent_session, register_sub_agent_session, steer_sub_agent_session,

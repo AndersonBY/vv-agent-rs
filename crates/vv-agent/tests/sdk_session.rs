@@ -285,6 +285,74 @@ fn session_runtime_receives_previous_messages_and_shared_state() {
 }
 
 #[test]
+fn session_runtime_event_listener_can_queue_steering() {
+    let responses = vec![
+        LLMResponse {
+            content: "two tool calls".to_string(),
+            tool_calls: vec![
+                ToolCall::new(
+                    "todo-1",
+                    "todo_write",
+                    json_args(serde_json::json!({
+                        "todos": [
+                            {"title": "switch strategy", "status": "completed", "priority": "medium"}
+                        ]
+                    })),
+                ),
+                ToolCall::new(
+                    "finish-should-skip",
+                    "task_finish",
+                    json_args(serde_json::json!({"message": "should be skipped"})),
+                ),
+            ],
+            raw: BTreeMap::new(),
+            token_usage: TokenUsage::default(),
+        },
+        LLMResponse {
+            content: "finish after steering".to_string(),
+            tool_calls: vec![ToolCall::new(
+                "finish-2",
+                "task_finish",
+                json_args(serde_json::json!({"message": "done"})),
+            )],
+            raw: BTreeMap::new(),
+            token_usage: TokenUsage::default(),
+        },
+    ];
+    let client = AgentSDKClient::new(AgentSDKOptions::default())
+        .with_runtime(AgentRuntime::new(ScriptedLlmClient::new(responses)));
+    let mut session =
+        create_agent_session(&client, "demo", AgentDefinition::default_for_model("demo"));
+    let steering = session.steering_handle();
+    let events = recorded_events();
+    session.subscribe(recording_listener(&events));
+    session.subscribe(Arc::new(move |event, payload| {
+        if event == "tool_result"
+            && payload.get("tool_name").and_then(Value::as_str) == Some("todo_write")
+        {
+            steering
+                .steer("switch strategy before finishing")
+                .expect("steer");
+        }
+    }));
+
+    let run = session.prompt("start").expect("prompt");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(run.result.final_answer.as_deref(), Some("done"));
+    assert_eq!(
+        run.result.cycles[0].tool_results[1].error_code.as_deref(),
+        Some("skipped_due_to_steering")
+    );
+    let events = events.lock().expect("events");
+    assert!(events.iter().any(|(event, _)| event == "tool_result"));
+    assert!(events
+        .iter()
+        .any(|(event, _)| event == "session_steer_interrupt"));
+    assert!(events.iter().any(|(event, _)| event == "run_steered"));
+}
+
+#[test]
 fn sdk_runtime_uses_options_workspace_for_tool_context_and_sessions() {
     let workspace = tempfile::tempdir().expect("workspace");
     let responses = vec![LLMResponse {

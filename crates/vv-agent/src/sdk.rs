@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
 use crate::config::ResolvedModelConfig;
 use crate::llm::{LlmClient, ScriptedLlmClient};
-use crate::runtime::AgentRuntime;
+use crate::runtime::{AgentRuntime, RuntimeRunControls};
 use crate::types::{AgentResult, AgentStatus, AgentTask, Metadata, NoToolPolicy, SubAgentConfig};
 use crate::workspace::LocalWorkspaceBackend;
 
@@ -141,11 +141,13 @@ pub struct AgentSessionState {
 pub type SessionEventHandler = Arc<dyn Fn(&str, &BTreeMap<String, Value>) + Send + Sync + 'static>;
 pub type SessionListenerId = u64;
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Clone, Default)]
 pub struct AgentSessionRunRequest {
     pub prompt: String,
     pub initial_messages: Vec<crate::types::Message>,
     pub shared_state: Metadata,
+    pub runtime_event_handler: Option<SessionEventHandler>,
+    pub steering_queue: Option<Arc<Mutex<VecDeque<String>>>>,
 }
 
 impl AgentSessionRunRequest {
@@ -154,7 +156,34 @@ impl AgentSessionRunRequest {
             prompt: prompt.into(),
             initial_messages: Vec::new(),
             shared_state: Metadata::new(),
+            runtime_event_handler: None,
+            steering_queue: None,
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct SessionSteeringHandle {
+    steering_queue: Arc<Mutex<VecDeque<String>>>,
+    listeners: Arc<Mutex<BTreeMap<SessionListenerId, SessionEventHandler>>>,
+}
+
+impl SessionSteeringHandle {
+    pub fn steer(&self, prompt: impl Into<String>) -> Result<(), String> {
+        let prompt = normalize_session_prompt(prompt.into(), "steer prompt")?;
+        {
+            let mut queue = self
+                .steering_queue
+                .lock()
+                .map_err(|_| "Session steering queue lock is poisoned.".to_string())?;
+            queue.push_back(prompt.clone());
+        }
+        emit_session_event(
+            &self.listeners,
+            "session_steer_queued",
+            BTreeMap::from([("prompt".to_string(), Value::String(prompt))]),
+        );
+        Ok(())
     }
 }
 
@@ -168,9 +197,9 @@ pub struct AgentSession {
     messages: Vec<crate::types::Message>,
     latest_run: Option<AgentRun>,
     running: bool,
-    listeners: BTreeMap<SessionListenerId, SessionEventHandler>,
+    listeners: Arc<Mutex<BTreeMap<SessionListenerId, SessionEventHandler>>>,
     next_listener_id: SessionListenerId,
-    steering_queue: VecDeque<String>,
+    steering_queue: Arc<Mutex<VecDeque<String>>>,
     follow_up_queue: VecDeque<String>,
 }
 
@@ -208,9 +237,9 @@ impl AgentSession {
             messages: Vec::new(),
             latest_run: None,
             running: false,
-            listeners: BTreeMap::new(),
+            listeners: Arc::new(Mutex::new(BTreeMap::new())),
             next_listener_id: 1,
-            steering_queue: VecDeque::new(),
+            steering_queue: Arc::new(Mutex::new(VecDeque::new())),
             follow_up_queue: VecDeque::new(),
         }
     }
@@ -218,12 +247,19 @@ impl AgentSession {
     pub fn subscribe(&mut self, listener: SessionEventHandler) -> SessionListenerId {
         let listener_id = self.next_listener_id;
         self.next_listener_id = self.next_listener_id.saturating_add(1);
-        self.listeners.insert(listener_id, listener);
+        self.listeners
+            .lock()
+            .expect("session listeners lock")
+            .insert(listener_id, listener);
         listener_id
     }
 
     pub fn unsubscribe(&mut self, listener_id: SessionListenerId) -> bool {
-        self.listeners.remove(&listener_id).is_some()
+        self.listeners
+            .lock()
+            .expect("session listeners lock")
+            .remove(&listener_id)
+            .is_some()
     }
 
     pub fn prompt(&mut self, prompt: impl Into<String>) -> Result<AgentRun, String> {
@@ -267,17 +303,20 @@ impl AgentSession {
     }
 
     pub fn steer(&mut self, prompt: impl Into<String>) -> Result<(), String> {
-        let prompt = normalize_session_prompt(prompt.into(), "steer prompt")?;
-        self.steering_queue.push_back(prompt.clone());
-        self.emit(
-            "session_steer_queued",
-            BTreeMap::from([("prompt".to_string(), Value::String(prompt))]),
-        );
-        Ok(())
+        self.steering_handle().steer(prompt)
+    }
+
+    pub fn steering_handle(&self) -> SessionSteeringHandle {
+        SessionSteeringHandle {
+            steering_queue: Arc::clone(&self.steering_queue),
+            listeners: Arc::clone(&self.listeners),
+        }
     }
 
     pub fn clear_queues(&mut self) {
-        self.steering_queue.clear();
+        if let Ok(mut queue) = self.steering_queue.lock() {
+            queue.clear();
+        }
         self.follow_up_queue.clear();
         self.emit("session_queues_cleared", BTreeMap::new());
     }
@@ -290,14 +329,18 @@ impl AgentSession {
             }
         }
 
-        let queued_prompt = self
-            .steering_queue
-            .pop_front()
-            .or_else(|| self.follow_up_queue.pop_front())
-            .ok_or_else(|| {
-                "No queued prompt available. Provide prompt or call steer()/follow_up() first."
-                    .to_string()
-            })?;
+        let queued_prompt = {
+            let mut steering_queue = self
+                .steering_queue
+                .lock()
+                .map_err(|_| "Session steering queue lock is poisoned.".to_string())?;
+            steering_queue.pop_front()
+        }
+        .or_else(|| self.follow_up_queue.pop_front())
+        .ok_or_else(|| {
+            "No queued prompt available. Provide prompt or call steer()/follow_up() first."
+                .to_string()
+        })?;
         self.prompt_with_auto_follow_up(queued_prompt, false)
     }
 
@@ -355,10 +398,16 @@ impl AgentSession {
                 ),
             ]),
         );
+        let listeners = Arc::clone(&self.listeners);
+        let runtime_event_handler: SessionEventHandler = Arc::new(move |event, payload| {
+            emit_session_event(&listeners, event, payload.clone());
+        });
         let run = (self.execute_run)(AgentSessionRunRequest {
             prompt,
             initial_messages: self.messages.clone(),
             shared_state: self.shared_state.clone(),
+            runtime_event_handler: Some(runtime_event_handler),
+            steering_queue: Some(Arc::clone(&self.steering_queue)),
         });
         self.running = false;
         let run = run?;
@@ -406,10 +455,7 @@ impl AgentSession {
     }
 
     fn emit(&self, event: &str, payload: BTreeMap<String, Value>) {
-        let listeners: Vec<SessionEventHandler> = self.listeners.values().cloned().collect();
-        for listener in listeners {
-            listener(event, &payload);
-        }
+        emit_session_event(&self.listeners, event, payload);
     }
 
     pub fn state(&self) -> AgentSessionState {
@@ -420,6 +466,22 @@ impl AgentSession {
             shared_state: self.shared_state.clone(),
             latest_run: self.latest_run.clone(),
         }
+    }
+}
+
+fn emit_session_event(
+    listeners: &Arc<Mutex<BTreeMap<SessionListenerId, SessionEventHandler>>>,
+    event: &str,
+    payload: BTreeMap<String, Value>,
+) {
+    let listeners: Vec<SessionEventHandler> = listeners
+        .lock()
+        .expect("session listeners lock")
+        .values()
+        .cloned()
+        .collect();
+    for listener in listeners {
+        listener(event, &payload);
     }
 }
 
@@ -786,7 +848,15 @@ impl<C: LlmClient + Clone + 'static> RunAgent for AgentRuntime<C> {
         let mut task = task_from_definition(definition, request.prompt);
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
-        let result = AgentRuntime::run(self, task).map_err(|err| err.to_string())?;
+        let result = self
+            .run_with_controls(
+                task,
+                RuntimeRunControls {
+                    log_handler: request.runtime_event_handler,
+                    steering_queue: request.steering_queue,
+                },
+            )
+            .map_err(|err| err.to_string())?;
         let resolved = ResolvedModelConfig::new(
             definition
                 .backend
@@ -816,7 +886,13 @@ impl RunAgent for ScriptedLlmClient {
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
         runtime
-            .run(task)
+            .run_with_controls(
+                task,
+                RuntimeRunControls {
+                    log_handler: request.runtime_event_handler,
+                    steering_queue: request.steering_queue,
+                },
+            )
             .map_err(|err| err.to_string())
             .map(|result| AgentRun {
                 agent_name: definition.model.clone(),

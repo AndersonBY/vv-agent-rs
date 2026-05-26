@@ -3,7 +3,7 @@ mod results;
 mod sub_agents;
 mod tool_planner;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -31,7 +31,14 @@ pub use tool_planner::patch_dynamic_tool_schema_hints;
 
 pub type RuntimeLogCallback = dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static;
 pub type RuntimeLogHandler = Arc<Mutex<Box<RuntimeLogCallback>>>;
+pub type RuntimeEventHandler = Arc<dyn Fn(&str, &BTreeMap<String, Value>) + Send + Sync + 'static>;
 const MAX_PROMPT_TOO_LONG_RETRIES: u32 = 3;
+
+#[derive(Clone, Default)]
+pub struct RuntimeRunControls {
+    pub log_handler: Option<RuntimeEventHandler>,
+    pub steering_queue: Option<Arc<Mutex<VecDeque<String>>>>,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct CancellationToken {
@@ -77,6 +84,14 @@ impl<C: LlmClient> AgentRuntime<C> {
 
 impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
     pub fn run(&self, task: AgentTask) -> Result<AgentResult, LlmError> {
+        self.run_with_controls(task, RuntimeRunControls::default())
+    }
+
+    pub fn run_with_controls(
+        &self,
+        task: AgentTask,
+        controls: RuntimeRunControls,
+    ) -> Result<AgentResult, LlmError> {
         let mut messages = build_initial_messages(&task);
 
         let mut cycles = Vec::new();
@@ -90,6 +105,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             .unwrap_or_else(|| PathBuf::from("./workspace"));
         let sub_task_manager = SubTaskManager::default();
         self.emit_log(
+            &controls,
             "run_started",
             BTreeMap::from([
                 ("task_id".to_string(), Value::String(task.task_id.clone())),
@@ -106,7 +122,37 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             build_memory_manager(&task, workspace_path.clone(), Some(self.llm_client.clone()));
 
         for cycle_index in 0..task.max_cycles {
+            let cycle_steering_prompts = drain_steering_queue(&controls);
+            if !cycle_steering_prompts.is_empty() {
+                for prompt in &cycle_steering_prompts {
+                    messages.push(crate::types::Message::user(prompt.clone()));
+                    self.emit_log(
+                        &controls,
+                        "session_steer_dequeued",
+                        BTreeMap::from([
+                            ("cycle".to_string(), Value::from(cycle_index)),
+                            ("prompt".to_string(), Value::String(prompt.clone())),
+                        ]),
+                    );
+                }
+                self.emit_log(
+                    &controls,
+                    "cycle_injected_messages",
+                    BTreeMap::from([
+                        ("cycle".to_string(), Value::from(cycle_index)),
+                        (
+                            "reason".to_string(),
+                            Value::String("session_steering".to_string()),
+                        ),
+                        (
+                            "message_count".to_string(),
+                            Value::from(cycle_steering_prompts.len() as u64),
+                        ),
+                    ]),
+                );
+            }
             self.emit_log(
+                &controls,
                 "cycle_started",
                 BTreeMap::from([
                     ("cycle".to_string(), Value::from(cycle_index)),
@@ -185,13 +231,14 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 Vec::<ToolExecutionResult>::new(),
             );
             cycle.memory_compacted = memory_compacted;
-            self.emit_cycle_llm_response(&cycle);
+            self.emit_cycle_llm_response(&controls, &cycle);
 
             if response.tool_calls.is_empty() {
                 cycles.push(cycle);
                 match task.no_tool_policy {
                     crate::types::NoToolPolicy::Finish => {
                         self.emit_log(
+                            &controls,
                             "run_completed",
                             BTreeMap::from([
                                 ("cycle".to_string(), Value::from(cycle_index)),
@@ -215,6 +262,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             response.content.clone()
                         };
                         self.emit_log(
+                            &controls,
                             "run_wait_user",
                             BTreeMap::from([
                                 ("cycle".to_string(), Value::from(cycle_index)),
@@ -283,9 +331,10 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 if result.tool_call_id.is_empty() {
                     result.tool_call_id = patched_call.id.clone();
                 }
-                self.emit_tool_result(cycle_index, &patched_call, &result);
+                self.emit_tool_result(&controls, cycle_index, &patched_call, &result);
 
-                if result.directive != ToolDirective::Continue {
+                let steering_prompts = drain_steering_queue(&controls);
+                if steering_prompts.is_empty() && result.directive != ToolDirective::Continue {
                     directive_result = Some(result.clone());
                 }
                 messages.push(result.to_message());
@@ -298,6 +347,59 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     messages.push(image_message);
                 }
                 cycle.tool_results.push(result);
+                if !steering_prompts.is_empty() {
+                    for prompt in &steering_prompts {
+                        self.emit_log(
+                            &controls,
+                            "session_steer_interrupt",
+                            BTreeMap::from([
+                                ("cycle".to_string(), Value::from(cycle_index)),
+                                (
+                                    "after_tool_call_id".to_string(),
+                                    Value::String(patched_call.id.clone()),
+                                ),
+                                (
+                                    "after_tool_name".to_string(),
+                                    Value::String(patched_call.name.clone()),
+                                ),
+                                ("prompt".to_string(), Value::String(prompt.clone())),
+                            ]),
+                        );
+                    }
+                    for skipped_call in response.tool_calls.iter().skip(call_index + 1) {
+                        let skipped = skipped_tool_result(
+                            skipped_call,
+                            "skipped_due_to_steering",
+                            "Tool skipped because session steering was queued after a previous tool call.",
+                        );
+                        self.emit_tool_result(&controls, cycle_index, skipped_call, &skipped);
+                        messages.push(skipped.to_message());
+                        cycle.tool_results.push(skipped);
+                    }
+                    for prompt in &steering_prompts {
+                        messages.push(crate::types::Message::user(prompt.clone()));
+                    }
+                    self.emit_log(
+                        &controls,
+                        "run_steered",
+                        BTreeMap::from([
+                            ("cycle".to_string(), Value::from(cycle_index)),
+                            (
+                                "after_tool_call_id".to_string(),
+                                Value::String(patched_call.id.clone()),
+                            ),
+                            (
+                                "after_tool_name".to_string(),
+                                Value::String(patched_call.name.clone()),
+                            ),
+                            (
+                                "prompt_count".to_string(),
+                                Value::from(steering_prompts.len() as u64),
+                            ),
+                        ]),
+                    );
+                    break;
+                }
                 if directive_result.is_some() {
                     let (error_code, message) = match directive_result
                         .as_ref()
@@ -316,7 +418,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     };
                     for skipped_call in response.tool_calls.iter().skip(call_index + 1) {
                         let skipped = skipped_tool_result(skipped_call, error_code, message);
-                        self.emit_tool_result(cycle_index, skipped_call, &skipped);
+                        self.emit_tool_result(&controls, cycle_index, skipped_call, &skipped);
                         messages.push(skipped.to_message());
                         cycle.tool_results.push(skipped);
                     }
@@ -331,6 +433,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     ToolDirective::Finish => {
                         let final_message = extract_final_message(&result);
                         self.emit_log(
+                            &controls,
                             "run_completed",
                             BTreeMap::from([
                                 ("cycle".to_string(), Value::from(cycle_index)),
@@ -350,6 +453,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     ToolDirective::WaitUser => {
                         let wait_reason = extract_wait_reason(&result);
                         self.emit_log(
+                            &controls,
                             "run_wait_user",
                             BTreeMap::from([
                                 ("cycle".to_string(), Value::from(cycle_index)),
@@ -376,6 +480,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         }
 
         self.emit_log(
+            &controls,
             "run_max_cycles",
             BTreeMap::from([
                 ("cycle".to_string(), Value::from(cycles.len())),
@@ -405,17 +510,29 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         RuntimeHookManager::new(self.hooks.clone())
     }
 
-    fn emit_log(&self, event: &str, payload: BTreeMap<String, Value>) {
-        let Some(handler) = &self.log_handler else {
-            return;
-        };
-        if let Ok(mut handler) = handler.lock() {
-            (handler)(event, &payload);
+    fn emit_log(
+        &self,
+        controls: &RuntimeRunControls,
+        event: &str,
+        payload: BTreeMap<String, Value>,
+    ) {
+        if let Some(handler) = &self.log_handler {
+            if let Ok(mut handler) = handler.lock() {
+                (handler)(event, &payload);
+            }
+        }
+        if let Some(handler) = &controls.log_handler {
+            handler(event, &payload);
         }
     }
 
-    fn emit_cycle_llm_response(&self, cycle: &crate::types::CycleRecord) {
+    fn emit_cycle_llm_response(
+        &self,
+        controls: &RuntimeRunControls,
+        cycle: &crate::types::CycleRecord,
+    ) {
         self.emit_log(
+            controls,
             "cycle_llm_response",
             BTreeMap::from([
                 ("cycle".to_string(), Value::from(cycle.index)),
@@ -453,8 +570,15 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         );
     }
 
-    fn emit_tool_result(&self, cycle_index: u32, call: &ToolCall, result: &ToolExecutionResult) {
+    fn emit_tool_result(
+        &self,
+        controls: &RuntimeRunControls,
+        cycle_index: u32,
+        call: &ToolCall,
+        result: &ToolExecutionResult,
+    ) {
         self.emit_log(
+            controls,
             "tool_result",
             BTreeMap::from([
                 ("cycle".to_string(), Value::from(cycle_index)),
@@ -491,6 +615,16 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             ]),
         );
     }
+}
+
+fn drain_steering_queue(controls: &RuntimeRunControls) -> Vec<String> {
+    let Some(queue) = &controls.steering_queue else {
+        return Vec::new();
+    };
+    let Ok(mut queue) = queue.lock() else {
+        return Vec::new();
+    };
+    queue.drain(..).collect()
 }
 
 fn is_prompt_too_long_error(error: &LlmError) -> bool {
