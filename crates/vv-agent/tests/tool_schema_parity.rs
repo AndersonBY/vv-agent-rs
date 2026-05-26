@@ -49,6 +49,7 @@ fn tools_module_is_split_into_handler_files() {
     assert!(root.join("tools").join("mod.rs").is_file());
     for relative in [
         "tools/base.rs",
+        "tools/dispatcher.rs",
         "tools/registry.rs",
         "tools/schemas/mod.rs",
         "tools/schemas/command.rs",

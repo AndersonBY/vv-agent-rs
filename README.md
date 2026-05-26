@@ -46,6 +46,7 @@ vv-agent-rs/
       tools/
         base.rs
         common.rs
+        dispatcher.rs
         mod.rs
         registry.rs
         schemas/
@@ -157,8 +158,12 @@ The current Rust implementation includes:
   builder sections, stable prompt hashes, raw section metadata, localized tool
   templates, available skills rendering, and prompt-cache break tracking.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
-  canonical `schemas/` domain modules, shared `common` helpers, and focused
-  handler modules.
+  dispatcher, canonical `schemas/` domain modules, shared `common` helpers, and
+  focused handler modules.
+- Python-style tool dispatch normalizes raw LLM tool arguments into structured
+  error tool results, fills missing / pending tool call ids, maps wait-user
+  directives to `WAIT_RESPONSE`, and returns `tool_not_found` without dropping
+  the tool result from the transcript.
 - Split public `skills/` modules for Python-style skill models, directory
   discovery, frontmatter parsing, metadata normalization, validation modes,
   diagnostics, and `<available_skills>` prompt rendering with the same

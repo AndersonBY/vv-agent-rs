@@ -217,11 +217,3 @@ pub fn build_default_registry() -> ToolRegistry {
         .expect("default check_background_command registration");
     registry
 }
-
-pub fn dispatch_tool_call(
-    registry: &ToolRegistry,
-    call: &ToolCall,
-    context: &mut ToolContext,
-) -> Result<ToolExecutionResult, ToolNotFoundError> {
-    registry.execute(call, context)
-}

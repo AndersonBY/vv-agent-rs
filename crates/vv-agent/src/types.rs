@@ -117,6 +117,78 @@ impl ToolCall {
             extra_content: None,
         }
     }
+
+    pub fn from_raw_arguments(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        raw_arguments: Value,
+    ) -> Self {
+        let id = id.into();
+        let name = name.into();
+        match parse_raw_tool_arguments(&raw_arguments) {
+            Ok(arguments) => Self {
+                id,
+                name,
+                arguments,
+                extra_content: None,
+            },
+            Err((error_code, error)) => Self {
+                id,
+                name,
+                arguments: ToolArguments::new(),
+                extra_content: Some(Value::Object(
+                    [
+                        ("raw_arguments".to_string(), raw_arguments),
+                        ("argument_error_code".to_string(), Value::String(error_code)),
+                        ("argument_error".to_string(), Value::String(error)),
+                    ]
+                    .into_iter()
+                    .collect(),
+                )),
+            },
+        }
+    }
+}
+
+fn parse_raw_tool_arguments(raw_arguments: &Value) -> Result<ToolArguments, (String, String)> {
+    match raw_arguments {
+        Value::Null => Ok(ToolArguments::new()),
+        Value::Object(object) => Ok(object.clone().into_iter().collect()),
+        Value::String(raw) => {
+            let stripped = raw.trim();
+            if stripped.is_empty() {
+                return Ok(ToolArguments::new());
+            }
+            let parsed = serde_json::from_str::<Value>(stripped).map_err(|error| {
+                (
+                    "invalid_arguments_json".to_string(),
+                    format!("Invalid tool arguments JSON: {error}"),
+                )
+            })?;
+            match parsed {
+                Value::Object(object) => Ok(object.into_iter().collect()),
+                _ => Err((
+                    "invalid_arguments_payload".to_string(),
+                    "Tool arguments must decode to an object".to_string(),
+                )),
+            }
+        }
+        other => Err((
+            "invalid_arguments_type".to_string(),
+            format!("Unsupported tool argument type: {}", json_type_name(other)),
+        )),
+    }
+}
+
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

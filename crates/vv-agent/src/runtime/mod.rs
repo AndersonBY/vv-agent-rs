@@ -814,22 +814,7 @@ fn execute_tool_result(
     call: &ToolCall,
     context: &mut ToolContext,
 ) -> ToolExecutionResult {
-    registry
-        .execute(call, context)
-        .unwrap_or_else(|error| ToolExecutionResult {
-            tool_call_id: call.id.clone(),
-            content: serde_json::json!({
-                "ok": false,
-                "error": error.to_string(),
-            })
-            .to_string(),
-            status: ToolResultStatus::Error,
-            directive: ToolDirective::Continue,
-            error_code: Some("tool_not_found".to_string()),
-            metadata: BTreeMap::new(),
-            image_url: None,
-            image_path: None,
-        })
+    crate::tools::dispatch_tool_call(registry, context, call)
 }
 
 fn skipped_tool_result(call: &ToolCall, error_code: &str, message: &str) -> ToolExecutionResult {

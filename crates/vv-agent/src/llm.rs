@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::types::{LLMResponse, Message, MessageRole, TokenUsage, ToolArguments, ToolCall};
+use crate::types::{LLMResponse, Message, MessageRole, TokenUsage, ToolCall};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LlmRequest {
@@ -253,12 +253,11 @@ fn from_vv_llm_response(response: vv_llm::ChatResponse) -> LLMResponse {
 }
 
 fn from_vv_llm_tool_call(tool_call: vv_llm::ToolCall) -> ToolCall {
-    let arguments = serde_json::from_str::<Value>(&tool_call.arguments)
-        .ok()
-        .and_then(|value| value.as_object().cloned())
-        .map(|object| object.into_iter().collect::<ToolArguments>())
-        .unwrap_or_default();
-    ToolCall::new(tool_call.id, tool_call.name, arguments)
+    ToolCall::from_raw_arguments(
+        tool_call.id,
+        tool_call.name,
+        Value::String(tool_call.arguments),
+    )
 }
 
 fn from_vv_llm_usage(usage: vv_llm::ChatUsage) -> TokenUsage {
