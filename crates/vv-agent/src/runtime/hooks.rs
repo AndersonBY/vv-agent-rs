@@ -5,6 +5,13 @@ use serde_json::Value;
 use crate::tools::ToolContext;
 use crate::types::{AgentTask, LLMResponse, Message, ToolCall, ToolExecutionResult};
 
+pub struct BeforeMemoryCompactEvent<'a> {
+    pub task: &'a AgentTask,
+    pub cycle_index: u32,
+    pub messages: &'a [Message],
+    pub shared_state: &'a BTreeMap<String, Value>,
+}
+
 pub struct BeforeLlmEvent<'a> {
     pub task: &'a AgentTask,
     pub cycle_index: u32,
@@ -50,6 +57,10 @@ pub struct BeforeToolCallPatch {
 }
 
 pub trait RuntimeHook: Send + Sync {
+    fn before_memory_compact(&self, _event: BeforeMemoryCompactEvent<'_>) -> Option<Vec<Message>> {
+        None
+    }
+
     fn before_llm(&self, _event: BeforeLlmEvent<'_>) -> Option<BeforeLlmPatch> {
         None
     }
@@ -79,6 +90,27 @@ impl RuntimeHookManager {
 
     pub fn is_empty(&self) -> bool {
         self.hooks.is_empty()
+    }
+
+    pub fn apply_before_memory_compact(
+        &self,
+        task: &AgentTask,
+        cycle_index: u32,
+        messages: Vec<Message>,
+        shared_state: &BTreeMap<String, Value>,
+    ) -> Vec<Message> {
+        let mut current_messages = messages;
+        for hook in &self.hooks {
+            if let Some(patched) = hook.before_memory_compact(BeforeMemoryCompactEvent {
+                task,
+                cycle_index,
+                messages: &current_messages,
+                shared_state,
+            }) {
+                current_messages = patched;
+            }
+        }
+        current_messages
     }
 
     pub fn apply_before_llm(

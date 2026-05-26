@@ -134,8 +134,8 @@ The current Rust implementation includes:
   tool-result extraction, and sub-agent execution so deeper Python parity work
   can stay localized.
 - Runtime hooks modeled after Python `RuntimeHookManager`: callers can patch
-  LLM request messages/schemas, patch LLM responses, patch or short-circuit
-  tool calls, and patch tool results.
+  messages before memory compaction, patch LLM request messages/schemas, patch
+  LLM responses, patch or short-circuit tool calls, and patch tool results.
 - Runtime lifecycle logging through `log_handler`, with Python-style events for
   run start, cycle start, LLM response, tool result, completion, wait-user, and
   max-cycle exits.
@@ -173,7 +173,7 @@ The current Rust implementation includes:
 - Persistent session memory modeled after Python `SessionMemory`: durable
   entries are normalized, deduplicated, budget-pruned, optionally persisted
   under `.memory/session`, and injected back into runtime LLM requests as a
-  `<Session Memory>` system context across compaction. The default runtime can
+  `<Session Memory>` system context before and after compaction. The default runtime can
   use the configured `LlmClient` as the extraction callback, so vv-llm-backed
   clients handle session-memory extraction without custom provider adapters.
 - Python-style microcompact support clears old, large, compactable tool results

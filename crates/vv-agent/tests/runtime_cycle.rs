@@ -664,6 +664,41 @@ fn runtime_compacts_memory_before_large_follow_up_cycle() {
 }
 
 #[test]
+fn runtime_hooks_can_patch_messages_before_memory_compaction() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let large_tool_payload = "tool output ".repeat(300);
+    let llm = MemoryCompactionInspectingLlmClient::new(large_tool_payload);
+    let inspector = llm.clone();
+    let hook = Arc::new(BeforeMemoryCompactHook::default());
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.default_workspace = Some(workspace.path().to_path_buf());
+    runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
+        workspace.path(),
+    ));
+    runtime.hooks.push(hook.clone());
+    let mut task = AgentTask::new("pre_compact_hook_task", "demo", "system", "inspect memory");
+    task.memory_compact_threshold = 20;
+    task.metadata
+        .insert("model_context_window".to_string(), json!(120));
+    task.metadata
+        .insert("reserved_output_tokens".to_string(), json!(10));
+    task.metadata
+        .insert("autocompact_buffer_tokens".to_string(), json!(0));
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(hook.cycle_indexes(), vec![1, 2]);
+    let second_request = inspector.second_request_messages();
+    assert!(
+        second_request
+            .iter()
+            .any(|message| message.content.contains("hook-added-before-memory-compact")),
+        "second request did not include before-memory-compaction hook marker: {second_request:#?}"
+    );
+}
+
+#[test]
 fn runtime_injects_session_memory_context_after_compaction() {
     let workspace = tempfile::tempdir().expect("workspace");
     let large_tool_payload = "tool output ".repeat(300);
@@ -1247,6 +1282,49 @@ impl LlmClient for InspectingSubTaskContinuationLlmClient {
             .map_err(|_| LlmError::Request("inspector poisoned".to_string()))?
             .pop_front()
             .ok_or(LlmError::ScriptExhausted)
+    }
+}
+
+#[derive(Default)]
+struct BeforeMemoryCompactHook {
+    cycle_indexes: Mutex<Vec<u32>>,
+}
+
+impl BeforeMemoryCompactHook {
+    fn cycle_indexes(&self) -> Vec<u32> {
+        self.cycle_indexes
+            .lock()
+            .expect("cycle indexes poisoned")
+            .clone()
+    }
+}
+
+impl RuntimeHook for BeforeMemoryCompactHook {
+    fn before_memory_compact(
+        &self,
+        event: vv_agent::BeforeMemoryCompactEvent<'_>,
+    ) -> Option<Vec<Message>> {
+        self.cycle_indexes
+            .lock()
+            .expect("cycle indexes poisoned")
+            .push(event.cycle_index);
+        assert_eq!(event.task.task_id, "pre_compact_hook_task");
+        assert!(event.shared_state.contains_key("todo_list"));
+        if event.cycle_index != 2 {
+            return None;
+        }
+        assert!(event
+            .messages
+            .iter()
+            .flat_map(|message| message.tool_calls.iter())
+            .any(|call| call
+                .arguments
+                .get("content")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|content| content.contains("tool output"))));
+        let mut messages = event.messages.to_vec();
+        messages.push(Message::user("hook-added-before-memory-compact"));
+        Some(messages)
     }
 }
 

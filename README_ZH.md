@@ -115,7 +115,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 已支持 Python `.py` settings 字面量模板：`LLM_SETTINGS = {...}` 和 `settings: SettingsDict = {...}` 都会按 Python 风格解析布尔值、空值、注释和尾逗号，再交给 `vv-llm` 做 endpoint / backend 解析。
 - 一个基础 multi-cycle runtime，可以把 tool schemas 发给 LLM、执行工具调用，并通过 `task_finish` 或 `ask_user` 收敛。
 - `runtime/` 已拆成 cancellation、hooks、shell resolution、state stores、主循环、cycle-runner retry helper、tool-call runner helper、工具结果解析和 sub-agent 执行模块，让后续继续补齐 Python parity 时改动更集中。
-- 已加入参考 Python `RuntimeHookManager` 的 runtime hooks：调用方可以改写 LLM 请求的 messages / schemas、改写 LLM 响应、改写或短路工具调用，并改写工具结果。
+- 已加入参考 Python `RuntimeHookManager` 的 runtime hooks：调用方可以在 memory compaction 前改写 messages，改写 LLM 请求的 messages / schemas、改写 LLM 响应、改写或短路工具调用，并改写工具结果。
 - `log_handler` 已可接收 Python 风格 runtime 生命周期事件，包括 run start、cycle start、LLM response、tool result、completed、wait-user 和 max-cycles。
 - 同一 package 内的 `vv-agent` CLI 已对齐 Python `cli.py` 的核心参数：prompt、backend/model、settings file、workspace、max cycles、language、agent type、verbose logs、prompt bundle 构建和 JSON 结果输出。
 - 已补 Python 风格 runtime token usage helper：可归一化 provider 原始 usage payload 中 prompt/completion 与 input/output 命名差异，保留 raw usage，并汇总逐 cycle token totals。
@@ -124,7 +124,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - `AgentRuntime` 现在持有可配置的 `RuntimeExecutionBackend`，会把 cycle loop 委托给 `InlineBackend`、`ThreadBackend` 或 `CeleryBackend`，对齐 Python `AgentRuntime.run -> execution_backend.execute(...)` 语义；runtime cycle index 也改为与 Python 一致，从 `1` 开始。
 - `memory/` 已拆成 manager、summary 和 token_utils，支持 Python 风格压缩阈值、本地结构化摘要，并在长上下文 follow-up cycle 前自动压缩。
 - 历史大工具结果可以持久化到 `.memory/tool_results`，并在上下文里替换为带 retrieval hint 的压缩内容，对齐 Python `v-agent` 的 artifact compaction 行为。
-- 已加入参考 Python `SessionMemory` 的持久化 session memory： durable entries 会归一化、去重、按预算裁剪，可保存到 `.memory/session`，并在 compaction 后作为 `<Session Memory>` system context 注入后续 LLM 请求。默认 runtime 可以直接使用已配置的 `LlmClient` 作为 extraction callback，因此 vv-llm-backed client 不需要额外 provider adapter。
+- 已加入参考 Python `SessionMemory` 的持久化 session memory： durable entries 会归一化、去重、按预算裁剪，可保存到 `.memory/session`，并在 compaction 前后作为 `<Session Memory>` system context 注入后续 LLM 请求。默认 runtime 可以直接使用已配置的 `LlmClient` 作为 extraction callback，因此 vv-llm-backed client 不需要额外 provider adapter。
 - 已加入 Python 风格 microcompact：在 full summary compaction 之前清理旧的大型可压缩工具结果，保留近期工具上下文，同时降低长任务的 prompt 压力。
 - 已加入参考 Python `CycleRunner` 的 prompt-too-long 重试：runtime 会识别常见 provider 上下文超限错误，先强制 normal memory compaction，再退到 emergency compaction 切片，并保留 system message 和近期工具上下文后重试。若所有 PTL 重试都耗尽，runtime 会返回 Python 风格 `CompactionExhaustedError`，包含 attempts 和最后一个 provider error。
 - 已加入参考 Python `post_compact_restore` 的 compaction 后关键文件恢复：summary 会用结构化 `path/action/summary` 记录文件动作，并在预算内把关键 workspace 文件内容放回 `<Post-Compaction File Context>`。

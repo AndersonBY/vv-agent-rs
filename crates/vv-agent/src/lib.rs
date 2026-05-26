@@ -53,8 +53,9 @@ pub use runtime::stores::redis::RedisStateStore;
 pub use runtime::stores::sqlite::SqliteStateStore;
 pub use runtime::{
     AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BeforeLlmEvent, BeforeLlmPatch,
-    BeforeToolCallEvent, BeforeToolCallPatch, CancellationToken, ExecutionContext,
-    RuntimeEventHandler, RuntimeHook, RuntimeHookManager, RuntimeRunControls, StreamCallback,
+    BeforeMemoryCompactEvent, BeforeToolCallEvent, BeforeToolCallPatch, CancellationToken,
+    ExecutionContext, RuntimeEventHandler, RuntimeHook, RuntimeHookManager, RuntimeRunControls,
+    StreamCallback,
 };
 pub use sdk::{
     create_agent_session, query, run, AgentDefinition, AgentResourceLoader, AgentRun,

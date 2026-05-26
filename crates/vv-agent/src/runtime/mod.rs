@@ -35,8 +35,8 @@ pub use cancellation::CancellationToken;
 pub use context::{ExecutionContext, StreamCallback};
 use cycle_runner::{is_prompt_too_long_error, MAX_PROMPT_TOO_LONG_RETRIES};
 pub use hooks::{
-    AfterLlmEvent, AfterToolCallEvent, BeforeLlmEvent, BeforeLlmPatch, BeforeToolCallEvent,
-    BeforeToolCallPatch, RuntimeHook, RuntimeHookManager,
+    AfterLlmEvent, AfterToolCallEvent, BeforeLlmEvent, BeforeLlmPatch, BeforeMemoryCompactEvent,
+    BeforeToolCallEvent, BeforeToolCallPatch, RuntimeHook, RuntimeHookManager,
 };
 use results::{assistant_message_from_response, extract_final_message, extract_wait_reason};
 pub use token_usage::{normalize_token_usage, summarize_task_token_usage};
@@ -246,11 +246,19 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         ("message_count".to_string(), Value::from(messages.len())),
                     ]),
                 );
+                let hook_manager = self.hook_manager();
+                let pre_compact_messages = hook_manager.apply_before_memory_compact(
+                    &task,
+                    cycle_index,
+                    messages.clone(),
+                    shared_state,
+                );
+                let pre_compact_messages =
+                    memory_manager.apply_session_memory_context(&pre_compact_messages);
                 let (prepared_messages, memory_compacted) =
-                    memory_manager.compact_for_cycle(messages, cycle_index, false);
+                    memory_manager.compact_for_cycle(&pre_compact_messages, cycle_index, false);
                 *messages = prepared_messages;
                 let tool_schemas = self.planned_tool_schemas(&task);
-                let hook_manager = self.hook_manager();
                 let llm_messages = memory_manager.apply_session_memory_context(messages);
                 let (request_messages, request_tool_schemas) = hook_manager.apply_before_llm(
                     &task,
