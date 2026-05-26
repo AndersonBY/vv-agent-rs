@@ -62,6 +62,7 @@ fn tools_module_is_split_into_handler_files() {
         "tools/handlers/sub_agents.rs",
         "tools/handlers/background.rs",
         "runtime/mod.rs",
+        "runtime/hooks.rs",
         "runtime/results.rs",
         "runtime/sub_agents.rs",
     ] {

@@ -28,7 +28,10 @@ pub use config::{
     EndpointOption, ResolvedModelConfig,
 };
 pub use llm::{EndpointTarget, LlmClient, LlmError, LlmRequest, ScriptedLlmClient, VvLlmClient};
-pub use runtime::AgentRuntime;
+pub use runtime::{
+    AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BeforeLlmEvent, BeforeLlmPatch,
+    BeforeToolCallEvent, BeforeToolCallPatch, RuntimeHook, RuntimeHookManager,
+};
 pub use sdk::{
     create_agent_session, query, run, AgentDefinition, AgentResourceLoader, AgentRun,
     AgentSDKClient, AgentSDKOptions, AgentSession, AgentSessionState,

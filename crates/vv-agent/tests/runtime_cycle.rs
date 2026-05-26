@@ -3,8 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use vv_agent::{
-    AgentRuntime, AgentStatus, AgentTask, LLMResponse, LlmClient, LlmError, LlmRequest,
-    ScriptedLlmClient, SubAgentConfig, ToolCall, ToolDirective,
+    AgentRuntime, AgentStatus, AgentTask, BeforeLlmPatch, BeforeToolCallPatch, LLMResponse,
+    LlmClient, LlmError, LlmRequest, Message, RuntimeHook, ScriptedLlmClient, SubAgentConfig,
+    ToolCall, ToolDirective, ToolExecutionResult,
 };
 
 const PNG_1X1: &[u8] = &[
@@ -236,6 +237,43 @@ fn runtime_can_poll_async_configured_sub_agent_status() {
     }));
 }
 
+#[test]
+fn runtime_hooks_can_patch_llm_request_and_tool_result_flow() {
+    let hook = Arc::new(InspectingRuntimeHook::default());
+    let llm = HookInspectingLlmClient::default();
+    let inspector = llm.clone();
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.hooks.push(hook.clone());
+
+    let result = runtime
+        .run(AgentTask::new("hook_task", "demo", "system", "original"))
+        .expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(
+        result.final_answer.as_deref(),
+        Some("final answer patched by after_tool_call")
+    );
+    assert!(inspector.saw_hooked_message());
+    assert_eq!(inspector.tool_schema_counts(), vec![0]);
+    assert_eq!(
+        hook.events(),
+        vec![
+            "before_llm",
+            "after_llm",
+            "before_tool_call",
+            "after_tool_call"
+        ]
+    );
+    assert_eq!(result.cycles[0].tool_results[0].tool_call_id, "hook_finish");
+    assert!(result
+        .messages
+        .last()
+        .expect("tool message")
+        .content
+        .contains("final answer patched by after_tool_call"));
+}
+
 #[derive(Clone)]
 struct InspectingImageLlmClient {
     responses: Arc<Mutex<VecDeque<LLMResponse>>>,
@@ -407,5 +445,124 @@ impl LlmClient for InspectingSubTaskStatusLlmClient {
             .map_err(|_| LlmError::Request("inspector poisoned".to_string()))?
             .pop_front()
             .ok_or(LlmError::ScriptExhausted)
+    }
+}
+
+#[derive(Default)]
+struct InspectingRuntimeHook {
+    events: Mutex<Vec<&'static str>>,
+}
+
+impl InspectingRuntimeHook {
+    fn events(&self) -> Vec<&'static str> {
+        self.events.lock().expect("events poisoned").clone()
+    }
+}
+
+impl RuntimeHook for InspectingRuntimeHook {
+    fn before_llm(&self, event: vv_agent::BeforeLlmEvent<'_>) -> Option<BeforeLlmPatch> {
+        assert_eq!(event.cycle_index, 0);
+        assert_eq!(event.task.task_id, "hook_task");
+        assert!(event.shared_state.contains_key("todo_list"));
+        self.events
+            .lock()
+            .expect("events poisoned")
+            .push("before_llm");
+        Some(BeforeLlmPatch {
+            messages: Some(vec![Message::user("hooked user request")]),
+            tool_schemas: Some(Vec::new()),
+        })
+    }
+
+    fn after_llm(&self, event: vv_agent::AfterLlmEvent<'_>) -> Option<LLMResponse> {
+        assert_eq!(event.messages[0].content, "hooked user request");
+        assert!(event.tool_schemas.is_empty());
+        self.events
+            .lock()
+            .expect("events poisoned")
+            .push("after_llm");
+        Some(event.response.clone())
+    }
+
+    fn before_tool_call(
+        &self,
+        event: vv_agent::BeforeToolCallEvent<'_>,
+    ) -> Option<BeforeToolCallPatch> {
+        assert_eq!(event.call.name, "task_finish");
+        assert_eq!(event.context.cycle_index, 0);
+        self.events
+            .lock()
+            .expect("events poisoned")
+            .push("before_tool_call");
+        Some(BeforeToolCallPatch {
+            call: None,
+            result: Some(ToolExecutionResult::success(
+                event.call.id.clone(),
+                json!({"message": "short-circuited by hook"}).to_string(),
+            )),
+        })
+    }
+
+    fn after_tool_call(
+        &self,
+        event: vv_agent::AfterToolCallEvent<'_>,
+    ) -> Option<ToolExecutionResult> {
+        assert_eq!(event.call.id, "hook_finish");
+        assert!(event.result.content.contains("short-circuited"));
+        self.events
+            .lock()
+            .expect("events poisoned")
+            .push("after_tool_call");
+        let mut result = event.result.clone();
+        result.directive = ToolDirective::Finish;
+        result.content = json!({"message": "final answer patched by after_tool_call"}).to_string();
+        result.metadata.insert(
+            "final_message".to_string(),
+            json!("final answer patched by after_tool_call"),
+        );
+        Some(result)
+    }
+}
+
+#[derive(Clone, Default)]
+struct HookInspectingLlmClient {
+    saw_hooked_message: Arc<Mutex<bool>>,
+    tool_schema_counts: Arc<Mutex<Vec<usize>>>,
+}
+
+impl HookInspectingLlmClient {
+    fn saw_hooked_message(&self) -> bool {
+        *self.saw_hooked_message.lock().expect("flag poisoned")
+    }
+
+    fn tool_schema_counts(&self) -> Vec<usize> {
+        self.tool_schema_counts
+            .lock()
+            .expect("schema counts poisoned")
+            .clone()
+    }
+}
+
+impl LlmClient for HookInspectingLlmClient {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        if request
+            .messages
+            .iter()
+            .any(|message| message.content == "hooked user request")
+        {
+            *self.saw_hooked_message.lock().expect("flag poisoned") = true;
+        }
+        self.tool_schema_counts
+            .lock()
+            .expect("schema counts poisoned")
+            .push(request.tools.len());
+        Ok(LLMResponse::with_tool_calls(
+            "finish through hook",
+            vec![ToolCall::new(
+                "hook_finish",
+                "task_finish",
+                BTreeMap::from([("message".to_string(), json!("original finish"))]),
+            )],
+        ))
     }
 }

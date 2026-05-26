@@ -18,6 +18,7 @@ vv-agent-rs/
       memory.rs
       prompt.rs
       runtime/
+        hooks.rs
         mod.rs
         results.rs
         sub_agents.rs
@@ -84,7 +85,8 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 与 Python 包对齐的顶层模块：`background_sessions`、`cli`、`config`、`constants`、`integrations`、`llm`、`memory`、`processes`、`prompt`、`runtime`、`sdk`、`skills`、`tools`、`types` 和 `workspace`。
 - 基于 crates.io 官方 `vv-llm = "0.1.0"` 的 chat client 构建，通过 `build_vv_llm_from_local_settings` 解析配置化 endpoint，并把 provider HTTP / 协议处理交给 `vv-llm`；同时保留 `ScriptedLlmClient` 用于确定性测试。
 - 一个基础 multi-cycle runtime，可以把 tool schemas 发给 LLM、执行工具调用，并通过 `task_finish` 或 `ask_user` 收敛。
-- `runtime/` 已拆成主循环、工具结果解析和 sub-agent 执行模块，让后续继续补齐 Python parity 时改动更集中。
+- `runtime/` 已拆成 hooks、主循环、工具结果解析和 sub-agent 执行模块，让后续继续补齐 Python parity 时改动更集中。
+- 已加入参考 Python `RuntimeHookManager` 的 runtime hooks：调用方可以改写 LLM 请求的 messages / schemas、改写 LLM 响应、改写或短路工具调用，并改写工具结果。
 - `tools/` 已按 Python `v-agent` 的结构拆分为 `base`、`registry`、canonical `schemas`、共享 `common` helper 和各个 handler 模块。
 - `activate_skill` handler 已拆成模型、解析、归一化和 shared state helper，更接近 Python `v-agent` 的 skill 边界。
 - 默认工具 schema 使用参考 Python `v-agent` 的高信息量描述，让模型拿到文件访问、grep、bash / 后台命令、todo、skills、图片和 sub-agent 的完整操作指引。
@@ -97,5 +99,5 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - SDK 客户端、工具注册表、工作区后端，以及共享协议类型。
 - 覆盖公开 API 构造、Rust SDK 使用、vv-llm 集成、runtime 工具循环、schema parity 和 workspace 工具的 smoke tests。
 
-对 Python 实现的更深层 parity 仍待继续补齐，包括 hooks、完整 memory compaction、更完整的 sub-agent session 管理与 steering、distributed backends 和剩余内置工具。
+对 Python 实现的更深层 parity 仍待继续补齐，包括完整 memory compaction、更完整的 sub-agent session 管理与 steering、distributed backends 和剩余内置工具。
 迁移目标是尽最大可能照搬 Python `v-agent` 的能力和行为，而不是只提供一个最小 Rust wrapper。

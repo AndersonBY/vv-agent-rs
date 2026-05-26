@@ -1,3 +1,4 @@
+pub mod hooks;
 mod results;
 mod sub_agents;
 
@@ -11,10 +12,15 @@ use crate::llm::{LlmClient, LlmError, LlmRequest};
 use crate::sub_task_manager::SubTaskManager;
 use crate::tools::{build_default_registry, ToolContext, ToolRegistry};
 use crate::types::{
-    AgentResult, AgentStatus, AgentTask, ToolDirective, ToolExecutionResult, ToolResultStatus,
+    AgentResult, AgentStatus, AgentTask, ToolCall, ToolDirective, ToolExecutionResult,
+    ToolResultStatus,
 };
 use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
+pub use hooks::{
+    AfterLlmEvent, AfterToolCallEvent, BeforeLlmEvent, BeforeLlmPatch, BeforeToolCallEvent,
+    BeforeToolCallPatch, RuntimeHook, RuntimeHookManager,
+};
 use results::{assistant_message_from_response, extract_final_message, extract_wait_reason};
 
 pub type RuntimeLogHandler = Box<dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static>;
@@ -40,6 +46,7 @@ pub struct AgentRuntime<C: LlmClient> {
     pub default_workspace: Option<PathBuf>,
     pub log_handler: Option<RuntimeLogHandler>,
     pub workspace_backend: Arc<dyn WorkspaceBackend>,
+    pub hooks: Vec<Arc<dyn RuntimeHook>>,
 }
 
 impl<C: LlmClient> AgentRuntime<C> {
@@ -50,6 +57,7 @@ impl<C: LlmClient> AgentRuntime<C> {
             default_workspace: None,
             log_handler: None,
             workspace_backend: Arc::new(LocalWorkspaceBackend::new(PathBuf::from("./workspace"))),
+            hooks: Vec::new(),
         }
     }
 
@@ -78,9 +86,26 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
 
         for cycle_index in 0..task.max_cycles {
             let tool_schemas = self.planned_tool_schemas(&task);
-            let mut request = LlmRequest::new(task.model.clone(), messages.clone());
-            request.tools = tool_schemas;
+            let hook_manager = self.hook_manager();
+            let (request_messages, request_tool_schemas) = hook_manager.apply_before_llm(
+                &task,
+                cycle_index,
+                messages.clone(),
+                tool_schemas,
+                &shared_state,
+            );
+            let mut request = LlmRequest::new(task.model.clone(), request_messages.clone());
+            request.tools = request_tool_schemas.clone();
             let response = self.llm_client.complete(request)?;
+            let response = hook_manager.apply_after_llm(
+                &task,
+                cycle_index,
+                &request_messages,
+                &request_tool_schemas,
+                response,
+                &shared_state,
+            );
+            messages = request_messages;
             messages.push(assistant_message_from_response(&response));
             let mut cycle = crate::types::CycleRecord::from_response(
                 cycle_index,
@@ -144,26 +169,26 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
 
             let mut directive_result = None;
             for call in &response.tool_calls {
-                let mut result = self
-                    .tool_registry
-                    .execute(call, &mut context)
-                    .unwrap_or_else(|error| ToolExecutionResult {
-                        tool_call_id: call.id.clone(),
-                        content: serde_json::json!({
-                            "ok": false,
-                            "error": error.to_string(),
-                        })
-                        .to_string(),
-                        status: ToolResultStatus::Error,
-                        directive: ToolDirective::Continue,
-                        error_code: Some("tool_not_found".to_string()),
-                        metadata: BTreeMap::new(),
-                        image_url: None,
-                        image_path: None,
-                    });
+                let (patched_call, short_circuit_result) =
+                    hook_manager.apply_before_tool_call(&task, cycle_index, call.clone(), &context);
+                let mut result = match short_circuit_result {
+                    Some(result) => result,
+                    None => execute_tool_result(&self.tool_registry, &patched_call, &mut context),
+                };
                 if result.tool_call_id.is_empty() {
-                    result.tool_call_id = call.id.clone();
+                    result.tool_call_id = patched_call.id.clone();
                 }
+                result = hook_manager.apply_after_tool_call(
+                    &task,
+                    cycle_index,
+                    &patched_call,
+                    &context,
+                    result,
+                );
+                if result.tool_call_id.is_empty() {
+                    result.tool_call_id = patched_call.id.clone();
+                }
+
                 if result.directive != ToolDirective::Continue {
                     directive_result = Some(result.clone());
                 }
@@ -226,4 +251,31 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
     fn planned_tool_schemas(&self, task: &AgentTask) -> Vec<Value> {
         self.tool_registry.planned_openai_schemas(task)
     }
+
+    fn hook_manager(&self) -> RuntimeHookManager {
+        RuntimeHookManager::new(self.hooks.clone())
+    }
+}
+
+fn execute_tool_result(
+    registry: &ToolRegistry,
+    call: &ToolCall,
+    context: &mut ToolContext,
+) -> ToolExecutionResult {
+    registry
+        .execute(call, context)
+        .unwrap_or_else(|error| ToolExecutionResult {
+            tool_call_id: call.id.clone(),
+            content: serde_json::json!({
+                "ok": false,
+                "error": error.to_string(),
+            })
+            .to_string(),
+            status: ToolResultStatus::Error,
+            directive: ToolDirective::Continue,
+            error_code: Some("tool_not_found".to_string()),
+            metadata: BTreeMap::new(),
+            image_url: None,
+            image_path: None,
+        })
 }
