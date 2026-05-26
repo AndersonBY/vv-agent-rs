@@ -40,7 +40,7 @@ pub use memory::{
 };
 pub use runtime::backends::{
     run_checkpointed_cycle, CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher,
-    InlineBackend, RuntimeRecipe, ThreadBackend,
+    InlineBackend, RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
 };
 pub use runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 pub use runtime::stores::sqlite::SqliteStateStore;

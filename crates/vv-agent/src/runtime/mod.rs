@@ -27,6 +27,7 @@ use crate::types::{
 };
 use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
+use self::backends::RuntimeExecutionBackend;
 pub use hooks::{
     AfterLlmEvent, AfterToolCallEvent, BeforeLlmEvent, BeforeLlmPatch, BeforeToolCallEvent,
     BeforeToolCallPatch, RuntimeHook, RuntimeHookManager,
@@ -131,6 +132,7 @@ pub struct AgentRuntime<C: LlmClient> {
     pub log_handler: Option<RuntimeLogHandler>,
     pub workspace_backend: Arc<dyn WorkspaceBackend>,
     pub hooks: Vec<Arc<dyn RuntimeHook>>,
+    pub execution_backend: RuntimeExecutionBackend,
 }
 
 impl<C: LlmClient> AgentRuntime<C> {
@@ -142,11 +144,20 @@ impl<C: LlmClient> AgentRuntime<C> {
             log_handler: None,
             workspace_backend: Arc::new(LocalWorkspaceBackend::new(PathBuf::from("./workspace"))),
             hooks: Vec::new(),
+            execution_backend: RuntimeExecutionBackend::default(),
         }
     }
 
     pub fn with_tool_registry(mut self, tool_registry: ToolRegistry) -> Self {
         self.tool_registry = tool_registry;
+        self
+    }
+
+    pub fn with_execution_backend(
+        mut self,
+        execution_backend: impl Into<RuntimeExecutionBackend>,
+    ) -> Self {
+        self.execution_backend = execution_backend.into();
         self
     }
 }
@@ -161,9 +172,9 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         task: AgentTask,
         controls: RuntimeRunControls,
     ) -> Result<AgentResult, LlmError> {
-        let mut messages = build_initial_messages(&task);
+        let messages = build_initial_messages(&task);
 
-        let mut cycles = Vec::new();
+        let cycles = Vec::new();
         let mut shared_state = task.initial_shared_state.clone();
         shared_state
             .entry("todo_list".to_string())
@@ -202,219 +213,15 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             return Ok(cancelled_agent_result(messages, cycles, shared_state));
         }
 
-        for cycle_index in 0..task.max_cycles {
-            if controls_cancelled(&controls) {
-                self.emit_log(
-                    &controls,
-                    "run_cancelled",
-                    BTreeMap::from([
-                        ("cycle".to_string(), Value::from(cycle_index)),
-                        (
-                            "error".to_string(),
-                            Value::String("Operation was cancelled".to_string()),
-                        ),
-                    ]),
-                );
-                return Ok(cancelled_agent_result(messages, cycles, shared_state));
-            }
-            let cycle_steering_prompts = drain_steering_queue(&controls);
-            if !cycle_steering_prompts.is_empty() {
-                for prompt in &cycle_steering_prompts {
-                    messages.push(crate::types::Message::user(prompt.clone()));
-                    self.emit_log(
-                        &controls,
-                        "session_steer_dequeued",
-                        BTreeMap::from([
-                            ("cycle".to_string(), Value::from(cycle_index)),
-                            ("prompt".to_string(), Value::String(prompt.clone())),
-                        ]),
-                    );
-                }
-                self.emit_log(
-                    &controls,
-                    "cycle_injected_messages",
-                    BTreeMap::from([
-                        ("cycle".to_string(), Value::from(cycle_index)),
-                        (
-                            "reason".to_string(),
-                            Value::String("session_steering".to_string()),
-                        ),
-                        (
-                            "message_count".to_string(),
-                            Value::from(cycle_steering_prompts.len() as u64),
-                        ),
-                    ]),
-                );
-            }
-            self.emit_log(
-                &controls,
-                "cycle_started",
-                BTreeMap::from([
-                    ("cycle".to_string(), Value::from(cycle_index)),
-                    ("max_cycles".to_string(), Value::from(task.max_cycles)),
-                    ("message_count".to_string(), Value::from(messages.len())),
-                ]),
-            );
-            let (prepared_messages, memory_compacted) =
-                memory_manager.compact_for_cycle(&messages, cycle_index, false);
-            messages = prepared_messages;
-            let tool_schemas = self.planned_tool_schemas(&task);
-            let hook_manager = self.hook_manager();
-            let llm_messages = memory_manager.apply_session_memory_context(&messages);
-            let (request_messages, request_tool_schemas) = hook_manager.apply_before_llm(
-                &task,
-                cycle_index,
-                llm_messages,
-                tool_schemas,
-                &shared_state,
-            );
-            let mut request_messages = request_messages;
-            let mut request_tool_schemas = request_tool_schemas;
-            let mut memory_compacted = memory_compacted;
-            let mut prompt_too_long_retries = 0;
-            let response = loop {
-                let mut request = LlmRequest::new(task.model.clone(), request_messages.clone());
-                request.tools = request_tool_schemas.clone();
-                match self.llm_client.complete(request) {
-                    Ok(response) => break response,
-                    Err(error) if is_prompt_too_long_error(&error) => {
-                        prompt_too_long_retries += 1;
-                        if prompt_too_long_retries > MAX_PROMPT_TOO_LONG_RETRIES {
-                            return Err(LlmError::CompactionExhausted(
-                                CompactionExhaustedError::new(
-                                    prompt_too_long_retries,
-                                    Some(error.to_string()),
-                                ),
-                            ));
-                        }
-                        memory_compacted = true;
-                        let retry_messages = if prompt_too_long_retries == 1 {
-                            let (compacted, _) = memory_manager.compact_for_cycle(
-                                &request_messages,
-                                cycle_index,
-                                true,
-                            );
-                            compacted
-                        } else {
-                            memory_manager.emergency_compact(
-                                &request_messages,
-                                (0.2 * prompt_too_long_retries as f64).min(0.95),
-                            )
-                        };
-                        let retry_tool_schemas = self.planned_tool_schemas(&task);
-                        let llm_messages =
-                            memory_manager.apply_session_memory_context(&retry_messages);
-                        (request_messages, request_tool_schemas) = hook_manager.apply_before_llm(
-                            &task,
-                            cycle_index,
-                            llm_messages,
-                            retry_tool_schemas,
-                            &shared_state,
-                        );
-                    }
-                    Err(error) => return Err(error),
-                }
-            };
-            let response = hook_manager.apply_after_llm(
-                &task,
-                cycle_index,
-                &request_messages,
-                &request_tool_schemas,
-                response,
-                &shared_state,
-            );
-            messages = request_messages;
-            messages.push(assistant_message_from_response(&response));
-            let mut cycle = crate::types::CycleRecord::from_response(
-                cycle_index,
-                &response,
-                Vec::<ToolExecutionResult>::new(),
-            );
-            cycle.memory_compacted = memory_compacted;
-            self.emit_cycle_llm_response(&controls, &cycle);
-
-            if response.tool_calls.is_empty() {
-                cycles.push(cycle);
-                match task.no_tool_policy {
-                    crate::types::NoToolPolicy::Finish => {
-                        self.emit_log(
-                            &controls,
-                            "run_completed",
-                            BTreeMap::from([
-                                ("cycle".to_string(), Value::from(cycle_index)),
-                                (
-                                    "final_answer".to_string(),
-                                    Value::String(response.content.clone()),
-                                ),
-                            ]),
-                        );
-                        return Ok(AgentResult::completed_with_shared_state(
-                            messages,
-                            cycles,
-                            response.content.clone(),
-                            shared_state,
-                        ));
-                    }
-                    crate::types::NoToolPolicy::WaitUser => {
-                        let wait_reason = if response.content.is_empty() {
-                            "No tool call and runtime is waiting for user.".to_string()
-                        } else {
-                            response.content.clone()
-                        };
-                        self.emit_log(
-                            &controls,
-                            "run_wait_user",
-                            BTreeMap::from([
-                                ("cycle".to_string(), Value::from(cycle_index)),
-                                (
-                                    "wait_reason".to_string(),
-                                    Value::String(wait_reason.clone()),
-                                ),
-                            ]),
-                        );
-                        return Ok(AgentResult {
-                            status: AgentStatus::WaitUser,
-                            messages,
-                            cycles,
-                            final_answer: None,
-                            wait_reason: Some(wait_reason),
-                            error: None,
-                            shared_state,
-                            token_usage: crate::types::TaskTokenUsage::default(),
-                        });
-                    }
-                    crate::types::NoToolPolicy::Continue => {
-                        messages.push(crate::types::Message::user(
-                            "Continue. If the task is complete, call task_finish.",
-                        ));
-                        continue;
-                    }
-                }
-            }
-
-            let sub_task_runner = self.build_sub_task_runner(
-                &task,
-                workspace_path.clone(),
-                self.workspace_backend.clone(),
-                shared_state.clone(),
-                sub_task_manager.clone(),
-            );
-            let mut context = ToolContext {
-                workspace: workspace_path.clone(),
-                shared_state: shared_state.clone(),
-                cycle_index,
-                task_id: task.task_id.clone(),
-                metadata: task.metadata.clone(),
-                workspace_backend: self.workspace_backend.clone(),
-                sub_task_runner,
-                sub_task_manager: Some(sub_task_manager.clone()),
-            };
-
-            let mut directive_result = None;
-            for (call_index, call) in response.tool_calls.iter().enumerate() {
-                if controls_cancelled(&controls) {
-                    shared_state = context.shared_state.clone();
-                    cycles.push(cycle);
+        let mut pending_error = None;
+        let result = self.execution_backend.execute(
+            &task,
+            messages,
+            shared_state,
+            |cycle_index, messages, cycles, shared_state, cancellation_token| {
+                if cancellation_token.is_some_and(CancellationToken::is_cancelled)
+                    || controls_cancelled(&controls)
+                {
                     self.emit_log(
                         &controls,
                         "run_cancelled",
@@ -426,48 +233,322 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             ),
                         ]),
                     );
-                    return Ok(cancelled_agent_result(messages, cycles, shared_state));
+                    return Some(cancelled_agent_result(
+                        messages.clone(),
+                        cycles.clone(),
+                        shared_state.clone(),
+                    ));
                 }
-                let (patched_call, short_circuit_result) =
-                    hook_manager.apply_before_tool_call(&task, cycle_index, call.clone(), &context);
-                let mut result = match short_circuit_result {
-                    Some(result) => result,
-                    None => execute_tool_result(&self.tool_registry, &patched_call, &mut context),
-                };
-                if result.tool_call_id.is_empty() {
-                    result.tool_call_id = patched_call.id.clone();
-                }
-                result = hook_manager.apply_after_tool_call(
-                    &task,
-                    cycle_index,
-                    &patched_call,
-                    &context,
-                    result,
-                );
-                if result.tool_call_id.is_empty() {
-                    result.tool_call_id = patched_call.id.clone();
-                }
-                self.emit_tool_result(&controls, cycle_index, &patched_call, &result);
-
-                let steering_prompts = drain_steering_queue(&controls);
-                if steering_prompts.is_empty() && result.directive != ToolDirective::Continue {
-                    directive_result = Some(result.clone());
-                }
-                messages.push(result.to_message());
-                if let Some(image_url) = &result.image_url {
-                    let image_path = result.image_path.as_deref().unwrap_or("image").to_string();
-                    let mut image_message =
-                        crate::types::Message::user(format!("[Image loaded] {image_path}"));
-                    image_message.image_url = Some(image_url.clone());
-                    image_message.metadata = result.metadata.clone();
-                    messages.push(image_message);
-                }
-                cycle.tool_results.push(result);
-                if !steering_prompts.is_empty() {
-                    for prompt in &steering_prompts {
+                let cycle_steering_prompts = drain_steering_queue(&controls);
+                if !cycle_steering_prompts.is_empty() {
+                    for prompt in &cycle_steering_prompts {
+                        messages.push(crate::types::Message::user(prompt.clone()));
                         self.emit_log(
                             &controls,
-                            "session_steer_interrupt",
+                            "session_steer_dequeued",
+                            BTreeMap::from([
+                                ("cycle".to_string(), Value::from(cycle_index)),
+                                ("prompt".to_string(), Value::String(prompt.clone())),
+                            ]),
+                        );
+                    }
+                    self.emit_log(
+                        &controls,
+                        "cycle_injected_messages",
+                        BTreeMap::from([
+                            ("cycle".to_string(), Value::from(cycle_index)),
+                            (
+                                "reason".to_string(),
+                                Value::String("session_steering".to_string()),
+                            ),
+                            (
+                                "message_count".to_string(),
+                                Value::from(cycle_steering_prompts.len() as u64),
+                            ),
+                        ]),
+                    );
+                }
+                self.emit_log(
+                    &controls,
+                    "cycle_started",
+                    BTreeMap::from([
+                        ("cycle".to_string(), Value::from(cycle_index)),
+                        ("max_cycles".to_string(), Value::from(task.max_cycles)),
+                        ("message_count".to_string(), Value::from(messages.len())),
+                    ]),
+                );
+                let (prepared_messages, memory_compacted) =
+                    memory_manager.compact_for_cycle(messages, cycle_index, false);
+                *messages = prepared_messages;
+                let tool_schemas = self.planned_tool_schemas(&task);
+                let hook_manager = self.hook_manager();
+                let llm_messages = memory_manager.apply_session_memory_context(messages);
+                let (request_messages, request_tool_schemas) = hook_manager.apply_before_llm(
+                    &task,
+                    cycle_index,
+                    llm_messages,
+                    tool_schemas,
+                    shared_state,
+                );
+                let mut request_messages = request_messages;
+                let mut request_tool_schemas = request_tool_schemas;
+                let mut memory_compacted = memory_compacted;
+                let mut prompt_too_long_retries = 0;
+                let response = loop {
+                    let mut request = LlmRequest::new(task.model.clone(), request_messages.clone());
+                    request.tools = request_tool_schemas.clone();
+                    match self.llm_client.complete(request) {
+                        Ok(response) => break response,
+                        Err(error) if is_prompt_too_long_error(&error) => {
+                            prompt_too_long_retries += 1;
+                            if prompt_too_long_retries > MAX_PROMPT_TOO_LONG_RETRIES {
+                                let error = LlmError::CompactionExhausted(
+                                    CompactionExhaustedError::new(
+                                        prompt_too_long_retries,
+                                        Some(error.to_string()),
+                                    ),
+                                );
+                                let message = error.to_string();
+                                pending_error = Some(error);
+                                return Some(failed_agent_result(
+                                    messages.clone(),
+                                    cycles.clone(),
+                                    shared_state.clone(),
+                                    message,
+                                ));
+                            }
+                            memory_compacted = true;
+                            let retry_messages = if prompt_too_long_retries == 1 {
+                                let (compacted, _) = memory_manager.compact_for_cycle(
+                                    &request_messages,
+                                    cycle_index,
+                                    true,
+                                );
+                                compacted
+                            } else {
+                                memory_manager.emergency_compact(
+                                    &request_messages,
+                                    (0.2 * prompt_too_long_retries as f64).min(0.95),
+                                )
+                            };
+                            let retry_tool_schemas = self.planned_tool_schemas(&task);
+                            let llm_messages =
+                                memory_manager.apply_session_memory_context(&retry_messages);
+                            (request_messages, request_tool_schemas) =
+                                hook_manager.apply_before_llm(
+                                    &task,
+                                    cycle_index,
+                                    llm_messages,
+                                    retry_tool_schemas,
+                                    shared_state,
+                                );
+                        }
+                        Err(error) => {
+                            let message = error.to_string();
+                            pending_error = Some(error);
+                            return Some(failed_agent_result(
+                                messages.clone(),
+                                cycles.clone(),
+                                shared_state.clone(),
+                                message,
+                            ));
+                        }
+                    }
+                };
+                let response = hook_manager.apply_after_llm(
+                    &task,
+                    cycle_index,
+                    &request_messages,
+                    &request_tool_schemas,
+                    response,
+                    shared_state,
+                );
+                *messages = request_messages;
+                messages.push(assistant_message_from_response(&response));
+                let mut cycle = crate::types::CycleRecord::from_response(
+                    cycle_index,
+                    &response,
+                    Vec::<ToolExecutionResult>::new(),
+                );
+                cycle.memory_compacted = memory_compacted;
+                self.emit_cycle_llm_response(&controls, &cycle);
+
+                if response.tool_calls.is_empty() {
+                    cycles.push(cycle);
+                    match task.no_tool_policy {
+                        crate::types::NoToolPolicy::Finish => {
+                            self.emit_log(
+                                &controls,
+                                "run_completed",
+                                BTreeMap::from([
+                                    ("cycle".to_string(), Value::from(cycle_index)),
+                                    (
+                                        "final_answer".to_string(),
+                                        Value::String(response.content.clone()),
+                                    ),
+                                ]),
+                            );
+                            return Some(AgentResult::completed_with_shared_state(
+                                messages.clone(),
+                                cycles.clone(),
+                                response.content.clone(),
+                                shared_state.clone(),
+                            ));
+                        }
+                        crate::types::NoToolPolicy::WaitUser => {
+                            let wait_reason = if response.content.is_empty() {
+                                "No tool call and runtime is waiting for user.".to_string()
+                            } else {
+                                response.content.clone()
+                            };
+                            self.emit_log(
+                                &controls,
+                                "run_wait_user",
+                                BTreeMap::from([
+                                    ("cycle".to_string(), Value::from(cycle_index)),
+                                    (
+                                        "wait_reason".to_string(),
+                                        Value::String(wait_reason.clone()),
+                                    ),
+                                ]),
+                            );
+                            return Some(AgentResult {
+                                status: AgentStatus::WaitUser,
+                                messages: messages.clone(),
+                                cycles: cycles.clone(),
+                                final_answer: None,
+                                wait_reason: Some(wait_reason),
+                                error: None,
+                                shared_state: shared_state.clone(),
+                                token_usage: summarize_task_token_usage(cycles),
+                            });
+                        }
+                        crate::types::NoToolPolicy::Continue => {
+                            messages.push(crate::types::Message::user(
+                                "Continue. If the task is complete, call task_finish.",
+                            ));
+                            return None;
+                        }
+                    }
+                }
+
+                let sub_task_runner = self.build_sub_task_runner(
+                    &task,
+                    workspace_path.clone(),
+                    self.workspace_backend.clone(),
+                    shared_state.clone(),
+                    sub_task_manager.clone(),
+                );
+                let mut context = ToolContext {
+                    workspace: workspace_path.clone(),
+                    shared_state: shared_state.clone(),
+                    cycle_index,
+                    task_id: task.task_id.clone(),
+                    metadata: task.metadata.clone(),
+                    workspace_backend: self.workspace_backend.clone(),
+                    sub_task_runner,
+                    sub_task_manager: Some(sub_task_manager.clone()),
+                };
+
+                let mut directive_result = None;
+                for (call_index, call) in response.tool_calls.iter().enumerate() {
+                    if cancellation_token.is_some_and(CancellationToken::is_cancelled)
+                        || controls_cancelled(&controls)
+                    {
+                        *shared_state = context.shared_state.clone();
+                        cycles.push(cycle);
+                        self.emit_log(
+                            &controls,
+                            "run_cancelled",
+                            BTreeMap::from([
+                                ("cycle".to_string(), Value::from(cycle_index)),
+                                (
+                                    "error".to_string(),
+                                    Value::String("Operation was cancelled".to_string()),
+                                ),
+                            ]),
+                        );
+                        return Some(cancelled_agent_result(
+                            messages.clone(),
+                            cycles.clone(),
+                            shared_state.clone(),
+                        ));
+                    }
+                    let (patched_call, short_circuit_result) = hook_manager.apply_before_tool_call(
+                        &task,
+                        cycle_index,
+                        call.clone(),
+                        &context,
+                    );
+                    let mut result = match short_circuit_result {
+                        Some(result) => result,
+                        None => execute_tool_result(&self.tool_registry, &patched_call, &mut context),
+                    };
+                    if result.tool_call_id.is_empty() {
+                        result.tool_call_id = patched_call.id.clone();
+                    }
+                    result = hook_manager.apply_after_tool_call(
+                        &task,
+                        cycle_index,
+                        &patched_call,
+                        &context,
+                        result,
+                    );
+                    if result.tool_call_id.is_empty() {
+                        result.tool_call_id = patched_call.id.clone();
+                    }
+                    self.emit_tool_result(&controls, cycle_index, &patched_call, &result);
+
+                    let steering_prompts = drain_steering_queue(&controls);
+                    if steering_prompts.is_empty() && result.directive != ToolDirective::Continue {
+                        directive_result = Some(result.clone());
+                    }
+                    messages.push(result.to_message());
+                    if let Some(image_url) = &result.image_url {
+                        let image_path =
+                            result.image_path.as_deref().unwrap_or("image").to_string();
+                        let mut image_message =
+                            crate::types::Message::user(format!("[Image loaded] {image_path}"));
+                        image_message.image_url = Some(image_url.clone());
+                        image_message.metadata = result.metadata.clone();
+                        messages.push(image_message);
+                    }
+                    cycle.tool_results.push(result);
+                    if !steering_prompts.is_empty() {
+                        for prompt in &steering_prompts {
+                            self.emit_log(
+                                &controls,
+                                "session_steer_interrupt",
+                                BTreeMap::from([
+                                    ("cycle".to_string(), Value::from(cycle_index)),
+                                    (
+                                        "after_tool_call_id".to_string(),
+                                        Value::String(patched_call.id.clone()),
+                                    ),
+                                    (
+                                        "after_tool_name".to_string(),
+                                        Value::String(patched_call.name.clone()),
+                                    ),
+                                    ("prompt".to_string(), Value::String(prompt.clone())),
+                                ]),
+                            );
+                        }
+                        for skipped_call in response.tool_calls.iter().skip(call_index + 1) {
+                            let skipped = skipped_tool_result(
+                                skipped_call,
+                                "skipped_due_to_steering",
+                                "Tool skipped because session steering was queued after a previous tool call.",
+                            );
+                            self.emit_tool_result(&controls, cycle_index, skipped_call, &skipped);
+                            messages.push(skipped.to_message());
+                            cycle.tool_results.push(skipped);
+                        }
+                        for prompt in &steering_prompts {
+                            messages.push(crate::types::Message::user(prompt.clone()));
+                        }
+                        self.emit_log(
+                            &controls,
+                            "run_steered",
                             BTreeMap::from([
                                 ("cycle".to_string(), Value::from(cycle_index)),
                                 (
@@ -478,144 +559,117 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                     "after_tool_name".to_string(),
                                     Value::String(patched_call.name.clone()),
                                 ),
-                                ("prompt".to_string(), Value::String(prompt.clone())),
-                            ]),
-                        );
-                    }
-                    for skipped_call in response.tool_calls.iter().skip(call_index + 1) {
-                        let skipped = skipped_tool_result(
-                            skipped_call,
-                            "skipped_due_to_steering",
-                            "Tool skipped because session steering was queued after a previous tool call.",
-                        );
-                        self.emit_tool_result(&controls, cycle_index, skipped_call, &skipped);
-                        messages.push(skipped.to_message());
-                        cycle.tool_results.push(skipped);
-                    }
-                    for prompt in &steering_prompts {
-                        messages.push(crate::types::Message::user(prompt.clone()));
-                    }
-                    self.emit_log(
-                        &controls,
-                        "run_steered",
-                        BTreeMap::from([
-                            ("cycle".to_string(), Value::from(cycle_index)),
-                            (
-                                "after_tool_call_id".to_string(),
-                                Value::String(patched_call.id.clone()),
-                            ),
-                            (
-                                "after_tool_name".to_string(),
-                                Value::String(patched_call.name.clone()),
-                            ),
-                            (
-                                "prompt_count".to_string(),
-                                Value::from(steering_prompts.len() as u64),
-                            ),
-                        ]),
-                    );
-                    break;
-                }
-                if directive_result.is_some() {
-                    let (error_code, message) = match directive_result
-                        .as_ref()
-                        .map(|result| result.directive)
-                        .unwrap_or(ToolDirective::Continue)
-                    {
-                        ToolDirective::WaitUser => (
-                            "skipped_due_to_wait_user",
-                            "Tool skipped because a previous tool requested user input.",
-                        ),
-                        ToolDirective::Finish => (
-                            "skipped_due_to_finish",
-                            "Tool skipped because a previous tool finished the task.",
-                        ),
-                        ToolDirective::Continue => ("skipped_due_to_directive", "Tool skipped."),
-                    };
-                    for skipped_call in response.tool_calls.iter().skip(call_index + 1) {
-                        let skipped = skipped_tool_result(skipped_call, error_code, message);
-                        self.emit_tool_result(&controls, cycle_index, skipped_call, &skipped);
-                        messages.push(skipped.to_message());
-                        cycle.tool_results.push(skipped);
-                    }
-                    break;
-                }
-            }
-            shared_state = context.shared_state.clone();
-
-            cycles.push(cycle);
-            if let Some(result) = directive_result {
-                match result.directive {
-                    ToolDirective::Finish => {
-                        let final_message = extract_final_message(&result);
-                        self.emit_log(
-                            &controls,
-                            "run_completed",
-                            BTreeMap::from([
-                                ("cycle".to_string(), Value::from(cycle_index)),
                                 (
-                                    "final_answer".to_string(),
-                                    Value::String(final_message.clone()),
+                                    "prompt_count".to_string(),
+                                    Value::from(steering_prompts.len() as u64),
                                 ),
                             ]),
                         );
-                        return Ok(AgentResult::completed_with_shared_state(
-                            messages,
-                            cycles,
-                            final_message,
-                            shared_state,
-                        ));
+                        break;
                     }
-                    ToolDirective::WaitUser => {
-                        let wait_reason = extract_wait_reason(&result);
-                        self.emit_log(
-                            &controls,
-                            "run_wait_user",
-                            BTreeMap::from([
-                                ("cycle".to_string(), Value::from(cycle_index)),
-                                (
-                                    "wait_reason".to_string(),
-                                    Value::String(wait_reason.clone()),
-                                ),
-                            ]),
-                        );
-                        return Ok(AgentResult {
-                            status: AgentStatus::WaitUser,
-                            messages,
-                            cycles,
-                            final_answer: None,
-                            wait_reason: Some(wait_reason),
-                            error: None,
-                            shared_state,
-                            token_usage: crate::types::TaskTokenUsage::default(),
-                        });
+                    if directive_result.is_some() {
+                        let (error_code, message) = match directive_result
+                            .as_ref()
+                            .map(|result| result.directive)
+                            .unwrap_or(ToolDirective::Continue)
+                        {
+                            ToolDirective::WaitUser => (
+                                "skipped_due_to_wait_user",
+                                "Tool skipped because a previous tool requested user input.",
+                            ),
+                            ToolDirective::Finish => (
+                                "skipped_due_to_finish",
+                                "Tool skipped because a previous tool finished the task.",
+                            ),
+                            ToolDirective::Continue => ("skipped_due_to_directive", "Tool skipped."),
+                        };
+                        for skipped_call in response.tool_calls.iter().skip(call_index + 1) {
+                            let skipped = skipped_tool_result(skipped_call, error_code, message);
+                            self.emit_tool_result(&controls, cycle_index, skipped_call, &skipped);
+                            messages.push(skipped.to_message());
+                            cycle.tool_results.push(skipped);
+                        }
+                        break;
                     }
-                    ToolDirective::Continue => {}
                 }
-            }
-        }
+                *shared_state = context.shared_state.clone();
 
-        self.emit_log(
-            &controls,
-            "run_max_cycles",
-            BTreeMap::from([
-                ("cycle".to_string(), Value::from(cycles.len())),
-                (
-                    "error".to_string(),
-                    Value::String("maximum cycle count reached".to_string()),
-                ),
-            ]),
+                cycles.push(cycle);
+                if let Some(result) = directive_result {
+                    match result.directive {
+                        ToolDirective::Finish => {
+                            let final_message = extract_final_message(&result);
+                            self.emit_log(
+                                &controls,
+                                "run_completed",
+                                BTreeMap::from([
+                                    ("cycle".to_string(), Value::from(cycle_index)),
+                                    (
+                                        "final_answer".to_string(),
+                                        Value::String(final_message.clone()),
+                                    ),
+                                ]),
+                            );
+                            return Some(AgentResult::completed_with_shared_state(
+                                messages.clone(),
+                                cycles.clone(),
+                                final_message,
+                                shared_state.clone(),
+                            ));
+                        }
+                        ToolDirective::WaitUser => {
+                            let wait_reason = extract_wait_reason(&result);
+                            self.emit_log(
+                                &controls,
+                                "run_wait_user",
+                                BTreeMap::from([
+                                    ("cycle".to_string(), Value::from(cycle_index)),
+                                    (
+                                        "wait_reason".to_string(),
+                                        Value::String(wait_reason.clone()),
+                                    ),
+                                ]),
+                            );
+                            return Some(AgentResult {
+                                status: AgentStatus::WaitUser,
+                                messages: messages.clone(),
+                                cycles: cycles.clone(),
+                                final_answer: None,
+                                wait_reason: Some(wait_reason),
+                                error: None,
+                                shared_state: shared_state.clone(),
+                                token_usage: summarize_task_token_usage(cycles),
+                            });
+                        }
+                        ToolDirective::Continue => {}
+                    }
+                }
+                None
+            },
+            controls.cancellation_token.as_ref(),
+            task.max_cycles,
         );
-        Ok(AgentResult {
-            status: AgentStatus::MaxCycles,
-            messages,
-            cycles,
-            final_answer: None,
-            wait_reason: None,
-            error: Some("maximum cycle count reached".to_string()),
-            shared_state,
-            token_usage: crate::types::TaskTokenUsage::default(),
-        })
+        if let Some(error) = pending_error {
+            return Err(error);
+        }
+        if result.status == AgentStatus::MaxCycles {
+            self.emit_log(
+                &controls,
+                "run_max_cycles",
+                BTreeMap::from([
+                    ("cycle".to_string(), Value::from(result.cycles.len())),
+                    (
+                        "final_answer".to_string(),
+                        Value::String(result.final_answer.clone().unwrap_or_default()),
+                    ),
+                    (
+                        "error".to_string(),
+                        Value::String(result.error.clone().unwrap_or_default()),
+                    ),
+                ]),
+            );
+        }
+        Ok(result)
     }
 
     fn planned_tool_schemas(&self, task: &AgentTask) -> Vec<Value> {
@@ -764,6 +818,25 @@ fn cancelled_agent_result(
         error: Some("Operation was cancelled".to_string()),
         shared_state,
         token_usage: crate::types::TaskTokenUsage::default(),
+    }
+}
+
+fn failed_agent_result(
+    messages: Vec<crate::types::Message>,
+    cycles: Vec<crate::types::CycleRecord>,
+    shared_state: BTreeMap<String, Value>,
+    error: String,
+) -> AgentResult {
+    let token_usage = summarize_task_token_usage(&cycles);
+    AgentResult {
+        status: AgentStatus::Failed,
+        messages,
+        cycles,
+        final_answer: None,
+        wait_reason: None,
+        error: Some(error),
+        shared_state,
+        token_usage,
     }
 }
 

@@ -155,6 +155,10 @@ The current Rust implementation includes:
   reusable `run_checkpointed_cycle` helper mirrors the worker-side
   `celery_tasks.run_single_cycle` checkpoint load / one-cycle execute / save or
   terminal cleanup flow.
+- `AgentRuntime` now owns a configurable `RuntimeExecutionBackend` and delegates
+  its cycle loop through `InlineBackend`, `ThreadBackend`, or `CeleryBackend`,
+  matching Python `AgentRuntime.run -> execution_backend.execute(...)`
+  semantics. Runtime cycle indexes are Python-compatible and start at `1`.
 - Split `memory/` modules with Python-style compaction thresholds, local
   structured summaries, and runtime autocompaction before large follow-up LLM
   cycles.
@@ -241,7 +245,8 @@ The current Rust implementation includes:
   `CeleryBackend`, and serializable `RuntimeRecipe` mirror the Python backend
   API surface for ordered `parallel_map`, thread `submit`, inline Celery
   fallback, distributed runtime recipe data, and `execute` cycle loops with
-  cancellation and max-cycle results.
+  cancellation and max-cycle results. `AgentRuntime` delegates through the same
+  backend abstraction instead of running a separate internal loop.
 - Runtime checkpoint stores modeled after Python `runtime.state` and
   `runtime.stores.sqlite`: `Checkpoint`, `InMemoryStateStore`, and
   `SqliteStateStore` persist messages, cycles, status, and shared state for

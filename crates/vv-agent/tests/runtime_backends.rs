@@ -3,12 +3,12 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use vv_agent::runtime::backends::{
     run_checkpointed_cycle, CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher,
-    InlineBackend, RuntimeRecipe, ThreadBackend,
+    InlineBackend, RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
 };
 use vv_agent::runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 use vv_agent::{
-    AgentResult, AgentStatus, AgentTask, CancellationToken, CycleRecord, LLMResponse, Message,
-    TaskTokenUsage,
+    AgentResult, AgentRuntime, AgentStatus, AgentTask, CancellationToken, CycleRecord, LLMResponse,
+    Message, ScriptedLlmClient, TaskTokenUsage,
 };
 
 #[test]
@@ -297,6 +297,43 @@ fn celery_backend_distributed_dispatches_cycles_through_checkpoint_store() {
     );
     assert!(store
         .load_checkpoint(&task.task_id)
+        .expect("load after cleanup")
+        .is_none());
+}
+
+#[test]
+fn runtime_delegates_cycle_execution_to_configured_backend() {
+    let recipe = RuntimeRecipe::new("settings.py", "deepseek", "deepseek-v4-pro", ".");
+    let store = Arc::new(InMemoryStateStore::new());
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let dispatcher = Arc::new(RecordingDispatcher {
+        store: store.clone(),
+        calls: calls.clone(),
+    });
+    let backend = CeleryBackend::distributed_with_dispatcher(recipe, store.clone(), dispatcher)
+        .with_cycle_task_name("custom.run_cycle");
+    let runtime = AgentRuntime::new(ScriptedLlmClient::new(Vec::new()))
+        .with_execution_backend(RuntimeExecutionBackend::Celery(backend));
+    let task = AgentTask::new(
+        "runtime-distributed-task",
+        "deepseek-v4-pro",
+        "system",
+        "prompt",
+    );
+
+    let result = runtime.run(task).expect("distributed runtime result");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(result.final_answer.as_deref(), Some("distributed done"));
+    assert_eq!(
+        *calls.lock().expect("calls"),
+        vec![
+            ("custom.run_cycle".to_string(), 1),
+            ("custom.run_cycle".to_string(), 2),
+        ]
+    );
+    assert!(store
+        .load_checkpoint("runtime-distributed-task")
         .expect("load after cleanup")
         .is_none());
 }

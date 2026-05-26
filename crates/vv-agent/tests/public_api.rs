@@ -6,9 +6,10 @@ use vv_agent::{
     AgentStatus, AgentTask, BackgroundSessionListener, CancellationToken, CeleryBackend,
     Checkpoint, ConfigError, EndpointConfig, EndpointOption, FileInfo, InMemoryStateStore,
     InlineBackend, LLMResponse, LocalWorkspaceBackend, MemoryWorkspaceBackend, Message,
-    ResolvedModelConfig, RuntimeRecipe, RuntimeRunControls, S3WorkspaceBackend, S3WorkspaceConfig,
-    ScriptedLlmClient, SessionCancellationHandle, SqliteStateStore, StateStore, ThreadBackend,
-    ToolCall, ToolExecutionResult, ToolRegistry, WorkspaceBackend,
+    ResolvedModelConfig, RuntimeExecutionBackend, RuntimeRecipe, RuntimeRunControls,
+    S3WorkspaceBackend, S3WorkspaceConfig, ScriptedLlmClient, SessionCancellationHandle,
+    SqliteStateStore, StateStore, ThreadBackend, ToolCall, ToolExecutionResult, ToolRegistry,
+    WorkspaceBackend,
 };
 
 #[test]
@@ -25,6 +26,7 @@ fn top_level_types_are_constructible() {
     let _token = CancellationToken::default();
     let _controls = RuntimeRunControls::default();
     let _inline_backend = InlineBackend;
+    let _execution_backend = RuntimeExecutionBackend::default();
     let _thread_backend = ThreadBackend::default();
     let _recipe = RuntimeRecipe::new("settings.py", "backend", "model", ".");
     let _celery_backend = CeleryBackend::inline_fallback();

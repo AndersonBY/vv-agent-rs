@@ -52,6 +52,85 @@ impl InlineBackend {
 }
 
 #[derive(Debug, Clone)]
+pub enum RuntimeExecutionBackend {
+    Inline(InlineBackend),
+    Thread(ThreadBackend),
+    Celery(CeleryBackend),
+}
+
+impl Default for RuntimeExecutionBackend {
+    fn default() -> Self {
+        Self::Inline(InlineBackend)
+    }
+}
+
+impl From<InlineBackend> for RuntimeExecutionBackend {
+    fn from(backend: InlineBackend) -> Self {
+        Self::Inline(backend)
+    }
+}
+
+impl From<ThreadBackend> for RuntimeExecutionBackend {
+    fn from(backend: ThreadBackend) -> Self {
+        Self::Thread(backend)
+    }
+}
+
+impl From<CeleryBackend> for RuntimeExecutionBackend {
+    fn from(backend: CeleryBackend) -> Self {
+        Self::Celery(backend)
+    }
+}
+
+impl RuntimeExecutionBackend {
+    pub fn execute<F>(
+        &self,
+        task: &AgentTask,
+        initial_messages: Vec<Message>,
+        shared_state: Metadata,
+        cycle_executor: F,
+        cancellation_token: Option<&CancellationToken>,
+        max_cycles: u32,
+    ) -> AgentResult
+    where
+        F: FnMut(
+            u32,
+            &mut Vec<Message>,
+            &mut Vec<CycleRecord>,
+            &mut Metadata,
+            Option<&CancellationToken>,
+        ) -> Option<AgentResult>,
+    {
+        match self {
+            Self::Inline(backend) => backend.execute(
+                task,
+                initial_messages,
+                shared_state,
+                cycle_executor,
+                cancellation_token,
+                max_cycles,
+            ),
+            Self::Thread(backend) => backend.execute(
+                task,
+                initial_messages,
+                shared_state,
+                cycle_executor,
+                cancellation_token,
+                max_cycles,
+            ),
+            Self::Celery(backend) => backend.execute(
+                task,
+                initial_messages,
+                shared_state,
+                cycle_executor,
+                cancellation_token,
+                max_cycles,
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ThreadBackend {
     max_workers: usize,
 }

@@ -1056,7 +1056,7 @@ impl InspectingRuntimeHook {
 
 impl RuntimeHook for InspectingRuntimeHook {
     fn before_llm(&self, event: vv_agent::BeforeLlmEvent<'_>) -> Option<BeforeLlmPatch> {
-        assert_eq!(event.cycle_index, 0);
+        assert_eq!(event.cycle_index, 1);
         assert_eq!(event.task.task_id, "hook_task");
         assert!(event.shared_state.contains_key("todo_list"));
         self.events
@@ -1084,7 +1084,7 @@ impl RuntimeHook for InspectingRuntimeHook {
         event: vv_agent::BeforeToolCallEvent<'_>,
     ) -> Option<BeforeToolCallPatch> {
         assert_eq!(event.call.name, "task_finish");
-        assert_eq!(event.context.cycle_index, 0);
+        assert_eq!(event.context.cycle_index, 1);
         self.events
             .lock()
             .expect("events poisoned")
