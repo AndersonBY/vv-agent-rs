@@ -137,6 +137,9 @@ The current Rust implementation includes:
 - Runtime lifecycle logging through `log_handler`, with Python-style events for
   run start, cycle start, LLM response, tool result, completion, wait-user, and
   max-cycle exits.
+- The in-crate `vv-agent` CLI mirrors Python `cli.py` flags for prompt,
+  backend/model, settings file, workspace, max cycles, language, agent type,
+  verbose logs, prompt bundle construction, and JSON result payloads.
 - Python-style runtime token usage helpers normalize raw provider usage payloads
   across prompt/completion and input/output naming variants, preserve the raw
   usage payload, and summarize per-cycle totals.
