@@ -7,7 +7,7 @@ use serde_json::Value;
 use crate::background_sessions::{background_session_manager, BackgroundSessionSubscription};
 use crate::config::ResolvedModelConfig;
 use crate::llm::{LlmClient, ScriptedLlmClient};
-use crate::runtime::{AgentRuntime, RuntimeRunControls};
+use crate::runtime::{AgentRuntime, CancellationToken, RuntimeRunControls};
 use crate::types::{AgentResult, AgentStatus, AgentTask, Metadata, NoToolPolicy, SubAgentConfig};
 use crate::workspace::LocalWorkspaceBackend;
 
@@ -149,6 +149,7 @@ pub struct AgentSessionRunRequest {
     pub shared_state: Metadata,
     pub runtime_event_handler: Option<SessionEventHandler>,
     pub steering_queue: Option<Arc<Mutex<VecDeque<String>>>>,
+    pub cancellation_token: Option<CancellationToken>,
 }
 
 impl AgentSessionRunRequest {
@@ -159,6 +160,7 @@ impl AgentSessionRunRequest {
             shared_state: Metadata::new(),
             runtime_event_handler: None,
             steering_queue: None,
+            cancellation_token: None,
         }
     }
 }
@@ -188,6 +190,37 @@ impl SessionSteeringHandle {
     }
 }
 
+#[derive(Clone)]
+pub struct SessionCancellationHandle {
+    active_cancellation_token: Arc<Mutex<Option<CancellationToken>>>,
+    steering_queue: Arc<Mutex<VecDeque<String>>>,
+    follow_up_queue: Arc<Mutex<VecDeque<String>>>,
+    listeners: Arc<Mutex<BTreeMap<SessionListenerId, SessionEventHandler>>>,
+}
+
+impl SessionCancellationHandle {
+    pub fn cancel(&self) -> bool {
+        let token = {
+            self.active_cancellation_token
+                .lock()
+                .expect("session cancellation token lock")
+                .clone()
+        };
+        let Some(token) = token else {
+            return false;
+        };
+        token.cancel();
+        if let Ok(mut queue) = self.steering_queue.lock() {
+            queue.clear();
+        }
+        if let Ok(mut queue) = self.follow_up_queue.lock() {
+            queue.clear();
+        }
+        emit_session_event(&self.listeners, "session_cancel_requested", BTreeMap::new());
+        true
+    }
+}
+
 pub struct AgentSession {
     execute_run: Arc<dyn Fn(AgentSessionRunRequest) -> Result<AgentRun, String> + Send + Sync>,
     _session_id: String,
@@ -202,7 +235,8 @@ pub struct AgentSession {
     background_command_subscriptions: Arc<Mutex<BTreeMap<String, BackgroundSessionSubscription>>>,
     next_listener_id: SessionListenerId,
     steering_queue: Arc<Mutex<VecDeque<String>>>,
-    follow_up_queue: VecDeque<String>,
+    follow_up_queue: Arc<Mutex<VecDeque<String>>>,
+    active_cancellation_token: Arc<Mutex<Option<CancellationToken>>>,
 }
 
 impl AgentSession {
@@ -243,7 +277,8 @@ impl AgentSession {
             background_command_subscriptions: Arc::new(Mutex::new(BTreeMap::new())),
             next_listener_id: 1,
             steering_queue: Arc::new(Mutex::new(VecDeque::new())),
-            follow_up_queue: VecDeque::new(),
+            follow_up_queue: Arc::new(Mutex::new(VecDeque::new())),
+            active_cancellation_token: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -280,7 +315,12 @@ impl AgentSession {
         }
 
         while run.result.status == AgentStatus::Completed {
-            let Some(follow_up_prompt) = self.follow_up_queue.pop_front() else {
+            let follow_up_prompt = self
+                .follow_up_queue
+                .lock()
+                .expect("session follow-up queue lock")
+                .pop_front();
+            let Some(follow_up_prompt) = follow_up_prompt else {
                 break;
             };
             self.emit(
@@ -297,7 +337,10 @@ impl AgentSession {
 
     pub fn follow_up(&mut self, prompt: impl Into<String>) -> Result<(), String> {
         let prompt = normalize_session_prompt(prompt.into(), "follow_up prompt")?;
-        self.follow_up_queue.push_back(prompt.clone());
+        self.follow_up_queue
+            .lock()
+            .map_err(|_| "Session follow-up queue lock is poisoned.".to_string())?
+            .push_back(prompt.clone());
         self.emit(
             "session_follow_up_queued",
             BTreeMap::from([("prompt".to_string(), Value::String(prompt))]),
@@ -316,11 +359,26 @@ impl AgentSession {
         }
     }
 
+    pub fn cancellation_handle(&self) -> SessionCancellationHandle {
+        SessionCancellationHandle {
+            active_cancellation_token: Arc::clone(&self.active_cancellation_token),
+            steering_queue: Arc::clone(&self.steering_queue),
+            follow_up_queue: Arc::clone(&self.follow_up_queue),
+            listeners: Arc::clone(&self.listeners),
+        }
+    }
+
+    pub fn cancel(&self) -> bool {
+        self.cancellation_handle().cancel()
+    }
+
     pub fn clear_queues(&mut self) {
         if let Ok(mut queue) = self.steering_queue.lock() {
             queue.clear();
         }
-        self.follow_up_queue.clear();
+        if let Ok(mut queue) = self.follow_up_queue.lock() {
+            queue.clear();
+        }
         self.emit("session_queues_cleared", BTreeMap::new());
     }
 
@@ -339,7 +397,12 @@ impl AgentSession {
                 .map_err(|_| "Session steering queue lock is poisoned.".to_string())?;
             steering_queue.pop_front()
         }
-        .or_else(|| self.follow_up_queue.pop_front())
+        .or_else(|| {
+            self.follow_up_queue
+                .lock()
+                .expect("session follow-up queue lock")
+                .pop_front()
+        })
         .ok_or_else(|| {
             "No queued prompt available. Provide prompt or call steer()/follow_up() first."
                 .to_string()
@@ -391,6 +454,12 @@ impl AgentSession {
         }
         let existing_messages = self.messages.len();
         self.running = true;
+        let cancellation_token = CancellationToken::default();
+        *self
+            .active_cancellation_token
+            .lock()
+            .map_err(|_| "Session cancellation token lock is poisoned.".to_string())? =
+            Some(cancellation_token.clone());
         self.emit(
             "session_run_start",
             BTreeMap::from([
@@ -420,8 +489,13 @@ impl AgentSession {
             shared_state: self.shared_state.clone(),
             runtime_event_handler: Some(runtime_event_handler),
             steering_queue: Some(Arc::clone(&self.steering_queue)),
+            cancellation_token: Some(cancellation_token),
         });
         self.running = false;
+        *self
+            .active_cancellation_token
+            .lock()
+            .map_err(|_| "Session cancellation token lock is poisoned.".to_string())? = None;
         let run = run?;
         self.messages = run.result.messages.clone();
         self.shared_state = run.result.shared_state.clone();
@@ -1036,7 +1110,7 @@ impl<C: LlmClient + Clone + 'static> RunAgent for AgentRuntime<C> {
                 RuntimeRunControls {
                     log_handler: request.runtime_event_handler,
                     steering_queue: request.steering_queue,
-                    cancellation_token: None,
+                    cancellation_token: request.cancellation_token,
                 },
             )
             .map_err(|err| err.to_string())?;
@@ -1074,7 +1148,7 @@ impl RunAgent for ScriptedLlmClient {
                 RuntimeRunControls {
                     log_handler: request.runtime_event_handler,
                     steering_queue: request.steering_queue,
-                    cancellation_token: None,
+                    cancellation_token: request.cancellation_token,
                 },
             )
             .map_err(|err| err.to_string())

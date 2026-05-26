@@ -6,7 +6,8 @@ use vv_agent::{
     AgentStatus, AgentTask, BackgroundSessionListener, CancellationToken, ConfigError,
     EndpointConfig, EndpointOption, FileInfo, LLMResponse, LocalWorkspaceBackend,
     MemoryWorkspaceBackend, Message, ResolvedModelConfig, RuntimeRunControls, S3WorkspaceBackend,
-    ScriptedLlmClient, ToolCall, ToolExecutionResult, ToolRegistry, WorkspaceBackend,
+    ScriptedLlmClient, SessionCancellationHandle, ToolCall, ToolExecutionResult, ToolRegistry,
+    WorkspaceBackend,
 };
 
 #[test]
@@ -50,5 +51,6 @@ fn top_level_types_are_constructible() {
     let _s3 = S3WorkspaceBackend;
     let _workspace: &dyn WorkspaceBackend = &_memory;
     let _listener: BackgroundSessionListener = std::sync::Arc::new(|_| {});
+    let _session_cancellation: Option<SessionCancellationHandle> = None;
     let _ = background_session_manager();
 }

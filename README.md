@@ -183,6 +183,10 @@ The current Rust implementation includes:
   values support idempotent cancellation, callback registration, parent/child
   propagation, and `RuntimeRunControls` cancellation checks before cycles and
   between tool calls, returning a failed result with a `run_cancelled` event.
+- SDK sessions expose Python-style cancellation through `cancel()` and a
+  cloneable `SessionCancellationHandle`; active session runs receive the
+  cancellation token, queued steering/follow-up prompts are cleared, and
+  listeners see `session_cancel_requested`.
 - Runtime-backed sub-agent support for `create_sub_task` / `sub_task_status`:
   configured `AgentTask.sub_agents` can run synchronously or via async
   `wait_for_completion=false`, with batch aggregation and status/snapshot

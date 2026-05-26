@@ -185,6 +185,47 @@ fn session_clear_queues_emits_event_and_drops_prompts() {
 }
 
 #[test]
+fn session_cancel_requests_active_runtime_and_clears_queues() {
+    let client = AgentSDKClient::new(AgentSDKOptions::default()).with_runtime(AgentRuntime::new(
+        ScriptedLlmClient::new(vec![LLMResponse::new("should not be used")]),
+    ));
+    let mut session =
+        create_agent_session(&client, "demo", AgentDefinition::default_for_model("demo"));
+    let cancellation = session.cancellation_handle();
+    let events = recorded_events();
+    session.subscribe(recording_listener(&events));
+    session.subscribe(Arc::new(move |event, _payload| {
+        if event == "session_run_start" {
+            assert!(cancellation.cancel());
+        }
+    }));
+
+    session.follow_up("later").expect("follow_up");
+    session.steer("urgent").expect("steer");
+    let run = session.prompt("start").expect("prompt");
+
+    assert_eq!(run.result.status, AgentStatus::Failed);
+    assert!(run
+        .result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("cancelled"));
+    assert!(run.result.cycles.is_empty());
+    assert!(!session.cancel());
+    assert!(session
+        .continue_run(None)
+        .expect_err("queues cleared")
+        .contains("No queued prompt available"));
+
+    let events = events.lock().expect("events");
+    assert!(events
+        .iter()
+        .any(|(event, _)| event == "session_cancel_requested"));
+    assert!(events.iter().any(|(event, _)| event == "session_run_end"));
+}
+
+#[test]
 fn session_run_to_dict_contains_structured_token_usage() {
     let mut run = fake_run("ok", AgentStatus::Completed);
     run.result = vv_agent::AgentResult::completed(
