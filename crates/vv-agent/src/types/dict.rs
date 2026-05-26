@@ -1,6 +1,50 @@
 use super::*;
 
 impl Message {
+    pub fn to_openai_message(&self, include_reasoning_content: bool) -> Value {
+        let mut payload = serde_json::Map::from_iter([
+            (
+                "role".to_string(),
+                Value::String(message_role_value(self.role).to_string()),
+            ),
+            ("content".to_string(), Value::String(self.content.clone())),
+        ]);
+        insert_optional_string(&mut payload, "name", &self.name);
+        insert_optional_string(&mut payload, "tool_call_id", &self.tool_call_id);
+        if self.role == MessageRole::Assistant && !self.tool_calls.is_empty() {
+            payload.insert(
+                "tool_calls".to_string(),
+                Value::Array(self.tool_calls.iter().map(tool_call_to_openai).collect()),
+            );
+            if self.content.is_empty() {
+                payload.insert("content".to_string(), Value::Null);
+            }
+        }
+        if include_reasoning_content
+            && self.role == MessageRole::Assistant
+            && self.reasoning_content.is_some()
+        {
+            insert_optional_string(&mut payload, "reasoning_content", &self.reasoning_content);
+        }
+        if self.role == MessageRole::User {
+            if let Some(image_url) = &self.image_url {
+                let mut blocks = Vec::new();
+                if !self.content.is_empty() {
+                    blocks.push(serde_json::json!({
+                        "type": "text",
+                        "text": self.content,
+                    }));
+                }
+                blocks.push(serde_json::json!({
+                    "type": "image_url",
+                    "image_url": {"url": image_url},
+                }));
+                payload.insert("content".to_string(), Value::Array(blocks));
+            }
+        }
+        Value::Object(payload)
+    }
+
     pub fn to_dict(&self) -> Value {
         let mut payload = serde_json::Map::from_iter([
             (
@@ -44,6 +88,17 @@ impl Message {
             metadata: read_metadata(object, "metadata")?,
         })
     }
+}
+
+fn tool_call_to_openai(tool_call: &ToolCall) -> Value {
+    serde_json::json!({
+        "id": tool_call.id,
+        "type": "function",
+        "function": {
+            "name": tool_call.name,
+            "arguments": Value::Object(tool_call.arguments.clone().into_iter().collect()).to_string(),
+        },
+    })
 }
 
 impl ToolCall {

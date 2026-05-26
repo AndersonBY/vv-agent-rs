@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 use vv_agent::{
-    AgentResult, AgentStatus, AgentTask, CycleRecord, LLMResponse, Message, NoToolPolicy,
+    AgentResult, AgentStatus, AgentTask, CycleRecord, LLMResponse, Message, NoToolPolicy, ToolCall,
     ToolDirective, ToolExecutionResult, ToolResultStatus,
 };
 
@@ -95,4 +95,46 @@ fn agent_task_dict_round_trips_python_runtime_recipe_payload_shape() {
     assert_eq!(restored.agent_type.as_deref(), Some("computer"));
     assert_eq!(restored.extra_tool_names, vec!["read_image"]);
     assert_eq!(restored.metadata["k"], json!("v"));
+}
+
+#[test]
+fn message_to_openai_message_matches_python_multimodal_and_tool_shapes() {
+    let mut assistant = Message::assistant("");
+    assistant.reasoning_content = Some("private reasoning".to_string());
+    assistant.tool_calls = vec![ToolCall::new(
+        "call-1",
+        "read_file",
+        [("path".to_string(), json!("README.md"))]
+            .into_iter()
+            .collect(),
+    )];
+
+    let assistant_payload = assistant.to_openai_message(true);
+    assert_eq!(assistant_payload["role"], json!("assistant"));
+    assert_eq!(assistant_payload["content"], Value::Null);
+    assert_eq!(
+        assistant_payload["reasoning_content"],
+        json!("private reasoning")
+    );
+    assert_eq!(
+        assistant_payload["tool_calls"][0]["function"]["arguments"],
+        json!(r#"{"path":"README.md"}"#)
+    );
+    assert!(assistant
+        .to_openai_message(false)
+        .get("reasoning_content")
+        .is_none());
+
+    let mut image = Message::user("inspect");
+    image.image_url = Some("data:image/png;base64,abc".to_string());
+    let image_payload = image.to_openai_message(true);
+    assert_eq!(image_payload["role"], json!("user"));
+    assert_eq!(
+        image_payload["content"][0],
+        json!({"type": "text", "text": "inspect"})
+    );
+    assert_eq!(
+        image_payload["content"][1],
+        json!({"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}})
+    );
 }
