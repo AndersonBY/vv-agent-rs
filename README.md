@@ -148,7 +148,10 @@ The current Rust implementation includes:
   initial checkpoint, dispatches one cycle at a time, returns worker terminal
   results, preserves checkpointed state on errors/max-cycles, and cleans up
   after the run. `RuntimeRecipe` also exposes Python-style dict helpers and a
-  default SQLite checkpoint path under `<workspace>/.vv-agent-state`.
+  default SQLite checkpoint path under `<workspace>/.vv-agent-state`; the
+  reusable `run_checkpointed_cycle` helper mirrors the worker-side
+  `celery_tasks.run_single_cycle` checkpoint load / one-cycle execute / save or
+  terminal cleanup flow.
 - Split `memory/` modules with Python-style compaction thresholds, local
   structured summaries, and runtime autocompaction before large follow-up LLM
   cycles.

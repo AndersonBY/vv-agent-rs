@@ -38,8 +38,8 @@ pub use memory::{
     SessionMemoryConfig, SessionMemoryEntry, SessionMemoryState,
 };
 pub use runtime::backends::{
-    CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher, InlineBackend, RuntimeRecipe,
-    ThreadBackend,
+    run_checkpointed_cycle, CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher,
+    InlineBackend, RuntimeRecipe, ThreadBackend,
 };
 pub use runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 pub use runtime::stores::sqlite::SqliteStateStore;

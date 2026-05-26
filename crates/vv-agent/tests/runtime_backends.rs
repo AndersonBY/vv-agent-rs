@@ -2,10 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use vv_agent::runtime::backends::{
-    CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher, InlineBackend, RuntimeRecipe,
-    ThreadBackend,
+    run_checkpointed_cycle, CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher,
+    InlineBackend, RuntimeRecipe, ThreadBackend,
 };
-use vv_agent::runtime::state::{InMemoryStateStore, StateStore};
+use vv_agent::runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 use vv_agent::{
     AgentResult, AgentStatus, AgentTask, CancellationToken, CycleRecord, LLMResponse, Message,
     TaskTokenUsage,
@@ -410,5 +410,125 @@ fn celery_backend_distributed_returns_checkpointed_max_cycles_and_cleans_up() {
     assert!(store
         .load_checkpoint(&task.task_id)
         .expect("load after cleanup")
+        .is_none());
+}
+
+#[test]
+fn checkpointed_cycle_worker_returns_failed_result_when_checkpoint_is_missing() {
+    let store = InMemoryStateStore::new();
+    let task = AgentTask::new("missing-worker-task", "model", "system", "prompt");
+
+    let dispatch_result = run_checkpointed_cycle(
+        &store,
+        &task,
+        1,
+        |_cycle_index, _messages, _cycles, _shared_state, _cancellation| {
+            panic!("worker should not execute without checkpoint")
+        },
+    )
+    .expect("worker result");
+
+    assert!(dispatch_result.finished);
+    let result = dispatch_result.result.expect("failed result");
+    assert_eq!(result.status, AgentStatus::Failed);
+    assert_eq!(
+        result.error.as_deref(),
+        Some("No checkpoint found for task missing-worker-task")
+    );
+}
+
+#[test]
+fn checkpointed_cycle_worker_saves_checkpoint_after_nonterminal_cycle() {
+    let store = InMemoryStateStore::new();
+    let task = AgentTask::new("worker-task", "model", "system", "prompt");
+    store
+        .save_checkpoint(Checkpoint {
+            task_id: task.task_id.clone(),
+            cycle_index: 0,
+            status: AgentStatus::Running,
+            messages: vec![Message::user("hello")],
+            cycles: Vec::new(),
+            shared_state: Default::default(),
+        })
+        .expect("save checkpoint");
+
+    let dispatch_result = run_checkpointed_cycle(
+        &store,
+        &task,
+        1,
+        |cycle_index, messages, cycles, shared_state, _cancellation| {
+            messages.push(Message::assistant("worker response"));
+            cycles.push(CycleRecord::from_response(
+                cycle_index,
+                &LLMResponse::new("worker response"),
+                vec![],
+            ));
+            shared_state.insert("worker".to_string(), json!("updated"));
+            None
+        },
+    )
+    .expect("worker result");
+
+    assert!(!dispatch_result.finished);
+    assert!(dispatch_result.result.is_none());
+    let checkpoint = store
+        .load_checkpoint(&task.task_id)
+        .expect("load checkpoint")
+        .expect("checkpoint exists");
+    assert_eq!(checkpoint.cycle_index, 1);
+    assert_eq!(
+        checkpoint.messages.last().unwrap().content,
+        "worker response"
+    );
+    assert_eq!(checkpoint.cycles[0].index, 1);
+    assert_eq!(checkpoint.shared_state["worker"], json!("updated"));
+}
+
+#[test]
+fn checkpointed_cycle_worker_deletes_checkpoint_after_terminal_result() {
+    let store = InMemoryStateStore::new();
+    let task = AgentTask::new("worker-terminal", "model", "system", "prompt");
+    store
+        .save_checkpoint(Checkpoint {
+            task_id: task.task_id.clone(),
+            cycle_index: 0,
+            status: AgentStatus::Running,
+            messages: vec![Message::user("hello")],
+            cycles: Vec::new(),
+            shared_state: Default::default(),
+        })
+        .expect("save checkpoint");
+
+    let dispatch_result = run_checkpointed_cycle(
+        &store,
+        &task,
+        1,
+        |cycle_index, messages, cycles, shared_state, _cancellation| {
+            cycles.push(CycleRecord::from_response(
+                cycle_index,
+                &LLMResponse::new("done"),
+                vec![],
+            ));
+            Some(AgentResult::completed_with_shared_state(
+                messages.clone(),
+                cycles.clone(),
+                "worker done",
+                shared_state.clone(),
+            ))
+        },
+    )
+    .expect("worker result");
+
+    assert!(dispatch_result.finished);
+    assert_eq!(
+        dispatch_result
+            .result
+            .as_ref()
+            .and_then(|result| result.final_answer.as_deref()),
+        Some("worker done")
+    );
+    assert!(store
+        .load_checkpoint(&task.task_id)
+        .expect("load after delete")
         .is_none());
 }
