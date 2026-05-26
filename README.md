@@ -186,6 +186,10 @@ The current Rust implementation includes:
   values support idempotent cancellation, callback registration, parent/child
   propagation, and `RuntimeRunControls` cancellation checks before cycles and
   between tool calls, returning a failed result with a `run_cancelled` event.
+- Python-inspired runtime backend helpers: `InlineBackend`, `ThreadBackend`,
+  `CeleryBackend`, and serializable `RuntimeRecipe` mirror the Python backend
+  API surface for ordered `parallel_map`, thread `submit`, inline Celery
+  fallback, and distributed runtime recipe data.
 - SDK sessions expose Python-style cancellation through `cancel()` and a
   cloneable `SessionCancellationHandle`; active session runs receive the
   cancellation token, queued steering/follow-up prompts are cleared, and

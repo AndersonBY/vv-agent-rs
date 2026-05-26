@@ -3,11 +3,12 @@ use std::collections::BTreeMap;
 use vv_agent::{
     background_session_manager, build_default_registry, load_llm_settings_from_file,
     resolve_model_endpoint, AgentDefinition, AgentRuntime, AgentSDKClient, AgentSDKOptions,
-    AgentStatus, AgentTask, BackgroundSessionListener, CancellationToken, ConfigError,
-    EndpointConfig, EndpointOption, FileInfo, LLMResponse, LocalWorkspaceBackend,
-    MemoryWorkspaceBackend, Message, ResolvedModelConfig, RuntimeRunControls, S3WorkspaceBackend,
-    S3WorkspaceConfig, ScriptedLlmClient, SessionCancellationHandle, ToolCall, ToolExecutionResult,
-    ToolRegistry, WorkspaceBackend,
+    AgentStatus, AgentTask, BackgroundSessionListener, CancellationToken, CeleryBackend,
+    ConfigError, EndpointConfig, EndpointOption, FileInfo, InlineBackend, LLMResponse,
+    LocalWorkspaceBackend, MemoryWorkspaceBackend, Message, ResolvedModelConfig, RuntimeRecipe,
+    RuntimeRunControls, S3WorkspaceBackend, S3WorkspaceConfig, ScriptedLlmClient,
+    SessionCancellationHandle, ThreadBackend, ToolCall, ToolExecutionResult, ToolRegistry,
+    WorkspaceBackend,
 };
 
 #[test]
@@ -23,6 +24,10 @@ fn top_level_types_are_constructible() {
     let _runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new("done")]));
     let _token = CancellationToken::default();
     let _controls = RuntimeRunControls::default();
+    let _inline_backend = InlineBackend;
+    let _thread_backend = ThreadBackend::default();
+    let _recipe = RuntimeRecipe::new("settings.py", "backend", "model", ".");
+    let _celery_backend = CeleryBackend::inline_fallback();
     let _options = AgentSDKOptions::default();
     let _client = AgentSDKClient::new(_options);
     let _config_error = ConfigError::MissingSettingsFile("missing".to_string());

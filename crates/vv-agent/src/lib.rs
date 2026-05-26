@@ -37,6 +37,7 @@ pub use memory::{
     sanitize_for_resume, LocalSummary, MemoryManager, MemoryManagerConfig, SessionMemory,
     SessionMemoryConfig, SessionMemoryEntry, SessionMemoryState,
 };
+pub use runtime::backends::{CeleryBackend, InlineBackend, RuntimeRecipe, ThreadBackend};
 pub use runtime::{
     AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BeforeLlmEvent, BeforeLlmPatch,
     BeforeToolCallEvent, BeforeToolCallPatch, CancellationToken, RuntimeEventHandler, RuntimeHook,

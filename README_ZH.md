@@ -121,6 +121,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 与 Python 一致的 `read_file` 大文件响应限制：超出行数 / 字符数限制时返回文件统计、请求大小、限制值和建议行范围，不再把大文件直接塞进 LLM 上下文。
 - 与 Python 一致的 tool-call batch directive 处理：当某个工具请求用户输入或结束任务时，同一轮 LLM response 里后续工具调用会被记录为 skipped result，而不是从 transcript 中消失。
 - Python 风格 runtime cancellation controls：可 clone 的 `CancellationToken` 支持幂等取消、callback 注册、父子 token 传播；`RuntimeRunControls` 会在 cycle 前和 tool call 之间检查取消状态，返回 failed result 并发出 `run_cancelled` 事件。
+- 已补 Python 风格 runtime backend helper：`InlineBackend`、`ThreadBackend`、`CeleryBackend` 和可序列化的 `RuntimeRecipe` 覆盖有序 `parallel_map`、thread `submit`、Celery inline fallback 以及 distributed runtime recipe 数据结构。
 - SDK session 也已接入 Python 风格 cancellation：`cancel()` 和可 clone 的 `SessionCancellationHandle` 会把 active cancellation token 透传到 runtime，清空 steering / follow-up 队列，并向 listener 发出 `session_cancel_requested`。
 - `create_sub_task` / `sub_task_status` 已接入 runtime-backed sub-agent：配置在 `AgentTask.sub_agents` 里的子 Agent 可以同步运行，也可以通过 `wait_for_completion=false` 异步启动，支持 batch 聚合和状态 / snapshot 轮询。已提供 Python 风格 active sub-agent session registry，暴露 `get_sub_agent_session`、`subscribe_sub_agent_session`、`steer_sub_agent_session`，并支持 `sub_task_status(message=...)` 向已注册且运行中的 session 排队 steering message。
 - Python 风格的 `activate_skill`：允许的 inline skill 和 `SKILL.md` location 会加载 instructions，更新 `active_skills`，并记录 activation history。
