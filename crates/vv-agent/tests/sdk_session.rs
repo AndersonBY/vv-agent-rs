@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use vv_agent::{
-    AgentDefinition, AgentRun, AgentSession, AgentStatus, ResolvedModelConfig, SessionEventHandler,
+    AgentDefinition, AgentRun, AgentSession, AgentStatus, CycleRecord, ResolvedModelConfig,
+    SessionEventHandler, TokenUsage,
 };
 
 #[test]
@@ -179,6 +180,41 @@ fn session_clear_queues_emits_event_and_drops_prompts() {
             "session_queues_cleared",
         ]
     );
+}
+
+#[test]
+fn session_run_to_dict_contains_structured_token_usage() {
+    let mut run = fake_run("ok", AgentStatus::Completed);
+    run.result = vv_agent::AgentResult::completed(
+        vec![],
+        vec![CycleRecord {
+            index: 3,
+            assistant_message: "ok".to_string(),
+            tool_calls: vec![],
+            tool_results: vec![],
+            memory_compacted: false,
+            token_usage: TokenUsage {
+                prompt_tokens: 11,
+                completion_tokens: 7,
+                total_tokens: 18,
+                cached_tokens: 2,
+                reasoning_tokens: 5,
+                ..TokenUsage::default()
+            },
+        }],
+        "ok",
+    );
+
+    let payload = run.to_dict();
+    let usage = payload.get("token_usage").expect("token_usage");
+
+    assert_eq!(usage["prompt_tokens"], Value::from(11));
+    assert_eq!(usage["completion_tokens"], Value::from(7));
+    assert_eq!(usage["total_tokens"], Value::from(18));
+    assert_eq!(usage["cached_tokens"], Value::from(2));
+    assert_eq!(usage["reasoning_tokens"], Value::from(5));
+    assert_eq!(usage["cycles"][0]["cycle_index"], Value::from(3));
+    assert_eq!(usage["cycles"][0]["usage"]["total_tokens"], Value::from(18));
 }
 
 fn fake_run(prompt: &str, status: AgentStatus) -> AgentRun {

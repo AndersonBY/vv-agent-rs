@@ -106,7 +106,7 @@ impl AgentRun {
         payload.insert("agent".to_string(), Value::String(self.agent_name.clone()));
         payload.insert(
             "status".to_string(),
-            Value::String(format!("{:?}", self.result.status).to_lowercase()),
+            Value::String(agent_status_value(self.result.status).to_string()),
         );
         payload.insert(
             "final_answer".to_string(),
@@ -119,6 +119,10 @@ impl AgentRun {
         payload.insert(
             "cycles".to_string(),
             Value::Number(serde_json::Number::from(self.result.cycles.len() as u64)),
+        );
+        payload.insert(
+            "token_usage".to_string(),
+            serde_json::to_value(&self.result.token_usage).unwrap_or(Value::Null),
         );
         payload
     }
