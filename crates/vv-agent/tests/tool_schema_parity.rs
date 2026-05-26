@@ -76,6 +76,11 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/results.rs",
         "runtime/sub_agents.rs",
         "runtime/tool_planner.rs",
+        "skills/mod.rs",
+        "skills/errors.rs",
+        "skills/models.rs",
+        "skills/prompt.rs",
+        "skills/validator.rs",
         "sub_agent_sessions.rs",
         "memory/artifacts.rs",
         "memory/microcompact.rs",
@@ -107,6 +112,10 @@ fn tools_module_is_split_into_handler_files() {
         (
             "tools/handlers/skills.rs",
             "skills.rs should be split into src/tools/handlers/skills/ modules",
+        ),
+        (
+            "skills.rs",
+            "skills.rs should be split into src/skills/ modules",
         ),
     ] {
         assert!(!root.join(relative).exists(), "{message}");

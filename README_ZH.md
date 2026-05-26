@@ -30,7 +30,12 @@ vv-agent-rs/
         results.rs
         sub_agents.rs
       sdk.rs
-      skills.rs
+      skills/
+        errors.rs
+        mod.rs
+        models.rs
+        prompt.rs
+        validator.rs
       sub_agent_sessions.rs
       tools/
         base.rs
@@ -113,6 +118,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 已加入 Python 风格 resume / compaction message sanitizer：会移除空 assistant、thinking-only assistant、孤儿 tool result 和未完成的尾部 tool calls，并在 memory compaction 前归一化陈旧 tool-call 边界。
 - `tools/` 已按 Python `v-agent` 的结构拆分为 `base`、`registry`、canonical `schemas/` domain modules、共享 `common` helper 和各个 handler 模块。
 - `activate_skill` handler 已拆成模型、解析、归一化和 shared state helper，更接近 Python `v-agent` 的 skill 边界。
+- 公开 `skills/` 模块已拆成 Python 风格的 skill model、validation mode、diagnostics 和 `<available_skills>` prompt 渲染，并支持与 `v-agent` 一致的预算降级策略。
 - 默认工具 schema 使用参考 Python `v-agent` 的高信息量描述，并对 `task_finish`、`file_str_replace`、`file_info`、`compress_memory`、`read_image` 等高影响工具补充更具体的操作约束，让模型拿到文件访问、grep、bash / 后台命令、todo、skills、图片和 sub-agent 的完整操作指引。
 - planned tool schemas 已加入 Python 风格动态 runtime shell hint，`bash` 会在 LLM 可见 description 里提示实际 shell 前缀或 shell 配置错误。
 - 内置控制工具（`task_finish`、`ask_user`、`todo_write`）、核心 workspace 工具（`list_files`、`file_info`、`read_file`、`write_file`、`file_str_replace`、`workspace_grep`、`read_image`）、通过 `compress_memory` 记录 memory notes，以及支持捕获输出、stdin、通过 `bash_shell` metadata 选择 shell、前台超时转后台、后台轮询和后台命令终态 listener 自动通知的 `bash` / `check_background_command` 命令工具。
