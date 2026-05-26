@@ -190,6 +190,10 @@ The current Rust implementation includes:
   `CeleryBackend`, and serializable `RuntimeRecipe` mirror the Python backend
   API surface for ordered `parallel_map`, thread `submit`, inline Celery
   fallback, and distributed runtime recipe data.
+- Runtime checkpoint stores modeled after Python `runtime.state` and
+  `runtime.stores.sqlite`: `Checkpoint`, `InMemoryStateStore`, and
+  `SqliteStateStore` persist messages, cycles, status, and shared state for
+  distributed / resumable execution plumbing.
 - SDK sessions expose Python-style cancellation through `cancel()` and a
   cloneable `SessionCancellationHandle`; active session runs receive the
   cancellation token, queued steering/follow-up prompts are cleared, and

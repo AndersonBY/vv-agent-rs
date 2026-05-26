@@ -38,6 +38,8 @@ pub use memory::{
     SessionMemoryConfig, SessionMemoryEntry, SessionMemoryState,
 };
 pub use runtime::backends::{CeleryBackend, InlineBackend, RuntimeRecipe, ThreadBackend};
+pub use runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
+pub use runtime::stores::sqlite::SqliteStateStore;
 pub use runtime::{
     AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BeforeLlmEvent, BeforeLlmPatch,
     BeforeToolCallEvent, BeforeToolCallPatch, CancellationToken, RuntimeEventHandler, RuntimeHook,

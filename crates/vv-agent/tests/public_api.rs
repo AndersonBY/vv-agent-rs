@@ -4,11 +4,11 @@ use vv_agent::{
     background_session_manager, build_default_registry, load_llm_settings_from_file,
     resolve_model_endpoint, AgentDefinition, AgentRuntime, AgentSDKClient, AgentSDKOptions,
     AgentStatus, AgentTask, BackgroundSessionListener, CancellationToken, CeleryBackend,
-    ConfigError, EndpointConfig, EndpointOption, FileInfo, InlineBackend, LLMResponse,
-    LocalWorkspaceBackend, MemoryWorkspaceBackend, Message, ResolvedModelConfig, RuntimeRecipe,
-    RuntimeRunControls, S3WorkspaceBackend, S3WorkspaceConfig, ScriptedLlmClient,
-    SessionCancellationHandle, ThreadBackend, ToolCall, ToolExecutionResult, ToolRegistry,
-    WorkspaceBackend,
+    Checkpoint, ConfigError, EndpointConfig, EndpointOption, FileInfo, InMemoryStateStore,
+    InlineBackend, LLMResponse, LocalWorkspaceBackend, MemoryWorkspaceBackend, Message,
+    ResolvedModelConfig, RuntimeRecipe, RuntimeRunControls, S3WorkspaceBackend, S3WorkspaceConfig,
+    ScriptedLlmClient, SessionCancellationHandle, SqliteStateStore, StateStore, ThreadBackend,
+    ToolCall, ToolExecutionResult, ToolRegistry, WorkspaceBackend,
 };
 
 #[test]
@@ -28,6 +28,17 @@ fn top_level_types_are_constructible() {
     let _thread_backend = ThreadBackend::default();
     let _recipe = RuntimeRecipe::new("settings.py", "backend", "model", ".");
     let _celery_backend = CeleryBackend::inline_fallback();
+    let _checkpoint = Checkpoint {
+        task_id: "task".to_string(),
+        cycle_index: 0,
+        status: AgentStatus::Pending,
+        messages: vec![],
+        cycles: vec![],
+        shared_state: BTreeMap::new(),
+    };
+    let _state_store = InMemoryStateStore::default();
+    let _state_store_ref: &dyn StateStore = &_state_store;
+    let _sqlite_state_store = SqliteStateStore::new(":memory:");
     let _options = AgentSDKOptions::default();
     let _client = AgentSDKClient::new(_options);
     let _config_error = ConfigError::MissingSettingsFile("missing".to_string());
