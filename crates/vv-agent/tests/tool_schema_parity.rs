@@ -113,6 +113,10 @@ fn tools_module_is_split_into_handler_files() {
         "prompt/builder.rs",
         "prompt/cache_tracker.rs",
         "prompt/templates.rs",
+        "llm/mod.rs",
+        "llm/base.rs",
+        "llm/scripted.rs",
+        "llm/vv_llm_client.rs",
     ] {
         assert!(root.join(relative).is_file(), "missing {relative}");
     }
@@ -137,6 +141,7 @@ fn tools_module_is_split_into_handler_files() {
             "prompt.rs",
             "prompt.rs should be split into src/prompt/ modules",
         ),
+        ("llm.rs", "llm.rs should be split into src/llm/ modules"),
         (
             "tools/schemas.rs",
             "schemas.rs should be split into src/tools/schemas/ domain modules",

@@ -120,6 +120,9 @@ The current Rust implementation includes:
   `build_vv_llm_from_local_settings`, settings-based endpoint resolution, and
   provider HTTP/protocol handling delegated to `vv-llm`, while keeping
   `ScriptedLlmClient` for deterministic tests.
+- Split `llm/` modules matching Python's base/scripted/vv_llm_client layers,
+  with the public `LlmClient` trait, scripted test client, and `vv-llm` backed
+  production client kept behind stable top-level exports.
 - LLM settings normalization keeps Python compatibility for `providers` /
   `backends`, default `VERSION`, endpoint API-key suffix extraction, and
   opt-in base64 key decoding before constructing `vv-llm` clients.
