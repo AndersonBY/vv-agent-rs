@@ -141,7 +141,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 与 Python 一致的 `read_file` 大文件响应限制：超出行数 / 字符数限制时返回文件统计、请求大小、限制值和建议行范围，不再把大文件直接塞进 LLM 上下文。
 - 与 Python 一致的 tool-call batch directive 处理：当某个工具请求用户输入或结束任务时，同一轮 LLM response 里后续工具调用会被记录为 skipped result，而不是从 transcript 中消失。
 - Python 风格 runtime cancellation controls：可 clone 的 `CancellationToken` 支持幂等取消、callback 注册、父子 token 传播；`RuntimeRunControls` 会在 cycle 前和 tool call 之间检查取消状态，返回 failed result 并发出 `run_cancelled` 事件。
-- 已补 Python 风格 `ExecutionContext`：包含 cancellation token、stream callback、state store 和 metadata 字段；runtime 取消检查现在同时支持 context 内的 token 和 `RuntimeRunControls` 上直接传入的 token。
+- 已补 Python 风格 `ExecutionContext`：包含 cancellation token、stream callback、state store 和 metadata 字段；runtime 取消检查现在同时支持 context 内的 token 和 `RuntimeRunControls` 上直接传入的 token；stream callback 也已透传到 `vv-llm` streaming completion，并可通过 `AgentSDKOptions` 配置。
 - 已补 Python 风格 runtime backend helper：`InlineBackend`、`ThreadBackend`、`CeleryBackend` 和可序列化的 `RuntimeRecipe` 覆盖有序 `parallel_map`、thread `submit`、Celery inline fallback、distributed runtime recipe 数据结构，以及带 cancellation / max-cycles 结果的 `execute` cycle loop。`AgentRuntime` 也通过同一 backend abstraction 执行，不再维护一套独立内部循环。
 - 已补参考 Python `runtime.state` 和 `runtime.stores.sqlite` 的 checkpoint store：`Checkpoint`、`InMemoryStateStore`、`SqliteStateStore` 可持久化 messages、cycles、status 和 shared_state，为后续 distributed / resumable execution 铺好状态层。
 - SDK session 也已接入 Python 风格 cancellation：`cancel()` 和可 clone 的 `SessionCancellationHandle` 会把 active cancellation token 透传到 runtime，清空 steering / follow-up 队列，并向 listener 发出 `session_cancel_requested`。

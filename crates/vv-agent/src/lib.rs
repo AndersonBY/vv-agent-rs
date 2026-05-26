@@ -32,7 +32,10 @@ pub use config::{
     load_llm_settings_from_file, resolve_model_endpoint, ConfigError, EndpointConfig,
     EndpointOption, ResolvedModelConfig,
 };
-pub use llm::{EndpointTarget, LlmClient, LlmError, LlmRequest, ScriptedLlmClient, VvLlmClient};
+pub use llm::{
+    EndpointTarget, LlmClient, LlmError, LlmRequest, LlmStreamCallback, ScriptedLlmClient,
+    VvLlmClient,
+};
 pub use memory::{
     sanitize_for_resume, CompactionExhaustedError, LocalSummary, MemoryManager,
     MemoryManagerConfig, SessionMemory, SessionMemoryConfig, SessionMemoryEntry,

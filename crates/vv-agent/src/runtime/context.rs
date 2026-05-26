@@ -3,10 +3,12 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::llm::LlmStreamCallback;
+
 use super::state::StateStore;
 use super::CancellationToken;
 
-pub type StreamCallback = Arc<dyn Fn(&BTreeMap<String, Value>) + Send + Sync + 'static>;
+pub type StreamCallback = LlmStreamCallback;
 
 #[derive(Clone, Default)]
 pub struct ExecutionContext {

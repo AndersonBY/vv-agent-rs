@@ -59,6 +59,12 @@ impl RuntimeRunControls {
                 .and_then(|context| context.cancellation_token.clone())
         })
     }
+
+    fn effective_stream_callback(&self) -> Option<StreamCallback> {
+        self.execution_context
+            .as_ref()
+            .and_then(|context| context.stream_callback.clone())
+    }
 }
 
 #[derive(Clone, Default)]
@@ -248,6 +254,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         }
 
         let effective_cancellation_token = controls.effective_cancellation_token();
+        let effective_stream_callback = controls.effective_stream_callback();
         let mut pending_error = None;
         let result = self.execution_backend.execute(
             &task,
@@ -332,7 +339,10 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 let response = loop {
                     let mut request = LlmRequest::new(task.model.clone(), request_messages.clone());
                     request.tools = request_tool_schemas.clone();
-                    match self.llm_client.complete(request) {
+                    match self
+                        .llm_client
+                        .complete_with_stream(request, effective_stream_callback.clone())
+                    {
                         Ok(response) => break response,
                         Err(error) if is_prompt_too_long_error(&error) => {
                             prompt_too_long_retries += 1;

@@ -7,7 +7,9 @@ use serde_json::Value;
 use crate::background_sessions::{background_session_manager, BackgroundSessionSubscription};
 use crate::config::ResolvedModelConfig;
 use crate::llm::{LlmClient, ScriptedLlmClient};
-use crate::runtime::{AgentRuntime, CancellationToken, RuntimeRunControls};
+use crate::runtime::{
+    AgentRuntime, CancellationToken, ExecutionContext, RuntimeRunControls, StreamCallback,
+};
 use crate::types::{AgentResult, AgentStatus, AgentTask, Metadata, NoToolPolicy, SubAgentConfig};
 use crate::workspace::LocalWorkspaceBackend;
 
@@ -70,7 +72,7 @@ impl AgentDefinition {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AgentSDKOptions {
     pub settings_file: PathBuf,
     pub default_backend: String,
@@ -79,6 +81,23 @@ pub struct AgentSDKOptions {
     pub log_preview_chars: Option<usize>,
     pub auto_discover_resources: bool,
     pub debug_dump_dir: Option<String>,
+    pub stream_callback: Option<StreamCallback>,
+}
+
+impl std::fmt::Debug for AgentSDKOptions {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AgentSDKOptions")
+            .field("settings_file", &self.settings_file)
+            .field("default_backend", &self.default_backend)
+            .field("workspace", &self.workspace)
+            .field("timeout_seconds", &self.timeout_seconds)
+            .field("log_preview_chars", &self.log_preview_chars)
+            .field("auto_discover_resources", &self.auto_discover_resources)
+            .field("debug_dump_dir", &self.debug_dump_dir)
+            .field("has_stream_callback", &self.stream_callback.is_some())
+            .finish()
+    }
 }
 
 impl Default for AgentSDKOptions {
@@ -91,6 +110,7 @@ impl Default for AgentSDKOptions {
             log_preview_chars: None,
             auto_discover_resources: true,
             debug_dump_dir: None,
+            stream_callback: None,
         }
     }
 }
@@ -150,6 +170,7 @@ pub struct AgentSessionRunRequest {
     pub runtime_event_handler: Option<SessionEventHandler>,
     pub steering_queue: Option<Arc<Mutex<VecDeque<String>>>>,
     pub cancellation_token: Option<CancellationToken>,
+    pub stream_callback: Option<StreamCallback>,
 }
 
 impl AgentSessionRunRequest {
@@ -161,6 +182,7 @@ impl AgentSessionRunRequest {
             runtime_event_handler: None,
             steering_queue: None,
             cancellation_token: None,
+            stream_callback: None,
         }
     }
 }
@@ -490,6 +512,7 @@ impl AgentSession {
             runtime_event_handler: Some(runtime_event_handler),
             steering_queue: Some(Arc::clone(&self.steering_queue)),
             cancellation_token: Some(cancellation_token),
+            stream_callback: None,
         });
         self.running = false;
         *self
@@ -1101,6 +1124,7 @@ impl<C: LlmClient + Clone + 'static> RunAgent for AgentRuntime<C> {
         definition: &AgentDefinition,
         request: AgentSessionRunRequest,
     ) -> Result<AgentRun, String> {
+        let execution_context = execution_context_from_request(&request);
         let mut task = task_from_definition(definition, request.prompt);
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
@@ -1111,7 +1135,7 @@ impl<C: LlmClient + Clone + 'static> RunAgent for AgentRuntime<C> {
                     log_handler: request.runtime_event_handler,
                     steering_queue: request.steering_queue,
                     cancellation_token: request.cancellation_token,
-                    execution_context: None,
+                    execution_context,
                 },
             )
             .map_err(|err| err.to_string())?;
@@ -1140,6 +1164,7 @@ impl RunAgent for ScriptedLlmClient {
         request: AgentSessionRunRequest,
     ) -> Result<AgentRun, String> {
         let runtime = AgentRuntime::new(self.clone());
+        let execution_context = execution_context_from_request(&request);
         let mut task = task_from_definition(definition, request.prompt);
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
@@ -1150,7 +1175,7 @@ impl RunAgent for ScriptedLlmClient {
                     log_handler: request.runtime_event_handler,
                     steering_queue: request.steering_queue,
                     cancellation_token: request.cancellation_token,
-                    execution_context: None,
+                    execution_context,
                 },
             )
             .map_err(|err| err.to_string())
@@ -1169,6 +1194,13 @@ impl RunAgent for ScriptedLlmClient {
                 result,
             })
     }
+}
+
+fn execution_context_from_request(request: &AgentSessionRunRequest) -> Option<ExecutionContext> {
+    request
+        .stream_callback
+        .clone()
+        .map(|callback| ExecutionContext::default().with_stream_callback(callback))
 }
 
 fn task_from_definition(definition: &AgentDefinition, prompt: String) -> AgentTask {
@@ -1225,7 +1257,9 @@ impl AgentSDKClient {
         definition: AgentDefinition,
         prompt: impl Into<String>,
     ) -> Result<AgentRun, String> {
-        self.runtime.run(&definition, prompt.into())
+        let mut request = AgentSessionRunRequest::new(prompt);
+        request.stream_callback = self.options.stream_callback.clone();
+        self.runtime.run_with_session(&definition, request)
     }
 
     pub fn run(&self, prompt: impl Into<String>) -> Result<AgentRun, String> {
@@ -1269,7 +1303,11 @@ pub fn create_agent_session(
 ) -> AgentSession {
     let runtime = client.runtime.clone();
     let definition_for_run = definition.clone();
-    let execute_run = Arc::new(move |request: AgentSessionRunRequest| {
+    let stream_callback = client.options.stream_callback.clone();
+    let execute_run = Arc::new(move |mut request: AgentSessionRunRequest| {
+        if request.stream_callback.is_none() {
+            request.stream_callback = stream_callback.clone();
+        }
         runtime.run_with_session(&definition_for_run, request)
     });
     AgentSession::new_with_context(

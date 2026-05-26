@@ -1,11 +1,14 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
+use futures_util::StreamExt;
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::memory::CompactionExhaustedError;
 use crate::types::{LLMResponse, Message, MessageRole, TokenUsage, ToolCall};
+
+pub type LlmStreamCallback = Arc<dyn Fn(&BTreeMap<String, Value>) + Send + Sync + 'static>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LlmRequest {
@@ -38,6 +41,15 @@ pub enum LlmError {
 
 pub trait LlmClient: Send + Sync {
     fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError>;
+
+    fn complete_with_stream(
+        &self,
+        request: LlmRequest,
+        stream_callback: Option<LlmStreamCallback>,
+    ) -> Result<LLMResponse, LlmError> {
+        let _ = stream_callback;
+        self.complete(request)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +121,14 @@ where
     fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
         (**self).complete(request)
     }
+
+    fn complete_with_stream(
+        &self,
+        request: LlmRequest,
+        stream_callback: Option<LlmStreamCallback>,
+    ) -> Result<LLMResponse, LlmError> {
+        (**self).complete_with_stream(request, stream_callback)
+    }
 }
 
 #[derive(Clone)]
@@ -148,7 +168,21 @@ impl VvLlmClient {
 
 impl LlmClient for VvLlmClient {
     fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
-        let chat_request = vv_llm::ChatRequest {
+        self.complete_with_stream(request, None)
+    }
+
+    fn complete_with_stream(
+        &self,
+        request: LlmRequest,
+        stream_callback: Option<LlmStreamCallback>,
+    ) -> Result<LLMResponse, LlmError> {
+        let should_stream = stream_callback.is_some()
+            || request
+                .metadata
+                .get("stream")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+        let mut chat_request = vv_llm::ChatRequest {
             model: if request.model.is_empty() {
                 self.model_id.clone()
             } else {
@@ -167,10 +201,21 @@ impl LlmClient for VvLlmClient {
                 .and_then(Value::as_str)
                 .map(str::to_string),
         };
+        if should_stream {
+            chat_request.options.stream = Some(true);
+        }
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .map_err(|error| LlmError::Request(error.to_string()))?;
+        if should_stream {
+            return runtime.block_on(collect_vv_llm_stream(
+                Arc::clone(&self.chat_client),
+                chat_request,
+                stream_callback,
+            ));
+        }
+
         let response = runtime
             .block_on(self.chat_client.create_completion(chat_request))
             .map_err(|error| LlmError::Request(error.to_string()))?;
@@ -282,6 +327,234 @@ fn from_vv_llm_usage(usage: vv_llm::ChatUsage) -> TokenUsage {
         output_tokens: usage.completion_tokens.unwrap_or_default() as u64,
         raw,
         ..TokenUsage::default()
+    }
+}
+
+#[derive(Debug, Default)]
+struct StreamingToolCallParts {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+async fn collect_vv_llm_stream(
+    chat_client: Arc<dyn vv_llm::ChatClient>,
+    request: vv_llm::ChatRequest,
+    stream_callback: Option<LlmStreamCallback>,
+) -> Result<LLMResponse, LlmError> {
+    let model = request.model.clone();
+    let mut stream = chat_client
+        .create_stream(request)
+        .await
+        .map_err(|error| LlmError::Request(error.to_string()))?;
+    let mut content = String::new();
+    let mut reasoning_content = String::new();
+    let mut raw_content = Vec::new();
+    let mut usage = None;
+    let mut tool_order = Vec::<String>::new();
+    let mut tool_calls = BTreeMap::<String, StreamingToolCallParts>::new();
+    let mut active_tool_call_key = None::<String>;
+
+    while let Some(delta) = stream.next().await {
+        let delta = delta.map_err(|error| LlmError::Request(error.to_string()))?;
+        if let Some(delta_usage) = delta.usage {
+            usage = Some(delta_usage);
+        }
+        if let Some(raw) = delta.raw_content {
+            raw_content.push(raw);
+        }
+        if !delta.reasoning_content.is_empty() {
+            reasoning_content.push_str(&delta.reasoning_content);
+            emit_stream_event(
+                &stream_callback,
+                BTreeMap::from([
+                    (
+                        "event".to_string(),
+                        Value::String("reasoning_delta".to_string()),
+                    ),
+                    (
+                        "reasoning_delta".to_string(),
+                        Value::String(delta.reasoning_content),
+                    ),
+                    (
+                        "reasoning_chars".to_string(),
+                        Value::from(reasoning_content.chars().count() as u64),
+                    ),
+                    (
+                        "estimated_tokens".to_string(),
+                        Value::from(estimate_stream_tokens(reasoning_content.len()) as u64),
+                    ),
+                ]),
+            );
+        }
+        if !delta.content.is_empty() {
+            content.push_str(&delta.content);
+            emit_stream_event(
+                &stream_callback,
+                BTreeMap::from([
+                    (
+                        "event".to_string(),
+                        Value::String("assistant_delta".to_string()),
+                    ),
+                    ("content_delta".to_string(), Value::String(delta.content)),
+                    (
+                        "content_chars".to_string(),
+                        Value::from(content.chars().count() as u64),
+                    ),
+                    (
+                        "estimated_tokens".to_string(),
+                        Value::from(estimate_stream_tokens(content.len()) as u64),
+                    ),
+                ]),
+            );
+        }
+        for (tool_call_index, tool_call_delta) in delta.tool_calls.into_iter().enumerate() {
+            let key = resolve_stream_tool_call_key(
+                &tool_call_delta,
+                tool_call_index,
+                active_tool_call_key.as_deref(),
+            );
+            active_tool_call_key = Some(key.clone());
+            if !tool_calls.contains_key(&key) {
+                tool_order.push(key.clone());
+                tool_calls.insert(
+                    key.clone(),
+                    StreamingToolCallParts {
+                        id: if tool_call_delta.id.is_empty() {
+                            key.clone()
+                        } else {
+                            tool_call_delta.id.clone()
+                        },
+                        ..StreamingToolCallParts::default()
+                    },
+                );
+            }
+            let Some(slot) = tool_calls.get_mut(&key) else {
+                continue;
+            };
+            if !tool_call_delta.id.is_empty() {
+                slot.id = tool_call_delta.id.clone();
+            }
+            let had_name = !slot.name.is_empty();
+            if !tool_call_delta.name.is_empty() {
+                slot.name = tool_call_delta.name.clone();
+            }
+            if !tool_call_delta.arguments.is_empty() {
+                slot.arguments.push_str(&tool_call_delta.arguments);
+            }
+            if !had_name && !slot.name.is_empty() {
+                emit_tool_stream_event(
+                    &stream_callback,
+                    "tool_call_started",
+                    tool_call_index,
+                    slot,
+                );
+            }
+            if !tool_call_delta.arguments.is_empty() {
+                emit_tool_stream_event(
+                    &stream_callback,
+                    "tool_call_progress",
+                    tool_call_index,
+                    slot,
+                );
+            }
+        }
+        if delta.done {
+            break;
+        }
+    }
+
+    let mut raw = crate::types::Metadata::new();
+    raw.insert("model".to_string(), Value::String(model));
+    raw.insert("stream_collected".to_string(), Value::Bool(true));
+    if !reasoning_content.is_empty() {
+        raw.insert(
+            "reasoning_content".to_string(),
+            Value::String(reasoning_content),
+        );
+    }
+    if !raw_content.is_empty() {
+        raw.insert("raw_content".to_string(), Value::Array(raw_content));
+    }
+    let token_usage = usage.map(from_vv_llm_usage).unwrap_or_default();
+    Ok(LLMResponse {
+        content,
+        tool_calls: tool_order
+            .into_iter()
+            .filter_map(|key| tool_calls.remove(&key))
+            .filter(|parts| !parts.name.is_empty())
+            .map(|parts| {
+                from_vv_llm_tool_call(vv_llm::ToolCall::function(
+                    parts.id,
+                    parts.name,
+                    parts.arguments,
+                ))
+            })
+            .collect(),
+        raw,
+        token_usage,
+    })
+}
+
+fn resolve_stream_tool_call_key(
+    tool_call: &vv_llm::ToolCall,
+    index: usize,
+    active_tool_call_key: Option<&str>,
+) -> String {
+    if !tool_call.id.is_empty() {
+        return tool_call.id.clone();
+    }
+    if let Some(active) = active_tool_call_key {
+        return active.to_string();
+    }
+    format!("call_stream_{index}")
+}
+
+fn emit_stream_event(stream_callback: &Option<LlmStreamCallback>, event: BTreeMap<String, Value>) {
+    if let Some(callback) = stream_callback {
+        callback(&event);
+    }
+}
+
+fn emit_tool_stream_event(
+    stream_callback: &Option<LlmStreamCallback>,
+    event_name: &str,
+    tool_call_index: usize,
+    tool_call: &StreamingToolCallParts,
+) {
+    emit_stream_event(
+        stream_callback,
+        BTreeMap::from([
+            ("event".to_string(), Value::String(event_name.to_string())),
+            (
+                "tool_call_id".to_string(),
+                Value::String(tool_call.id.clone()),
+            ),
+            (
+                "tool_call_index".to_string(),
+                Value::from(tool_call_index as u64),
+            ),
+            (
+                "function_name".to_string(),
+                Value::String(tool_call.name.clone()),
+            ),
+            (
+                "arguments_chars".to_string(),
+                Value::from(tool_call.arguments.chars().count() as u64),
+            ),
+            (
+                "estimated_tokens".to_string(),
+                Value::from(estimate_stream_tokens(tool_call.arguments.len()) as u64),
+            ),
+        ]),
+    );
+}
+
+fn estimate_stream_tokens(text_length: usize) -> usize {
+    if text_length == 0 {
+        0
+    } else {
+        text_length.div_ceil(4)
     }
 }
 

@@ -244,7 +244,8 @@ The current Rust implementation includes:
 - Python-style `ExecutionContext` is available for runtime integrations, with
   cancellation token, stream callback, state store, and metadata fields. Runtime
   cancellation checks now honor tokens supplied through the context as well as
-  direct `RuntimeRunControls`.
+  direct `RuntimeRunControls`; stream callbacks are forwarded into `vv-llm`
+  streaming completions and can also be configured through `AgentSDKOptions`.
 - Python-inspired runtime backend helpers: `InlineBackend`, `ThreadBackend`,
   `CeleryBackend`, and serializable `RuntimeRecipe` mirror the Python backend
   API surface for ordered `parallel_map`, thread `submit`, inline Celery
