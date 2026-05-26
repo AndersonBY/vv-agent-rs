@@ -208,7 +208,10 @@ The current Rust implementation includes:
   registered sessions, including Python-style `wait_for_response` coercion and
   max-cycle continuation rejection. `SubTaskManager::attach_session` also
   tracks Python-style session event snapshots with recent activity, latest
-  cycle/tool-call metadata, and visible workspace file listings.
+  cycle/tool-call metadata, and visible workspace file listings. Runtime-backed
+  sub-tasks are now session-driven and automatically registered, so completed
+  async sub-tasks can be continued through `sub_task_status(message=...)` while
+  preserving prior messages and shared state.
 - Python-style `activate_skill` behavior for allowed skills: inline skill
   entries and `SKILL.md` locations load instructions, update `active_skills`,
   and record activation history.
@@ -245,7 +248,7 @@ The current Rust implementation includes:
   integration, runtime tool cycles, schema parity, and workspace tools.
 
 Deeper parity work against the Python implementation is still pending for full
-sub-agent automatic runtime registration, distributed backends, and the
-remaining built-in tools. The migration target is to copy Python
+distributed backend execution and the remaining built-in tools. The migration
+target is to copy Python
 `v-agent` behavior as completely as possible, not merely provide a minimal Rust
 wrapper.
