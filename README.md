@@ -168,6 +168,11 @@ The current Rust implementation includes:
 - Python-style `activate_skill` behavior for allowed skills: inline skill
   entries and `SKILL.md` locations load instructions, update `active_skills`,
   and record activation history.
+- Python-style SDK session continuation basics: `AgentSession::follow_up`
+  queues automatic completed-run follow-ups, `steer` has priority for
+  `continue_run(None)`, `clear_queues` drops pending prompts, and `query`
+  returns the final answer or a status-specific error such as
+  `status=wait_user`.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,

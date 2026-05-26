@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -146,6 +146,8 @@ pub struct AgentSession {
     latest_run: Option<AgentRun>,
     running: bool,
     _listeners: Vec<SessionEventHandler>,
+    steering_queue: VecDeque<String>,
+    follow_up_queue: VecDeque<String>,
 }
 
 impl AgentSession {
@@ -172,11 +174,116 @@ impl AgentSession {
             latest_run: None,
             running: false,
             _listeners: Vec::new(),
+            steering_queue: VecDeque::new(),
+            follow_up_queue: VecDeque::new(),
         }
     }
 
     pub fn prompt(&mut self, prompt: impl Into<String>) -> Result<AgentRun, String> {
-        let run = (self.execute_run)(prompt.into())?;
+        self.prompt_with_auto_follow_up(prompt, true)
+    }
+
+    pub fn prompt_with_auto_follow_up(
+        &mut self,
+        prompt: impl Into<String>,
+        auto_follow_up: bool,
+    ) -> Result<AgentRun, String> {
+        let mut run = self.run_once(normalize_session_prompt(prompt.into(), "prompt")?)?;
+        if !auto_follow_up {
+            return Ok(run);
+        }
+
+        while run.result.status == AgentStatus::Completed {
+            let Some(follow_up_prompt) = self.follow_up_queue.pop_front() else {
+                break;
+            };
+            run = self.run_once(follow_up_prompt)?;
+        }
+        Ok(run)
+    }
+
+    pub fn follow_up(&mut self, prompt: impl Into<String>) -> Result<(), String> {
+        self.follow_up_queue
+            .push_back(normalize_session_prompt(prompt.into(), "follow_up prompt")?);
+        Ok(())
+    }
+
+    pub fn steer(&mut self, prompt: impl Into<String>) -> Result<(), String> {
+        self.steering_queue
+            .push_back(normalize_session_prompt(prompt.into(), "steer prompt")?);
+        Ok(())
+    }
+
+    pub fn clear_queues(&mut self) {
+        self.steering_queue.clear();
+        self.follow_up_queue.clear();
+    }
+
+    pub fn continue_run(&mut self, prompt: Option<String>) -> Result<AgentRun, String> {
+        if let Some(prompt) = prompt {
+            let prompt = prompt.trim();
+            if !prompt.is_empty() {
+                return self.prompt_with_auto_follow_up(prompt.to_string(), false);
+            }
+        }
+
+        let queued_prompt = self
+            .steering_queue
+            .pop_front()
+            .or_else(|| self.follow_up_queue.pop_front())
+            .ok_or_else(|| {
+                "No queued prompt available. Provide prompt or call steer()/follow_up() first."
+                    .to_string()
+            })?;
+        self.prompt_with_auto_follow_up(queued_prompt, false)
+    }
+
+    pub fn query(&mut self, prompt: impl Into<String>) -> Result<String, String> {
+        self.query_with_require_completed(prompt, true)
+    }
+
+    pub fn query_with_require_completed(
+        &mut self,
+        prompt: impl Into<String>,
+        require_completed: bool,
+    ) -> Result<String, String> {
+        let run = self.prompt(prompt)?;
+        if run.result.status == AgentStatus::Completed {
+            return Ok(run.result.final_answer.unwrap_or_default());
+        }
+        if require_completed {
+            let reason = run
+                .result
+                .error
+                .clone()
+                .or(run.result.wait_reason.clone())
+                .or(run.result.final_answer.clone())
+                .unwrap_or_else(|| "session query did not complete".to_string());
+            return Err(format!(
+                "Session query failed with status={}: {}",
+                agent_status_value(run.result.status),
+                reason
+            ));
+        }
+        Ok(run
+            .result
+            .final_answer
+            .or(run.result.wait_reason)
+            .or(run.result.error)
+            .unwrap_or_default())
+    }
+
+    fn run_once(&mut self, prompt: String) -> Result<AgentRun, String> {
+        if self.running {
+            return Err(
+                "Session is already running. Queue with steer()/follow_up() or wait for completion."
+                    .to_string(),
+            );
+        }
+        self.running = true;
+        let run = (self.execute_run)(prompt);
+        self.running = false;
+        let run = run?;
         self.messages = run.result.messages.clone();
         self.shared_state = run.result.shared_state.clone();
         self.latest_run = Some(run.clone());
@@ -191,6 +298,25 @@ impl AgentSession {
             shared_state: self.shared_state.clone(),
             latest_run: self.latest_run.clone(),
         }
+    }
+}
+
+fn normalize_session_prompt(prompt: String, label: &str) -> Result<String, String> {
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Err(format!("{label} cannot be empty"));
+    }
+    Ok(prompt.to_string())
+}
+
+fn agent_status_value(status: AgentStatus) -> &'static str {
+    match status {
+        AgentStatus::Pending => "pending",
+        AgentStatus::Running => "running",
+        AgentStatus::WaitUser => "wait_user",
+        AgentStatus::Completed => "completed",
+        AgentStatus::Failed => "failed",
+        AgentStatus::MaxCycles => "max_cycles",
     }
 }
 
