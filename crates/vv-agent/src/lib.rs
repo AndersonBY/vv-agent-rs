@@ -23,6 +23,10 @@ pub mod tools;
 pub mod types;
 pub mod workspace;
 
+pub use background_sessions::{
+    background_session_manager, BackgroundSessionListener, BackgroundSessionManager,
+    BackgroundSessionSubscription,
+};
 pub use config::{
     build_openai_llm_from_local_settings, build_vv_llm_from_local_settings,
     load_llm_settings_from_file, resolve_model_endpoint, ConfigError, EndpointConfig,

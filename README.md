@@ -162,7 +162,8 @@ The current Rust implementation includes:
   workspace tools (`list_files`, `file_info`, `read_file`, `write_file`,
   `file_str_replace`, `workspace_grep`, `read_image`), memory notes through
   `compress_memory`, and `bash` / `check_background_command` command tools with
-  captured output, stdin, foreground timeout handoff, and background polling.
+  captured output, stdin, foreground timeout handoff, background polling, and
+  terminal background-session listener notifications.
 - Python-compatible workspace path safety: `LocalWorkspaceBackend` rejects
   paths outside the workspace by default, and file/image/grep/bash tools keep
   metadata-controlled outside-path access for trusted tasks.

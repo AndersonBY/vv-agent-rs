@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use serde_json::{json, Value};
+use vv_agent::background_sessions::background_session_manager;
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
 #[test]
@@ -112,6 +114,64 @@ fn background_command_lifecycle_can_be_polled() {
         .expect("command")
         .contains("printf start"));
     assert_eq!(final_payload["output"], "startdone");
+}
+
+#[test]
+fn background_command_listener_receives_terminal_event() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let start = registry
+        .execute(
+            &ToolCall::new(
+                "bash_bg_listener",
+                "bash",
+                BTreeMap::from([
+                    ("command".to_string(), json!("printf listen; sleep 0.1")),
+                    ("run_in_background".to_string(), json!(true)),
+                    ("timeout".to_string(), json!(5)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("bash background start");
+    let start_payload: Value = serde_json::from_str(&start.content).expect("start payload");
+    let session_id = start_payload["session_id"]
+        .as_str()
+        .expect("session_id")
+        .to_string();
+    let events = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let sink = events.clone();
+    let subscription = background_session_manager().subscribe(
+        &session_id,
+        Arc::new(move |payload| {
+            sink.lock().expect("events").push(payload.clone());
+        }),
+    );
+
+    for _ in 0..20 {
+        let probe = registry
+            .execute(
+                &ToolCall::new(
+                    "bash_bg_check_listener",
+                    "check_background_command",
+                    BTreeMap::from([("session_id".to_string(), json!(session_id))]),
+                ),
+                &mut context,
+            )
+            .expect("check background command");
+        if probe.status != ToolResultStatus::Running {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let events = events.lock().expect("events");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["status"], "completed");
+    assert_eq!(events[0]["output"], "listen");
+    drop(subscription);
 }
 
 #[test]

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -12,6 +12,7 @@ use crate::processes::{kill_process_tree, read_captured_output, remove_captured_
 const OUTPUT_LIMIT: usize = 50_000;
 
 static MANAGER: OnceLock<BackgroundSessionManager> = OnceLock::new();
+pub type BackgroundSessionListener = Arc<dyn Fn(&Value) + Send + Sync + 'static>;
 
 pub fn background_session_manager() -> &'static BackgroundSessionManager {
     MANAGER.get_or_init(BackgroundSessionManager::default)
@@ -21,6 +22,7 @@ pub fn background_session_manager() -> &'static BackgroundSessionManager {
 pub struct BackgroundSessionManager {
     sessions: Mutex<BTreeMap<String, BackgroundSession>>,
     next_id: AtomicU64,
+    next_listener_id: AtomicU64,
 }
 
 impl BackgroundSessionManager {
@@ -47,12 +49,55 @@ impl BackgroundSessionManager {
             status: BackgroundStatus::Running,
             output: String::new(),
             exit_code: None,
+            listeners: BTreeMap::new(),
         };
         self.sessions
             .lock()
             .expect("background session manager poisoned")
             .insert(session_id.clone(), session);
         session_id
+    }
+
+    pub fn subscribe(
+        &'static self,
+        session_id: &str,
+        listener: BackgroundSessionListener,
+    ) -> BackgroundSessionSubscription {
+        let mut snapshot = None;
+        let listener_id = self.next_listener_id.fetch_add(1, Ordering::Relaxed) + 1;
+        {
+            let mut sessions = self
+                .sessions
+                .lock()
+                .expect("background session manager poisoned");
+            let Some(session) = sessions.get_mut(session_id) else {
+                return BackgroundSessionSubscription::noop();
+            };
+            if session.status.is_terminal() {
+                snapshot = Some(session.snapshot());
+            } else {
+                session.listeners.insert(listener_id, listener.clone());
+            }
+        }
+        if let Some(payload) = snapshot {
+            listener(&payload);
+            return BackgroundSessionSubscription::noop();
+        }
+        BackgroundSessionSubscription {
+            session_id: session_id.to_string(),
+            listener_id: Some(listener_id),
+            manager: self,
+        }
+    }
+
+    fn unsubscribe(&self, session_id: &str, listener_id: u64) {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .expect("background session manager poisoned");
+        if let Some(session) = sessions.get_mut(session_id) {
+            session.listeners.remove(&listener_id);
+        }
     }
 
     pub fn check(&self, session_id: &str) -> Value {
@@ -75,7 +120,11 @@ impl BackgroundSessionManager {
         let elapsed = session.started_at.elapsed();
         if elapsed > Duration::from_secs(session.timeout_seconds) {
             session.finalize_timeout();
-            return session.snapshot();
+            let payload = session.snapshot();
+            let terminal_listeners = session.take_listeners();
+            drop(sessions);
+            notify_background_listeners(terminal_listeners, &payload);
+            return payload;
         }
 
         let Some(child) = session.child.as_mut() else {
@@ -86,15 +135,53 @@ impl BackgroundSessionManager {
         match child.try_wait() {
             Ok(Some(exit_status)) => {
                 session.finalize_completed(exit_status.code().unwrap_or(-1));
-                session.snapshot()
+                let payload = session.snapshot();
+                let terminal_listeners = session.take_listeners();
+                drop(sessions);
+                notify_background_listeners(terminal_listeners, &payload);
+                payload
             }
             Ok(None) => session.running_snapshot(elapsed),
             Err(error) => {
                 session.status = BackgroundStatus::Failed;
                 session.exit_code = Some(-1);
                 session.output = error.to_string();
-                session.snapshot()
+                let payload = session.snapshot();
+                let terminal_listeners = session.take_listeners();
+                drop(sessions);
+                notify_background_listeners(terminal_listeners, &payload);
+                payload
             }
+        }
+    }
+}
+
+pub struct BackgroundSessionSubscription {
+    session_id: String,
+    listener_id: Option<u64>,
+    manager: &'static BackgroundSessionManager,
+}
+
+impl BackgroundSessionSubscription {
+    fn noop() -> Self {
+        Self {
+            session_id: String::new(),
+            listener_id: None,
+            manager: background_session_manager(),
+        }
+    }
+
+    pub fn unsubscribe(mut self) {
+        if let Some(listener_id) = self.listener_id.take() {
+            self.manager.unsubscribe(&self.session_id, listener_id);
+        }
+    }
+}
+
+impl Drop for BackgroundSessionSubscription {
+    fn drop(&mut self) {
+        if let Some(listener_id) = self.listener_id.take() {
+            self.manager.unsubscribe(&self.session_id, listener_id);
         }
     }
 }
@@ -111,6 +198,7 @@ struct BackgroundSession {
     status: BackgroundStatus,
     output: String,
     exit_code: Option<i32>,
+    listeners: BTreeMap<u64, BackgroundSessionListener>,
 }
 
 impl BackgroundSession {
@@ -177,6 +265,10 @@ impl BackgroundSession {
         remove_captured_output(&self.output_path);
         self.child = None;
     }
+
+    fn take_listeners(&mut self) -> Vec<BackgroundSessionListener> {
+        std::mem::take(&mut self.listeners).into_values().collect()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -204,4 +296,10 @@ impl BackgroundStatus {
 
 fn display_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+fn notify_background_listeners(listeners: Vec<BackgroundSessionListener>, payload: &Value) {
+    for listener in listeners {
+        listener(payload);
+    }
 }
