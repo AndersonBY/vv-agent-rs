@@ -395,6 +395,7 @@ impl RuntimeSubAgentSession {
                     log_handler: Some(log_handler),
                     steering_queue: Some(self.steering_queue.clone()),
                     cancellation_token: None,
+                    execution_context: None,
                 },
             )
             .map_err(|error| error.to_string())?;

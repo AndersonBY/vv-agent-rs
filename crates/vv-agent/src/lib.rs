@@ -46,8 +46,8 @@ pub use runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 pub use runtime::stores::sqlite::SqliteStateStore;
 pub use runtime::{
     AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BeforeLlmEvent, BeforeLlmPatch,
-    BeforeToolCallEvent, BeforeToolCallPatch, CancellationToken, RuntimeEventHandler, RuntimeHook,
-    RuntimeHookManager, RuntimeRunControls,
+    BeforeToolCallEvent, BeforeToolCallPatch, CancellationToken, ExecutionContext,
+    RuntimeEventHandler, RuntimeHook, RuntimeHookManager, RuntimeRunControls, StreamCallback,
 };
 pub use sdk::{
     create_agent_session, query, run, AgentDefinition, AgentResourceLoader, AgentRun,

@@ -1,4 +1,5 @@
 pub mod backends;
+pub mod context;
 pub mod hooks;
 mod results;
 pub mod state;
@@ -28,6 +29,7 @@ use crate::types::{
 use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
 use self::backends::RuntimeExecutionBackend;
+pub use context::{ExecutionContext, StreamCallback};
 pub use hooks::{
     AfterLlmEvent, AfterToolCallEvent, BeforeLlmEvent, BeforeLlmPatch, BeforeToolCallEvent,
     BeforeToolCallPatch, RuntimeHook, RuntimeHookManager,
@@ -46,6 +48,17 @@ pub struct RuntimeRunControls {
     pub log_handler: Option<RuntimeEventHandler>,
     pub steering_queue: Option<Arc<Mutex<VecDeque<String>>>>,
     pub cancellation_token: Option<CancellationToken>,
+    pub execution_context: Option<ExecutionContext>,
+}
+
+impl RuntimeRunControls {
+    fn effective_cancellation_token(&self) -> Option<CancellationToken> {
+        self.cancellation_token.clone().or_else(|| {
+            self.execution_context
+                .as_ref()
+                .and_then(|context| context.cancellation_token.clone())
+        })
+    }
 }
 
 #[derive(Clone, Default)]
@@ -234,6 +247,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             return Ok(cancelled_agent_result(messages, cycles, shared_state));
         }
 
+        let effective_cancellation_token = controls.effective_cancellation_token();
         let mut pending_error = None;
         let result = self.execution_backend.execute(
             &task,
@@ -667,7 +681,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 }
                 None
             },
-            controls.cancellation_token.as_ref(),
+            effective_cancellation_token.as_ref(),
             task.max_cycles,
         );
         if let Some(error) = pending_error {
@@ -820,7 +834,7 @@ fn drain_steering_queue(controls: &RuntimeRunControls) -> Vec<String> {
 
 fn controls_cancelled(controls: &RuntimeRunControls) -> bool {
     controls
-        .cancellation_token
+        .effective_cancellation_token()
         .as_ref()
         .is_some_and(CancellationToken::is_cancelled)
 }

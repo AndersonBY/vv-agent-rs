@@ -1111,6 +1111,7 @@ impl<C: LlmClient + Clone + 'static> RunAgent for AgentRuntime<C> {
                     log_handler: request.runtime_event_handler,
                     steering_queue: request.steering_queue,
                     cancellation_token: request.cancellation_token,
+                    execution_context: None,
                 },
             )
             .map_err(|err| err.to_string())?;
@@ -1149,6 +1150,7 @@ impl RunAgent for ScriptedLlmClient {
                     log_handler: request.runtime_event_handler,
                     steering_queue: request.steering_queue,
                     cancellation_token: request.cancellation_token,
+                    execution_context: None,
                 },
             )
             .map_err(|err| err.to_string())

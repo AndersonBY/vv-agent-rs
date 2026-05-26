@@ -4,9 +4,9 @@ use vv_agent::{
     background_session_manager, build_default_registry, load_llm_settings_from_file,
     resolve_model_endpoint, AgentDefinition, AgentRuntime, AgentSDKClient, AgentSDKOptions,
     AgentStatus, AgentTask, BackgroundSessionListener, CancellationToken, CeleryBackend,
-    Checkpoint, ConfigError, EndpointConfig, EndpointOption, FileInfo, InMemoryStateStore,
-    InlineBackend, LLMResponse, LocalWorkspaceBackend, MemoryWorkspaceBackend, Message,
-    ResolvedModelConfig, RuntimeExecutionBackend, RuntimeRecipe, RuntimeRunControls,
+    Checkpoint, ConfigError, EndpointConfig, EndpointOption, ExecutionContext, FileInfo,
+    InMemoryStateStore, InlineBackend, LLMResponse, LocalWorkspaceBackend, MemoryWorkspaceBackend,
+    Message, ResolvedModelConfig, RuntimeExecutionBackend, RuntimeRecipe, RuntimeRunControls,
     S3WorkspaceBackend, S3WorkspaceConfig, ScriptedLlmClient, SessionCancellationHandle,
     SqliteStateStore, StateStore, ThreadBackend, ToolCall, ToolExecutionResult, ToolRegistry,
     WorkspaceBackend,
@@ -27,6 +27,7 @@ fn top_level_types_are_constructible() {
         .with_default_backend("deepseek")
         .with_sub_agent_timeout_seconds(30.0);
     let _token = CancellationToken::default();
+    let _context = ExecutionContext::default();
     let _controls = RuntimeRunControls::default();
     let _inline_backend = InlineBackend;
     let _execution_backend = RuntimeExecutionBackend::default();

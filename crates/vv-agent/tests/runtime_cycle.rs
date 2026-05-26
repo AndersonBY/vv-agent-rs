@@ -599,6 +599,34 @@ fn cancellation_token_callbacks_match_python_semantics() {
 }
 
 #[test]
+fn execution_context_cancellation_token_is_honored_by_runtime() {
+    let token = CancellationToken::default();
+    token.cancel();
+    let context = vv_agent::ExecutionContext::default().with_cancellation_token(token);
+    let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new(
+        "should not be used",
+    )]));
+
+    let result = runtime
+        .run_with_controls(
+            AgentTask::new("ctx_cancel_task", "demo", "system", "start"),
+            RuntimeRunControls {
+                execution_context: Some(context),
+                ..RuntimeRunControls::default()
+            },
+        )
+        .expect("cancelled result");
+
+    assert_eq!(result.status, AgentStatus::Failed);
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("cancelled"));
+    assert!(result.cycles.is_empty());
+}
+
+#[test]
 fn runtime_compacts_memory_before_large_follow_up_cycle() {
     let workspace = tempfile::tempdir().expect("workspace");
     let large_tool_payload = "tool output ".repeat(300);
