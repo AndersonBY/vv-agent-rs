@@ -223,7 +223,8 @@ The current Rust implementation includes:
 - Python-inspired runtime backend helpers: `InlineBackend`, `ThreadBackend`,
   `CeleryBackend`, and serializable `RuntimeRecipe` mirror the Python backend
   API surface for ordered `parallel_map`, thread `submit`, inline Celery
-  fallback, and distributed runtime recipe data.
+  fallback, distributed runtime recipe data, and `execute` cycle loops with
+  cancellation and max-cycle results.
 - Runtime checkpoint stores modeled after Python `runtime.state` and
   `runtime.stores.sqlite`: `Checkpoint`, `InMemoryStateStore`, and
   `SqliteStateStore` persist messages, cycles, status, and shared state for

@@ -3,10 +3,41 @@ use std::thread::{self, JoinHandle};
 
 use serde::{Deserialize, Serialize};
 
+use super::token_usage::summarize_task_token_usage;
+use super::CancellationToken;
+use crate::types::{AgentResult, AgentStatus, AgentTask, CycleRecord, Message, Metadata};
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct InlineBackend;
 
 impl InlineBackend {
+    pub fn execute<F>(
+        &self,
+        _task: &AgentTask,
+        initial_messages: Vec<Message>,
+        shared_state: Metadata,
+        cycle_executor: F,
+        cancellation_token: Option<&CancellationToken>,
+        max_cycles: u32,
+    ) -> AgentResult
+    where
+        F: FnMut(
+            u32,
+            &mut Vec<Message>,
+            &mut Vec<CycleRecord>,
+            &mut Metadata,
+            Option<&CancellationToken>,
+        ) -> Option<AgentResult>,
+    {
+        execute_cycle_loop(
+            initial_messages,
+            shared_state,
+            cycle_executor,
+            cancellation_token,
+            max_cycles,
+        )
+    }
+
     pub fn parallel_map<T, R, F>(&self, function: F, items: Vec<T>) -> Vec<R>
     where
         F: Fn(T) -> R,
@@ -35,6 +66,33 @@ impl ThreadBackend {
 
     pub fn max_workers(&self) -> usize {
         self.max_workers
+    }
+
+    pub fn execute<F>(
+        &self,
+        _task: &AgentTask,
+        initial_messages: Vec<Message>,
+        shared_state: Metadata,
+        cycle_executor: F,
+        cancellation_token: Option<&CancellationToken>,
+        max_cycles: u32,
+    ) -> AgentResult
+    where
+        F: FnMut(
+            u32,
+            &mut Vec<Message>,
+            &mut Vec<CycleRecord>,
+            &mut Metadata,
+            Option<&CancellationToken>,
+        ) -> Option<AgentResult>,
+    {
+        execute_cycle_loop(
+            initial_messages,
+            shared_state,
+            cycle_executor,
+            cancellation_token,
+            max_cycles,
+        )
     }
 
     pub fn submit<R, F>(&self, function: F) -> JoinHandle<R>
@@ -144,10 +202,101 @@ impl CeleryBackend {
         &self.cycle_task_name
     }
 
+    pub fn execute<F>(
+        &self,
+        _task: &AgentTask,
+        initial_messages: Vec<Message>,
+        shared_state: Metadata,
+        cycle_executor: F,
+        cancellation_token: Option<&CancellationToken>,
+        max_cycles: u32,
+    ) -> AgentResult
+    where
+        F: FnMut(
+            u32,
+            &mut Vec<Message>,
+            &mut Vec<CycleRecord>,
+            &mut Metadata,
+            Option<&CancellationToken>,
+        ) -> Option<AgentResult>,
+    {
+        execute_cycle_loop(
+            initial_messages,
+            shared_state,
+            cycle_executor,
+            cancellation_token,
+            max_cycles,
+        )
+    }
+
     pub fn parallel_map<T, R, F>(&self, function: F, items: Vec<T>) -> Vec<R>
     where
         F: Fn(T) -> R,
     {
         items.into_iter().map(function).collect()
+    }
+}
+
+fn execute_cycle_loop<F>(
+    mut messages: Vec<Message>,
+    mut shared_state: Metadata,
+    mut cycle_executor: F,
+    cancellation_token: Option<&CancellationToken>,
+    max_cycles: u32,
+) -> AgentResult
+where
+    F: FnMut(
+        u32,
+        &mut Vec<Message>,
+        &mut Vec<CycleRecord>,
+        &mut Metadata,
+        Option<&CancellationToken>,
+    ) -> Option<AgentResult>,
+{
+    let mut cycles = Vec::new();
+
+    for cycle_index in 1..=max_cycles {
+        if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
+            return cancelled_backend_result(messages, cycles, shared_state);
+        }
+        if let Some(result) = cycle_executor(
+            cycle_index,
+            &mut messages,
+            &mut cycles,
+            &mut shared_state,
+            cancellation_token,
+        ) {
+            return result;
+        }
+    }
+
+    let token_usage = summarize_task_token_usage(&cycles);
+    AgentResult {
+        status: AgentStatus::MaxCycles,
+        messages,
+        cycles,
+        final_answer: Some("Reached max cycles without finish signal.".to_string()),
+        wait_reason: None,
+        error: None,
+        shared_state,
+        token_usage,
+    }
+}
+
+fn cancelled_backend_result(
+    messages: Vec<Message>,
+    cycles: Vec<CycleRecord>,
+    shared_state: Metadata,
+) -> AgentResult {
+    let token_usage = summarize_task_token_usage(&cycles);
+    AgentResult {
+        status: AgentStatus::Failed,
+        messages,
+        cycles,
+        final_answer: None,
+        wait_reason: None,
+        error: Some("Operation was cancelled".to_string()),
+        shared_state,
+        token_usage,
     }
 }
