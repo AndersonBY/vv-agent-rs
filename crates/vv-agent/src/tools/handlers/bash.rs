@@ -9,7 +9,8 @@ use crate::processes::{
 };
 use crate::tools::base::ToolSpec;
 use crate::tools::common::{
-    resolve_workspace_path, tool_error_with_code, tool_result, workspace_relative_path_or_absolute,
+    path_escapes_workspace_error, tool_error_with_code, tool_result,
+    workspace_relative_path_or_absolute,
 };
 use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
 
@@ -46,7 +47,10 @@ pub(crate) fn bash_tool() -> ToolSpec {
                 .get("exec_dir")
                 .and_then(Value::as_str)
                 .unwrap_or(".");
-            let cwd = resolve_workspace_path(&context.workspace, exec_dir);
+            let cwd = match context.resolve_workspace_path(exec_dir) {
+                Ok(cwd) => cwd,
+                Err(error) => return path_escapes_workspace_error(error),
+            };
             if !cwd.is_dir() {
                 return tool_error_with_code(
                     format!("exec_dir not found: {exec_dir}"),

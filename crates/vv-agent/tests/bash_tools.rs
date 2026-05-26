@@ -174,3 +174,28 @@ fn bash_tool_passes_stdin_to_command() {
     assert_eq!(payload["exit_code"], 0);
     assert_eq!(payload["output"], "hello from stdin\n");
 }
+
+#[test]
+fn bash_tool_rejects_exec_dir_outside_workspace_by_default() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let outside = tempfile::tempdir().expect("outside");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "bash_escape",
+                "bash",
+                BTreeMap::from([
+                    ("command".to_string(), json!("pwd")),
+                    ("exec_dir".to_string(), json!(outside.path())),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("bash tool");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("path_escapes_workspace"));
+}

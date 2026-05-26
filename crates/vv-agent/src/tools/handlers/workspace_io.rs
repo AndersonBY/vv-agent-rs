@@ -3,7 +3,11 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::ToolSpec;
+use crate::tools::common::path_escapes_workspace_error;
 use crate::tools::common::{collect_ignored_roots, is_ignored_root, replace_n, tool_error};
+
+const READ_FILE_MAX_LINES: usize = 2_000;
+const READ_FILE_MAX_CHARS: usize = 50_000;
 
 pub(crate) fn list_files_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
@@ -24,6 +28,9 @@ pub(crate) fn list_files_tool() -> ToolSpec {
                 .get("include_ignored")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            if let Err(error) = context.resolve_workspace_path(path) {
+                return path_escapes_workspace_error(error);
+            }
             match context.workspace_backend.list_files(path, glob) {
                 Ok(mut files) => {
                     let ignored_roots = if include_ignored || path != "." {
@@ -82,6 +89,9 @@ pub(crate) fn file_info_tool() -> ToolSpec {
             let Some(path) = arguments.get("path").and_then(Value::as_str) else {
                 return tool_error("missing required argument: path");
             };
+            if let Err(error) = context.resolve_workspace_path(path) {
+                return path_escapes_workspace_error(error);
+            }
             match context.workspace_backend.file_info(path) {
                 Ok(Some(info)) => {
                     let mut payload = json!({
@@ -116,6 +126,9 @@ pub(crate) fn read_file_tool() -> ToolSpec {
             let Some(path) = arguments.get("path").and_then(Value::as_str) else {
                 return tool_error("missing required argument: path");
             };
+            if let Err(error) = context.resolve_workspace_path(path) {
+                return path_escapes_workspace_error(error);
+            }
             if !context.workspace_backend.is_file(path) {
                 return tool_error(format!("file not found: {path}"));
             }
@@ -138,6 +151,9 @@ pub(crate) fn read_file_tool() -> ToolSpec {
                     let start_index = start_line.saturating_sub(1).min(lines.len());
                     let end_index = end_line.unwrap_or(lines.len()).min(lines.len());
                     let selected = &lines[start_index..end_index];
+                    let selected_line_count = selected.len();
+                    let actual_start_line = start_index + 1;
+                    let actual_end_line = start_index + selected_line_count;
                     let content = selected
                         .iter()
                         .enumerate()
@@ -150,12 +166,49 @@ pub(crate) fn read_file_tool() -> ToolSpec {
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
+                    if selected_line_count > READ_FILE_MAX_LINES
+                        || content.len() > READ_FILE_MAX_CHARS
+                    {
+                        let total_lines = lines.len();
+                        let total_chars = text.len();
+                        let suggested_start = start_line.min(total_lines.max(1));
+                        let suggested_end =
+                            (suggested_start + READ_FILE_MAX_LINES - 1).min(total_lines);
+                        return crate::types::ToolExecutionResult::success(
+                            "",
+                            json!({
+                                "path": path,
+                                "start_line": actual_start_line,
+                                "end_line": actual_end_line,
+                                "show_line_numbers": show_line_numbers,
+                                "content": Value::Null,
+                                "file_info": {
+                                    "total_lines": total_lines,
+                                    "total_chars": total_chars,
+                                },
+                                "requested": {
+                                    "line_count": selected_line_count,
+                                    "char_count": content.len(),
+                                },
+                                "limits": {
+                                    "max_lines": READ_FILE_MAX_LINES,
+                                    "max_chars": READ_FILE_MAX_CHARS,
+                                },
+                                "suggested_range": {
+                                    "start_line": suggested_start,
+                                    "end_line": suggested_end,
+                                },
+                                "message": "Requested read exceeds limits. Use start_line/end_line for a smaller range.",
+                            })
+                            .to_string(),
+                        );
+                    }
                     crate::types::ToolExecutionResult::success(
                         "",
                         json!({
                             "path": path,
-                            "start_line": start_index + 1,
-                            "end_line": start_index + selected.len(),
+                            "start_line": actual_start_line,
+                            "end_line": actual_end_line,
                             "show_line_numbers": show_line_numbers,
                             "content": content,
                         })
@@ -180,6 +233,9 @@ pub(crate) fn write_file_tool() -> ToolSpec {
             let Some(path) = arguments.get("path").and_then(Value::as_str) else {
                 return tool_error("missing required argument: path");
             };
+            if let Err(error) = context.resolve_workspace_path(path) {
+                return path_escapes_workspace_error(error);
+            }
             let content = arguments
                 .get("content")
                 .and_then(Value::as_str)
@@ -238,6 +294,9 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
             let Some(path) = arguments.get("path").and_then(Value::as_str) else {
                 return tool_error("missing required argument: path");
             };
+            if let Err(error) = context.resolve_workspace_path(path) {
+                return path_escapes_workspace_error(error);
+            }
             if !context.workspace_backend.is_file(path) {
                 return tool_error(format!("file not found: {path}"));
             }

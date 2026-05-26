@@ -95,6 +95,12 @@ The current Rust implementation includes:
   `file_str_replace`, `workspace_grep`, `read_image`), memory notes through
   `compress_memory`, and `bash` / `check_background_command` command tools with
   captured output, stdin, foreground timeout handoff, and background polling.
+- Python-compatible workspace path safety: file, image, grep, and bash tools
+  reject paths outside the workspace by default, with metadata-controlled
+  outside-path access for trusted tasks.
+- Python-compatible `read_file` response limiting: large reads return file
+  statistics, request size, limits, and a suggested line range instead of
+  flooding the LLM context.
 - Sub-agent tool protocol support for `create_sub_task` / `sub_task_status`,
   including injected synchronous runners and batch aggregation.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`

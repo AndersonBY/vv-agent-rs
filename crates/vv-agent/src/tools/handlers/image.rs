@@ -5,7 +5,7 @@ use base64::Engine as _;
 use serde_json::{json, Value};
 
 use crate::tools::base::ToolSpec;
-use crate::tools::common::{tool_error_with_code, tool_result};
+use crate::tools::common::{path_escapes_workspace_error, tool_error_with_code, tool_result};
 use crate::types::{ToolDirective, ToolResultStatus};
 
 pub(crate) fn read_image_tool() -> ToolSpec {
@@ -35,6 +35,9 @@ pub(crate) fn read_image_tool() -> ToolSpec {
                 );
                 result.image_url = Some(raw_path.to_string());
                 return result;
+            }
+            if let Err(error) = context.resolve_workspace_path(raw_path) {
+                return path_escapes_workspace_error(error);
             }
             if !context.workspace_backend.exists(raw_path)
                 || !context.workspace_backend.is_file(raw_path)

@@ -58,13 +58,8 @@ pub(crate) fn tool_error_with_code(
     }
 }
 
-pub(crate) fn resolve_workspace_path(workspace: &Path, path: &str) -> PathBuf {
-    let candidate = Path::new(path);
-    if candidate.is_absolute() {
-        candidate.to_path_buf()
-    } else {
-        workspace.join(candidate)
-    }
+pub(crate) fn path_escapes_workspace_error(message: impl Into<String>) -> ToolExecutionResult {
+    tool_error_with_code(message, "path_escapes_workspace")
 }
 
 pub(crate) fn collect_workspace_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {

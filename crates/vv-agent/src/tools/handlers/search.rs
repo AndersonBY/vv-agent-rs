@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use crate::tools::base::ToolSpec;
 use crate::tools::common::{
     collect_workspace_files, grep_text, is_hidden_path, is_ignored_root, is_supported_file_type,
-    matches_file_type, resolve_workspace_path, tool_error, tool_result,
+    matches_file_type, path_escapes_workspace_error, tool_error, tool_result,
     workspace_relative_path_or_absolute, GrepTextOptions,
 };
 use crate::types::{ToolDirective, ToolResultStatus};
@@ -93,7 +93,10 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 !pattern.chars().any(char::is_uppercase)
             };
 
-            let target_path = resolve_workspace_path(&context.workspace, path);
+            let target_path = match context.resolve_workspace_path(path) {
+                Ok(path) => path,
+                Err(error) => return path_escapes_workspace_error(error),
+            };
             let mut candidate_files = Vec::new();
             if target_path.is_file() {
                 candidate_files.push(target_path);

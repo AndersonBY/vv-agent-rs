@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{json, Value};
@@ -51,6 +51,90 @@ impl ToolContext {
             sub_task_runner: None,
         }
     }
+
+    pub fn allow_outside_workspace_paths(&self) -> bool {
+        for key in [
+            "allow_outside_workspace_paths",
+            "allow_outside_workspace",
+            "workspace_allow_outside_main",
+            "workspace_allow_outside",
+        ] {
+            if let Some(parsed) = parse_bool(self.metadata.get(key)) {
+                return parsed;
+            }
+        }
+        false
+    }
+
+    pub fn resolve_workspace_path(&self, raw_path: &str) -> Result<PathBuf, String> {
+        resolve_workspace_path_checked(
+            &self.workspace,
+            raw_path,
+            self.allow_outside_workspace_paths(),
+        )
+    }
+}
+
+pub(crate) fn resolve_workspace_path_checked(
+    workspace: &Path,
+    raw_path: &str,
+    allow_outside_workspace_paths: bool,
+) -> Result<PathBuf, String> {
+    let base = workspace
+        .canonicalize()
+        .unwrap_or_else(|_| absolutize_without_canonicalizing(workspace));
+    let candidate = Path::new(raw_path);
+    let target = if candidate.is_absolute() {
+        absolutize_without_canonicalizing(candidate)
+    } else {
+        absolutize_without_canonicalizing(&base.join(candidate))
+    };
+    let normalized = normalize_path(target);
+    if !allow_outside_workspace_paths && normalized != base && !normalized.starts_with(&base) {
+        return Err(format!("Path escapes workspace: {raw_path}"));
+    }
+    Ok(normalized)
+}
+
+fn parse_bool(value: Option<&Value>) -> Option<bool> {
+    match value {
+        Some(Value::Bool(value)) => Some(*value),
+        Some(Value::Number(number)) => number.as_i64().and_then(|value| match value {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        }),
+        Some(Value::String(value)) => match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn absolutize_without_canonicalizing(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
+}
+
+fn normalize_path(path: PathBuf) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 #[derive(Clone)]

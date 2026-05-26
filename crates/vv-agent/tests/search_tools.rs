@@ -154,3 +154,29 @@ fn workspace_grep_supports_context_lines_and_file_targets() {
     assert_eq!(lines[0]["is_match"], false);
     assert_eq!(lines[1]["is_match"], true);
 }
+
+#[test]
+fn workspace_grep_rejects_paths_outside_workspace_by_default() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let outside = tempfile::tempdir().expect("outside");
+    std::fs::write(outside.path().join("secret.txt"), "Agent outside").expect("outside file");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "grep_escape",
+                "workspace_grep",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("Agent")),
+                    ("path".to_string(), json!(outside.path())),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("path_escapes_workspace"));
+}

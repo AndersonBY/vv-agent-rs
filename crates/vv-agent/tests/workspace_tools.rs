@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
 #[test]
@@ -105,4 +105,121 @@ fn file_info_reports_file_metadata() {
     assert!(info.content.contains("\"exists\":true"));
     assert!(info.content.contains("\"size\":5"));
     assert!(info.content.contains("\"suffix\":\"md\""));
+}
+
+#[test]
+fn workspace_file_tools_reject_paths_outside_workspace_by_default() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let outside = tempfile::tempdir().expect("outside");
+    let outside_file = outside.path().join("escape.txt");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let write = registry
+        .execute(
+            &ToolCall::new(
+                "write_escape",
+                "write_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!(outside_file)),
+                    ("content".to_string(), json!("escaped")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("write tool");
+
+    assert_eq!(write.status, ToolResultStatus::Error);
+    assert_eq!(write.error_code.as_deref(), Some("path_escapes_workspace"));
+    assert!(!outside_file.exists());
+
+    let read = registry
+        .execute(
+            &ToolCall::new(
+                "read_escape",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!(outside_file))]),
+            ),
+            &mut context,
+        )
+        .expect("read tool");
+
+    assert_eq!(read.status, ToolResultStatus::Error);
+    assert_eq!(read.error_code.as_deref(), Some("path_escapes_workspace"));
+}
+
+#[test]
+fn workspace_file_tools_can_access_outside_paths_when_metadata_allows_it() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let outside = tempfile::tempdir().expect("outside");
+    let outside_file = outside.path().join("allowed.txt");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.metadata.insert(
+        "allow_outside_workspace_paths".to_string(),
+        Value::Bool(true),
+    );
+
+    let write = registry
+        .execute(
+            &ToolCall::new(
+                "write_allowed",
+                "write_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!(outside_file)),
+                    ("content".to_string(), json!("allowed")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("write tool");
+    assert_eq!(write.status, ToolResultStatus::Success);
+
+    let read = registry
+        .execute(
+            &ToolCall::new(
+                "read_allowed",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!(outside_file))]),
+            ),
+            &mut context,
+        )
+        .expect("read tool");
+    assert_eq!(read.status, ToolResultStatus::Success);
+    assert!(read.content.contains("allowed"));
+}
+
+#[test]
+fn read_file_returns_file_info_when_requested_slice_exceeds_limits() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    let large_content = (0..2_001)
+        .map(|line| format!("line-{line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(workspace.path().join("large.txt"), large_content).expect("large file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "read_large",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!("large.txt"))]),
+            ),
+            &mut context,
+        )
+        .expect("read tool");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["content"], Value::Null);
+    assert_eq!(payload["file_info"]["total_lines"], 2_001);
+    assert_eq!(payload["limits"]["max_lines"], 2_000);
+    assert_eq!(payload["suggested_range"]["start_line"], 1);
+    assert_eq!(payload["suggested_range"]["end_line"], 2_000);
+    assert!(payload["message"]
+        .as_str()
+        .expect("message")
+        .contains("exceeds limits"));
 }
