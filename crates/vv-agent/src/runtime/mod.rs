@@ -550,6 +550,12 @@ where
             "tool_result_excerpt_tail",
             200,
         ),
+        tool_calls_keep_last: read_usize_metadata(&task.metadata, "tool_calls_keep_last", 3),
+        assistant_no_tool_keep_last: read_usize_metadata(
+            &task.metadata,
+            "assistant_no_tool_keep_last",
+            1,
+        ),
         tool_result_artifact_dir: metadata_path(
             &task.metadata,
             "tool_result_artifact_dir",

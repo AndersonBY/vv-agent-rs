@@ -133,6 +133,10 @@ The current Rust implementation includes:
   `post_compact_restore`: summaries now track file actions as structured
   `path/action/summary` entries and restore key workspace files under a bounded
   `<Post-Compaction File Context>` block.
+- Python-style message sanitization for resume/compaction: blank and
+  thinking-only assistant messages are removed, orphan tool results and
+  unresolved tail tool calls are pruned, and memory compaction normalizes stale
+  tool-call boundaries before summarizing.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
   canonical `schemas`, shared `common` helpers, and focused handler modules.
 - Split `activate_skill` handling into model, parser, normalization, and shared

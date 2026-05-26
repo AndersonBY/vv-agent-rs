@@ -274,6 +274,72 @@ fn memory_manager_emergency_compact_preserves_recent_tool_context() {
 }
 
 #[test]
+fn memory_manager_normalizes_orphan_tool_messages_with_reused_call_id() {
+    let mut manager = MemoryManager::new(MemoryManagerConfig {
+        tool_calls_keep_last: 1,
+        assistant_no_tool_keep_last: 10,
+        ..MemoryManagerConfig::default()
+    });
+    let messages = vec![
+        Message::system("sys"),
+        Message {
+            tool_calls: vec![ToolCall::new(
+                "screen_capture:4",
+                "screen_capture",
+                BTreeMap::new(),
+            )],
+            ..Message::assistant("first capture request")
+        },
+        Message::tool("first result", "screen_capture:4"),
+        Message::assistant("narration"),
+        Message {
+            tool_calls: vec![ToolCall::new(
+                "screen_capture:4",
+                "screen_capture",
+                BTreeMap::new(),
+            )],
+            ..Message::assistant("second capture request")
+        },
+        Message::tool("second result", "screen_capture:4"),
+    ];
+
+    let (compacted, changed) = manager.compact(&messages, true);
+
+    assert!(changed);
+    assert!(!compacted[1].content.contains("first result"));
+    assert!(compacted[1].content.contains("second result"));
+    assert!(compacted[1].content.contains("second capture request"));
+}
+
+#[test]
+fn memory_manager_drops_excess_tool_results_per_call_id() {
+    let mut manager = MemoryManager::new(MemoryManagerConfig {
+        compact_threshold: 10,
+        model_context_window: 80,
+        reserved_output_tokens: 10,
+        autocompact_buffer_tokens: 0,
+        ..MemoryManagerConfig::default()
+    });
+    let messages = vec![
+        Message::system("sys"),
+        Message::user("run tool"),
+        Message {
+            tool_calls: vec![ToolCall::new("call_1", "bash", BTreeMap::new())],
+            ..Message::assistant("call")
+        },
+        Message::tool("first", "call_1"),
+        Message::tool("second", "call_1"),
+        Message::assistant("done"),
+    ];
+
+    let (compacted, changed) = manager.compact(&messages, true);
+
+    assert!(changed);
+    assert!(compacted[1].content.contains("first"));
+    assert!(!compacted[1].content.contains("second"));
+}
+
+#[test]
 fn session_memory_extracts_new_messages_and_renders_grouped_context() {
     let prompts = Arc::new(Mutex::new(Vec::<String>::new()));
     let captured_prompts = Arc::clone(&prompts);

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::memory::artifacts::{
     compact_tool_results, render_persisted_artifacts_section, ToolResultArtifactConfig,
 };
+use crate::memory::message_sanitizer::filter_empty_assistant_messages;
 use crate::memory::microcompact::{microcompact, MicrocompactConfig};
 use crate::memory::post_compact_restore::{restore_key_files, PostCompactRestoreConfig};
 use crate::memory::session::SessionMemory;
@@ -25,6 +26,8 @@ pub struct MemoryManagerConfig {
     pub tool_result_keep_last: usize,
     pub tool_result_excerpt_head: usize,
     pub tool_result_excerpt_tail: usize,
+    pub tool_calls_keep_last: usize,
+    pub assistant_no_tool_keep_last: usize,
     pub tool_result_artifact_dir: PathBuf,
     pub microcompact_trigger_ratio: f64,
     pub microcompact_keep_recent_cycles: usize,
@@ -47,6 +50,8 @@ impl Default for MemoryManagerConfig {
             tool_result_keep_last: 3,
             tool_result_excerpt_head: 200,
             tool_result_excerpt_tail: 200,
+            tool_calls_keep_last: 3,
+            assistant_no_tool_keep_last: 1,
             tool_result_artifact_dir: PathBuf::from(".memory/tool_results"),
             microcompact_trigger_ratio: 0.75,
             microcompact_keep_recent_cycles: 3,
@@ -96,7 +101,7 @@ impl MemoryManager {
         }
 
         let cleaned = self.remove_previous_summary(messages);
-        let sanitized = sanitize_empty_assistant_messages(cleaned);
+        let sanitized = filter_empty_assistant_messages(&cleaned);
         let changed_by_sanitize = sanitized.len() != messages.len()
             || sanitized
                 .iter()
@@ -255,8 +260,9 @@ impl MemoryManager {
             .iter()
             .find(|message| message.role == MessageRole::System)
             .cloned();
-        let (messages_for_summary, artifacts, _) = compact_tool_results(
-            messages,
+        let (messages_for_summary, _normalized) = self.normalize_compaction_messages(messages);
+        let (messages_for_summary, artifacts, _compacted_tools) = compact_tool_results(
+            &messages_for_summary,
             &ToolResultArtifactConfig {
                 workspace: self.config.workspace.clone(),
                 artifact_dir: self.config.tool_result_artifact_dir.clone(),
@@ -298,21 +304,145 @@ impl MemoryManager {
         )));
         (compacted, true)
     }
+
+    fn normalize_compaction_messages(&self, messages: &[Message]) -> (Vec<Message>, bool) {
+        let (messages, stripped) = self.strip_stale_tool_calls(messages);
+        let (messages, normalized) = normalize_orphan_tool_messages(&messages);
+        let (messages, collapsed) = self.collapse_assistant_no_tool_messages(&messages);
+        let sanitized = filter_empty_assistant_messages(&messages);
+        let sanitized_changed = sanitized.len() != messages.len()
+            || sanitized
+                .iter()
+                .zip(messages.iter())
+                .any(|(left, right)| left != right);
+        (
+            sanitized,
+            stripped || normalized || collapsed || sanitized_changed,
+        )
+    }
+
+    fn strip_stale_tool_calls(&self, messages: &[Message]) -> (Vec<Message>, bool) {
+        let keep_count = self.config.tool_calls_keep_last;
+        let tool_call_indices = messages
+            .iter()
+            .enumerate()
+            .filter_map(|(index, message)| {
+                (message.role == MessageRole::Assistant && !message.tool_calls.is_empty())
+                    .then_some(index)
+            })
+            .collect::<Vec<_>>();
+        let keep_indices = if keep_count == 0 {
+            Vec::new()
+        } else {
+            tool_call_indices
+                .iter()
+                .rev()
+                .take(keep_count)
+                .copied()
+                .collect::<Vec<_>>()
+        };
+
+        let mut changed = false;
+        let mut stripped = Vec::with_capacity(messages.len());
+        for (index, message) in messages.iter().enumerate() {
+            if message.role == MessageRole::Assistant
+                && !message.tool_calls.is_empty()
+                && !keep_indices.contains(&index)
+            {
+                changed = true;
+                let mut updated = message.clone();
+                updated.tool_calls.clear();
+                if updated.content.trim().is_empty() {
+                    continue;
+                }
+                stripped.push(updated);
+            } else {
+                stripped.push(message.clone());
+            }
+        }
+        (stripped, changed)
+    }
+
+    fn collapse_assistant_no_tool_messages(&self, messages: &[Message]) -> (Vec<Message>, bool) {
+        let keep_last = self.config.assistant_no_tool_keep_last;
+        if keep_last == 0 {
+            return (messages.to_vec(), false);
+        }
+        let mut changed = false;
+        let mut collapsed = Vec::with_capacity(messages.len());
+        let mut run_buffer = Vec::<Message>::new();
+        for message in messages {
+            if message.role == MessageRole::Assistant && message.tool_calls.is_empty() {
+                run_buffer.push(message.clone());
+                continue;
+            }
+            flush_assistant_run(&mut collapsed, &mut run_buffer, keep_last, &mut changed);
+            collapsed.push(message.clone());
+        }
+        flush_assistant_run(&mut collapsed, &mut run_buffer, keep_last, &mut changed);
+        (collapsed, changed)
+    }
 }
 
 fn sanitize_empty_assistant_messages(messages: Vec<Message>) -> Vec<Message> {
-    messages
-        .into_iter()
-        .filter(|message| {
-            message.role != MessageRole::Assistant
-                || !message.content.trim().is_empty()
-                || !message.tool_calls.is_empty()
-                || message
-                    .reasoning_content
-                    .as_deref()
-                    .is_some_and(|text| !text.trim().is_empty())
-        })
-        .collect()
+    filter_empty_assistant_messages(&messages)
+}
+
+fn normalize_orphan_tool_messages(messages: &[Message]) -> (Vec<Message>, bool) {
+    let mut changed = false;
+    let mut pending_tool_calls = std::collections::BTreeMap::<String, usize>::new();
+    let mut normalized = Vec::with_capacity(messages.len());
+    for message in messages {
+        if message.role == MessageRole::Assistant && !message.tool_calls.is_empty() {
+            for tool_call in &message.tool_calls {
+                let tool_call_id = tool_call.id.trim();
+                if tool_call_id.is_empty() {
+                    continue;
+                }
+                *pending_tool_calls
+                    .entry(tool_call_id.to_string())
+                    .or_default() += 1;
+            }
+            normalized.push(message.clone());
+            continue;
+        }
+
+        if message.role == MessageRole::Tool {
+            let tool_call_id = message.tool_call_id.as_deref().unwrap_or_default().trim();
+            if tool_call_id.is_empty() {
+                changed = true;
+                continue;
+            }
+            let remaining = pending_tool_calls.get(tool_call_id).copied().unwrap_or(0);
+            if remaining == 0 {
+                changed = true;
+                continue;
+            }
+            pending_tool_calls.insert(tool_call_id.to_string(), remaining - 1);
+        }
+        normalized.push(message.clone());
+    }
+    (normalized, changed)
+}
+
+fn flush_assistant_run(
+    collapsed: &mut Vec<Message>,
+    run_buffer: &mut Vec<Message>,
+    keep_last: usize,
+    changed: &mut bool,
+) {
+    if run_buffer.is_empty() {
+        return;
+    }
+    if run_buffer.len() > keep_last {
+        *changed = true;
+        let start = run_buffer.len() - keep_last;
+        collapsed.extend(run_buffer[start..].iter().cloned());
+    } else {
+        collapsed.append(run_buffer);
+        return;
+    }
+    run_buffer.clear();
 }
 
 fn extract_original_user_request(messages: &[Message]) -> Option<String> {

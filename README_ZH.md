@@ -102,6 +102,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 已加入 Python 风格 microcompact：在 full summary compaction 之前清理旧的大型可压缩工具结果，保留近期工具上下文，同时降低长任务的 prompt 压力。
 - 已加入参考 Python `CycleRunner` 的 prompt-too-long 重试：runtime 会识别常见 provider 上下文超限错误，先强制 normal memory compaction，再退到 emergency compaction 切片，并保留 system message 和近期工具上下文后重试。
 - 已加入参考 Python `post_compact_restore` 的 compaction 后关键文件恢复：summary 会用结构化 `path/action/summary` 记录文件动作，并在预算内把关键 workspace 文件内容放回 `<Post-Compaction File Context>`。
+- 已加入 Python 风格 resume / compaction message sanitizer：会移除空 assistant、thinking-only assistant、孤儿 tool result 和未完成的尾部 tool calls，并在 memory compaction 前归一化陈旧 tool-call 边界。
 - `tools/` 已按 Python `v-agent` 的结构拆分为 `base`、`registry`、canonical `schemas`、共享 `common` helper 和各个 handler 模块。
 - `activate_skill` handler 已拆成模型、解析、归一化和 shared state helper，更接近 Python `v-agent` 的 skill 边界。
 - 默认工具 schema 使用参考 Python `v-agent` 的高信息量描述，让模型拿到文件访问、grep、bash / 后台命令、todo、skills、图片和 sub-agent 的完整操作指引。
