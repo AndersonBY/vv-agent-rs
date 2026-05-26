@@ -195,6 +195,40 @@ fn memory_manager_uses_microcompact_before_full_summary() {
 }
 
 #[test]
+fn memory_manager_emergency_compact_preserves_recent_tool_context() {
+    let manager = MemoryManager::new(MemoryManagerConfig {
+        keep_recent_messages: 2,
+        ..MemoryManagerConfig::default()
+    });
+    let messages = vec![
+        Message::system("sys"),
+        Message::user("old request"),
+        Message {
+            tool_calls: vec![ToolCall::new("call_1", "read_file", BTreeMap::new())],
+            ..Message::assistant("call tool")
+        },
+        Message::tool("tool result", "call_1"),
+        Message::assistant("recent analysis"),
+        Message::user("latest ask"),
+    ];
+
+    let compacted = manager.emergency_compact(&messages, 0.5);
+
+    assert_eq!(compacted[0].content, "sys");
+    assert!(compacted
+        .iter()
+        .all(|message| message.content != "old request"));
+    assert!(compacted
+        .iter()
+        .any(|message| message.role == vv_agent::MessageRole::Assistant
+            && !message.tool_calls.is_empty()));
+    assert!(compacted.iter().any(|message| {
+        message.role == vv_agent::MessageRole::Tool
+            && message.tool_call_id.as_deref() == Some("call_1")
+    }));
+}
+
+#[test]
 fn session_memory_extracts_new_messages_and_renders_grouped_context() {
     let prompts = Arc::new(Mutex::new(Vec::<String>::new()));
     let captured_prompts = Arc::clone(&prompts);

@@ -29,6 +29,7 @@ use results::{assistant_message_from_response, extract_final_message, extract_wa
 
 pub type RuntimeLogCallback = dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static;
 pub type RuntimeLogHandler = Arc<Mutex<Box<RuntimeLogCallback>>>;
+const MAX_PROMPT_TOO_LONG_RETRIES: u32 = 3;
 
 #[derive(Debug, Clone, Default)]
 pub struct CancellationToken {
@@ -126,9 +127,48 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 tool_schemas,
                 &shared_state,
             );
-            let mut request = LlmRequest::new(task.model.clone(), request_messages.clone());
-            request.tools = request_tool_schemas.clone();
-            let response = self.llm_client.complete(request)?;
+            let mut request_messages = request_messages;
+            let mut request_tool_schemas = request_tool_schemas;
+            let mut memory_compacted = memory_compacted;
+            let mut prompt_too_long_retries = 0;
+            let response = loop {
+                let mut request = LlmRequest::new(task.model.clone(), request_messages.clone());
+                request.tools = request_tool_schemas.clone();
+                match self.llm_client.complete(request) {
+                    Ok(response) => break response,
+                    Err(error) if is_prompt_too_long_error(&error) => {
+                        prompt_too_long_retries += 1;
+                        if prompt_too_long_retries > MAX_PROMPT_TOO_LONG_RETRIES {
+                            return Err(error);
+                        }
+                        memory_compacted = true;
+                        let retry_messages = if prompt_too_long_retries == 1 {
+                            let (compacted, _) = memory_manager.compact_for_cycle(
+                                &request_messages,
+                                cycle_index,
+                                true,
+                            );
+                            compacted
+                        } else {
+                            memory_manager.emergency_compact(
+                                &request_messages,
+                                (0.2 * prompt_too_long_retries as f64).min(0.95),
+                            )
+                        };
+                        let retry_tool_schemas = self.planned_tool_schemas(&task);
+                        let llm_messages =
+                            memory_manager.apply_session_memory_context(&retry_messages);
+                        (request_messages, request_tool_schemas) = hook_manager.apply_before_llm(
+                            &task,
+                            cycle_index,
+                            llm_messages,
+                            retry_tool_schemas,
+                            &shared_state,
+                        );
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
             let response = hook_manager.apply_after_llm(
                 &task,
                 cycle_index,
@@ -430,6 +470,20 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             ]),
         );
     }
+}
+
+fn is_prompt_too_long_error(error: &LlmError) -> bool {
+    let text = error.to_string().to_ascii_lowercase();
+    [
+        "prompt is too long",
+        "prompt_too_long",
+        "context_length_exceeded",
+        "maximum context length",
+        "request too large",
+        "too many tokens",
+    ]
+    .iter()
+    .any(|pattern| text.contains(pattern))
 }
 
 fn execute_tool_result(

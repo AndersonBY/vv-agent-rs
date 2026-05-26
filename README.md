@@ -125,6 +125,10 @@ The current Rust implementation includes:
 - Python-style microcompact support clears old, large, compactable tool results
   before full summary compaction, preserving recent tool context while reducing
   prompt pressure during long runs.
+- Prompt-too-long retries modeled after Python `CycleRunner`: runtime detects
+  common provider context-window errors, forces normal memory compaction once,
+  then falls back to emergency compaction slices that preserve system and recent
+  tool context before retrying.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
   canonical `schemas`, shared `common` helpers, and focused handler modules.
 - Split `activate_skill` handling into model, parser, normalization, and shared
