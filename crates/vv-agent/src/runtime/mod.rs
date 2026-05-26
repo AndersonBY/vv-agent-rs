@@ -98,7 +98,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             ]),
         );
 
-        let memory_manager = build_memory_manager(&task);
+        let memory_manager = build_memory_manager(&task, workspace_path.clone());
 
         for cycle_index in 0..task.max_cycles {
             self.emit_log(
@@ -449,7 +449,7 @@ fn execute_tool_result(
         })
 }
 
-fn build_memory_manager(task: &AgentTask) -> MemoryManager {
+fn build_memory_manager(task: &AgentTask, workspace_path: PathBuf) -> MemoryManager {
     MemoryManager::new(MemoryManagerConfig {
         compact_threshold: task.memory_compact_threshold,
         keep_recent_messages: read_usize_metadata(
@@ -466,6 +466,28 @@ fn build_memory_manager(task: &AgentTask) -> MemoryManager {
             13_000,
         ),
         summary_event_limit: read_usize_metadata(&task.metadata, "summary_event_limit", 40),
+        tool_result_compact_threshold: read_usize_metadata(
+            &task.metadata,
+            "tool_result_compact_threshold",
+            2_000,
+        ),
+        tool_result_keep_last: read_usize_metadata(&task.metadata, "tool_result_keep_last", 3),
+        tool_result_excerpt_head: read_usize_metadata(
+            &task.metadata,
+            "tool_result_excerpt_head",
+            200,
+        ),
+        tool_result_excerpt_tail: read_usize_metadata(
+            &task.metadata,
+            "tool_result_excerpt_tail",
+            200,
+        ),
+        tool_result_artifact_dir: metadata_path(
+            &task.metadata,
+            "tool_result_artifact_dir",
+            ".memory/tool_results",
+        ),
+        workspace: task.use_workspace.then_some(workspace_path),
     })
 }
 
@@ -482,4 +504,14 @@ fn read_u64_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: u64
 
 fn read_usize_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: usize) -> usize {
     read_u64_metadata(metadata, key, default as u64) as usize
+}
+
+fn metadata_path(metadata: &BTreeMap<String, Value>, key: &str, default: &str) -> PathBuf {
+    metadata
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(default))
 }

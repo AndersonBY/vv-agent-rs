@@ -48,6 +48,7 @@ fn memory_manager_compacts_to_original_request_and_summary_block() {
         keep_recent_messages: 3,
         model: "demo".to_string(),
         summary_event_limit: 5,
+        ..MemoryManagerConfig::default()
     });
     let messages = vec![
         Message::system("system"),
@@ -101,4 +102,55 @@ fn memory_threshold_uses_configured_and_model_derived_ceiling() {
         compute_compaction_threshold(0, 60_000, 10_000, 5_000),
         45_000
     );
+}
+
+#[test]
+fn memory_manager_persists_large_tool_results_as_artifacts() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let large_tool_result = "x".repeat(240);
+    let manager = MemoryManager::new(MemoryManagerConfig {
+        compact_threshold: 10,
+        model_context_window: 80,
+        reserved_output_tokens: 10,
+        autocompact_buffer_tokens: 0,
+        tool_result_compact_threshold: 30,
+        tool_result_keep_last: 0,
+        tool_result_excerpt_head: 12,
+        tool_result_excerpt_tail: 10,
+        workspace: Some(workspace.path().to_path_buf()),
+        ..MemoryManagerConfig::default()
+    });
+    let messages = vec![
+        Message::system("system"),
+        Message::user("read a large file"),
+        Message {
+            tool_calls: vec![ToolCall::new("call_1", "read_file", BTreeMap::new())],
+            ..Message::assistant("reading")
+        },
+        Message::tool(large_tool_result.clone(), "call_1"),
+        Message::assistant("continue"),
+    ];
+
+    let (compacted, changed) = manager.compact(&messages, false);
+
+    assert!(changed);
+    let artifact = workspace.path().join(".memory/tool_results/call_1.txt");
+    assert!(
+        artifact.is_file(),
+        "missing artifact at {}",
+        artifact.display()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&artifact).expect("artifact"),
+        large_tool_result
+    );
+    assert!(compacted[1].content.contains("<Persisted Artifacts>"));
+    assert!(compacted[1]
+        .content
+        .contains(".memory/tool_results/call_1.txt"));
+    assert!(compacted[1].content.contains("tool: read_file"));
+    assert!(compacted[1].content.contains("<Tool Result Compact>"));
+    assert!(compacted[1]
+        .content
+        .contains("retrieval_hint: use read_file on artifact_path if needed"));
 }

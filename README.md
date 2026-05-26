@@ -16,6 +16,7 @@ vv-agent-rs/
       integrations.rs
       llm.rs
       memory/
+        artifacts.rs
         manager.rs
         mod.rs
         summary.rs
@@ -109,6 +110,9 @@ The current Rust implementation includes:
 - Split `memory/` modules with Python-style compaction thresholds, local
   structured summaries, and runtime autocompaction before large follow-up LLM
   cycles.
+- Large historical tool results can be persisted under `.memory/tool_results`
+  and replaced with compact retrieval hints, matching Python `v-agent` artifact
+  compaction behavior.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
   canonical `schemas`, shared `common` helpers, and focused handler modules.
 - Split `activate_skill` handling into model, parser, normalization, and shared
@@ -143,7 +147,7 @@ The current Rust implementation includes:
   integration, runtime tool cycles, schema parity, and workspace tools.
 
 Deeper parity work against the Python implementation is still pending for
-session memory extraction, richer tool-result artifact compaction, sub-agent
-session management and steering, distributed backends, and the remaining
-built-in tools. The migration target is to copy Python `v-agent` behavior as
-completely as possible, not merely provide a minimal Rust wrapper.
+session memory extraction, sub-agent session management and steering,
+distributed backends, and the remaining built-in tools. The migration target is
+to copy Python `v-agent` behavior as completely as possible, not merely provide
+a minimal Rust wrapper.

@@ -1,3 +1,8 @@
+use std::path::PathBuf;
+
+use crate::memory::artifacts::{
+    compact_tool_results, render_persisted_artifacts_section, ToolResultArtifactConfig,
+};
 use crate::memory::summary::LocalSummary;
 use crate::memory::token_utils::{compute_compaction_threshold, count_messages_tokens};
 use crate::types::{Message, MessageRole};
@@ -13,6 +18,12 @@ pub struct MemoryManagerConfig {
     pub reserved_output_tokens: u64,
     pub autocompact_buffer_tokens: u64,
     pub summary_event_limit: usize,
+    pub tool_result_compact_threshold: usize,
+    pub tool_result_keep_last: usize,
+    pub tool_result_excerpt_head: usize,
+    pub tool_result_excerpt_tail: usize,
+    pub tool_result_artifact_dir: PathBuf,
+    pub workspace: Option<PathBuf>,
 }
 
 impl Default for MemoryManagerConfig {
@@ -25,6 +36,12 @@ impl Default for MemoryManagerConfig {
             reserved_output_tokens: 16_000,
             autocompact_buffer_tokens: 13_000,
             summary_event_limit: 40,
+            tool_result_compact_threshold: 2_000,
+            tool_result_keep_last: 3,
+            tool_result_excerpt_head: 200,
+            tool_result_excerpt_tail: 200,
+            tool_result_artifact_dir: PathBuf::from(".memory/tool_results"),
+            workspace: None,
         }
     }
 }
@@ -86,9 +103,25 @@ impl MemoryManager {
             .iter()
             .find(|message| message.role == MessageRole::System)
             .cloned();
+        let (messages_for_summary, artifacts, _) = compact_tool_results(
+            messages,
+            &ToolResultArtifactConfig {
+                workspace: self.config.workspace.clone(),
+                artifact_dir: self.config.tool_result_artifact_dir.clone(),
+                compact_threshold: self.config.tool_result_compact_threshold,
+                keep_last: self.config.tool_result_keep_last,
+                excerpt_head: self.config.tool_result_excerpt_head,
+                excerpt_tail: self.config.tool_result_excerpt_tail,
+            },
+        );
         let original_request = extract_original_user_request(messages).unwrap_or_default();
-        let summary = LocalSummary::from_messages(messages, self.config.summary_event_limit);
-        let compressed_memory = summary.to_json_string();
+        let summary =
+            LocalSummary::from_messages(&messages_for_summary, self.config.summary_event_limit);
+        let mut compressed_memory = summary.to_json_string();
+        if let Some(artifact_section) = render_persisted_artifacts_section(&artifacts) {
+            compressed_memory.push_str("\n\n");
+            compressed_memory.push_str(&artifact_section);
+        }
 
         let mut compacted = Vec::new();
         if let Some(system_message) = system_message {
