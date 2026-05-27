@@ -17,6 +17,7 @@ pub mod token_usage;
 pub mod tool_call_runner;
 mod tool_planner;
 
+pub use backends::RuntimeExecutionBackend as ExecutionBackend;
 pub use background_sessions::{
     background_session_manager, BackgroundSessionListener, BackgroundSessionManager,
     BackgroundSessionSubscription,
@@ -33,6 +34,10 @@ pub use engine::{
 pub use hooks::{
     AfterLlmEvent, AfterToolCallEvent, BeforeLlmEvent, BeforeLlmPatch, BeforeMemoryCompactEvent,
     BeforeToolCallEvent, BeforeToolCallPatch, RuntimeHook, RuntimeHookManager,
+};
+pub use hooks::{
+    AfterLlmEvent as AfterLLMEvent, BeforeLlmEvent as BeforeLLMEvent,
+    BeforeLlmPatch as BeforeLLMPatch, RuntimeHook as BaseRuntimeHook,
 };
 pub use processes::{
     kill_process_tree, read_captured_output, remove_captured_output, start_captured_process,

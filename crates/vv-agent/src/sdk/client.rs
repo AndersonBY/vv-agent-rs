@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -50,7 +50,9 @@ impl<C: LlmClient + Clone + 'static> RunAgent for AgentRuntime<C> {
         request: AgentSessionRunRequest,
     ) -> Result<AgentRun, String> {
         let controls = run_controls_from_request(&request);
-        let mut task = task_from_definition(definition, request.prompt);
+        let workspace = request.workspace.clone();
+        let mut task =
+            task_from_definition_with_workspace(definition, request.prompt, workspace.as_deref());
         merge_request_metadata(&mut task, request.metadata);
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
@@ -83,7 +85,9 @@ impl RunAgent for ScriptedLlmClient {
     ) -> Result<AgentRun, String> {
         let runtime = AgentRuntime::new(self.clone());
         let controls = run_controls_from_request(&request);
-        let mut task = task_from_definition(definition, request.prompt);
+        let workspace = request.workspace.clone();
+        let mut task =
+            task_from_definition_with_workspace(definition, request.prompt, workspace.as_deref());
         merge_request_metadata(&mut task, request.metadata);
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
@@ -130,8 +134,13 @@ fn run_controls_from_request(request: &AgentSessionRunRequest) -> RuntimeRunCont
     }
 }
 
-fn task_from_definition(definition: &AgentDefinition, prompt: String) -> AgentTask {
-    let (system_prompt, system_prompt_sections) = system_prompt_from_definition(definition);
+fn task_from_definition_with_workspace(
+    definition: &AgentDefinition,
+    prompt: String,
+    workspace: Option<&Path>,
+) -> AgentTask {
+    let (system_prompt, system_prompt_sections) =
+        system_prompt_from_definition(definition, workspace);
     let mut metadata = definition.metadata.clone();
     metadata
         .entry("language".to_string())
@@ -215,7 +224,10 @@ fn task_from_definition(definition: &AgentDefinition, prompt: String) -> AgentTa
     task
 }
 
-fn system_prompt_from_definition(definition: &AgentDefinition) -> (String, Vec<Value>) {
+fn system_prompt_from_definition(
+    definition: &AgentDefinition,
+    workspace: Option<&Path>,
+) -> (String, Vec<Value>) {
     if let Some(system_prompt) = definition.system_prompt.as_ref() {
         return (
             system_prompt.clone(),
@@ -254,6 +266,7 @@ fn system_prompt_from_definition(definition: &AgentDefinition) -> (String, Vec<V
             agent_type: definition.agent_type.clone(),
             available_sub_agents,
             available_skills,
+            workspace: workspace.map(Path::to_path_buf),
             ..BuildSystemPromptOptions::default()
         },
     );
@@ -394,7 +407,7 @@ impl AgentSDKClient {
     ) -> Result<AgentRun, String> {
         let definition = self.effective_definition(definition);
         let mut request = AgentSessionRunRequest::new(prompt);
-        request.workspace = workspace;
+        request.workspace = Some(workspace.unwrap_or_else(|| self.options.workspace.clone()));
         request.stream_callback = self.options.stream_callback.clone();
         let mut run = self.runtime.run_with_session(&definition, request)?;
         run.agent_name = agent_name.to_string();
@@ -449,13 +462,49 @@ impl AgentSDKClient {
         Ok(self.prepare_task_with_agent(definition, prompt, resolved_model_id))
     }
 
+    pub fn prepare_task_for_agent_in_workspace(
+        &self,
+        agent_name: impl AsRef<str>,
+        prompt: impl Into<String>,
+        resolved_model_id: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+    ) -> Result<AgentTask, String> {
+        let definition = self.get_agent(agent_name.as_ref().trim())?.clone();
+        Ok(self.prepare_task_with_agent_in_workspace(
+            definition,
+            prompt,
+            resolved_model_id,
+            workspace,
+        ))
+    }
+
     pub fn prepare_task_with_agent(
         &self,
         definition: AgentDefinition,
         prompt: impl Into<String>,
         resolved_model_id: impl Into<String>,
     ) -> AgentTask {
-        let mut task = task_from_definition(&self.effective_definition(definition), prompt.into());
+        self.prepare_task_with_agent_in_workspace(
+            definition,
+            prompt,
+            resolved_model_id,
+            self.options.workspace.clone(),
+        )
+    }
+
+    pub fn prepare_task_with_agent_in_workspace(
+        &self,
+        definition: AgentDefinition,
+        prompt: impl Into<String>,
+        resolved_model_id: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+    ) -> AgentTask {
+        let workspace = workspace.into();
+        let mut task = task_from_definition_with_workspace(
+            &self.effective_definition(definition),
+            prompt.into(),
+            Some(workspace.as_path()),
+        );
         task.model = resolved_model_id.into();
         task
     }
@@ -520,6 +569,62 @@ impl AgentSDKClient {
         query_text_from_run(run, require_completed, "Agent query failed")
     }
 
+    pub fn query_agent(
+        &self,
+        agent_name: impl AsRef<str>,
+        prompt: impl Into<String>,
+    ) -> Result<String, String> {
+        self.query_agent_with_require_completed(agent_name, prompt, true)
+    }
+
+    pub fn query_agent_with_require_completed(
+        &self,
+        agent_name: impl AsRef<str>,
+        prompt: impl Into<String>,
+        require_completed: bool,
+    ) -> Result<String, String> {
+        let run = self.run_agent(agent_name, prompt)?;
+        query_text_from_run(run, require_completed, "Agent query failed")
+    }
+
+    pub fn query_agent_in_workspace(
+        &self,
+        agent_name: impl AsRef<str>,
+        prompt: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+    ) -> Result<String, String> {
+        self.query_agent_in_workspace_with_require_completed(agent_name, prompt, workspace, true)
+    }
+
+    pub fn query_agent_in_workspace_with_require_completed(
+        &self,
+        agent_name: impl AsRef<str>,
+        prompt: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+        require_completed: bool,
+    ) -> Result<String, String> {
+        let run = self.run_agent_in_workspace(agent_name, prompt, workspace)?;
+        query_text_from_run(run, require_completed, "Agent query failed")
+    }
+
+    pub fn query_in_workspace(
+        &self,
+        prompt: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+    ) -> Result<String, String> {
+        self.query_in_workspace_with_require_completed(prompt, workspace, true)
+    }
+
+    pub fn query_in_workspace_with_require_completed(
+        &self,
+        prompt: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+        require_completed: bool,
+    ) -> Result<String, String> {
+        let run = self.run_in_workspace(prompt, workspace)?;
+        query_text_from_run(run, require_completed, "Agent query failed")
+    }
+
     fn get_agent(&self, agent_name: &str) -> Result<&AgentDefinition, String> {
         if agent_name.is_empty() {
             return Err("Agent name cannot be empty".to_string());
@@ -580,7 +685,15 @@ impl RunAgent for SettingsRunAgent {
         configure_runtime_from_options(&mut runtime, &self.options);
 
         let controls = run_controls_from_request(&request);
-        let mut task = task_from_definition(definition, request.prompt);
+        let effective_workspace = request
+            .workspace
+            .clone()
+            .unwrap_or_else(|| self.options.workspace.clone());
+        let mut task = task_from_definition_with_workspace(
+            definition,
+            request.prompt,
+            Some(effective_workspace.as_path()),
+        );
         task.model = resolved.model_id.clone();
         apply_resolved_model_limits(&mut task, &resolved);
         merge_request_metadata(&mut task, request.metadata);

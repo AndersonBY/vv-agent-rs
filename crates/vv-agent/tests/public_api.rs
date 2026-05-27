@@ -2,14 +2,15 @@ use std::collections::BTreeMap;
 
 use vv_agent::{
     background_session_manager, build_default_registry, load_llm_settings_from_file,
-    resolve_model_endpoint, AgentDefinition, AgentRuntime, AgentSDKClient, AgentSDKOptions,
-    AgentStatus, AgentTask, BackgroundSessionListener, CancellationToken, CeleryBackend,
-    Checkpoint, ConfigError, EndpointConfig, EndpointOption, ExecutionContext, FileInfo,
-    InMemoryStateStore, InlineBackend, LLMResponse, LocalWorkspaceBackend, MemoryWorkspaceBackend,
-    Message, RedisStateStore, ResolvedModelConfig, RuntimeExecutionBackend, RuntimeRecipe,
-    RuntimeRunControls, S3WorkspaceBackend, S3WorkspaceConfig, ScriptedLlmClient,
-    SessionCancellationHandle, SqliteStateStore, StateStore, ThreadBackend, ToolCall,
-    ToolExecutionResult, ToolRegistry, WorkspaceBackend,
+    resolve_model_endpoint, AfterLLMEvent, AgentDefinition, AgentRuntime, AgentSDKClient,
+    AgentSDKOptions, AgentStatus, AgentTask, BackgroundSessionListener, BaseRuntimeHook,
+    BeforeLLMEvent, BeforeLLMPatch, CancellationToken, CeleryBackend, Checkpoint, ConfigError,
+    EndpointConfig, EndpointOption, ExecutionBackend, ExecutionContext, FileInfo,
+    InMemoryStateStore, InlineBackend, LLMClient, LLMResponse, LocalWorkspaceBackend,
+    MemoryWorkspaceBackend, Message, RedisStateStore, ResolvedModelConfig, RuntimeExecutionBackend,
+    RuntimeRecipe, RuntimeRunControls, S3WorkspaceBackend, S3WorkspaceConfig, ScriptedLLM,
+    ScriptedLlmClient, SessionCancellationHandle, SqliteStateStore, StateStore, ThreadBackend,
+    ToolCall, ToolExecutionResult, ToolRegistry, VVLlmClient, WorkspaceBackend,
 };
 
 #[test]
@@ -31,6 +32,7 @@ fn top_level_types_are_constructible() {
     let _controls = RuntimeRunControls::default();
     let _inline_backend = InlineBackend;
     let _execution_backend = RuntimeExecutionBackend::default();
+    let _execution_backend_alias = ExecutionBackend::default();
     let _thread_backend = ThreadBackend::default();
     let _recipe = RuntimeRecipe::new("settings.py", "backend", "model", ".");
     let _celery_backend = CeleryBackend::inline_fallback();
@@ -77,6 +79,20 @@ fn top_level_types_are_constructible() {
     let _listener: BackgroundSessionListener = std::sync::Arc::new(|_| {});
     let _session_cancellation: Option<SessionCancellationHandle> = None;
     let _ = background_session_manager();
+}
+
+#[test]
+fn python_style_public_aliases_are_available() {
+    fn assert_llm_client<T: LLMClient>() {}
+    assert_llm_client::<ScriptedLLM>();
+
+    let _scripted = ScriptedLLM::new(vec![LLMResponse::new("done")]);
+    let _vv_llm: Option<VVLlmClient> = None;
+    let _backend = ExecutionBackend::default();
+    let _before_patch = BeforeLLMPatch::default();
+    let _before_event: Option<BeforeLLMEvent<'_>> = None;
+    let _after_event: Option<AfterLLMEvent<'_>> = None;
+    let _hook: Option<&dyn BaseRuntimeHook> = None;
 }
 
 #[test]

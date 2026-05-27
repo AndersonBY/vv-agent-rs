@@ -153,7 +153,9 @@ The current Rust implementation includes:
   the normalized `vv_llm::LlmSettings` used by the client builder.
 - Split `llm/` modules matching Python's base/scripted/vv_llm_client layers,
   with the public `LlmClient` trait, scripted test client, and `vv-llm` backed
-  production client kept behind stable top-level exports.
+  production client kept behind stable top-level exports. Python-style public
+  aliases such as `LLMClient`, `ScriptedLLM`, and `VVLlmClient` are also
+  exported for callers porting code from `v-agent`.
 - LLM settings normalization keeps Python compatibility for `providers` /
   `backends`, default `VERSION`, endpoint API-key suffix extraction, and
   opt-in base64 key decoding before constructing `vv-llm` clients.
@@ -455,7 +457,10 @@ The current Rust implementation includes:
   session.
 - `AgentSDKClient::query` mirrors Python client query semantics: it returns the
   final answer for completed runs and reports non-completed statuses with
-  snake_case status values such as `status=wait_user`.
+  snake_case status values such as `status=wait_user`. Named-agent query
+  compatibility wrappers are available through `query_agent`,
+  `query_agent_with_require_completed`, and the workspace-specific query
+  helpers.
 - `AgentSDKClient` auto-discovers named profiles from `.vv-agent/agents.json`,
   exposes `list_agents`, and can run a profile by name through `run_agent`,
   preserving the profile name in `AgentRun.agent_name`. Plain `run()` follows
@@ -485,6 +490,9 @@ The current Rust implementation includes:
   debugging flows. `prepare_task_for_agent` exposes this path for named
   profiles, and `system_prompt_template` is treated like Python: it replaces the
   agent definition text while still going through the full prompt builder.
+  Relative `skill_directories` are resolved from the SDK workspace during task
+  preparation and one-shot runs, matching Python's available-skills prompt
+  behavior.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,

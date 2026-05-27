@@ -34,8 +34,8 @@ pub use config::{
     ConfigError, EndpointConfig, EndpointOption, MemorySummaryDefaults, ResolvedModelConfig,
 };
 pub use llm::{
-    EndpointTarget, LlmClient, LlmError, LlmRequest, LlmStreamCallback, ScriptedLlmClient,
-    VvLlmClient,
+    EndpointTarget, LLMClient, LlmClient, LlmError, LlmRequest, LlmStreamCallback, ScriptedLLM,
+    ScriptedLlmClient, VVLlmClient, VvLlmClient,
 };
 pub use memory::{
     sanitize_for_resume, CompactionExhaustedError, LocalSummary, MemoryManager,
@@ -53,9 +53,10 @@ pub use runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 pub use runtime::stores::redis::RedisStateStore;
 pub use runtime::stores::sqlite::SqliteStateStore;
 pub use runtime::{
-    AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BeforeCycleMessageProvider, BeforeLlmEvent,
-    BeforeLlmPatch, BeforeMemoryCompactEvent, BeforeToolCallEvent, BeforeToolCallPatch,
-    CancellationToken, CycleRunRequest, CycleRunner, ExecutionContext, InterruptionMessageProvider,
+    AfterLLMEvent, AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BaseRuntimeHook,
+    BeforeCycleMessageProvider, BeforeLLMEvent, BeforeLLMPatch, BeforeLlmEvent, BeforeLlmPatch,
+    BeforeMemoryCompactEvent, BeforeToolCallEvent, BeforeToolCallPatch, CancellationToken,
+    CycleRunRequest, CycleRunner, ExecutionBackend, ExecutionContext, InterruptionMessageProvider,
     RuntimeEventHandler, RuntimeHook, RuntimeHookManager, RuntimeRunControls, StreamCallback,
     ToolCallRunner, ToolRunOutcome, ToolRunRequest, MAX_PROMPT_TOO_LONG_RETRIES,
 };

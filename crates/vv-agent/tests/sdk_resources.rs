@@ -399,6 +399,32 @@ fn sdk_client_prepare_task_for_agent_uses_resources_like_python() {
 }
 
 #[test]
+fn sdk_prepare_task_resolves_relative_skill_directories_from_workspace_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let skill_dir = workspace.path().join("skills/alpha");
+    std::fs::create_dir_all(&skill_dir).expect("skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: alpha\ndescription: Alpha skill\n---\nBody\n",
+    )
+    .expect("skill");
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().to_path_buf(),
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("demo-model");
+    agent.description = "assist".to_string();
+    agent.skill_directories = vec!["skills".to_string()];
+
+    let task = client.prepare_task_with_agent(agent, "hello", "demo-model");
+
+    assert!(task.system_prompt.contains("<available_skills>"));
+    assert!(task.system_prompt.contains("<name>\nalpha\n</name>"));
+    assert_eq!(task.metadata["available_skills"], json!(["skills"]));
+}
+
+#[test]
 fn sdk_client_run_requires_agent_when_no_profile_is_configured_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new(
@@ -416,6 +442,60 @@ fn sdk_client_run_requires_agent_when_no_profile_is_configured_like_python() {
         .expect_err("no profile");
 
     assert!(error.contains("No agent configured"));
+}
+
+#[test]
+fn sdk_client_query_agent_compatibility_wrapper_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+        "done",
+        vec![ToolCall::new(
+            "finish",
+            "task_finish",
+            BTreeMap::from([("message".to_string(), json!("compat-query"))]),
+        )],
+    )]));
+    let mut client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().to_path_buf(),
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    })
+    .with_runtime(runtime);
+    client
+        .register_agent("demo", AgentDefinition::default_for_model("demo-model"))
+        .expect("register demo");
+
+    let text = client.query_agent("demo", "say ok").expect("query agent");
+
+    assert_eq!(text, "compat-query");
+}
+
+#[test]
+fn sdk_client_query_agent_can_return_wait_reason_when_not_strict_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+        "need input",
+        vec![ToolCall::new(
+            "ask",
+            "ask_user",
+            BTreeMap::from([("question".to_string(), json!("pick one"))]),
+        )],
+    )]));
+    let mut client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().to_path_buf(),
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    })
+    .with_runtime(runtime);
+    client
+        .register_agent("demo", AgentDefinition::default_for_model("demo-model"))
+        .expect("register demo");
+
+    let text = client
+        .query_agent_with_require_completed("demo", "say ok", false)
+        .expect("query wait reason");
+
+    assert!(text.contains("pick one"));
 }
 
 #[test]
