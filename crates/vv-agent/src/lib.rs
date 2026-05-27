@@ -80,7 +80,7 @@ pub use sub_agent_sessions::{
     unregister_sub_agent_session, SubAgentSession, SubAgentSessionListener,
     SubAgentSessionRegistry, SubAgentSessionUnsubscribe,
 };
-pub use sub_task_manager::{ManagedSubTask, SubTaskManager};
+pub use sub_task_manager::{ManagedSubTask, SubTaskManager, SubTaskSessionAttachment};
 pub use tools::{
     build_default_registry, dispatch_tool_call, ToolContext, ToolHandler, ToolNotFoundError,
     ToolRegistry, ToolSpec,

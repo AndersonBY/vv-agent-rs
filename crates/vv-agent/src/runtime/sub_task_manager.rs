@@ -20,6 +20,17 @@ pub struct SubTaskManager {
     tasks: Arc<Mutex<BTreeMap<String, ManagedSubTask>>>,
 }
 
+#[derive(Clone)]
+pub struct SubTaskSessionAttachment {
+    pub task_id: String,
+    pub session_id: String,
+    pub agent_name: String,
+    pub task_title: String,
+    pub workspace_backend: Arc<dyn WorkspaceBackend>,
+    pub session: Arc<dyn SubAgentSession>,
+    pub resolved: BTreeMap<String, String>,
+}
+
 impl std::fmt::Debug for SubTaskManager {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -76,6 +87,7 @@ impl SubTaskManager {
                     workspace_backend,
                     session: None,
                     outcome: None,
+                    resolved: BTreeMap::new(),
                     current_cycle_index: None,
                     recent_activity: None,
                     latest_cycle: None,
@@ -118,6 +130,9 @@ impl SubTaskManager {
                     .clone()
                     .unwrap_or_else(|| record.session_id.clone());
                 record.agent_name = outcome.agent_name.clone();
+                if !outcome.resolved.is_empty() {
+                    record.resolved = outcome.resolved.clone();
+                }
                 record.update_from_outcome(&outcome);
                 record.outcome = Some(outcome);
                 record.updated_at = now_millis();
@@ -130,6 +145,7 @@ impl SubTaskManager {
                     workspace_backend: None,
                     session: None,
                     outcome: None,
+                    resolved: outcome.resolved.clone(),
                     current_cycle_index: None,
                     recent_activity: None,
                     latest_cycle: None,
@@ -155,10 +171,27 @@ impl SubTaskManager {
         workspace_backend: Arc<dyn WorkspaceBackend>,
         session: Arc<dyn SubAgentSession>,
     ) {
-        let task_id = task_id.into();
-        let session_id = session_id.into();
-        let agent_name = agent_name.into();
-        let task_title = task_title.into();
+        self.attach_session_with_resolved(SubTaskSessionAttachment {
+            task_id: task_id.into(),
+            session_id: session_id.into(),
+            agent_name: agent_name.into(),
+            task_title: task_title.into(),
+            workspace_backend,
+            session,
+            resolved: BTreeMap::new(),
+        });
+    }
+
+    pub fn attach_session_with_resolved(&self, attachment: SubTaskSessionAttachment) {
+        let SubTaskSessionAttachment {
+            task_id,
+            session_id,
+            agent_name,
+            task_title,
+            workspace_backend,
+            session,
+            resolved,
+        } = attachment;
         let should_attach_listener = {
             let mut tasks = self.tasks.lock().expect("sub-task manager poisoned");
             match tasks.get_mut(&task_id) {
@@ -170,6 +203,9 @@ impl SubTaskManager {
                     }
                     record.workspace_backend = Some(workspace_backend);
                     record.session = Some(session.clone());
+                    if !resolved.is_empty() {
+                        record.resolved = resolved;
+                    }
                     record.updated_at = now_millis();
                     let should_attach_listener = !record.manager_listener_attached;
                     record.manager_listener_attached = true;
@@ -186,6 +222,7 @@ impl SubTaskManager {
                             workspace_backend: Some(workspace_backend),
                             session: Some(session.clone()),
                             outcome: None,
+                            resolved,
                             current_cycle_index: None,
                             recent_activity: None,
                             latest_cycle: None,
@@ -278,6 +315,10 @@ impl SubTaskManager {
             unregister_sub_agent_session(&session_id_for_thread);
             let mut tasks = tasks.lock().expect("sub-task manager poisoned");
             if let Some(record) = tasks.get_mut(&task_id_for_thread) {
+                let mut outcome = outcome;
+                if outcome.resolved.is_empty() && !record.resolved.is_empty() {
+                    outcome.resolved = record.resolved.clone();
+                }
                 record.session_id = outcome
                     .session_id
                     .clone()
@@ -497,6 +538,7 @@ pub struct ManagedSubTask {
     workspace_backend: Option<Arc<dyn WorkspaceBackend>>,
     session: Option<Arc<dyn SubAgentSession>>,
     outcome: Option<SubTaskOutcome>,
+    resolved: BTreeMap<String, String>,
     current_cycle_index: Option<u32>,
     recent_activity: Option<String>,
     latest_cycle: Option<Value>,

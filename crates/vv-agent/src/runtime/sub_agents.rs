@@ -19,7 +19,7 @@ use crate::sub_agent_sessions::{
     register_sub_agent_session, unregister_sub_agent_session, SubAgentSession,
     SubAgentSessionListener, SubAgentSessionUnsubscribe,
 };
-use crate::sub_task_manager::SubTaskManager;
+use crate::sub_task_manager::{SubTaskManager, SubTaskSessionAttachment};
 use crate::tools::{SubTaskRunner, ToolRegistry};
 use crate::types::{
     AgentResult, AgentStatus, AgentTask, Metadata, NoToolPolicy, SubAgentConfig, SubTaskOutcome,
@@ -187,6 +187,7 @@ fn run_sub_task(context: SubTaskRunContext, request: SubTaskRequest) -> SubTaskO
         },
     );
     let initial_prompt = sub_task.user_prompt.clone();
+    let resolved_payload = resolved_client.payload.clone();
     let session = Arc::new(RuntimeSubAgentSession::new(RuntimeSubAgentSessionParts {
         llm_client: resolved_client.llm_client,
         tool_registry: context.tool_registry.clone(),
@@ -201,14 +202,17 @@ fn run_sub_task(context: SubTaskRunContext, request: SubTaskRequest) -> SubTaskO
         parent_event_handler: context.parent_event_handler.clone(),
     }));
     let sub_agent_session: Arc<dyn SubAgentSession> = session.clone();
-    context.sub_task_manager.attach_session(
-        sub_task_id.clone(),
-        sub_session_id.clone(),
-        request.agent_name.clone(),
-        request.task_description.clone(),
-        context.workspace_backend.clone(),
-        sub_agent_session.clone(),
-    );
+    context
+        .sub_task_manager
+        .attach_session_with_resolved(SubTaskSessionAttachment {
+            task_id: sub_task_id.clone(),
+            session_id: sub_session_id.clone(),
+            agent_name: request.agent_name.clone(),
+            task_title: request.task_description.clone(),
+            workspace_backend: context.workspace_backend.clone(),
+            session: sub_agent_session.clone(),
+            resolved: resolved_payload,
+        });
     session.emit(
         "session_created",
         BTreeMap::from([

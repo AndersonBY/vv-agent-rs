@@ -479,7 +479,10 @@ The current Rust implementation includes:
   active record. Before a completed session is resumed, stale resume messages
   are sanitized the same way as Python: empty / thinking-only assistant messages
   and unresolved tail tool calls are removed before the continuation prompt is
-  appended.
+  appended. Attached runtime-backed sub-agent sessions also retain Python's
+  resolved backend/model payload across follow-up continuations, so
+  `sub_task_status` keeps reporting the model used even when the continuation
+  outcome does not repeat that metadata.
 - Sub-agent model/backend resolution follows Python safety rules: a different
   sub-agent model requires a runtime `settings_file`, otherwise the sub-task
   fails explicitly instead of silently reusing the parent LLM client. When

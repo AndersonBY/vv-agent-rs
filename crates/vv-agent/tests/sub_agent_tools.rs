@@ -10,8 +10,8 @@ use serde_json::{json, Value};
 use vv_agent::{
     build_default_registry, register_sub_agent_session, sub_agent_session_registry,
     unregister_sub_agent_session, AgentStatus, Message, RuntimeExecutionBackend, SubAgentSession,
-    SubAgentSessionListener, SubTaskManager, SubTaskOutcome, ThreadBackend, ToolCall, ToolContext,
-    ToolResultStatus,
+    SubAgentSessionListener, SubTaskManager, SubTaskOutcome, SubTaskSessionAttachment,
+    ThreadBackend, ToolCall, ToolContext, ToolResultStatus,
 };
 
 struct SubAgentRegistryTestLock {
@@ -655,6 +655,56 @@ fn sub_task_status_can_continue_completed_attached_session_without_global_regist
     assert!(sub_agent_session_registry()
         .get("sub-session-attached")
         .is_none());
+}
+
+#[test]
+fn sub_task_manager_preserves_attached_resolved_payload_for_continuation_like_python() {
+    let _registry_lock = isolated_sub_agent_registry();
+    let workspace = tempfile::tempdir().expect("workspace");
+    let manager = SubTaskManager::default();
+    let continued = Arc::new(Mutex::new(Vec::<String>::new()));
+    let session = Arc::new(ContinuingSubAgentSession {
+        continued: Arc::clone(&continued),
+    });
+    manager.attach_session_with_resolved(SubTaskSessionAttachment {
+        task_id: "sub-task-completed".to_string(),
+        session_id: "sub-session-continued".to_string(),
+        agent_name: "researcher".to_string(),
+        task_title: "initial task".to_string(),
+        workspace_backend: Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
+            workspace.path(),
+        )),
+        session,
+        resolved: BTreeMap::from([
+            ("backend".to_string(), "moonshot".to_string()),
+            ("model_id".to_string(), "kimi-k2.5".to_string()),
+        ]),
+    });
+    manager.record_outcome(
+        "sub-task-completed",
+        SubTaskOutcome {
+            task_id: "sub-task-completed".to_string(),
+            agent_name: "researcher".to_string(),
+            status: AgentStatus::Completed,
+            session_id: Some("sub-session-continued".to_string()),
+            final_answer: Some("initial done".to_string()),
+            wait_reason: None,
+            error: None,
+            cycles: 1,
+            todo_list: Vec::new(),
+            resolved: BTreeMap::new(),
+        },
+    );
+
+    manager
+        .continue_task("sub-task-completed", "add appendix")
+        .expect("continue sub task");
+    assert!(manager.wait("sub-task-completed", Some(Duration::from_secs(5))));
+
+    let entries = manager.status_entries(&["sub-task-completed".to_string()], "basic", 10);
+    assert_eq!(entries[0]["status"], "completed");
+    assert_eq!(entries[0]["resolved"]["backend"], "moonshot");
+    assert_eq!(entries[0]["resolved"]["model_id"], "kimi-k2.5");
 }
 
 #[test]
