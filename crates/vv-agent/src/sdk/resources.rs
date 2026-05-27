@@ -24,10 +24,10 @@ pub struct AgentResourceLoader {
 
 impl AgentResourceLoader {
     pub fn new(workspace: impl Into<PathBuf>) -> Self {
-        let workspace = workspace.into();
+        let workspace = absolutize_path(expand_user_path(workspace.into()));
         Self {
             project_resource_dir: workspace.join(".vv-agent"),
-            global_resource_dir: PathBuf::from("~/.vv-agent"),
+            global_resource_dir: absolutize_path(expand_user_path(PathBuf::from("~/.vv-agent"))),
             workspace,
             cached: None,
         }
@@ -39,16 +39,26 @@ impl AgentResourceLoader {
         global_resource_dir: impl Into<PathBuf>,
     ) -> Self {
         Self {
-            workspace: workspace.into(),
-            project_resource_dir: project_resource_dir.into(),
-            global_resource_dir: global_resource_dir.into(),
+            workspace: absolutize_path(expand_user_path(workspace.into())),
+            project_resource_dir: absolutize_path(expand_user_path(project_resource_dir.into())),
+            global_resource_dir: absolutize_path(expand_user_path(global_resource_dir.into())),
             cached: None,
         }
     }
 
     pub fn discover(&mut self) -> DiscoveredResources {
+        self.discover_inner(false)
+    }
+
+    pub fn discover_force_reload(&mut self) -> DiscoveredResources {
+        self.discover_inner(true)
+    }
+
+    fn discover_inner(&mut self, force_reload: bool) -> DiscoveredResources {
         if let Some(cached) = &self.cached {
-            return cached.clone();
+            if !force_reload {
+                return cached.clone();
+            }
         }
         let mut discovered = DiscoveredResources::default();
         for root in [
@@ -288,13 +298,48 @@ fn read_resolved_path_list(
 }
 
 fn resolve_resource_path(base_dir: &std::path::Path, raw_path: &str) -> String {
-    let path = PathBuf::from(raw_path);
+    let path = expand_user_path(PathBuf::from(raw_path));
     let path = if path.is_absolute() {
         path
     } else {
-        base_dir.join(path)
+        absolutize_path(base_dir.join(path))
     };
     path.to_string_lossy().to_string()
+}
+
+fn expand_user_path(path: PathBuf) -> PathBuf {
+    let raw_path = path.to_string_lossy();
+    if raw_path == "~" {
+        return home_dir().unwrap_or(path);
+    }
+    if let Some(rest) = raw_path.strip_prefix("~/") {
+        if let Some(home) = home_dir() {
+            return home.join(rest);
+        }
+    }
+    path
+}
+
+fn absolutize_path(path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        return path;
+    }
+    std::env::current_dir()
+        .map(|current_dir| current_dir.join(&path))
+        .unwrap_or(path)
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+        .or_else(|| {
+            let drive = std::env::var_os("HOMEDRIVE")?;
+            let path = std::env::var_os("HOMEPATH")?;
+            let mut home = PathBuf::from(drive);
+            home.push(path);
+            Some(home)
+        })
 }
 
 fn read_sub_agents(payload: &serde_json::Map<String, Value>) -> BTreeMap<String, SubAgentConfig> {

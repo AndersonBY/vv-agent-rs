@@ -407,7 +407,9 @@ The current Rust implementation includes:
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,
-  tool flags, shell defaults, metadata, and resource paths.
+  tool flags, shell defaults, metadata, and resource paths. Resource paths
+  expand `~` like Python, and `AgentResourceLoader::discover_force_reload`
+  refreshes cached resources after on-disk changes.
 - SDK client, tool registry, workspace backends, and shared protocol types.
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, schema parity, and workspace tools.

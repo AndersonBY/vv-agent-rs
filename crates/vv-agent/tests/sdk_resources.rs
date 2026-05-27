@@ -128,6 +128,56 @@ fn resource_loader_discovers_agents_prompts_and_skills() {
 }
 
 #[test]
+fn resource_loader_force_reload_refreshes_cached_resources_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let resource_root = workspace.path().join(".vv-agent");
+    std::fs::create_dir_all(resource_root.join("prompts")).expect("prompts");
+    std::fs::write(resource_root.join("prompts/research.md"), "first").expect("first prompt");
+
+    let mut loader = AgentResourceLoader::with_resource_dirs(
+        workspace.path(),
+        &resource_root,
+        workspace.path().join(".none"),
+    );
+    let first = loader.discover();
+    assert_eq!(
+        first.prompts.get("research").map(String::as_str),
+        Some("first")
+    );
+
+    std::fs::write(resource_root.join("prompts/research.md"), "second").expect("second prompt");
+    let cached = loader.discover();
+    assert_eq!(
+        cached.prompts.get("research").map(String::as_str),
+        Some("first")
+    );
+
+    let reloaded = loader.discover_force_reload();
+    assert_eq!(
+        reloaded.prompts.get("research").map(String::as_str),
+        Some("second")
+    );
+}
+
+#[test]
+fn resource_loader_expands_home_paths_like_python() {
+    let Some(home) = std::env::var_os("HOME") else {
+        return;
+    };
+    let workspace = tempfile::tempdir().expect("workspace");
+    let loader = AgentResourceLoader::with_resource_dirs(
+        workspace.path(),
+        workspace.path().join(".vv-agent"),
+        "~/.vv-agent-test",
+    );
+
+    assert_eq!(
+        loader.global_resource_dir,
+        std::path::PathBuf::from(home).join(".vv-agent-test")
+    );
+}
+
+#[test]
 fn sdk_client_auto_discovers_resource_agents_and_runs_by_name() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
