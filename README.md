@@ -505,7 +505,9 @@ The current Rust implementation includes:
   and `run_steered` events. Sessions also subscribe to running background
   commands reported by `bash` / `check_background_command`; terminal background
   events emit `background_command_completed` / `background_command_terminal`
-  and queue a system notification as steering while the run is active.
+  and queue a system notification as steering while the run is active. Background
+  session snapshots keep Python's stable `shell` field shape, including
+  `null` when no shell was recorded.
   Runtime-backed sessions preserve prior messages and shared state across
   prompts, so follow-up turns see the same conversation and TODO/memory state
   instead of starting from a fresh task. SDK-created runtime sessions also

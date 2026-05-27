@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 use vv_agent::background_sessions::{background_session_manager, BackgroundSessionStartOptions};
-use vv_agent::processes::read_captured_output;
+use vv_agent::processes::{read_captured_output, start_captured_process};
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
 #[test]
@@ -264,6 +264,42 @@ fn background_session_manager_can_start_process_like_python() {
         .as_str()
         .expect("command")
         .contains("VV_AGENT_BG_ENV"));
+}
+
+#[test]
+fn background_session_snapshot_keeps_null_shell_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let command = vec![
+        "bash".to_string(),
+        "-lc".to_string(),
+        "printf null-shell".to_string(),
+    ];
+    let started = start_captured_process(&command, workspace.path(), None).expect("start process");
+    let session_id = background_session_manager().adopt_running_process(
+        "printf null-shell",
+        workspace.path(),
+        5,
+        started.child,
+        started.output_path,
+        None,
+    );
+
+    let mut final_payload = None;
+    for _ in 0..20 {
+        let payload = background_session_manager().check(&session_id);
+        if payload["status"] == "running" {
+            assert_eq!(payload.get("shell"), Some(&Value::Null));
+            thread::sleep(Duration::from_millis(50));
+            continue;
+        }
+        final_payload = Some(payload);
+        break;
+    }
+
+    let final_payload = final_payload.expect("background manager task finished");
+    assert_eq!(final_payload["status"], "completed");
+    assert_eq!(final_payload["output"], "null-shell");
+    assert_eq!(final_payload.get("shell"), Some(&Value::Null));
 }
 
 #[test]

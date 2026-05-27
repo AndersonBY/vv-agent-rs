@@ -267,32 +267,26 @@ struct BackgroundSession {
 
 impl BackgroundSession {
     fn running_snapshot(&self, elapsed: Duration) -> Value {
-        let mut payload = json!({
+        json!({
             "status": "running",
             "session_id": self.session_id,
             "command": self.command,
             "elapsed_seconds": (elapsed.as_millis() as f64) / 1000.0,
             "cwd": display_path(&self.cwd),
-        });
-        if let Some(shell) = &self.shell {
-            payload["shell"] = Value::String(shell.clone());
-        }
-        payload
+            "shell": self.shell,
+        })
     }
 
     fn snapshot(&self) -> Value {
-        let mut payload = json!({
+        json!({
             "status": self.status.as_str(),
             "session_id": self.session_id,
             "command": self.command,
             "cwd": display_path(&self.cwd),
             "exit_code": self.exit_code,
             "output": self.output,
-        });
-        if let Some(shell) = &self.shell {
-            payload["shell"] = Value::String(shell.clone());
-        }
-        payload
+            "shell": self.shell,
+        })
     }
 
     fn finalize_completed(&mut self, exit_code: i32) {
