@@ -11,6 +11,8 @@ use crate::runtime::{RuntimeEventHandler, RuntimeHook, StreamCallback};
 use crate::tools::ToolRegistry;
 use crate::types::{AgentResult, AgentStatus, Metadata, NoToolPolicy, SubAgentConfig};
 
+use super::resources::AgentResourceLoader;
+
 pub type SdkLlmClient = Arc<dyn LlmClient>;
 pub type LlmBuilder = Arc<
     dyn Fn(&Path, &str, &str, f64) -> Result<(SdkLlmClient, ResolvedModelConfig), String>
@@ -90,6 +92,7 @@ pub struct AgentSDKOptions {
     pub tool_registry_factory: Option<ToolRegistryFactory>,
     pub log_handler: Option<RuntimeEventHandler>,
     pub execution_backend: Option<RuntimeExecutionBackend>,
+    pub resource_loader: Option<AgentResourceLoader>,
     pub auto_discover_resources: bool,
     pub debug_dump_dir: Option<String>,
     pub stream_callback: Option<StreamCallback>,
@@ -115,6 +118,7 @@ impl std::fmt::Debug for AgentSDKOptions {
                 &self.tool_registry_factory.is_some(),
             )
             .field("execution_backend", &self.execution_backend)
+            .field("has_resource_loader", &self.resource_loader.is_some())
             .field("auto_discover_resources", &self.auto_discover_resources)
             .field("debug_dump_dir", &self.debug_dump_dir)
             .field("has_stream_callback", &self.stream_callback.is_some())
@@ -138,6 +142,7 @@ impl Default for AgentSDKOptions {
             tool_registry_factory: None,
             log_handler: None,
             execution_backend: None,
+            resource_loader: None,
             auto_discover_resources: true,
             debug_dump_dir: None,
             stream_callback: None,

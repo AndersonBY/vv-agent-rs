@@ -403,7 +403,20 @@ fn runtime_forwards_stream_callback_to_runtime_backed_sub_agent_like_python() {
             events.lock().expect("events").push(event.clone());
         })
     };
-    let runtime = AgentRuntime::new(StreamingSubAgentLlmClient::default());
+    let log_events = Arc::new(Mutex::new(Vec::<(
+        String,
+        BTreeMap<String, serde_json::Value>,
+    )>::new()));
+    let log_sink = Arc::clone(&log_events);
+    let mut runtime = AgentRuntime::new(StreamingSubAgentLlmClient::default());
+    runtime.log_handler = Some(Arc::new(Mutex::new(Box::new(
+        move |event: &str, payload: &BTreeMap<String, serde_json::Value>| {
+            log_sink
+                .lock()
+                .expect("log events")
+                .push((event.to_string(), payload.clone()));
+        },
+    ))));
     let mut task = AgentTask::new("parent_stream", "demo", "parent system", "delegate");
     task.sub_agents.insert(
         "researcher".to_string(),
@@ -424,12 +437,28 @@ fn runtime_forwards_stream_callback_to_runtime_backed_sub_agent_like_python() {
 
     assert_eq!(result.status, AgentStatus::Completed);
     assert!(events.lock().expect("events").iter().any(|event| {
-        event.get("event").and_then(serde_json::Value::as_str) == Some("sub_agent_delta")
+        event.get("event").and_then(serde_json::Value::as_str) == Some("assistant_delta")
             && event
                 .get("content_delta")
                 .and_then(serde_json::Value::as_str)
                 == Some("checking")
+            && event
+                .get("sub_agent_name")
+                .and_then(serde_json::Value::as_str)
+                == Some("researcher")
     }));
+    let log_events = log_events.lock().expect("log events");
+    let sub_agent_delta = log_events
+        .iter()
+        .find(|(event, _)| event == "sub_agent_assistant_delta")
+        .expect("sub-agent stream event in runtime logs");
+    assert_eq!(sub_agent_delta.1["content_delta"], json!("checking"));
+    assert_eq!(sub_agent_delta.1["sub_agent_name"], json!("researcher"));
+    assert!(sub_agent_delta.1["task_id"].as_str().is_some());
+    assert_eq!(
+        sub_agent_delta.1["session_id"],
+        sub_agent_delta.1["task_id"]
+    );
 }
 
 #[test]
@@ -2420,7 +2449,7 @@ impl LlmClient for StreamingSubAgentLlmClient {
             2 => {
                 if let Some(callback) = stream_callback {
                     callback(&BTreeMap::from([
-                        ("event".to_string(), json!("sub_agent_delta")),
+                        ("event".to_string(), json!("assistant_delta")),
                         ("content_delta".to_string(), json!("checking")),
                     ]));
                 }

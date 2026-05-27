@@ -16,6 +16,7 @@ pub struct DiscoveredResources {
     pub diagnostics: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
 pub struct AgentResourceLoader {
     pub workspace: PathBuf,
     pub project_resource_dir: PathBuf,

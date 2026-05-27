@@ -248,6 +248,8 @@ impl SubTaskManager {
             )
         };
 
+        session.sanitize_for_resume();
+
         let tasks = self.tasks.clone();
         let task_id_for_thread = task_id.to_string();
         let prompt_for_thread = prompt.to_string();

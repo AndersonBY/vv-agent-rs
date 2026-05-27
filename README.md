@@ -395,7 +395,10 @@ The current Rust implementation includes:
   sub-tasks are now session-driven and temporarily registered only while a run
   is active, so completed async sub-tasks can be continued through
   `sub_task_status(message=...)` while preserving prior messages and shared
-  state without leaking stale global sessions.
+  state without leaking stale global sessions. Before a completed session is
+  resumed, stale resume messages are sanitized the same way as Python: empty /
+  thinking-only assistant messages and unresolved tail tool calls are removed
+  before the continuation prompt is appended.
 - Sub-agent model/backend resolution follows Python safety rules: a different
   sub-agent model requires a runtime `settings_file`, otherwise the sub-task
   fails explicitly instead of silently reusing the parent LLM client. When
@@ -452,7 +455,9 @@ The current Rust implementation includes:
   configured.
 - Runtime-backed sub-agent sessions inherit the parent run's LLM stream
   callback, so streamed provider events continue to flow through nested agent
-  execution like Python.
+  execution like Python. Child stream events are enriched with `task_id`,
+  `session_id`, and `sub_agent_name`, and parent log/event handlers receive
+  matching `sub_agent_*` events.
 - Memory token utilities now prefer `vv-llm::utilities::count_tokens` for
   supported tokenizers and fall back to the Python-style CJK-aware estimator for
   unsupported models. They also accept structured JSON payloads by serializing
@@ -460,8 +465,8 @@ The current Rust implementation includes:
 - SDK one-shot runs no longer require a prebuilt runtime: by default the client
   builds a `vv-llm` backed runtime from `AgentSDKOptions.settings_file`, while
   tests and embedders can inject an `LlmBuilder` for deterministic clients.
-  `AgentSDKOptions.runtime_hooks`, `log_handler`, `tool_registry_factory`, and
-  `execution_backend` are applied to both SDK-built and injected runtimes,
+  `AgentSDKOptions.runtime_hooks`, `log_handler`, `tool_registry_factory`,
+  `execution_backend`, and custom `resource_loader` are applied to SDK flows,
   matching Python's SDK extension points. SDK-built runtimes apply resolved
   vv-llm token limits as `model_context_window` and `reserved_output_tokens`
   metadata unless the caller already supplied those keys.
@@ -476,9 +481,11 @@ The current Rust implementation includes:
   `agents.json` now carries full agent fields including sub-agent definitions,
   tool flags, shell defaults, metadata, and resource paths. Resource paths
   expand `~` like Python, and `AgentResourceLoader::discover_force_reload`
-  refreshes cached resources after on-disk changes. Python hook files under
-  `.vv-agent/hooks` are discovered and reported through diagnostics; Rust hook
-  execution uses `AgentSDKOptions.runtime_hooks`.
+  refreshes cached resources after on-disk changes. SDK clients can also inject
+  a custom `AgentResourceLoader` to discover agents and prompt templates from
+  non-default roots. Python hook files under `.vv-agent/hooks` are discovered
+  and reported through diagnostics; Rust hook execution uses
+  `AgentSDKOptions.runtime_hooks`.
 - SDK client, tool registry, workspace backends, and shared protocol types.
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, schema parity, and workspace tools.

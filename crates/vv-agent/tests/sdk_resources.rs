@@ -161,6 +161,50 @@ fn resource_loader_force_reload_refreshes_cached_resources_like_python() {
 }
 
 #[test]
+fn sdk_options_resource_loader_discovers_from_custom_roots_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let custom_root = workspace.path().join("custom-resources");
+    std::fs::create_dir_all(custom_root.join("prompts")).expect("prompts");
+    std::fs::write(
+        custom_root.join("agents.json"),
+        json!({
+            "profiles": {
+                "custom": {
+                    "description": "custom profile",
+                    "model": "deepseek-v4-pro",
+                    "system_prompt_template": "custom-template"
+                }
+            }
+        })
+        .to_string(),
+    )
+    .expect("agents");
+    std::fs::write(
+        custom_root.join("prompts/custom-template.md"),
+        "Loaded from injected resource loader.",
+    )
+    .expect("prompt");
+
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().join("workspace-without-resources"),
+        resource_loader: Some(AgentResourceLoader::with_resource_dirs(
+            workspace.path(),
+            &custom_root,
+            workspace.path().join(".none"),
+        )),
+        ..AgentSDKOptions::default()
+    });
+
+    assert_eq!(client.list_agents(), vec!["custom"]);
+    let task = client
+        .prepare_task_for_agent("custom", "hello", "resolved-model")
+        .expect("custom agent from injected loader");
+    assert!(task
+        .system_prompt
+        .contains("Loaded from injected resource loader."));
+}
+
+#[test]
 fn resource_loader_expands_home_paths_like_python() {
     let Some(home) = std::env::var_os("HOME") else {
         return;

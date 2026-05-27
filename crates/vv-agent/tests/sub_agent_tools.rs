@@ -9,7 +9,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use vv_agent::{
     build_default_registry, register_sub_agent_session, sub_agent_session_registry,
-    unregister_sub_agent_session, AgentStatus, RuntimeExecutionBackend, SubAgentSession,
+    unregister_sub_agent_session, AgentStatus, Message, RuntimeExecutionBackend, SubAgentSession,
     SubAgentSessionListener, SubTaskManager, SubTaskOutcome, ThreadBackend, ToolCall, ToolContext,
     ToolResultStatus,
 };
@@ -610,6 +610,74 @@ fn sub_task_status_can_continue_completed_attached_session_without_global_regist
 }
 
 #[test]
+fn sub_task_manager_sanitizes_session_messages_before_continue_like_python() {
+    let _registry_lock = isolated_sub_agent_registry();
+    let manager = SubTaskManager::default();
+    let workspace = tempfile::tempdir().expect("workspace");
+    let messages = Arc::new(Mutex::new(vec![
+        Message::system("sys"),
+        {
+            let mut message = Message::assistant("");
+            message.reasoning_content = Some("thinking only".to_string());
+            message
+        },
+        {
+            let mut message = Message::assistant("");
+            message.tool_calls = vec![ToolCall::new(
+                "tool-1",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!("README.md"))]),
+            )];
+            message
+        },
+    ]));
+    let snapshot = Arc::new(Mutex::new(Vec::<Message>::new()));
+    let session = Arc::new(SanitizingSubAgentSession {
+        messages: Arc::clone(&messages),
+        snapshot: Arc::clone(&snapshot),
+    });
+    manager.attach_session(
+        "sub-sanitize",
+        "sub-session-sanitize",
+        "researcher",
+        "initial task",
+        Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
+            workspace.path(),
+        )),
+        session,
+    );
+    manager.record_outcome(
+        "sub-sanitize",
+        SubTaskOutcome {
+            task_id: "sub-sanitize".to_string(),
+            agent_name: "researcher".to_string(),
+            status: AgentStatus::Completed,
+            session_id: Some("sub-session-sanitize".to_string()),
+            final_answer: Some("initial done".to_string()),
+            wait_reason: None,
+            error: None,
+            cycles: 1,
+            todo_list: Vec::new(),
+            resolved: BTreeMap::new(),
+        },
+    );
+
+    manager
+        .continue_task("sub-sanitize", "resume")
+        .expect("continue sub task");
+    assert!(manager.wait("sub-sanitize", Some(Duration::from_secs(5))));
+
+    assert_eq!(
+        snapshot.lock().expect("snapshot").as_slice(),
+        &[Message::system("sys")]
+    );
+    assert_eq!(
+        messages.lock().expect("messages").as_slice(),
+        &[Message::assistant("continued done")]
+    );
+}
+
+#[test]
 fn sub_task_status_rejects_max_cycles_continuation() {
     let _registry_lock = isolated_sub_agent_registry();
     let workspace = tempfile::tempdir().expect("workspace");
@@ -784,6 +852,43 @@ impl SubAgentSession for ContinuingSubAgentSession {
             agent_name: "researcher".to_string(),
             status: AgentStatus::Completed,
             session_id: Some("sub-session-continued".to_string()),
+            final_answer: Some("continued done".to_string()),
+            wait_reason: None,
+            error: None,
+            cycles: 2,
+            todo_list: Vec::new(),
+            resolved: BTreeMap::new(),
+        })
+    }
+}
+
+struct SanitizingSubAgentSession {
+    messages: Arc<Mutex<Vec<Message>>>,
+    snapshot: Arc<Mutex<Vec<Message>>>,
+}
+
+impl SubAgentSession for SanitizingSubAgentSession {
+    fn steer(&self, prompt: &str) -> Result<(), String> {
+        self.continue_run(prompt).map(|_| ())
+    }
+
+    fn sanitize_for_resume(&self) -> usize {
+        let mut messages = self.messages.lock().expect("messages");
+        let sanitized = vv_agent::memory::sanitize_for_resume(&messages);
+        let removed = messages.len().saturating_sub(sanitized.len());
+        *messages = sanitized;
+        removed
+    }
+
+    fn continue_run(&self, _prompt: &str) -> Result<SubTaskOutcome, String> {
+        let mut messages = self.messages.lock().expect("messages");
+        *self.snapshot.lock().expect("snapshot") = messages.clone();
+        *messages = vec![Message::assistant("continued done")];
+        Ok(SubTaskOutcome {
+            task_id: "sub-sanitize".to_string(),
+            agent_name: "researcher".to_string(),
+            status: AgentStatus::Completed,
+            session_id: Some("sub-session-sanitize".to_string()),
             final_answer: Some("continued done".to_string()),
             wait_reason: None,
             error: None,

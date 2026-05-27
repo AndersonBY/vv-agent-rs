@@ -12,6 +12,10 @@ pub type SubAgentSessionUnsubscribe = Box<dyn FnOnce() + Send + 'static>;
 pub trait SubAgentSession: Send + Sync {
     fn steer(&self, prompt: &str) -> Result<(), String>;
 
+    fn sanitize_for_resume(&self) -> usize {
+        0
+    }
+
     fn continue_run(&self, _prompt: &str) -> Result<SubTaskOutcome, String> {
         Err("Sub-agent session continuation is not supported.".to_string())
     }

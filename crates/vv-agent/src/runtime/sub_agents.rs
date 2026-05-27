@@ -5,7 +5,10 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-use super::{AgentRuntime, ExecutionContext, RuntimeRunControls, StreamCallback};
+use super::{
+    AgentRuntime, ExecutionContext, RuntimeEventHandler, RuntimeLogHandler, RuntimeRunControls,
+    StreamCallback,
+};
 use crate::config::build_vv_llm_from_local_settings;
 use crate::llm::LlmClient;
 use crate::prompt::{
@@ -32,7 +35,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         workspace_backend: Arc<dyn WorkspaceBackend>,
         parent_shared_state: BTreeMap<String, Value>,
         sub_task_manager: SubTaskManager,
-        stream_callback: Option<StreamCallback>,
+        callbacks: SubTaskCallbacks,
     ) -> Option<SubTaskRunner> {
         if parent_task.sub_agents.is_empty() {
             return None;
@@ -51,12 +54,21 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             settings_file: self.settings_file.clone(),
             default_backend: self.default_backend.clone(),
             sub_agent_timeout_seconds: self.sub_agent_timeout_seconds,
-            stream_callback,
+            stream_callback: callbacks.stream_callback,
+            parent_log_handler: callbacks.parent_log_handler,
+            parent_event_handler: callbacks.parent_event_handler,
         };
         Some(Arc::new(move |request| {
             run_sub_task(sub_task_context.clone(), request)
         }))
     }
+}
+
+#[derive(Clone, Default)]
+pub(super) struct SubTaskCallbacks {
+    pub(super) stream_callback: Option<StreamCallback>,
+    pub(super) parent_log_handler: Option<RuntimeLogHandler>,
+    pub(super) parent_event_handler: Option<RuntimeEventHandler>,
 }
 
 #[derive(Clone)]
@@ -72,6 +84,8 @@ struct SubTaskRunContext {
     default_backend: Option<String>,
     sub_agent_timeout_seconds: f64,
     stream_callback: Option<StreamCallback>,
+    parent_log_handler: Option<RuntimeLogHandler>,
+    parent_event_handler: Option<RuntimeEventHandler>,
 }
 
 struct SubTaskBuildInputs<'a> {
@@ -183,6 +197,8 @@ fn run_sub_task(context: SubTaskRunContext, request: SubTaskRequest) -> SubTaskO
         session_id: sub_session_id.clone(),
         resolved: resolved_client.payload,
         stream_callback: context.stream_callback.clone(),
+        parent_log_handler: context.parent_log_handler.clone(),
+        parent_event_handler: context.parent_event_handler.clone(),
     }));
     let sub_agent_session: Arc<dyn SubAgentSession> = session.clone();
     context.sub_task_manager.attach_session(
@@ -192,6 +208,24 @@ fn run_sub_task(context: SubTaskRunContext, request: SubTaskRequest) -> SubTaskO
         request.task_description.clone(),
         context.workspace_backend.clone(),
         sub_agent_session.clone(),
+    );
+    session.emit(
+        "session_created",
+        BTreeMap::from([
+            (
+                "agent_name".to_string(),
+                Value::String(request.agent_name.clone()),
+            ),
+            ("model".to_string(), Value::String(resolved_client.model_id)),
+            (
+                "workspace".to_string(),
+                Value::String(context.workspace_path.display().to_string()),
+            ),
+            (
+                "max_cycles".to_string(),
+                Value::from(session.task_template.max_cycles as u64),
+            ),
+        ]),
     );
 
     register_sub_agent_session(sub_session_id.clone(), sub_agent_session.clone());
@@ -293,6 +327,8 @@ struct RuntimeSubAgentSession {
     session_id: String,
     resolved: BTreeMap<String, String>,
     stream_callback: Option<StreamCallback>,
+    parent_log_handler: Option<RuntimeLogHandler>,
+    parent_event_handler: Option<RuntimeEventHandler>,
     state: Mutex<RuntimeSubAgentSessionState>,
     running: Mutex<bool>,
     steering_queue: Arc<Mutex<VecDeque<String>>>,
@@ -310,6 +346,8 @@ struct RuntimeSubAgentSessionParts {
     session_id: String,
     resolved: BTreeMap<String, String>,
     stream_callback: Option<StreamCallback>,
+    parent_log_handler: Option<RuntimeLogHandler>,
+    parent_event_handler: Option<RuntimeEventHandler>,
 }
 
 #[derive(Default)]
@@ -332,6 +370,8 @@ impl RuntimeSubAgentSession {
             session_id: parts.session_id,
             resolved: parts.resolved,
             stream_callback: parts.stream_callback,
+            parent_log_handler: parts.parent_log_handler,
+            parent_event_handler: parts.parent_event_handler,
             state: Mutex::new(RuntimeSubAgentSessionState::default()),
             running: Mutex::new(false),
             steering_queue: Arc::new(Mutex::new(VecDeque::new())),
@@ -387,17 +427,50 @@ impl RuntimeSubAgentSession {
         task.initial_shared_state = shared_state;
 
         let listeners = self.listeners.clone();
+        let parent_log_handler = self.parent_log_handler.clone();
+        let parent_event_handler = self.parent_event_handler.clone();
+        let task_id = self.task_id.clone();
+        let session_id = self.session_id.clone();
+        let agent_name = self.agent_name.clone();
         let log_handler = Arc::new(move |event: &str, payload: &BTreeMap<String, Value>| {
             emit_sub_agent_session_event(&listeners, event, payload);
+            let enriched = enrich_sub_agent_payload(payload, &task_id, &session_id, &agent_name);
+            emit_parent_sub_agent_event(
+                &parent_log_handler,
+                &parent_event_handler,
+                &format!("sub_agent_{event}"),
+                enriched,
+            );
         });
         let mut runtime = AgentRuntime::new(self.llm_client.clone())
             .with_tool_registry(self.tool_registry.clone());
         runtime.default_workspace = Some(self.workspace_path.clone());
         runtime.workspace_backend = self.workspace_backend.clone();
-        let execution_context = self
-            .stream_callback
-            .clone()
-            .map(|callback| ExecutionContext::default().with_stream_callback(callback));
+        let execution_context = self.stream_callback.clone().map(|callback| {
+            let parent_log_handler = self.parent_log_handler.clone();
+            let parent_event_handler = self.parent_event_handler.clone();
+            let task_id = self.task_id.clone();
+            let session_id = self.session_id.clone();
+            let agent_name = self.agent_name.clone();
+            let stream_callback: StreamCallback = Arc::new(move |event| {
+                let enriched = enrich_sub_agent_payload(event, &task_id, &session_id, &agent_name);
+                let event_name = enriched
+                    .get("event")
+                    .and_then(Value::as_str)
+                    .unwrap_or("stream_event")
+                    .to_string();
+                let mut log_payload = enriched.clone();
+                log_payload.remove("event");
+                emit_parent_sub_agent_event(
+                    &parent_log_handler,
+                    &parent_event_handler,
+                    &format!("sub_agent_{event_name}"),
+                    log_payload,
+                );
+                callback(&enriched);
+            });
+            ExecutionContext::default().with_stream_callback(stream_callback)
+        });
         let result = runtime
             .run_with_controls(
                 task,
@@ -486,6 +559,14 @@ impl RuntimeSubAgentSession {
 
     fn emit(&self, event: &str, payload: BTreeMap<String, Value>) {
         emit_sub_agent_session_event(&self.listeners, event, &payload);
+        let enriched =
+            enrich_sub_agent_payload(&payload, &self.task_id, &self.session_id, &self.agent_name);
+        emit_parent_sub_agent_event(
+            &self.parent_log_handler,
+            &self.parent_event_handler,
+            &format!("sub_agent_{event}"),
+            enriched,
+        );
     }
 }
 
@@ -504,6 +585,16 @@ impl SubAgentSession for RuntimeSubAgentSession {
             BTreeMap::from([("prompt".to_string(), Value::String(prompt.to_string()))]),
         );
         Ok(())
+    }
+
+    fn sanitize_for_resume(&self) -> usize {
+        let Ok(mut state) = self.state.lock() else {
+            return 0;
+        };
+        let sanitized = crate::memory::sanitize_for_resume(&state.messages);
+        let removed = state.messages.len().saturating_sub(sanitized.len());
+        state.messages = sanitized;
+        removed
     }
 
     fn continue_run(&self, prompt: &str) -> Result<SubTaskOutcome, String> {
@@ -538,6 +629,41 @@ fn emit_sub_agent_session_event(
         .collect::<Vec<_>>();
     for listener in listeners {
         listener(event, payload);
+    }
+}
+
+fn enrich_sub_agent_payload(
+    payload: &BTreeMap<String, Value>,
+    task_id: &str,
+    session_id: &str,
+    sub_agent_name: &str,
+) -> BTreeMap<String, Value> {
+    let mut enriched = payload.clone();
+    enriched
+        .entry("task_id".to_string())
+        .or_insert_with(|| Value::String(task_id.to_string()));
+    enriched
+        .entry("session_id".to_string())
+        .or_insert_with(|| Value::String(session_id.to_string()));
+    enriched
+        .entry("sub_agent_name".to_string())
+        .or_insert_with(|| Value::String(sub_agent_name.to_string()));
+    enriched
+}
+
+fn emit_parent_sub_agent_event(
+    parent_log_handler: &Option<RuntimeLogHandler>,
+    parent_event_handler: &Option<RuntimeEventHandler>,
+    event: &str,
+    payload: BTreeMap<String, Value>,
+) {
+    if let Some(handler) = parent_log_handler {
+        if let Ok(mut handler) = handler.lock() {
+            handler(event, &payload);
+        }
+    }
+    if let Some(handler) = parent_event_handler {
+        handler(event, &payload);
     }
 }
 

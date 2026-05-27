@@ -268,7 +268,10 @@ impl AgentSDKClient {
         let mut resource_diagnostics = Vec::new();
 
         if options.auto_discover_resources {
-            let mut loader = AgentResourceLoader::new(options.workspace.clone());
+            let mut loader = options
+                .resource_loader
+                .clone()
+                .unwrap_or_else(|| AgentResourceLoader::new(options.workspace.clone()));
             let discovered = loader.discover();
             agents = discovered.agents;
             prompt_templates = discovered.prompts;
