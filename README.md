@@ -401,7 +401,9 @@ The current Rust implementation includes:
 - SDK task preparation now builds Python-style prompt bundles from
   `AgentDefinition.description` when no raw `system_prompt` is provided,
   preserving generated `system_prompt_sections` metadata for cache and
-  debugging flows.
+  debugging flows. `prepare_task_for_agent` exposes this path for named
+  profiles, and `system_prompt_template` is treated like Python: it replaces the
+  agent definition text while still going through the full prompt builder.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,

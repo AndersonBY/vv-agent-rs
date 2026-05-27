@@ -171,6 +171,20 @@ fn task_from_definition(definition: &AgentDefinition, prompt: String) -> AgentTa
                 )
             });
     }
+    if !definition.skill_directories.is_empty() {
+        metadata
+            .entry("available_skills".to_string())
+            .or_insert_with(|| {
+                Value::Array(
+                    definition
+                        .skill_directories
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                )
+            });
+    }
     let mut task = AgentTask::new(
         format!("{}-task", definition.model),
         definition.model.clone(),
@@ -358,6 +372,27 @@ impl AgentSDKClient {
         Ok(run)
     }
 
+    pub fn prepare_task_for_agent(
+        &self,
+        agent_name: impl AsRef<str>,
+        prompt: impl Into<String>,
+        resolved_model_id: impl Into<String>,
+    ) -> Result<AgentTask, String> {
+        let definition = self.get_agent(agent_name.as_ref().trim())?.clone();
+        Ok(self.prepare_task_with_agent(definition, prompt, resolved_model_id))
+    }
+
+    pub fn prepare_task_with_agent(
+        &self,
+        definition: AgentDefinition,
+        prompt: impl Into<String>,
+        resolved_model_id: impl Into<String>,
+    ) -> AgentTask {
+        let mut task = task_from_definition(&self.effective_definition(definition), prompt.into());
+        task.model = resolved_model_id.into();
+        task
+    }
+
     pub fn run(&self, prompt: impl Into<String>) -> Result<AgentRun, String> {
         if let Some(agent) = self.default_agent.clone() {
             return self.run_named_agent("default", agent, prompt);
@@ -419,7 +454,7 @@ impl AgentSDKClient {
             if let Some(template_name) = definition.system_prompt_template.as_deref() {
                 if let Some(template) = self.prompt_templates.get(template_name) {
                     if !template.trim().is_empty() {
-                        definition.system_prompt = Some(template.clone());
+                        definition.description = template.clone();
                     }
                 }
             }

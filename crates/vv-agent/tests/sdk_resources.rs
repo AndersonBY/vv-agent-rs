@@ -171,6 +171,60 @@ fn sdk_client_auto_discovers_resource_agents_and_runs_by_name() {
 }
 
 #[test]
+fn sdk_client_prepare_task_for_agent_uses_resources_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let resource_root = workspace.path().join(".vv-agent");
+    std::fs::create_dir_all(resource_root.join("prompts")).expect("prompts");
+    std::fs::create_dir_all(resource_root.join("skills/demo")).expect("skills");
+    std::fs::write(
+        resource_root.join("agents.json"),
+        json!({
+            "profiles": {
+                "researcher": {
+                    "description": "fallback",
+                    "model": "demo-model",
+                    "system_prompt_template": "research"
+                }
+            }
+        })
+        .to_string(),
+    )
+    .expect("agents");
+    std::fs::write(
+        resource_root.join("prompts/research.md"),
+        "Template system prompt",
+    )
+    .expect("prompt");
+    std::fs::write(
+        resource_root.join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: demo skill\n---\nbody",
+    )
+    .expect("skill");
+
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().to_path_buf(),
+        ..AgentSDKOptions::default()
+    });
+
+    let task = client
+        .prepare_task_for_agent("researcher", "preview task", "demo-model-resolved")
+        .expect("prepare task");
+
+    assert_eq!(task.model, "demo-model-resolved");
+    assert_eq!(task.user_prompt, "preview task");
+    assert!(task.system_prompt.contains("Template system prompt"));
+    assert!(task.metadata["available_skills"]
+        .as_array()
+        .expect("skills")
+        .iter()
+        .any(|path| path.as_str().is_some_and(|path| path.ends_with("skills"))));
+    assert_eq!(
+        task.metadata["system_prompt_sections"][0]["id"],
+        "agent_definition"
+    );
+}
+
+#[test]
 fn sdk_client_run_requires_agent_when_no_profile_is_configured_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new(
