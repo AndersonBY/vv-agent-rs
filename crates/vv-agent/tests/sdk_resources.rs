@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use vv_agent::{
     build_default_registry, AfterLlmEvent, AgentDefinition, AgentResourceLoader, AgentRuntime,
-    AgentSDKClient, AgentSDKOptions, AgentStatus, LLMResponse, LlmBuilder, LlmClient, LlmError,
-    LlmRequest, Message, MessageRole, NoToolPolicy, ResolvedModelConfig, RuntimeExecutionBackend,
-    RuntimeHook, ScriptedLlmClient, ThreadBackend, ToolCall, ToolExecutionResult,
-    ToolRegistryFactory, ToolResultStatus,
+    AgentSDKClient, AgentSDKOptions, AgentSessionRunRequest, AgentStatus, LLMResponse, LlmBuilder,
+    LlmClient, LlmError, LlmRequest, Message, MessageRole, NoToolPolicy, ResolvedModelConfig,
+    RuntimeExecutionBackend, RuntimeHook, ScriptedLlmClient, ThreadBackend, ToolCall,
+    ToolExecutionResult, ToolRegistryFactory, ToolResultStatus,
 };
 
 #[test]
@@ -836,6 +836,78 @@ fn sdk_options_tool_registry_factory_runs_custom_tools_like_python() {
         run.result.cycles[0].tool_results[0].status,
         ToolResultStatus::Success
     );
+}
+
+#[test]
+fn sdk_client_run_agent_with_request_passes_shared_state_like_python() {
+    let custom_tool = "_inspect_shared_state";
+    let builder: LlmBuilder = Arc::new(move |_, backend, model, _| {
+        let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![
+            LLMResponse::with_tool_calls(
+                "inspect shared state",
+                vec![ToolCall::new(custom_tool, custom_tool, BTreeMap::new())],
+            ),
+            LLMResponse::with_tool_calls(
+                "finish",
+                vec![ToolCall::new(
+                    "finish_call",
+                    "task_finish",
+                    BTreeMap::from([("message".to_string(), json!("done"))]),
+                )],
+            ),
+        ]));
+        Ok((
+            llm,
+            ResolvedModelConfig::new(
+                backend.to_string(),
+                model.to_string(),
+                model.to_string(),
+                model.to_string(),
+                Vec::new(),
+            ),
+        ))
+    });
+    let factory: ToolRegistryFactory = Arc::new(move || {
+        let mut registry = build_default_registry();
+        registry
+            .register_tool(
+                custom_tool,
+                "Inspect SDK request shared state.",
+                Arc::new(|context, _arguments| {
+                    let seed = context
+                        .shared_state
+                        .get("seed")
+                        .cloned()
+                        .unwrap_or(json!(null));
+                    context.shared_state.insert("seen_seed".to_string(), seed);
+                    ToolExecutionResult::success("", json!({"ok": true}).to_string())
+                }),
+            )
+            .expect("register custom tool");
+        registry
+    });
+    let mut client = AgentSDKClient::new(AgentSDKOptions {
+        auto_discover_resources: false,
+        llm_builder: Some(builder),
+        tool_registry_factory: Some(factory),
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("demo-model");
+    agent.extra_tool_names.push(custom_tool.to_string());
+    client
+        .register_agent("demo", agent)
+        .expect("register demo agent");
+    let mut request = AgentSessionRunRequest::new("inspect shared state");
+    request
+        .shared_state
+        .insert("seed".to_string(), json!("from-request"));
+
+    let run = client
+        .run_agent_with_request("demo", request)
+        .expect("run with request");
+
+    assert_eq!(run.result.final_answer.as_deref(), Some("done"));
+    assert_eq!(run.result.shared_state["seen_seed"], json!("from-request"));
 }
 
 #[test]

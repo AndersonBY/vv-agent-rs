@@ -486,7 +486,10 @@ The current Rust implementation includes:
   metadata unless the caller already supplied those keys. Module-level
   one-shot helpers `run_with_options_and_agent` and
   `query_with_options_and_agent` mirror Python `sdk.run(...)` / `sdk.query(...)`
-  while keeping Rust signatures explicit.
+  while keeping Rust signatures explicit. `AgentSDKClient::run_agent_with_request`
+  and `run_with_agent_request` expose the same one-shot request path used by
+  sessions, so callers can pass shared state, initial messages, cancellation,
+  steering, and per-run metadata without constructing a long-lived session.
 - SDK task preparation now builds Python-style prompt bundles from
   `AgentDefinition.description` when no raw `system_prompt` is provided,
   preserving generated `system_prompt_sections` metadata for cache and
@@ -497,7 +500,10 @@ The current Rust implementation includes:
   preparation and one-shot runs, matching Python's available-skills prompt
   behavior. Runtime limit fields are clamped during SDK task preparation so
   invalid `max_cycles`, memory compaction threshold, or memory threshold
-  percentage values fall back to Python-compatible safe ranges.
+  percentage values fall back to Python-compatible safe ranges. SDK sessions
+  now use the same effective agent definition as one-shot runs, so startup
+  shell defaults, bash environment overrides, prompt templates, and discovered
+  skill directories also apply to session prompts.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,

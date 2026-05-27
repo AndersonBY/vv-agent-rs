@@ -368,6 +368,14 @@ impl AgentSDKClient {
         self.run_named_agent_with_workspace("inline", definition, prompt, Some(workspace.into()))
     }
 
+    pub fn run_with_agent_request(
+        &self,
+        definition: AgentDefinition,
+        request: AgentSessionRunRequest,
+    ) -> Result<AgentRun, String> {
+        self.run_named_agent_with_request("inline", definition, request)
+    }
+
     pub fn run_agent(
         &self,
         agent_name: impl AsRef<str>,
@@ -389,6 +397,16 @@ impl AgentSDKClient {
         self.run_named_agent_with_workspace(agent_name, definition, prompt, Some(workspace.into()))
     }
 
+    pub fn run_agent_with_request(
+        &self,
+        agent_name: impl AsRef<str>,
+        request: AgentSessionRunRequest,
+    ) -> Result<AgentRun, String> {
+        let agent_name = agent_name.as_ref().trim();
+        let definition = self.get_agent(agent_name)?.clone();
+        self.run_named_agent_with_request(agent_name, definition, request)
+    }
+
     fn run_named_agent(
         &self,
         agent_name: &str,
@@ -405,10 +423,24 @@ impl AgentSDKClient {
         prompt: impl Into<String>,
         workspace: Option<PathBuf>,
     ) -> Result<AgentRun, String> {
-        let definition = self.effective_definition(definition);
         let mut request = AgentSessionRunRequest::new(prompt);
         request.workspace = Some(workspace.unwrap_or_else(|| self.options.workspace.clone()));
-        request.stream_callback = self.options.stream_callback.clone();
+        self.run_named_agent_with_request(agent_name, definition, request)
+    }
+
+    fn run_named_agent_with_request(
+        &self,
+        agent_name: &str,
+        definition: AgentDefinition,
+        mut request: AgentSessionRunRequest,
+    ) -> Result<AgentRun, String> {
+        let definition = self.effective_definition(definition);
+        if request.workspace.is_none() {
+            request.workspace = Some(self.options.workspace.clone());
+        }
+        if request.stream_callback.is_none() {
+            request.stream_callback = self.options.stream_callback.clone();
+        }
         let mut run = self.runtime.run_with_session(&definition, request)?;
         run.agent_name = agent_name.to_string();
         Ok(run)
@@ -794,6 +826,7 @@ pub fn create_agent_session_with_workspace(
     definition: AgentDefinition,
     workspace: impl Into<PathBuf>,
 ) -> AgentSession {
+    let definition = client.effective_definition(definition);
     let runtime = client.runtime.clone();
     let definition_for_run = definition.clone();
     let stream_callback = client.options.stream_callback.clone();
@@ -828,6 +861,7 @@ pub fn create_agent_session_with_id_and_workspace(
     session_id: impl Into<String>,
     workspace: impl Into<PathBuf>,
 ) -> AgentSession {
+    let definition = client.effective_definition(definition);
     let runtime = client.runtime.clone();
     let definition_for_run = definition.clone();
     let stream_callback = client.options.stream_callback.clone();
