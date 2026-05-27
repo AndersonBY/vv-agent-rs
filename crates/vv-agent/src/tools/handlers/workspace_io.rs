@@ -4,7 +4,9 @@ use serde_json::{json, Value};
 
 use crate::tools::base::ToolSpec;
 use crate::tools::common::path_escapes_workspace_error;
-use crate::tools::common::{collect_ignored_roots, is_ignored_root, replace_n, tool_error};
+use crate::tools::common::{
+    collect_ignored_roots, is_hidden_path, is_ignored_root, replace_n, tool_error,
+};
 
 const READ_FILE_MAX_LINES: usize = 2_000;
 const READ_FILE_MAX_CHARS: usize = 50_000;
@@ -33,6 +35,10 @@ pub(crate) fn list_files_tool() -> ToolSpec {
                 .get("include_ignored")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let include_hidden = arguments
+                .get("include_hidden")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             if let Err(error) = context.resolve_workspace_path(path) {
                 return path_escapes_workspace_error(error);
             }
@@ -50,6 +56,9 @@ pub(crate) fn list_files_tool() -> ToolSpec {
                                 .next()
                                 .is_none_or(|root| !is_ignored_root(root))
                         });
+                    }
+                    if !include_hidden {
+                        files.retain(|path| !is_hidden_path(path));
                     }
                     let actual_count = files.len();
                     let scan_limited = actual_count > scan_limit;

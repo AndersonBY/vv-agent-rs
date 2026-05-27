@@ -89,6 +89,42 @@ fn list_files_skips_common_dependency_roots_by_default() {
 }
 
 #[test]
+fn list_files_excludes_hidden_by_default_and_can_include_them_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("visible.txt"), "visible").expect("visible file");
+    std::fs::write(workspace.path().join(".hidden.txt"), "hidden").expect("hidden file");
+
+    let default_list = registry
+        .execute(
+            &ToolCall::new("list_hidden_default", "list_files", BTreeMap::new()),
+            &mut context,
+        )
+        .expect("default list");
+    let default_payload: Value =
+        serde_json::from_str(&default_list.content).expect("default payload");
+    assert_eq!(default_payload["files"], json!(["visible.txt"]));
+
+    let included = registry
+        .execute(
+            &ToolCall::new(
+                "list_hidden_included",
+                "list_files",
+                BTreeMap::from([("include_hidden".to_string(), json!(true))]),
+            ),
+            &mut context,
+        )
+        .expect("included list");
+    let included_payload: Value =
+        serde_json::from_str(&included.content).expect("included payload");
+    assert_eq!(
+        included_payload["files"],
+        json!([".hidden.txt", "visible.txt"])
+    );
+}
+
+#[test]
 fn list_files_reports_estimated_count_when_scan_limit_is_reached_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
