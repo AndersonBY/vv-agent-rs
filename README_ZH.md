@@ -172,6 +172,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - `AgentSDKClient::query` 已对齐 Python client query 语义：completed run 返回最终回答，非 completed 状态会用 `status=wait_user` 这类 snake_case 状态值报告错误原因。
 - `AgentSDKClient` 会自动发现 `.vv-agent/agents.json` 里的命名 profiles，提供 `list_agents`，并可通过 `run_agent` 按名称运行，同时在 `AgentRun.agent_name` 中保留 profile 名称。
 - SDK one-shot run 现在不再必须预先传入 runtime：默认会根据 `AgentSDKOptions.settings_file` 构造 `vv-llm` backed runtime；测试和嵌入方也可以注入 `LlmBuilder` 使用确定性 client。
+- SDK task preparation 现在会在未提供 raw `system_prompt` 时，根据 `AgentDefinition.description` 构建 Python 风格 prompt bundle，并保留生成的 `system_prompt_sections` metadata，方便 prompt cache 和调试链路继续对齐。
 - 基于 `AgentTask` flags 的 Python 风格工具规划，以及 `.vv-agent` 下 `agents.json`、prompt templates 和 skill directories 的资源发现；`agents.json` 已支持完整 agent 字段，包括 sub-agent definitions、tool flags、shell defaults、metadata 和资源路径。
 - SDK 客户端、工具注册表、工作区后端，以及共享协议类型。
 - 覆盖公开 API 构造、Rust SDK 使用、vv-llm 集成、runtime 工具循环、schema parity 和 workspace 工具的 smoke tests。

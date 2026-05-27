@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use vv_agent::{
     AgentDefinition, AgentResourceLoader, AgentRuntime, AgentSDKClient, AgentSDKOptions,
-    AgentStatus, LLMResponse, LlmBuilder, LlmClient, NoToolPolicy, ResolvedModelConfig,
-    ScriptedLlmClient,
+    AgentStatus, LLMResponse, LlmBuilder, LlmClient, LlmError, LlmRequest, Message, MessageRole,
+    NoToolPolicy, ResolvedModelConfig, ScriptedLlmClient,
 };
 
 #[test]
@@ -224,4 +224,70 @@ fn sdk_client_uses_llm_builder_when_runtime_is_not_injected() {
             12.5,
         )]
     );
+}
+
+#[test]
+fn sdk_client_builds_python_style_system_prompt_from_agent_definition() {
+    let captured_messages = Arc::new(Mutex::new(Vec::<Vec<Message>>::new()));
+    let builder: LlmBuilder = {
+        let captured_messages = Arc::clone(&captured_messages);
+        Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
+            let llm: Arc<dyn LlmClient> = Arc::new(CapturingLlmClient {
+                captured_messages: Arc::clone(&captured_messages),
+            });
+            Ok((
+                llm,
+                ResolvedModelConfig::new(
+                    backend.to_string(),
+                    model.to_string(),
+                    model.to_string(),
+                    model.to_string(),
+                    Vec::new(),
+                ),
+            ))
+        })
+    };
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        auto_discover_resources: false,
+        llm_builder: Some(builder),
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("demo-model");
+    agent.description = "Research profile must inspect files before answering.".to_string();
+    agent.no_tool_policy = NoToolPolicy::Finish;
+    agent.allow_interruption = false;
+    agent.use_workspace = false;
+    agent.enable_todo_management = false;
+
+    let run = client
+        .run_with_agent(agent, "capture prompt")
+        .expect("run through capturing builder");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    let captured = captured_messages.lock().expect("captured messages");
+    let system_message = captured[0]
+        .iter()
+        .find(|message| message.role == MessageRole::System)
+        .expect("system message");
+    assert!(system_message.content.contains("<Agent Definition>"));
+    assert!(system_message
+        .content
+        .contains("Research profile must inspect files before answering."));
+    assert!(system_message.content.contains("<Tools>"));
+    assert!(system_message.content.contains("task_finish"));
+}
+
+#[derive(Clone)]
+struct CapturingLlmClient {
+    captured_messages: Arc<Mutex<Vec<Vec<Message>>>>,
+}
+
+impl LlmClient for CapturingLlmClient {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        self.captured_messages
+            .lock()
+            .expect("captured messages")
+            .push(request.messages);
+        Ok(LLMResponse::new("captured answer"))
+    }
 }

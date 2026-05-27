@@ -1,8 +1,14 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use serde_json::Value;
+
 use crate::config::{build_vv_llm_from_local_settings, ResolvedModelConfig};
 use crate::llm::{LlmClient, ScriptedLlmClient};
+use crate::prompt::{
+    build_raw_system_prompt_sections, build_system_prompt_bundle_with_options,
+    BuildSystemPromptOptions,
+};
 use crate::runtime::{AgentRuntime, ExecutionContext, RuntimeRunControls};
 use crate::types::AgentTask;
 use crate::workspace::LocalWorkspaceBackend;
@@ -122,10 +128,11 @@ fn execution_context_from_request(request: &AgentSessionRunRequest) -> Option<Ex
 }
 
 fn task_from_definition(definition: &AgentDefinition, prompt: String) -> AgentTask {
+    let (system_prompt, system_prompt_sections) = system_prompt_from_definition(definition);
     let mut task = AgentTask::new(
         format!("{}-task", definition.model),
         definition.model.clone(),
-        definition.system_prompt.clone().unwrap_or_default(),
+        system_prompt,
         prompt,
     );
     task.max_cycles = definition.max_cycles;
@@ -141,7 +148,57 @@ fn task_from_definition(definition: &AgentDefinition, prompt: String) -> AgentTa
     task.extra_tool_names = definition.extra_tool_names.clone();
     task.exclude_tools = definition.exclude_tools.clone();
     task.metadata = definition.metadata.clone();
+    if !system_prompt_sections.is_empty() {
+        task.metadata
+            .entry("system_prompt_sections".to_string())
+            .or_insert(Value::Array(system_prompt_sections));
+    }
     task
+}
+
+fn system_prompt_from_definition(definition: &AgentDefinition) -> (String, Vec<Value>) {
+    if let Some(system_prompt) = definition.system_prompt.as_ref() {
+        return (
+            system_prompt.clone(),
+            build_raw_system_prompt_sections(system_prompt),
+        );
+    }
+
+    let available_sub_agents = definition
+        .sub_agents
+        .iter()
+        .map(|(name, config)| (name.clone(), config.description.clone()))
+        .collect();
+    let available_skills = definition
+        .metadata
+        .get("available_skills")
+        .cloned()
+        .or_else(|| {
+            (!definition.skill_directories.is_empty()).then(|| {
+                Value::Array(
+                    definition
+                        .skill_directories
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                )
+            })
+        });
+    let prompt_bundle = build_system_prompt_bundle_with_options(
+        &definition.description,
+        BuildSystemPromptOptions {
+            language: definition.language.clone(),
+            allow_interruption: definition.allow_interruption,
+            use_workspace: definition.use_workspace,
+            enable_todo_management: definition.enable_todo_management,
+            agent_type: definition.agent_type.clone(),
+            available_sub_agents,
+            available_skills,
+            ..BuildSystemPromptOptions::default()
+        },
+    );
+    (prompt_bundle.prompt, prompt_bundle.sections)
 }
 
 impl AgentSDKClient {
