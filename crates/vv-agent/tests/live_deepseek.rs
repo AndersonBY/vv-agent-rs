@@ -2,7 +2,8 @@ use std::env;
 use std::path::PathBuf;
 
 use vv_agent::{
-    build_vv_llm_from_local_settings, AgentRuntime, AgentStatus, AgentTask, NoToolPolicy,
+    build_vv_llm_from_local_settings, AgentDefinition, AgentRuntime, AgentSDKClient,
+    AgentSDKOptions, AgentStatus, AgentTask, NoToolPolicy,
 };
 
 #[test]
@@ -43,6 +44,54 @@ fn live_deepseek_v4_pro_finishes_agent_task() {
     assert_eq!(result.final_answer.as_deref(), Some("pong-rs-live"));
     assert!(
         result.cycles.iter().any(|cycle| cycle
+            .tool_calls
+            .iter()
+            .any(|call| call.name == "task_finish")),
+        "expected the live model to call task_finish"
+    );
+}
+
+#[test]
+#[ignore = "live API call; run with VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored"]
+fn live_deepseek_v4_pro_finishes_sdk_task_without_injected_runtime() {
+    if !live_enabled() {
+        eprintln!("Live tests are disabled. Set VV_AGENT_RUN_LIVE_TESTS=1 to run.");
+        return;
+    }
+
+    let settings_path = live_settings_path();
+    assert!(
+        settings_path.exists(),
+        "live settings file is missing: {}",
+        settings_path.display()
+    );
+
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        settings_file: settings_path,
+        default_backend: "deepseek".to_string(),
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("deepseek-v4-pro");
+    agent.backend = Some("deepseek".to_string());
+    agent.max_cycles = 2;
+    agent.no_tool_policy = NoToolPolicy::WaitUser;
+    agent.system_prompt = Some(
+        "You are testing an agent SDK runtime. You must call the task_finish tool. \
+         Set the task_finish message to exactly: pong-rs-sdk-live"
+            .to_string(),
+    );
+
+    let run = client
+        .run_with_agent(agent, "Finish this SDK test now.")
+        .expect("run live SDK agent task");
+
+    assert_eq!(run.resolved.backend, "deepseek");
+    assert_eq!(run.resolved.requested_model, "deepseek-v4-pro");
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(run.result.final_answer.as_deref(), Some("pong-rs-sdk-live"));
+    assert!(
+        run.result.cycles.iter().any(|cycle| cycle
             .tool_calls
             .iter()
             .any(|call| call.name == "task_finish")),

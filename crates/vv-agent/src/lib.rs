@@ -60,7 +60,8 @@ pub use runtime::{
 pub use sdk::{
     create_agent_session, query, run, AgentDefinition, AgentResourceLoader, AgentRun,
     AgentSDKClient, AgentSDKOptions, AgentSession, AgentSessionRunRequest, AgentSessionState,
-    SessionCancellationHandle, SessionEventHandler, SessionListenerId, SessionSteeringHandle,
+    LlmBuilder, SdkLlmClient, SessionCancellationHandle, SessionEventHandler, SessionListenerId,
+    SessionSteeringHandle,
 };
 pub use sub_agent_sessions::{
     continue_sub_agent_session, get_sub_agent_session, register_sub_agent_session,

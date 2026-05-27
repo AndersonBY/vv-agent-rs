@@ -1,11 +1,21 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde_json::Value;
 
 use crate::config::ResolvedModelConfig;
+use crate::llm::LlmClient;
 use crate::runtime::StreamCallback;
 use crate::types::{AgentResult, AgentStatus, Metadata, NoToolPolicy, SubAgentConfig};
+
+pub type SdkLlmClient = Arc<dyn LlmClient>;
+pub type LlmBuilder = Arc<
+    dyn Fn(&Path, &str, &str, f64) -> Result<(SdkLlmClient, ResolvedModelConfig), String>
+        + Send
+        + Sync
+        + 'static,
+>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentDefinition {
@@ -73,6 +83,7 @@ pub struct AgentSDKOptions {
     pub workspace: PathBuf,
     pub timeout_seconds: f64,
     pub log_preview_chars: Option<usize>,
+    pub llm_builder: Option<LlmBuilder>,
     pub auto_discover_resources: bool,
     pub debug_dump_dir: Option<String>,
     pub stream_callback: Option<StreamCallback>,
@@ -87,6 +98,7 @@ impl std::fmt::Debug for AgentSDKOptions {
             .field("workspace", &self.workspace)
             .field("timeout_seconds", &self.timeout_seconds)
             .field("log_preview_chars", &self.log_preview_chars)
+            .field("has_llm_builder", &self.llm_builder.is_some())
             .field("auto_discover_resources", &self.auto_discover_resources)
             .field("debug_dump_dir", &self.debug_dump_dir)
             .field("has_stream_callback", &self.stream_callback.is_some())
@@ -102,6 +114,7 @@ impl Default for AgentSDKOptions {
             workspace: PathBuf::from("./workspace"),
             timeout_seconds: 90.0,
             log_preview_chars: None,
+            llm_builder: None,
             auto_discover_resources: true,
             debug_dump_dir: None,
             stream_callback: None,

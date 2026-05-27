@@ -1,6 +1,9 @@
+use std::sync::{Arc, Mutex};
+
 use serde_json::json;
 use vv_agent::{
-    AgentResourceLoader, AgentRuntime, AgentSDKClient, AgentSDKOptions, AgentStatus, LLMResponse,
+    AgentDefinition, AgentResourceLoader, AgentRuntime, AgentSDKClient, AgentSDKOptions,
+    AgentStatus, LLMResponse, LlmBuilder, LlmClient, NoToolPolicy, ResolvedModelConfig,
     ScriptedLlmClient,
 };
 
@@ -162,5 +165,63 @@ fn sdk_client_auto_discovers_resource_agents_and_runs_by_name() {
     assert_eq!(
         run.result.final_answer.as_deref(),
         Some("discovered answer")
+    );
+}
+
+#[test]
+fn sdk_client_uses_llm_builder_when_runtime_is_not_injected() {
+    let calls = Arc::new(Mutex::new(Vec::<(String, String, String, f64)>::new()));
+    let builder: LlmBuilder = {
+        let calls = Arc::clone(&calls);
+        Arc::new(move |settings_path, backend, model, timeout_seconds| {
+            calls.lock().expect("calls").push((
+                settings_path.display().to_string(),
+                backend.to_string(),
+                model.to_string(),
+                timeout_seconds,
+            ));
+            let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![LLMResponse::new(
+                "builder answer",
+            )]));
+            Ok((
+                llm,
+                ResolvedModelConfig::new(
+                    backend.to_string(),
+                    model.to_string(),
+                    model.to_string(),
+                    format!("{model}-resolved"),
+                    Vec::new(),
+                ),
+            ))
+        })
+    };
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        settings_file: "settings.py".into(),
+        default_backend: "deepseek".to_string(),
+        timeout_seconds: 12.5,
+        auto_discover_resources: false,
+        llm_builder: Some(builder),
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("demo-model");
+    agent.backend = Some("custom-backend".to_string());
+    agent.no_tool_policy = NoToolPolicy::Finish;
+
+    let run = client
+        .run_with_agent(agent, "use configured builder")
+        .expect("run through builder");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(run.result.final_answer.as_deref(), Some("builder answer"));
+    assert_eq!(run.resolved.backend, "custom-backend");
+    assert_eq!(run.resolved.model_id, "demo-model-resolved");
+    assert_eq!(
+        *calls.lock().expect("calls"),
+        vec![(
+            "settings.py".to_string(),
+            "custom-backend".to_string(),
+            "demo-model".to_string(),
+            12.5,
+        )]
     );
 }

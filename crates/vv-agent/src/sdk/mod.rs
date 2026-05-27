@@ -9,4 +9,4 @@ pub use session::{
     AgentSession, AgentSessionRunRequest, AgentSessionState, SessionCancellationHandle,
     SessionEventHandler, SessionListenerId, SessionSteeringHandle,
 };
-pub use types::{AgentDefinition, AgentRun, AgentSDKOptions};
+pub use types::{AgentDefinition, AgentRun, AgentSDKOptions, LlmBuilder, SdkLlmClient};

@@ -364,6 +364,9 @@ The current Rust implementation includes:
 - `AgentSDKClient` auto-discovers named profiles from `.vv-agent/agents.json`,
   exposes `list_agents`, and can run a profile by name through `run_agent`,
   preserving the profile name in `AgentRun.agent_name`.
+- SDK one-shot runs no longer require a prebuilt runtime: by default the client
+  builds a `vv-llm` backed runtime from `AgentSDKOptions.settings_file`, while
+  tests and embedders can inject an `LlmBuilder` for deterministic clients.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::config::ResolvedModelConfig;
+use crate::config::{build_vv_llm_from_local_settings, ResolvedModelConfig};
 use crate::llm::{LlmClient, ScriptedLlmClient};
 use crate::runtime::{AgentRuntime, ExecutionContext, RuntimeRunControls};
 use crate::types::AgentTask;
@@ -9,7 +9,7 @@ use crate::workspace::LocalWorkspaceBackend;
 
 use super::resources::AgentResourceLoader;
 use super::session::{AgentSession, AgentSessionRunRequest};
-use super::types::{query_text_from_run, AgentDefinition, AgentRun, AgentSDKOptions};
+use super::types::{query_text_from_run, AgentDefinition, AgentRun, AgentSDKOptions, SdkLlmClient};
 
 #[derive(Clone)]
 pub struct AgentSDKClient {
@@ -160,6 +160,8 @@ impl AgentSDKClient {
             resource_diagnostics = discovered.diagnostics;
         }
 
+        let runtime_options = options.clone();
+
         Self {
             options,
             default_agent: None,
@@ -167,7 +169,9 @@ impl AgentSDKClient {
             prompt_templates,
             resource_skill_directories,
             resource_diagnostics,
-            runtime: Arc::new(NullRunAgent),
+            runtime: Arc::new(SettingsRunAgent {
+                options: runtime_options,
+            }),
         }
     }
 
@@ -305,15 +309,84 @@ impl AgentSDKClient {
     }
 }
 
-struct NullRunAgent;
+#[derive(Clone)]
+struct SettingsRunAgent {
+    options: AgentSDKOptions,
+}
 
-impl RunAgent for NullRunAgent {
+impl RunAgent for SettingsRunAgent {
     fn run_with_session(
         &self,
-        _definition: &AgentDefinition,
-        _request: AgentSessionRunRequest,
+        definition: &AgentDefinition,
+        request: AgentSessionRunRequest,
     ) -> Result<AgentRun, String> {
-        Err("runtime not configured".to_string())
+        let backend = definition
+            .backend
+            .clone()
+            .unwrap_or_else(|| self.options.default_backend.clone());
+        let (llm, resolved) = build_llm_from_options(&self.options, &backend, &definition.model)?;
+        let mut runtime = AgentRuntime::new(llm);
+        configure_runtime_from_options(&mut runtime, &self.options);
+
+        let execution_context = execution_context_from_request(&request);
+        let mut task = task_from_definition(definition, request.prompt);
+        task.model = resolved.model_id.clone();
+        task.initial_messages = request.initial_messages;
+        task.initial_shared_state = request.shared_state;
+        let result = runtime
+            .run_with_controls(
+                task,
+                RuntimeRunControls {
+                    log_handler: request.runtime_event_handler,
+                    before_cycle_messages: None,
+                    steering_queue: request.steering_queue,
+                    cancellation_token: request.cancellation_token,
+                    execution_context,
+                },
+            )
+            .map_err(|err| err.to_string())?;
+        Ok(AgentRun {
+            agent_name: definition.model.clone(),
+            result,
+            resolved,
+        })
+    }
+}
+
+fn build_llm_from_options(
+    options: &AgentSDKOptions,
+    backend: &str,
+    model: &str,
+) -> Result<(SdkLlmClient, ResolvedModelConfig), String> {
+    if let Some(builder) = &options.llm_builder {
+        return builder(
+            options.settings_file.as_path(),
+            backend,
+            model,
+            options.timeout_seconds,
+        );
+    }
+    let (llm, resolved) = build_vv_llm_from_local_settings(
+        &options.settings_file,
+        backend,
+        model,
+        options.timeout_seconds,
+    )
+    .map_err(|err| err.to_string())?;
+    Ok((Arc::new(llm), resolved))
+}
+
+fn configure_runtime_from_options<C: LlmClient + Clone + 'static>(
+    runtime: &mut AgentRuntime<C>,
+    options: &AgentSDKOptions,
+) {
+    if runtime.log_preview_chars.is_none() {
+        runtime.log_preview_chars = options.log_preview_chars;
+    }
+    if runtime.default_workspace.is_none() {
+        let workspace = options.workspace.clone();
+        runtime.default_workspace = Some(workspace.clone());
+        runtime.workspace_backend = Arc::new(LocalWorkspaceBackend::new(workspace));
     }
 }
 
