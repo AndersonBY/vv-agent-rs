@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use regex::Regex;
 use serde_json::{json, Value};
 
 use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
@@ -106,53 +107,55 @@ pub(crate) fn collect_workspace_files(root: &Path) -> std::io::Result<Vec<PathBu
 
 #[derive(Clone, Copy)]
 pub(crate) struct GrepTextOptions {
-    pub(crate) case_insensitive: bool,
     pub(crate) multiline: bool,
     pub(crate) before_context: usize,
     pub(crate) after_context: usize,
     pub(crate) show_line_numbers: bool,
 }
 
+pub(crate) struct GrepTextResult {
+    pub(crate) rows: Vec<Value>,
+    pub(crate) match_count: usize,
+}
+
 pub(crate) fn grep_text(
     relative_path: &str,
     text: &str,
-    pattern: &str,
+    regex: &Regex,
     options: GrepTextOptions,
-) -> Vec<Value> {
+) -> GrepTextResult {
     if options.multiline {
-        let haystack = if options.case_insensitive {
-            text.to_ascii_lowercase()
-        } else {
-            text.to_string()
+        let rows = regex
+            .find_iter(text)
+            .map(|matched| {
+                let line = text[..matched.start()]
+                    .chars()
+                    .filter(|ch| *ch == '\n')
+                    .count()
+                    + 1;
+                json!({
+                    "path": relative_path,
+                    "line": line,
+                    "text": matched.as_str(),
+                    "is_match": true,
+                })
+            })
+            .collect::<Vec<_>>();
+        return GrepTextResult {
+            match_count: rows.len(),
+            rows,
         };
-        let needle = if options.case_insensitive {
-            pattern.to_ascii_lowercase()
-        } else {
-            pattern.to_string()
-        };
-        if !haystack.contains(&needle) {
-            return Vec::new();
-        }
-        let line = text[..haystack.find(&needle).unwrap_or(0)]
-            .chars()
-            .filter(|ch| *ch == '\n')
-            .count()
-            + 1;
-        return vec![json!({
-            "path": relative_path,
-            "line": line,
-            "text": pattern,
-            "is_match": true,
-        })];
     }
 
     let lines = text.lines().collect::<Vec<_>>();
     let mut include_lines = BTreeMap::<usize, bool>::new();
+    let mut match_count = 0usize;
     for (index, line) in lines.iter().enumerate() {
-        let matched = line_contains(line, pattern, options.case_insensitive);
-        if !matched {
+        let line_match_count = regex.find_iter(line).count();
+        if line_match_count == 0 {
             continue;
         }
+        match_count += line_match_count;
         let start = index.saturating_sub(options.before_context);
         let end = (index + options.after_context).min(lines.len().saturating_sub(1));
         for row_index in start..=end {
@@ -161,7 +164,7 @@ pub(crate) fn grep_text(
         include_lines.insert(index, true);
     }
 
-    include_lines
+    let rows = include_lines
         .into_iter()
         .map(|(index, is_match)| {
             let line_number = index + 1;
@@ -176,16 +179,8 @@ pub(crate) fn grep_text(
             }
             row
         })
-        .collect()
-}
-
-fn line_contains(line: &str, pattern: &str, case_insensitive: bool) -> bool {
-    if case_insensitive {
-        line.to_ascii_lowercase()
-            .contains(&pattern.to_ascii_lowercase())
-    } else {
-        line.contains(pattern)
-    }
+        .collect();
+    GrepTextResult { rows, match_count }
 }
 
 pub(crate) fn is_hidden_path(path: &str) -> bool {

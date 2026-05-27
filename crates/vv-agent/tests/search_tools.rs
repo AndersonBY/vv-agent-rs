@@ -28,6 +28,35 @@ fn workspace_grep_finds_content_with_smart_case() {
 }
 
 #[test]
+fn workspace_grep_uses_regex_patterns_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(
+        workspace.path().join("events.log"),
+        "error 1\nwarning 2\nerror 203\n",
+    )
+    .expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "grep_regex",
+                "workspace_grep",
+                BTreeMap::from([("pattern".to_string(), json!(r"error \d+"))]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep regex");
+
+    assert_eq!(result.metadata["summary"]["total_matches"], 2);
+    let rows = result.metadata["matches"].as_array().expect("matches");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["line"], 1);
+    assert_eq!(rows[1]["line"], 3);
+}
+
+#[test]
 fn workspace_grep_returns_python_style_text_content_and_structured_metadata() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

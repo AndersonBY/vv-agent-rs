@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use regex::RegexBuilder;
 use serde_json::{json, Value};
 
 use crate::tools::base::ToolSpec;
@@ -95,6 +96,17 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
             } else {
                 !pattern.chars().any(char::is_uppercase)
             };
+            let regex = match RegexBuilder::new(&pattern)
+                .case_insensitive(case_insensitive)
+                .multi_line(multiline)
+                .dot_matches_new_line(multiline)
+                .build()
+            {
+                Ok(regex) => regex,
+                Err(error) => {
+                    return tool_error(format!("Invalid regular expression: {error}"));
+                }
+            };
 
             let target_path = match context.resolve_workspace_path(path) {
                 Ok(path) => path,
@@ -138,28 +150,20 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 };
                 searched_files += 1;
                 let grep_options = GrepTextOptions {
-                    case_insensitive,
                     multiline,
                     before_context,
                     after_context,
                     show_line_numbers,
                 };
-                let file_match_rows = grep_text(&relative_path, &text, &pattern, grep_options);
-                let match_count = file_match_rows
-                    .iter()
-                    .filter(|row| {
-                        row.get("is_match")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false)
-                    })
-                    .count();
+                let grep_result = grep_text(&relative_path, &text, &regex, grep_options);
+                let match_count = grep_result.match_count;
                 if match_count == 0 {
                     continue;
                 }
                 total_matches += match_count;
                 files_with_matches.push(relative_path.clone());
                 file_counts.insert(relative_path, match_count);
-                rows.extend(file_match_rows);
+                rows.extend(grep_result.rows);
             }
 
             files_with_matches.sort();

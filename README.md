@@ -289,9 +289,10 @@ The current Rust implementation includes:
   `read_image`, with image-message injection limited to `native_multimodal`
   tasks, Python-style `list_files` hidden-file filtering and scan-limit
   estimate payloads, and
-  `workspace_grep` text content with structured matches kept in metadata and
-  capped with Python-style structured payload limits, plus single-file grep
-  targets that bypass hidden/ignored directory filtering like Python);
+  `workspace_grep` regex search, text content with structured matches kept in
+  metadata and capped with Python-style structured payload limits, plus
+  single-file grep targets that bypass hidden/ignored directory filtering like
+  Python);
   memory notes through `compress_memory`; and `bash` /
   `check_background_command` command tools with captured output, Python-style
   replacement decoding, stdin, metadata-controlled shell selection via
