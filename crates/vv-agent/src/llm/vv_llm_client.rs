@@ -4,6 +4,7 @@ use std::sync::Arc;
 use futures_util::StreamExt;
 use serde_json::Value;
 
+use crate::memory::token_utils::{count_messages_tokens, count_tokens};
 use crate::types::{LLMResponse, Message, MessageRole, TokenUsage, ToolCall};
 
 use super::{LlmClient, LlmError, LlmRequest, LlmStreamCallback};
@@ -59,12 +60,14 @@ impl LlmClient for VvLlmClient {
                 .get("stream")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+        let effective_model = if request.model.is_empty() {
+            self.model_id.clone()
+        } else {
+            request.model.clone()
+        };
+        let estimated_prompt_tokens = count_messages_tokens(&request.messages, &effective_model);
         let mut chat_request = vv_llm::ChatRequest {
-            model: if request.model.is_empty() {
-                self.model_id.clone()
-            } else {
-                request.model
-            },
+            model: effective_model.clone(),
             messages: request
                 .messages
                 .into_iter()
@@ -90,6 +93,10 @@ impl LlmClient for VvLlmClient {
                 Arc::clone(&self.chat_client),
                 chat_request,
                 stream_callback,
+                Some(UsageEstimateContext {
+                    model: effective_model,
+                    prompt_tokens: estimated_prompt_tokens,
+                }),
             ));
         }
 
@@ -97,7 +104,13 @@ impl LlmClient for VvLlmClient {
             .block_on(self.chat_client.create_completion(chat_request))
             .map_err(|error| LlmError::Request(error.to_string()))?;
 
-        Ok(from_vv_llm_response(response))
+        Ok(from_vv_llm_response(
+            response,
+            Some(UsageEstimateContext {
+                model: effective_model,
+                prompt_tokens: estimated_prompt_tokens,
+            }),
+        ))
     }
 }
 
@@ -170,10 +183,23 @@ fn to_vv_llm_tool(tool: Value) -> vv_llm::ChatTool {
     vv_llm::ChatTool::function(name, description, parameters)
 }
 
-fn from_vv_llm_response(response: vv_llm::ChatResponse) -> LLMResponse {
+#[derive(Debug, Clone)]
+struct UsageEstimateContext {
+    model: String,
+    prompt_tokens: u64,
+}
+
+fn from_vv_llm_response(
+    response: vv_llm::ChatResponse,
+    estimate: Option<UsageEstimateContext>,
+) -> LLMResponse {
     let mut raw = crate::types::Metadata::new();
     raw.insert("id".to_string(), Value::String(response.id));
     raw.insert("model".to_string(), Value::String(response.model));
+    let token_usage = response.usage.map(from_vv_llm_usage).unwrap_or_else(|| {
+        estimate_missing_usage(&response.content, &response.tool_calls, estimate)
+    });
+    raw.insert("usage".to_string(), token_usage.raw.clone());
     LLMResponse {
         content: response.content,
         tool_calls: response
@@ -182,7 +208,7 @@ fn from_vv_llm_response(response: vv_llm::ChatResponse) -> LLMResponse {
             .map(from_vv_llm_tool_call)
             .collect(),
         raw,
-        token_usage: response.usage.map(from_vv_llm_usage).unwrap_or_default(),
+        token_usage,
     }
 }
 
@@ -207,6 +233,47 @@ fn from_vv_llm_usage(usage: vv_llm::ChatUsage) -> TokenUsage {
     }
 }
 
+fn estimate_missing_usage(
+    content: &str,
+    tool_calls: &[vv_llm::ToolCall],
+    estimate: Option<UsageEstimateContext>,
+) -> TokenUsage {
+    let Some(estimate) = estimate else {
+        return TokenUsage::default();
+    };
+    let completion_payload = completion_payload_for_usage(content, tool_calls);
+    let completion_tokens = count_tokens(&completion_payload, &estimate.model);
+    let total_tokens = estimate.prompt_tokens + completion_tokens;
+    let raw = serde_json::json!({
+        "prompt_tokens": estimate.prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    });
+    TokenUsage {
+        prompt_tokens: estimate.prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        input_tokens: estimate.prompt_tokens,
+        output_tokens: completion_tokens,
+        raw,
+        ..TokenUsage::default()
+    }
+}
+
+fn completion_payload_for_usage(content: &str, tool_calls: &[vv_llm::ToolCall]) -> String {
+    if tool_calls.is_empty() {
+        return content.to_string();
+    }
+    let mut payload = content.to_string();
+    if let Ok(tool_payload) = serde_json::to_string(tool_calls) {
+        if !payload.is_empty() {
+            payload.push('\n');
+        }
+        payload.push_str(&tool_payload);
+    }
+    payload
+}
+
 #[derive(Debug, Default)]
 struct StreamingToolCallParts {
     id: String,
@@ -218,6 +285,7 @@ async fn collect_vv_llm_stream(
     chat_client: Arc<dyn vv_llm::ChatClient>,
     request: vv_llm::ChatRequest,
     stream_callback: Option<LlmStreamCallback>,
+    estimate: Option<UsageEstimateContext>,
 ) -> Result<LLMResponse, LlmError> {
     let model = request.model.clone();
     let mut stream = chat_client
@@ -353,7 +421,21 @@ async fn collect_vv_llm_stream(
     if !raw_content.is_empty() {
         raw.insert("raw_content".to_string(), Value::Array(raw_content));
     }
-    let token_usage = usage.map(from_vv_llm_usage).unwrap_or_default();
+    let completion_payload = completion_payload_for_usage(
+        &content,
+        &tool_order
+            .iter()
+            .filter_map(|key| {
+                tool_calls.get(key).map(|parts| {
+                    vv_llm::ToolCall::function(&parts.id, &parts.name, &parts.arguments)
+                })
+            })
+            .collect::<Vec<_>>(),
+    );
+    let token_usage = usage
+        .map(from_vv_llm_usage)
+        .unwrap_or_else(|| estimate_missing_usage(&completion_payload, &[], estimate));
+    raw.insert("usage".to_string(), token_usage.raw.clone());
     Ok(LLMResponse {
         content,
         tool_calls: tool_order

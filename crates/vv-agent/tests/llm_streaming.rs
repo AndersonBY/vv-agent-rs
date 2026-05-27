@@ -7,7 +7,8 @@ use futures_util::stream;
 use serde_json::{json, Value};
 use vv_agent::{
     AgentDefinition, AgentRuntime, AgentSDKClient, AgentSDKOptions, AgentStatus, AgentTask,
-    ExecutionContext, RuntimeRunControls, StreamCallback, VvLlmClient,
+    ExecutionContext, LlmClient, LlmRequest, Message, RuntimeRunControls, StreamCallback,
+    VvLlmClient,
 };
 
 #[derive(Clone, Default)]
@@ -194,4 +195,92 @@ fn sdk_options_stream_callback_is_forwarded_to_runtime() {
     assert_eq!(probe.completion_calls(), 0);
     assert_eq!(probe.stream_calls(), 1);
     assert!(!events.lock().expect("stream events lock").is_empty());
+}
+
+#[test]
+fn vv_llm_client_estimates_usage_when_provider_omits_usage_like_python() {
+    let llm = VvLlmClient::new(
+        "openai",
+        "demo-model",
+        "demo-model",
+        Box::new(UsageMissingChatClient),
+        90.0,
+    );
+
+    let response = llm
+        .complete(LlmRequest::new(
+            "demo-model",
+            vec![Message::user("hello from usage estimator")],
+        ))
+        .expect("completion without provider usage");
+
+    assert_eq!(response.content, "estimated usage response");
+    assert!(response.token_usage.prompt_tokens > 0);
+    assert!(response.token_usage.completion_tokens > 0);
+    assert_eq!(
+        response.token_usage.total_tokens,
+        response.token_usage.prompt_tokens + response.token_usage.completion_tokens
+    );
+    assert_eq!(
+        response.raw["usage"]["prompt_tokens"],
+        json!(response.token_usage.prompt_tokens)
+    );
+    assert_eq!(
+        response.raw["usage"]["completion_tokens"],
+        json!(response.token_usage.completion_tokens)
+    );
+}
+
+#[derive(Clone, Default)]
+struct UsageMissingChatClient;
+
+impl vv_llm::ChatClient for UsageMissingChatClient {
+    fn provider_name(&self) -> &'static str {
+        "usage-missing"
+    }
+
+    fn create_completion<'life0, 'async_trait>(
+        &'life0 self,
+        request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatResponse, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            Ok(vv_llm::ChatResponse {
+                id: "usage-missing-response".to_string(),
+                model: request.model,
+                content: "estimated usage response".to_string(),
+                tool_calls: Vec::new(),
+                usage: None,
+            })
+        })
+    }
+
+    fn create_stream<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatStream, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let chat_stream: vv_llm::ChatStream = Box::pin(stream::empty());
+            Ok(chat_stream)
+        })
+    }
 }

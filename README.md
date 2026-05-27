@@ -181,6 +181,9 @@ The current Rust implementation includes:
 - Python-style runtime token usage helpers normalize raw provider usage payloads
   across prompt/completion and input/output naming variants, preserve the raw
   usage payload, and summarize per-cycle totals.
+- The `vv-llm` backed client estimates prompt/completion usage when a provider
+  response omits usage, preserving Python's fallback behavior for runtime
+  accounting and memory-compaction heuristics.
 - Core runtime types expose Python-style `to_dict` / `from_dict` helpers for
   task, result, message, cycle, tool-call, and tool-result payloads, including
   legacy tool `status` plus `status_code` for worker interoperability.
