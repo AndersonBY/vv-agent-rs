@@ -176,6 +176,10 @@ impl LlmClient for VvLlmClient {
         self.complete_with_stream(request, None)
     }
 
+    fn clone_with_debug_dump_dir(&self, debug_dump_dir: &Path) -> Option<Arc<dyn LlmClient>> {
+        Some(Arc::new(self.clone().with_debug_dump_dir(debug_dump_dir)))
+    }
+
     fn complete_with_stream(
         &self,
         request: LlmRequest,

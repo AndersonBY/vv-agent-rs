@@ -1098,6 +1098,66 @@ fn sdk_options_runtime_hooks_apply_to_injected_runtime_like_python() {
 }
 
 #[test]
+fn sdk_options_pass_debug_dump_dir_to_custom_llm_builder_like_python() {
+    #[derive(Clone, Default)]
+    struct DebugAwareLlm {
+        debug_dump_dir: Arc<Mutex<Option<std::path::PathBuf>>>,
+    }
+
+    impl LlmClient for DebugAwareLlm {
+        fn complete(&self, _request: LlmRequest) -> Result<LLMResponse, LlmError> {
+            Ok(LLMResponse::with_tool_calls(
+                "done",
+                vec![ToolCall::new(
+                    "finish",
+                    "task_finish",
+                    BTreeMap::from([("message".to_string(), json!("ok"))]),
+                )],
+            ))
+        }
+
+        fn set_debug_dump_dir(&self, debug_dump_dir: &std::path::Path) {
+            *self.debug_dump_dir.lock().expect("debug dir") = Some(debug_dump_dir.to_path_buf());
+        }
+    }
+
+    let workspace = tempfile::tempdir().expect("workspace");
+    let dump_dir = workspace.path().join("llm-dumps");
+    let llm = DebugAwareLlm::default();
+    let observed_debug_dump_dir = Arc::clone(&llm.debug_dump_dir);
+    let llm_builder: LlmBuilder = Arc::new(move |_settings, _backend, _model, _timeout| {
+        Ok((
+            Arc::new(llm.clone()) as Arc<dyn LlmClient>,
+            ResolvedModelConfig::new(
+                "deepseek",
+                "deepseek-v4-pro",
+                "deepseek-v4-pro",
+                "deepseek-v4-pro",
+                Vec::new(),
+            ),
+        ))
+    });
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().to_path_buf(),
+        debug_dump_dir: Some(dump_dir.to_string_lossy().into_owned()),
+        llm_builder: Some(llm_builder),
+        tool_registry_factory: Some(Arc::new(build_default_registry)),
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    });
+
+    let mut agent = AgentDefinition::default_for_model("deepseek-v4-pro");
+    agent.backend = Some("deepseek".to_string());
+    let run = client.run_with_agent(agent, "say ok").expect("run");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(
+        *observed_debug_dump_dir.lock().expect("debug dir"),
+        Some(dump_dir)
+    );
+}
+
+#[test]
 fn sdk_client_builds_python_style_system_prompt_from_agent_definition() {
     let captured_messages = Arc::new(Mutex::new(Vec::<Vec<Message>>::new()));
     let builder: LlmBuilder = {

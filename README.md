@@ -178,7 +178,10 @@ The current Rust implementation includes:
   with the public `LlmClient` trait, scripted test client, and `vv-llm` backed
   production client kept behind stable top-level exports. Python-style public
   aliases such as `LLMClient`, `ScriptedLLM`, `ScriptStep`, and `VVLlmClient`
-  are also exported for callers porting code from `v-agent`.
+  are also exported for callers porting code from `v-agent`. `LlmClient` also
+  exposes debug-dump configuration hooks, so SDK callers that inject a custom
+  `llm_builder` can receive `AgentSDKOptions.debug_dump_dir` instead of
+  bypassing Python-style request dump behavior.
 - Split `memory/` submodules are public on the same import paths as Python,
   including `errors`, `manager`, `message_sanitizer`, `microcompact`,
   `post_compact_restore`, `session_memory`, and `token_utils`.
@@ -549,10 +552,11 @@ The current Rust implementation includes:
   builds a `vv-llm` backed runtime from `AgentSDKOptions.settings_file`, while
   tests and embedders can inject an `LlmBuilder` for deterministic clients.
   `AgentSDKOptions.runtime_hooks`, `log_handler`, `tool_registry_factory`,
-  `execution_backend`, and custom `resource_loader` are applied to SDK flows,
-  matching Python's SDK extension points. SDK-built runtimes apply resolved
-  vv-llm token limits as `model_context_window` and `reserved_output_tokens`
-  metadata unless the caller already supplied those keys. Module-level
+  `execution_backend`, `debug_dump_dir`, and custom `resource_loader` are
+  applied to SDK flows, matching Python's SDK extension points. SDK-built
+  runtimes apply resolved vv-llm token limits as `model_context_window` and
+  `reserved_output_tokens` metadata unless the caller already supplied those
+  keys. Module-level
   one-shot helpers `run_with_options_and_agent` and
   `query_with_options_and_agent` mirror Python `sdk.run(...)` / `sdk.query(...)`
   while keeping Rust signatures explicit. `AgentSDKClient::run_agent_with_request`

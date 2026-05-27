@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -41,6 +42,12 @@ pub enum LlmError {
 pub trait LlmClient: Send + Sync {
     fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError>;
 
+    fn set_debug_dump_dir(&self, _debug_dump_dir: &Path) {}
+
+    fn clone_with_debug_dump_dir(&self, _debug_dump_dir: &Path) -> Option<Arc<dyn LlmClient>> {
+        None
+    }
+
     fn complete_with_stream(
         &self,
         request: LlmRequest,
@@ -57,6 +64,14 @@ where
 {
     fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
         (**self).complete(request)
+    }
+
+    fn set_debug_dump_dir(&self, debug_dump_dir: &Path) {
+        (**self).set_debug_dump_dir(debug_dump_dir);
+    }
+
+    fn clone_with_debug_dump_dir(&self, debug_dump_dir: &Path) -> Option<Arc<dyn LlmClient>> {
+        (**self).clone_with_debug_dump_dir(debug_dump_dir)
     }
 
     fn complete_with_stream(
