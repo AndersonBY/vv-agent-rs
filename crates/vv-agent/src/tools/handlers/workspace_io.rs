@@ -163,15 +163,20 @@ pub(crate) fn read_file_tool() -> ToolSpec {
             if !backend.is_file(path) {
                 return tool_error(format!("file not found: {path}"));
             }
-            let start_line = arguments
-                .get("start_line")
-                .and_then(Value::as_u64)
-                .unwrap_or(1)
-                .max(1) as usize;
-            let end_line = arguments
-                .get("end_line")
-                .and_then(Value::as_u64)
-                .map(|line| line.max(start_line as u64) as usize);
+            let start_line = match arguments.get("start_line") {
+                Some(value) => match parse_integer_arg(value) {
+                    Ok(line) => line.max(1) as usize,
+                    Err(_) => return tool_error("`start_line`/`end_line` must be integers"),
+                },
+                None => 1,
+            };
+            let end_line = match arguments.get("end_line") {
+                Some(value) => match parse_integer_arg(value) {
+                    Ok(line) => Some(line.max(start_line as i64) as usize),
+                    Err(_) => return tool_error("`start_line`/`end_line` must be integers"),
+                },
+                None => None,
+            };
             let show_line_numbers = arguments
                 .get("show_line_numbers")
                 .and_then(Value::as_bool)
@@ -254,6 +259,14 @@ pub(crate) fn read_file_tool() -> ToolSpec {
         spec.schema = schema;
     }
     spec
+}
+
+fn parse_integer_arg(value: &Value) -> Result<i64, ()> {
+    match value {
+        Value::Number(number) => number.as_i64().ok_or(()),
+        Value::String(text) => text.trim().parse::<i64>().map_err(|_| ()),
+        _ => Err(()),
+    }
 }
 
 pub(crate) fn write_file_tool() -> ToolSpec {

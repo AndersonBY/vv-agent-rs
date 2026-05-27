@@ -10,8 +10,8 @@ pub(super) fn read_file_schema() -> Value {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
-                    "start_line": {"type": "integer", "minimum": 1, "description": "Optional starting line number (1-based)."},
-                    "end_line": {"type": "integer", "minimum": 1, "description": "Optional ending line number (1-based, inclusive)."},
+                    "start_line": {"type": "integer", "minimum": 1, "description": "Optional starting line number (1-based). numeric string values are accepted for Python compatibility."},
+                    "end_line": {"type": "integer", "minimum": 1, "description": "Optional ending line number (1-based, inclusive). numeric string values are accepted for Python compatibility."},
                     "show_line_numbers": {"type": "boolean", "description": "When true, prefixes each output line with its source line number."}
                 },
                 "required": ["path"]

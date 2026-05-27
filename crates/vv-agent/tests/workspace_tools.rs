@@ -297,6 +297,35 @@ fn read_file_returns_file_info_when_requested_slice_exceeds_limits() {
 }
 
 #[test]
+fn read_file_accepts_string_line_numbers_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("notes.txt"), "alpha\nbeta\ngamma").expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "read_string_lines",
+                "read_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("notes.txt")),
+                    ("start_line".to_string(), json!("2")),
+                    ("end_line".to_string(), json!("2")),
+                    ("show_line_numbers".to_string(), json!(true)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("read tool");
+
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["start_line"], 2);
+    assert_eq!(payload["end_line"], 2);
+    assert_eq!(payload["content"], "2: beta");
+}
+
+#[test]
 fn workspace_backends_honor_python_glob_and_missing_file_semantics() {
     let workspace = tempfile::tempdir().expect("workspace");
     std::fs::create_dir_all(workspace.path().join("src/nested")).expect("dirs");

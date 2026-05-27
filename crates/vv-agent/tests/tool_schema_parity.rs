@@ -11,6 +11,7 @@ fn default_tool_schemas_include_reference_quality_descriptions() {
     assert!(read_file.contains("Supported behavior:"));
     assert!(read_file.contains("max 2000 lines or 50000 characters"));
     assert!(property_description(&registry, "read_file", "path").contains("workspace-relative"));
+    assert!(property_description(&registry, "read_file", "start_line").contains("numeric string"));
 
     let workspace_grep = description(&registry, "workspace_grep");
     assert!(workspace_grep.contains("OUTPUT MODES:"));
