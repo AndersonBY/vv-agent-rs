@@ -161,7 +161,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 已加入参考 Python `post_compact_restore` 的 compaction 后关键文件恢复：summary 会用结构化 `path/action/summary` 记录文件动作，并在预算内把关键 workspace 文件内容放回 `<Post-Compaction File Context>`。
 - 已加入 Python 风格 resume / compaction message sanitizer：会移除空 assistant、thinking-only assistant、孤儿 tool result 和未完成的尾部 tool calls，并在 memory compaction 前归一化陈旧 tool-call 边界。
 - `prompt/` 已按 Python `vv_agent.prompt` 拆分：支持 system prompt builder sections、stable prompt hash、raw section metadata、本地化工具模板、available skills 渲染和 prompt-cache break tracking。
-- `tools/` 已按 Python `v-agent` 的结构拆分为 `base`、`builtins`、`registry`、dispatcher、canonical `schemas/` domain modules、共享 `common` helper 和各个 handler 模块；`tools::builtins` 暴露 Python 对齐的 `build_default_registry` 导入路径，`ToolRegistry` 支持 Python 风格自定义工具注册，可使用默认空参数 schema 或显式 JSON Schema 参数。
+- `tools/` 已按 Python `v-agent` 的结构拆分为 `base`、`builtins`、`registry`、dispatcher、canonical `schemas/` domain modules、共享 `common` helper 和各个 handler 模块；`tools::builtins` 暴露 Python 对齐的 `build_default_registry` 导入路径，`ToolRegistry` 支持 Python 风格自定义工具注册，可使用默认空参数 schema 或显式 JSON Schema 参数。`tools::handlers::todo_read` / `todo_write` 也已作为 Python 风格 handler 入口公开。
 - 已补 Python 风格 tool dispatch：会把 LLM 原始工具参数解析错误转换成结构化 tool result，补齐 missing / pending tool call id，把 wait-user directive 映射为 `WAIT_RESPONSE`，并在未知工具时返回 `tool_not_found`，避免 transcript 丢失工具结果。
 - 公开 `skills/` 模块已拆成 Python 风格的 skill model、目录发现、frontmatter 解析、metadata 归一化、validation mode、diagnostics 和 `<available_skills>` prompt 渲染，并支持与 `v-agent` 一致的预算降级策略。
 - `sdk/` 已按 Python 的 `types`、`resources`、`session` 和 `client` 层级拆分，同时保持 crate 顶层 SDK 导出稳定。

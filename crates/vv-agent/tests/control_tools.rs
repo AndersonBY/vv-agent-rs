@@ -4,6 +4,43 @@ use serde_json::json;
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolDirective, ToolResultStatus};
 
 #[test]
+fn todo_handlers_expose_python_style_read_and_write_functions() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut context = ToolContext::new(workspace.path());
+    let empty_args = BTreeMap::new();
+
+    let read_empty = vv_agent::tools::handlers::todo::todo_read(&mut context, &empty_args);
+    assert_eq!(read_empty.status, ToolResultStatus::Success);
+    let read_empty_payload: serde_json::Value =
+        serde_json::from_str(&read_empty.content).expect("read empty payload");
+    assert_eq!(read_empty_payload["action"], json!("read"));
+    assert_eq!(read_empty_payload["count"], json!(0));
+    assert_eq!(context.shared_state["todo_list"], json!([]));
+
+    let read_empty_from_handlers = vv_agent::tools::handlers::todo_read(&mut context, &empty_args);
+    assert_eq!(read_empty_from_handlers.status, ToolResultStatus::Success);
+
+    let write_result = vv_agent::tools::handlers::todo::todo_write(
+        &mut context,
+        &BTreeMap::from([(
+            "todos".to_string(),
+            json!([{"title": "ship parity", "status": "completed", "priority": "high"}]),
+        )]),
+    );
+    assert_eq!(write_result.status, ToolResultStatus::Success);
+
+    let read_written = vv_agent::tools::handlers::todo::todo_read(&mut context, &empty_args);
+    let read_written_payload: serde_json::Value =
+        serde_json::from_str(&read_written.content).expect("read written payload");
+    assert_eq!(read_written_payload["action"], json!("read"));
+    assert_eq!(read_written_payload["count"], json!(1));
+    assert_eq!(
+        read_written_payload["todos"][0]["title"],
+        json!("ship parity")
+    );
+}
+
+#[test]
 fn todo_write_updates_shared_state_and_enforces_single_in_progress() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
