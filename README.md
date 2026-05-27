@@ -459,8 +459,10 @@ The current Rust implementation includes:
   `wait_for_completion=false`, with batch aggregation and status/snapshot
   polling. `create_sub_task` also accepts Python-style boolean coercion for
   `include_main_summary` and `wait_for_completion`, so common string values
-  such as `"true"` and `"0"` behave the same as in Python. A Python-style active
-  sub-agent session registry exposes
+  such as `"true"` and `"0"` behave the same as in Python. `SubTaskRequest::new`
+  uses the same defaults as Python's dataclass, and `SubTaskOutcome::to_dict`
+  emits the Python payload shape for callers that serialize sub-agent results.
+  A Python-style active sub-agent session registry exposes
   `get_sub_agent_session`, `subscribe_sub_agent_session`, and
   `steer_sub_agent_session`, and `sub_task_status(message=...)` can queue
   steering messages for sessions registered during active runs or continue

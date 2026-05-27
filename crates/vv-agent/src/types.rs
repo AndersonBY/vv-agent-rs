@@ -450,6 +450,19 @@ pub struct SubTaskRequest {
     pub metadata: Metadata,
 }
 
+impl SubTaskRequest {
+    pub fn new(agent_name: impl Into<String>, task_description: impl Into<String>) -> Self {
+        Self {
+            agent_name: agent_name.into(),
+            task_description: task_description.into(),
+            output_requirements: String::new(),
+            include_main_summary: false,
+            exclude_files_pattern: None,
+            metadata: Metadata::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SubTaskOutcome {
     pub task_id: String,
@@ -465,6 +478,10 @@ pub struct SubTaskOutcome {
 }
 
 impl SubTaskOutcome {
+    pub fn to_dict(&self) -> Value {
+        self.to_value()
+    }
+
     pub fn to_value(&self) -> Value {
         json_value_from_serializable(self)
     }

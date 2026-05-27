@@ -1,8 +1,11 @@
+use std::collections::BTreeMap;
+
 use serde_json::{json, Value};
 use vv_agent::types::CycleTokenUsage;
 use vv_agent::{
     AgentResult, AgentStatus, AgentTask, CycleRecord, LLMResponse, Message, NoToolPolicy,
-    TokenUsage, ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus,
+    SubTaskOutcome, SubTaskRequest, TokenUsage, ToolCall, ToolDirective, ToolExecutionResult,
+    ToolResultStatus,
 };
 
 #[test]
@@ -176,4 +179,38 @@ fn message_to_openai_message_matches_python_multimodal_and_tool_shapes() {
         image_payload["content"][1],
         json!({"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}})
     );
+}
+
+#[test]
+fn sub_task_protocol_helpers_match_python_defaults_and_dict_shape() {
+    let request = SubTaskRequest::new("researcher", "collect sources");
+    assert_eq!(request.agent_name, "researcher");
+    assert_eq!(request.task_description, "collect sources");
+    assert_eq!(request.output_requirements, "");
+    assert!(!request.include_main_summary);
+    assert!(request.exclude_files_pattern.is_none());
+    assert!(request.metadata.is_empty());
+
+    let outcome = SubTaskOutcome {
+        task_id: "sub-1".to_string(),
+        agent_name: "researcher".to_string(),
+        status: AgentStatus::Completed,
+        session_id: Some("session-1".to_string()),
+        final_answer: Some("done".to_string()),
+        wait_reason: None,
+        error: None,
+        cycles: 2,
+        todo_list: vec![json!({"title": "collect", "status": "completed"})],
+        resolved: BTreeMap::from([("model".to_string(), "deepseek-v4-pro".to_string())]),
+    };
+
+    let payload = outcome.to_dict();
+    assert_eq!(payload["task_id"], "sub-1");
+    assert_eq!(payload["agent_name"], "researcher");
+    assert_eq!(payload["status"], "completed");
+    assert_eq!(payload["session_id"], "session-1");
+    assert_eq!(payload["final_answer"], "done");
+    assert_eq!(payload["cycles"], 2);
+    assert_eq!(payload["todo_list"][0]["title"], "collect");
+    assert_eq!(payload["resolved"]["model"], "deepseek-v4-pro");
 }
