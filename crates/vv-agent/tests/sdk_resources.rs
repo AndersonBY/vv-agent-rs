@@ -223,6 +223,40 @@ fn resource_loader_reports_invalid_agent_profiles_like_python() {
 }
 
 #[test]
+fn resource_loader_tracks_python_hook_files_with_rust_diagnostics() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let resource_root = workspace.path().join(".vv-agent");
+    std::fs::create_dir_all(resource_root.join("hooks/nested")).expect("hooks");
+    std::fs::write(resource_root.join("hooks/noop.py"), "HOOK = object()").expect("hook");
+    std::fs::write(
+        resource_root.join("hooks/nested/index.py"),
+        "HOOK = object()",
+    )
+    .expect("nested hook");
+
+    let mut loader = AgentResourceLoader::with_resource_dirs(
+        workspace.path(),
+        &resource_root,
+        workspace.path().join(".none"),
+    );
+    let discovered = loader.discover();
+
+    assert_eq!(discovered.hook_files.len(), 2);
+    assert!(discovered
+        .hook_files
+        .iter()
+        .any(|path| path.ends_with("hooks/noop.py")));
+    assert!(discovered
+        .hook_files
+        .iter()
+        .any(|path| path.ends_with("hooks/nested/index.py")));
+    assert!(discovered.diagnostics.iter().any(|diagnostic| {
+        diagnostic.contains("Python hook file discovered")
+            && diagnostic.contains("AgentSDKOptions.runtime_hooks")
+    }));
+}
+
+#[test]
 fn sdk_client_auto_discovers_resource_agents_and_runs_by_name() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");

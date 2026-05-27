@@ -12,6 +12,7 @@ pub struct DiscoveredResources {
     pub agents: BTreeMap<String, AgentDefinition>,
     pub prompts: BTreeMap<String, String>,
     pub skill_directories: Vec<String>,
+    pub hook_files: Vec<String>,
     pub diagnostics: Vec<String>,
 }
 
@@ -69,6 +70,7 @@ impl AgentResourceLoader {
                 self.load_agents(&root, &mut discovered);
                 self.load_prompts(&root, &mut discovered);
                 self.load_skills(&root, &mut discovered);
+                self.load_hooks(&root, &mut discovered);
             }
         }
         self.cached = Some(discovered.clone());
@@ -202,6 +204,39 @@ impl AgentResourceLoader {
         let path = skills_dir.to_string_lossy().to_string();
         if !discovered.skill_directories.contains(&path) {
             discovered.skill_directories.push(path);
+        }
+    }
+
+    fn load_hooks(&self, root: &std::path::Path, discovered: &mut DiscoveredResources) {
+        let hooks_dir = root.join("hooks");
+        if !hooks_dir.is_dir() {
+            return;
+        }
+
+        let mut hook_files = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&hooks_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("py") {
+                    hook_files.push(path);
+                } else if path.is_dir() {
+                    let index_file = path.join("index.py");
+                    if index_file.is_file() {
+                        hook_files.push(index_file);
+                    }
+                }
+            }
+        }
+        hook_files.sort();
+
+        for hook_file in hook_files {
+            let path = hook_file.to_string_lossy().to_string();
+            if !discovered.hook_files.contains(&path) {
+                discovered.hook_files.push(path.clone());
+            }
+            discovered.diagnostics.push(format!(
+                "Python hook file discovered but Rust cannot load it automatically: {path}. Pass Rust RuntimeHook objects through AgentSDKOptions.runtime_hooks."
+            ));
         }
     }
 }

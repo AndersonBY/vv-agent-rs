@@ -415,7 +415,9 @@ The current Rust implementation includes:
   `agents.json` now carries full agent fields including sub-agent definitions,
   tool flags, shell defaults, metadata, and resource paths. Resource paths
   expand `~` like Python, and `AgentResourceLoader::discover_force_reload`
-  refreshes cached resources after on-disk changes.
+  refreshes cached resources after on-disk changes. Python hook files under
+  `.vv-agent/hooks` are discovered and reported through diagnostics; Rust hook
+  execution uses `AgentSDKOptions.runtime_hooks`.
 - SDK client, tool registry, workspace backends, and shared protocol types.
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, schema parity, and workspace tools.

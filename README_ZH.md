@@ -185,7 +185,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - Memory token utilities 会优先使用 `vv-llm::utilities::count_tokens` 的 tokenizer；不支持的模型继续使用 Python 风格 CJK-aware 估算。
 - SDK one-shot run 现在不再必须预先传入 runtime：默认会根据 `AgentSDKOptions.settings_file` 构造 `vv-llm` backed runtime；测试和嵌入方也可以注入 `LlmBuilder` 使用确定性 client。`AgentSDKOptions.runtime_hooks` 会同时作用于 SDK 自动构建和外部注入的 runtime，对齐 Python SDK 的扩展点。
 - SDK task preparation 现在会在未提供 raw `system_prompt` 时，根据 `AgentDefinition.description` 构建 Python 风格 prompt bundle，并保留生成的 `system_prompt_sections` metadata，方便 prompt cache 和调试链路继续对齐。`prepare_task_for_agent` 也已暴露命名 profile 的 task 预览路径；`system_prompt_template` 会像 Python 一样替换 agent definition 文本，但仍走完整 prompt builder。
-- 基于 `AgentTask` flags 的 Python 风格工具规划，以及 `.vv-agent` 下 `agents.json`、prompt templates 和 skill directories 的资源发现；`agents.json` 已支持完整 agent 字段，包括 sub-agent definitions、tool flags、shell defaults、metadata 和资源路径。资源路径会像 Python 一样展开 `~`，`AgentResourceLoader::discover_force_reload` 可在磁盘资源变更后刷新缓存。
+- 基于 `AgentTask` flags 的 Python 风格工具规划，以及 `.vv-agent` 下 `agents.json`、prompt templates 和 skill directories 的资源发现；`agents.json` 已支持完整 agent 字段，包括 sub-agent definitions、tool flags、shell defaults、metadata 和资源路径。资源路径会像 Python 一样展开 `~`，`AgentResourceLoader::discover_force_reload` 可在磁盘资源变更后刷新缓存；`.vv-agent/hooks` 下的 Python hook 文件会被发现并通过 diagnostics 报告，Rust hook 执行使用 `AgentSDKOptions.runtime_hooks` 注入。
 - SDK 客户端、工具注册表、工作区后端，以及共享协议类型。
 - 覆盖公开 API 构造、Rust SDK 使用、vv-llm 集成、runtime 工具循环、schema parity 和 workspace 工具的 smoke tests。
 
