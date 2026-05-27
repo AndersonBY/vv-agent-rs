@@ -178,6 +178,51 @@ fn resource_loader_expands_home_paths_like_python() {
 }
 
 #[test]
+fn resource_loader_reports_invalid_agent_profiles_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let resource_root = workspace.path().join(".vv-agent");
+    std::fs::create_dir_all(&resource_root).expect("resource root");
+    std::fs::write(
+        resource_root.join("agents.json"),
+        json!({
+            "profiles": {
+                "": {"description": "blank name", "model": "demo"},
+                "not_object": "invalid",
+                "missing_description": {"model": "demo"},
+                "missing_model": {"description": "demo"}
+            }
+        })
+        .to_string(),
+    )
+    .expect("agents");
+
+    let mut loader = AgentResourceLoader::with_resource_dirs(
+        workspace.path(),
+        &resource_root,
+        workspace.path().join(".none"),
+    );
+    let discovered = loader.discover();
+
+    assert!(discovered.agents.is_empty());
+    assert!(discovered
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.contains("Skip invalid profile name")));
+    assert!(discovered
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.contains("definition must be an object")));
+    assert!(discovered
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.contains("`description` must be non-empty string")));
+    assert!(discovered
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.contains("`model` must be non-empty string")));
+}
+
+#[test]
 fn sdk_client_auto_discovers_resource_agents_and_runs_by_name() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");

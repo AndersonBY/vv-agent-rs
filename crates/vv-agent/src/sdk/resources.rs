@@ -104,13 +104,40 @@ impl AgentResourceLoader {
             return;
         };
         for (name, payload) in profiles {
+            if name.trim().is_empty() {
+                discovered.diagnostics.push(format!(
+                    "Skip invalid profile name in {}.",
+                    config_file.display()
+                ));
+                continue;
+            }
             let Some(payload) = payload.as_object() else {
+                discovered.diagnostics.push(format!(
+                    "Skip profile `{name}` in {}: definition must be an object.",
+                    config_file.display()
+                ));
                 continue;
             };
-            let Some(description) = payload.get("description").and_then(Value::as_str) else {
+            let Some(description) = payload
+                .get("description")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                discovered.diagnostics.push(format!(
+                    "Skip profile `{name}`: `description` must be non-empty string."
+                ));
                 continue;
             };
-            let Some(model) = payload.get("model").and_then(Value::as_str) else {
+            let Some(model) = payload
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                discovered.diagnostics.push(format!(
+                    "Skip profile `{name}`: `model` must be non-empty string."
+                ));
                 continue;
             };
             let mut definition = AgentDefinition::default_for_model(model);
