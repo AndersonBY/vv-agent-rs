@@ -346,6 +346,15 @@ impl AgentSDKClient {
         self.run_named_agent("inline", definition, prompt)
     }
 
+    pub fn run_with_agent_in_workspace(
+        &self,
+        definition: AgentDefinition,
+        prompt: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+    ) -> Result<AgentRun, String> {
+        self.run_named_agent_with_workspace("inline", definition, prompt, Some(workspace.into()))
+    }
+
     pub fn run_agent(
         &self,
         agent_name: impl AsRef<str>,
@@ -356,14 +365,36 @@ impl AgentSDKClient {
         self.run_named_agent(agent_name, definition, prompt)
     }
 
+    pub fn run_agent_in_workspace(
+        &self,
+        agent_name: impl AsRef<str>,
+        prompt: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+    ) -> Result<AgentRun, String> {
+        let agent_name = agent_name.as_ref().trim();
+        let definition = self.get_agent(agent_name)?.clone();
+        self.run_named_agent_with_workspace(agent_name, definition, prompt, Some(workspace.into()))
+    }
+
     fn run_named_agent(
         &self,
         agent_name: &str,
         definition: AgentDefinition,
         prompt: impl Into<String>,
     ) -> Result<AgentRun, String> {
+        self.run_named_agent_with_workspace(agent_name, definition, prompt, None)
+    }
+
+    fn run_named_agent_with_workspace(
+        &self,
+        agent_name: &str,
+        definition: AgentDefinition,
+        prompt: impl Into<String>,
+        workspace: Option<PathBuf>,
+    ) -> Result<AgentRun, String> {
         let definition = self.effective_definition(definition);
         let mut request = AgentSessionRunRequest::new(prompt);
+        request.workspace = workspace;
         request.stream_callback = self.options.stream_callback.clone();
         let mut run = self.runtime.run_with_session(&definition, request)?;
         run.agent_name = agent_name.to_string();
@@ -446,6 +477,33 @@ impl AgentSDKClient {
         let available = self.list_agents().join(", ");
         Err(format!(
             "Multiple agents configured. Call run_agent(name, ...) with one of: {available}"
+        ))
+    }
+
+    pub fn run_in_workspace(
+        &self,
+        prompt: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+    ) -> Result<AgentRun, String> {
+        let workspace = workspace.into();
+        if let Some(agent) = self.default_agent.clone() {
+            return self.run_named_agent_with_workspace("default", agent, prompt, Some(workspace));
+        }
+        if self.agents.len() == 1 {
+            let (name, definition) = self.agents.iter().next().expect("single agent");
+            return self.run_named_agent_with_workspace(
+                name,
+                definition.clone(),
+                prompt,
+                Some(workspace),
+            );
+        }
+        if self.agents.is_empty() {
+            return Err("No agent configured. Call run_with_agent_in_workspace(...) or register named agents first.".to_string());
+        }
+        let available = self.list_agents().join(", ");
+        Err(format!(
+            "Multiple agents configured. Call run_agent_in_workspace(name, ...) with one of: {available}"
         ))
     }
 

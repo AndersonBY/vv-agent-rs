@@ -9,9 +9,10 @@ use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{
-    coerce_python_text_arg, grep_text, is_hidden_path, is_ignored_root, is_supported_file_type,
-    matches_file_type, parse_integer_arg, path_escapes_workspace_error,
-    supported_file_types_message, workspace_relative_path_or_absolute, GrepTextOptions,
+    coerce_python_text_arg, command_output_with_executable_busy_retry, grep_text, is_hidden_path,
+    is_ignored_root, is_supported_file_type, matches_file_type, parse_integer_arg,
+    path_escapes_workspace_error, supported_file_types_message,
+    workspace_relative_path_or_absolute, GrepTextOptions,
 };
 use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
 use crate::workspace::{normalized_glob_pattern, LocalWorkspaceBackend};
@@ -134,13 +135,14 @@ fn workspace_grep_local_rg(request: RgWorkspaceGrepRequest<'_>) -> Option<RgGrep
             command.arg("--iglob").arg(file_glob);
         }
     }
-    let output = command
-        .arg("--regexp")
-        .arg(pattern)
-        .arg(".")
-        .current_dir(&base_path)
-        .output()
-        .ok()?;
+    let output = command_output_with_executable_busy_retry(
+        command
+            .arg("--regexp")
+            .arg(pattern)
+            .arg(".")
+            .current_dir(&base_path),
+    )
+    .ok()?;
     if !matches!(output.status.code(), Some(0) | Some(1) | Some(2)) {
         return None;
     }
@@ -931,12 +933,16 @@ fn cap_structured_items<T>(items: Vec<T>, estimator: impl Fn(&T) -> usize) -> (V
 mod tests {
     use super::*;
     use crate::tools::base::ToolContext;
+    use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
     fn write_fake_rg(workspace: &Path, script: &str) -> std::path::PathBuf {
         let fake_rg = workspace.join("fake-rg");
-        std::fs::write(&fake_rg, script).expect("fake rg");
+        let mut file = std::fs::File::create(&fake_rg).expect("fake rg");
+        file.write_all(script.as_bytes()).expect("fake rg body");
+        file.sync_all().expect("fake rg sync");
+        drop(file);
         let mut permissions = std::fs::metadata(&fake_rg).expect("metadata").permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(&fake_rg, permissions).expect("chmod");

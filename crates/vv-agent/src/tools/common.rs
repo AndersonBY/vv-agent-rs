@@ -1,10 +1,34 @@
 use std::collections::BTreeMap;
+use std::io;
 use std::path::Path;
+use std::process::{Command, Output};
+use std::thread;
+use std::time::Duration;
 
 use regex::Regex;
 use serde_json::{json, Value};
 
 use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
+
+pub(crate) fn command_output_with_executable_busy_retry(
+    command: &mut Command,
+) -> io::Result<Output> {
+    const MAX_ATTEMPTS: usize = 3;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        match command.output() {
+            Err(error)
+                if error.kind() == io::ErrorKind::ExecutableFileBusy
+                    && attempt + 1 < MAX_ATTEMPTS =>
+            {
+                thread::sleep(Duration::from_millis(10 * (attempt as u64 + 1)));
+            }
+            result => return result,
+        }
+    }
+
+    unreachable!("command output retry loop always returns");
+}
 
 pub(crate) fn tool_error(message: impl Into<String>) -> ToolExecutionResult {
     tool_error_with_code(message, "")

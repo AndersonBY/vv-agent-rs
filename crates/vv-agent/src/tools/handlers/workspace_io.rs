@@ -7,8 +7,9 @@ use serde_json::{json, Value};
 use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::path_escapes_workspace_error;
 use crate::tools::common::{
-    coerce_python_text_arg, collect_ignored_roots, is_hidden_path, is_ignored_root,
-    parse_integer_arg, replace_n, tool_error, workspace_relative_path_or_absolute,
+    coerce_python_text_arg, collect_ignored_roots, command_output_with_executable_busy_retry,
+    is_hidden_path, is_ignored_root, parse_integer_arg, replace_n, tool_error,
+    workspace_relative_path_or_absolute,
 };
 use crate::workspace::{glob_match, normalized_glob_pattern, LocalWorkspaceBackend};
 
@@ -85,7 +86,8 @@ fn list_files_local_rg(request: RgListFilesRequest<'_>) -> Option<RgListFilesRes
             command.arg("--glob").arg(format!("!{root}/**"));
         }
     }
-    let output = command.arg(".").current_dir(base_path).output().ok()?;
+    let output =
+        command_output_with_executable_busy_retry(command.arg(".").current_dir(base_path)).ok()?;
     if !matches!(output.status.code(), Some(0) | Some(1)) {
         return None;
     }
@@ -604,10 +606,14 @@ mod tests {
 
     #[cfg(unix)]
     fn write_fake_rg(workspace: &Path, script: &str) -> PathBuf {
+        use std::io::Write as _;
         use std::os::unix::fs::PermissionsExt;
 
         let fake_rg = workspace.join("fake-rg");
-        std::fs::write(&fake_rg, script).expect("fake rg");
+        let mut file = std::fs::File::create(&fake_rg).expect("fake rg");
+        file.write_all(script.as_bytes()).expect("fake rg body");
+        file.sync_all().expect("fake rg sync");
+        drop(file);
         let mut permissions = std::fs::metadata(&fake_rg).expect("metadata").permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(&fake_rg, permissions).expect("chmod");

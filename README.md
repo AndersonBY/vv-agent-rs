@@ -447,6 +447,9 @@ The current Rust implementation includes:
   Session workspace overrides are supported through
   `AgentSDKClient::create_session_with_workspace`; the override updates session
   state, runtime workspace metadata, and the file-tool workspace backend.
+  One-shot SDK runs can also use per-call workspace overrides through
+  `run_with_agent_in_workspace`, `run_agent_in_workspace`, or `run_in_workspace`,
+  matching Python `run(..., workspace=...)` behavior.
   Sessions also reuse one `SubTaskManager` across turns, so a later prompt can
   inspect or continue async sub-tasks created by an earlier prompt in the same
   session.

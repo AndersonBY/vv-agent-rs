@@ -505,6 +505,66 @@ fn sdk_client_uses_llm_builder_when_runtime_is_not_injected() {
 }
 
 #[test]
+fn sdk_one_shot_run_can_override_workspace_like_python() {
+    let root = tempfile::tempdir().expect("root");
+    let default_workspace = root.path().join("default-workspace");
+    let override_workspace = root.path().join("override-workspace");
+    let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
+        let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![
+            LLMResponse::with_tool_calls(
+                "write marker",
+                vec![ToolCall::new(
+                    "write-marker",
+                    "write_file",
+                    BTreeMap::from([
+                        ("path".to_string(), json!("marker.txt")),
+                        ("content".to_string(), json!("workspace override")),
+                    ]),
+                )],
+            ),
+            LLMResponse::with_tool_calls(
+                "finish",
+                vec![ToolCall::new(
+                    "finish",
+                    "task_finish",
+                    BTreeMap::from([("message".to_string(), json!("ok"))]),
+                )],
+            ),
+        ]));
+        Ok((
+            llm,
+            ResolvedModelConfig::new(
+                backend.to_string(),
+                model.to_string(),
+                model.to_string(),
+                model.to_string(),
+                Vec::new(),
+            ),
+        ))
+    });
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        auto_discover_resources: false,
+        workspace: default_workspace.clone(),
+        llm_builder: Some(builder),
+        tool_registry_factory: Some(Arc::new(build_default_registry)),
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("demo-model");
+    agent.max_cycles = 3;
+
+    let run = client
+        .run_with_agent_in_workspace(agent, "write marker", &override_workspace)
+        .expect("run with workspace override");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(
+        std::fs::read_to_string(override_workspace.join("marker.txt")).expect("marker"),
+        "workspace override"
+    );
+    assert!(!default_workspace.join("marker.txt").exists());
+}
+
+#[test]
 fn sdk_options_tool_registry_factory_runs_custom_tools_like_python() {
     let custom_tool = "_workflow_custom_run";
     let builder: LlmBuilder = Arc::new(move |_, backend, model, _| {
