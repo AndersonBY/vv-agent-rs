@@ -125,6 +125,40 @@ fn workspace_grep_caps_structured_payload_without_duplication_like_python() {
 }
 
 #[test]
+fn workspace_grep_truncates_large_text_content_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(
+        workspace.path().join("huge.txt"),
+        format!("token {}\n", "x".repeat(40_000)),
+    )
+    .expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "grep_text_truncation",
+                "workspace_grep",
+                BTreeMap::from([("pattern".to_string(), json!("token"))]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.metadata["summary"]["total_matches"], 1);
+    assert_eq!(result.metadata["content_truncated"], true);
+    assert_eq!(result.metadata["structured_truncated"], false);
+    assert_eq!(result.metadata["truncated"], true);
+    assert!(result.content.contains("--- TRUNCATED ---"));
+    assert!(result
+        .content
+        .contains("Use a narrower pattern/path/glob/type/head_limit"));
+    assert!(result.content.len() < 35_000);
+}
+
+#[test]
 fn workspace_grep_supports_files_and_count_modes_with_type_filter() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

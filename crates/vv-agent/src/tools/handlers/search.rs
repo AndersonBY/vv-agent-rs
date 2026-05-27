@@ -14,6 +14,8 @@ use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 const MAX_STRUCTURED_ITEMS: usize = 200;
 const MAX_STRUCTURED_CHARS: usize = 20_000;
+const MAX_RESULT_LINES: usize = 500;
+const MAX_RESULT_CHARS: usize = 30_000;
 
 pub(crate) fn workspace_grep_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
@@ -265,6 +267,10 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 show_line_numbers,
                 structured_truncated,
             );
+            let (content, content_truncated) =
+                truncate_result_text(content, total_matches, files_with_match_count);
+            payload["content_truncated"] = json!(content_truncated);
+            payload["truncated"] = json!(content_truncated || structured_truncated);
             let metadata = payload
                 .as_object()
                 .map(|object| {
@@ -377,6 +383,47 @@ fn render_grep_content(
             lines.join("\n")
         }
     }
+}
+
+fn truncate_result_text(
+    result_text: String,
+    total_matches: usize,
+    files_with_matches: usize,
+) -> (String, bool) {
+    let line_count = result_text.lines().count();
+    if line_count <= MAX_RESULT_LINES && result_text.len() <= MAX_RESULT_CHARS {
+        return (result_text, false);
+    }
+
+    let truncated = if result_text.len() > MAX_RESULT_CHARS {
+        let mut end = MAX_RESULT_CHARS.min(result_text.len());
+        while !result_text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let candidate = &result_text[..end];
+        match candidate.rfind('\n') {
+            Some(last_newline) if last_newline > MAX_RESULT_CHARS * 4 / 5 => {
+                candidate[..last_newline].to_string()
+            }
+            _ => candidate.to_string(),
+        }
+    } else {
+        result_text
+            .lines()
+            .take(MAX_RESULT_LINES)
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let shown_lines = truncated.lines().count();
+    let truncated_info = format!(
+        "\n\n--- TRUNCATED ---\n\
+         Shown: {shown_lines} lines, {} characters\n\
+         Total matches: {total_matches} in {files_with_matches} files\n\
+         Use a narrower pattern/path/glob/type/head_limit for more focused output.",
+        truncated.len()
+    );
+    (format!("{truncated}{truncated_info}"), true)
 }
 
 fn estimate_match_row_size(row: &Value) -> usize {
