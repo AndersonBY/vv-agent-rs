@@ -134,12 +134,18 @@ The current Rust implementation includes:
 - A valid Cargo workspace with a main `vv-agent` package.
 - A library target exposing top-level API types and functions comparable to
   Python's `vv_agent.__init__`.
+- Top-level exports for Python-style tool dispatch helpers, including
+  `dispatch_tool_call` and `ToolNotFoundError`, in addition to `ToolRegistry`
+  and `build_default_registry`.
 - A CLI target inside the same package.
 - Top-level modules aligned with the Python package: `background_sessions`,
   `cli`, `config`, `constants`, `integrations`, `llm`, `memory`, `processes`,
   `prompt`, `runtime`, `sdk`, `skills`, `tools`, `types`, and `workspace`.
 - The `integrations::SkillIntegration` public trait mirrors the Python
   protocol with an `enabled()` capability check.
+- The `constants` module exposes Python-style tool names, `WORKSPACE_TOOLS`,
+  default tool schemas, workspace tool schemas, and convenience accessors for
+  the `task_finish`, `ask_user`, and `activate_skill` schemas.
 - `vv-llm = "0.1.0"` backed chat client construction through
   `build_vv_llm_from_local_settings`, settings-based endpoint resolution, and
   provider HTTP/protocol handling delegated to `vv-llm`, while keeping
@@ -446,6 +452,10 @@ The current Rust implementation includes:
   sessions now also carry a stable `session_id` into every task's metadata;
   callers can use `AgentSDKClient::create_session_with_id` or
   `create_agent_session_with_id` when they need a deterministic session id.
+  Session continuation is covered for Python's multi-tool wait-user case: a
+  first `ask_user` pauses the run, later tool calls in the same batch are
+  recorded as skipped, and `continue_run(Some(...))` resumes the same
+  conversation to completion.
   Session workspace overrides are supported through
   `AgentSDKClient::create_session_with_workspace`; the override updates session
   state, runtime workspace metadata, and the file-tool workspace backend.

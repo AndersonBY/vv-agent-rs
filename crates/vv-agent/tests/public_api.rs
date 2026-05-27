@@ -1,16 +1,17 @@
 use std::collections::BTreeMap;
 
 use vv_agent::{
-    background_session_manager, build_default_registry, load_llm_settings_from_file,
-    resolve_model_endpoint, AfterLLMEvent, AgentDefinition, AgentRuntime, AgentSDKClient,
-    AgentSDKOptions, AgentStatus, AgentTask, BackgroundSessionListener, BaseRuntimeHook,
-    BeforeLLMEvent, BeforeLLMPatch, CancellationToken, CeleryBackend, Checkpoint, ConfigError,
-    EndpointConfig, EndpointOption, ExecutionBackend, ExecutionContext, FileInfo,
-    InMemoryStateStore, InlineBackend, LLMClient, LLMResponse, LocalWorkspaceBackend,
-    MemoryWorkspaceBackend, Message, RedisStateStore, ResolvedModelConfig, RuntimeExecutionBackend,
-    RuntimeRecipe, RuntimeRunControls, S3WorkspaceBackend, S3WorkspaceConfig, ScriptedLLM,
-    ScriptedLlmClient, SessionCancellationHandle, SqliteStateStore, StateStore, ThreadBackend,
-    ToolCall, ToolExecutionResult, ToolRegistry, VVLlmClient, WorkspaceBackend,
+    background_session_manager, build_default_registry, dispatch_tool_call,
+    load_llm_settings_from_file, resolve_model_endpoint, AfterLLMEvent, AgentDefinition,
+    AgentRuntime, AgentSDKClient, AgentSDKOptions, AgentStatus, AgentTask,
+    BackgroundSessionListener, BaseRuntimeHook, BeforeLLMEvent, BeforeLLMPatch, CancellationToken,
+    CeleryBackend, Checkpoint, ConfigError, EndpointConfig, EndpointOption, ExecutionBackend,
+    ExecutionContext, FileInfo, InMemoryStateStore, InlineBackend, LLMClient, LLMResponse,
+    LocalWorkspaceBackend, MemoryWorkspaceBackend, Message, RedisStateStore, ResolvedModelConfig,
+    RuntimeExecutionBackend, RuntimeRecipe, RuntimeRunControls, S3WorkspaceBackend,
+    S3WorkspaceConfig, ScriptedLLM, ScriptedLlmClient, SessionCancellationHandle, SqliteStateStore,
+    StateStore, ThreadBackend, ToolCall, ToolExecutionResult, ToolNotFoundError, ToolRegistry,
+    VVLlmClient, WorkspaceBackend,
 };
 
 #[test]
@@ -21,6 +22,8 @@ fn top_level_types_are_constructible() {
     let _result = ToolExecutionResult::success("call_1", "ok");
     let _llm_response = LLMResponse::new("done");
     let _registry = build_default_registry();
+    let _dispatch = dispatch_tool_call;
+    let _tool_not_found = ToolNotFoundError("missing_tool".to_string());
     let _definition = AgentDefinition::default_for_model("mini");
     let _task = AgentTask::new("task_1", "mini", "system", "user");
     let _runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new("done")]))
@@ -131,6 +134,29 @@ fn constants_module_exports_python_tool_names_and_workspace_tool_list() {
             constants::COMPRESS_MEMORY_TOOL_NAME,
             constants::TODO_WRITE_TOOL_NAME,
         ]
+    );
+
+    let default_schemas = constants::get_default_tool_schemas();
+    assert!(default_schemas.contains_key(constants::TASK_FINISH_TOOL_NAME));
+    assert!(default_schemas.contains_key(constants::ASK_USER_TOOL_NAME));
+    assert!(default_schemas.contains_key(constants::ACTIVATE_SKILL_TOOL_NAME));
+
+    let workspace_schemas = constants::workspace_tools_schemas();
+    assert_eq!(workspace_schemas.len(), constants::WORKSPACE_TOOLS.len());
+    assert!(workspace_schemas.contains_key(constants::READ_FILE_TOOL_NAME));
+    assert!(!workspace_schemas.contains_key(constants::TASK_FINISH_TOOL_NAME));
+
+    assert_eq!(
+        constants::task_finish_tool_schema()["function"]["name"],
+        constants::TASK_FINISH_TOOL_NAME
+    );
+    assert_eq!(
+        constants::ask_user_tool_schema()["function"]["name"],
+        constants::ASK_USER_TOOL_NAME
+    );
+    assert_eq!(
+        constants::activate_skill_tool_schema()["function"]["name"],
+        constants::ACTIVATE_SKILL_TOOL_NAME
     );
 }
 

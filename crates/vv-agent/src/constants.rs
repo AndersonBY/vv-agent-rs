@@ -1,3 +1,7 @@
+use std::collections::BTreeMap;
+
+use serde_json::Value;
+
 pub const TODO_INCOMPLETE_ERROR_CODE: &str = "todo_incomplete";
 
 pub const ASK_USER_TOOL_NAME: &str = "ask_user";
@@ -29,3 +33,29 @@ pub const WORKSPACE_TOOLS: [&str; 8] = [
 ];
 
 pub const DEFAULT_WORKSPACE_DIR: &str = "./workspace";
+
+pub fn get_default_tool_schemas() -> BTreeMap<String, Value> {
+    crate::tools::schemas::default_tool_schemas()
+}
+
+pub fn workspace_tools_schemas() -> BTreeMap<String, Value> {
+    let mut schemas = get_default_tool_schemas();
+    schemas.retain(|name, _| WORKSPACE_TOOLS.contains(&name.as_str()));
+    schemas
+}
+
+pub fn task_finish_tool_schema() -> Value {
+    schema_or_null(TASK_FINISH_TOOL_NAME)
+}
+
+pub fn ask_user_tool_schema() -> Value {
+    schema_or_null(ASK_USER_TOOL_NAME)
+}
+
+pub fn activate_skill_tool_schema() -> Value {
+    schema_or_null(ACTIVATE_SKILL_TOOL_NAME)
+}
+
+fn schema_or_null(name: &str) -> Value {
+    crate::tools::schemas::schema_for(name).unwrap_or(Value::Null)
+}

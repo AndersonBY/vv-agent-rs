@@ -79,7 +79,10 @@ pub use sub_agent_sessions::{
     SubAgentSessionRegistry, SubAgentSessionUnsubscribe,
 };
 pub use sub_task_manager::{ManagedSubTask, SubTaskManager};
-pub use tools::{build_default_registry, ToolContext, ToolHandler, ToolRegistry, ToolSpec};
+pub use tools::{
+    build_default_registry, dispatch_tool_call, ToolContext, ToolHandler, ToolNotFoundError,
+    ToolRegistry, ToolSpec,
+};
 pub use types::{
     AgentResult, AgentStatus, AgentTask, CycleRecord, CycleStatus, LLMResponse, Message,
     MessageRole, NoToolPolicy, SubAgentConfig, SubTaskOutcome, SubTaskRequest, TaskTokenUsage,
