@@ -1,5 +1,8 @@
 use serde_json::json;
-use vv_agent::AgentResourceLoader;
+use vv_agent::{
+    AgentResourceLoader, AgentRuntime, AgentSDKClient, AgentSDKOptions, AgentStatus, LLMResponse,
+    ScriptedLlmClient,
+};
 
 #[test]
 fn resource_loader_discovers_agents_prompts_and_skills() {
@@ -117,4 +120,47 @@ fn resource_loader_discovers_agents_prompts_and_skills() {
         .iter()
         .any(|path| path.ends_with("skills")));
     assert!(discovered.diagnostics.is_empty());
+}
+
+#[test]
+fn sdk_client_auto_discovers_resource_agents_and_runs_by_name() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let resource_root = workspace.path().join(".vv-agent");
+    std::fs::create_dir_all(&resource_root).expect("resource root");
+    std::fs::write(
+        resource_root.join("agents.json"),
+        json!({
+            "profiles": {
+                "researcher": {
+                    "description": "research profile",
+                    "model": "demo-model",
+                    "no_tool_policy": "finish"
+                }
+            }
+        })
+        .to_string(),
+    )
+    .expect("agents");
+
+    let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new(
+        "discovered answer",
+    )]));
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().to_path_buf(),
+        ..AgentSDKOptions::default()
+    })
+    .with_runtime(runtime);
+
+    assert_eq!(client.list_agents(), vec!["researcher".to_string()]);
+
+    let run = client
+        .run_agent("researcher", "use discovered profile")
+        .expect("run discovered agent");
+
+    assert_eq!(run.agent_name, "researcher");
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(
+        run.result.final_answer.as_deref(),
+        Some("discovered answer")
+    );
 }

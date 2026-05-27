@@ -361,6 +361,9 @@ The current Rust implementation includes:
 - `AgentSDKClient::query` mirrors Python client query semantics: it returns the
   final answer for completed runs and reports non-completed statuses with
   snake_case status values such as `status=wait_user`.
+- `AgentSDKClient` auto-discovers named profiles from `.vv-agent/agents.json`,
+  exposes `list_agents`, and can run a profile by name through `run_agent`,
+  preserving the profile name in `AgentRun.agent_name`.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,

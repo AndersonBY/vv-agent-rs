@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::config::ResolvedModelConfig;
@@ -6,6 +7,7 @@ use crate::runtime::{AgentRuntime, ExecutionContext, RuntimeRunControls};
 use crate::types::AgentTask;
 use crate::workspace::LocalWorkspaceBackend;
 
+use super::resources::AgentResourceLoader;
 use super::session::{AgentSession, AgentSessionRunRequest};
 use super::types::{query_text_from_run, AgentDefinition, AgentRun, AgentSDKOptions};
 
@@ -13,6 +15,10 @@ use super::types::{query_text_from_run, AgentDefinition, AgentRun, AgentSDKOptio
 pub struct AgentSDKClient {
     pub options: AgentSDKOptions,
     default_agent: Option<AgentDefinition>,
+    agents: BTreeMap<String, AgentDefinition>,
+    prompt_templates: BTreeMap<String, String>,
+    resource_skill_directories: Vec<String>,
+    resource_diagnostics: Vec<String>,
     runtime: Arc<dyn RunAgent + Send + Sync>,
 }
 
@@ -140,9 +146,27 @@ fn task_from_definition(definition: &AgentDefinition, prompt: String) -> AgentTa
 
 impl AgentSDKClient {
     pub fn new(options: AgentSDKOptions) -> Self {
+        let mut agents = BTreeMap::new();
+        let mut prompt_templates = BTreeMap::new();
+        let mut resource_skill_directories = Vec::new();
+        let mut resource_diagnostics = Vec::new();
+
+        if options.auto_discover_resources {
+            let mut loader = AgentResourceLoader::new(options.workspace.clone());
+            let discovered = loader.discover();
+            agents = discovered.agents;
+            prompt_templates = discovered.prompts;
+            resource_skill_directories = discovered.skill_directories;
+            resource_diagnostics = discovered.diagnostics;
+        }
+
         Self {
             options,
             default_agent: None,
+            agents,
+            prompt_templates,
+            resource_skill_directories,
+            resource_diagnostics,
             runtime: Arc::new(NullRunAgent),
         }
     }
@@ -167,22 +191,78 @@ impl AgentSDKClient {
         self.default_agent = Some(definition);
     }
 
+    pub fn register_agent(
+        &mut self,
+        name: impl Into<String>,
+        definition: AgentDefinition,
+    ) -> Result<(), String> {
+        let name = name.into().trim().to_string();
+        if name.is_empty() {
+            return Err("Agent name cannot be empty".to_string());
+        }
+        self.agents.insert(name, definition);
+        Ok(())
+    }
+
+    pub fn register_agents(
+        &mut self,
+        agents: BTreeMap<String, AgentDefinition>,
+    ) -> Result<(), String> {
+        for (name, definition) in agents {
+            self.register_agent(name, definition)?;
+        }
+        Ok(())
+    }
+
+    pub fn list_agents(&self) -> Vec<String> {
+        self.agents.keys().cloned().collect()
+    }
+
+    pub fn resource_diagnostics(&self) -> Vec<String> {
+        self.resource_diagnostics.clone()
+    }
+
     pub fn run_with_agent(
         &self,
         definition: AgentDefinition,
         prompt: impl Into<String>,
     ) -> Result<AgentRun, String> {
+        self.run_named_agent("inline", definition, prompt)
+    }
+
+    pub fn run_agent(
+        &self,
+        agent_name: impl AsRef<str>,
+        prompt: impl Into<String>,
+    ) -> Result<AgentRun, String> {
+        let agent_name = agent_name.as_ref().trim();
+        let definition = self.get_agent(agent_name)?.clone();
+        self.run_named_agent(agent_name, definition, prompt)
+    }
+
+    fn run_named_agent(
+        &self,
+        agent_name: &str,
+        definition: AgentDefinition,
+        prompt: impl Into<String>,
+    ) -> Result<AgentRun, String> {
+        let definition = self.effective_definition(definition);
         let mut request = AgentSessionRunRequest::new(prompt);
         request.stream_callback = self.options.stream_callback.clone();
-        self.runtime.run_with_session(&definition, request)
+        let mut run = self.runtime.run_with_session(&definition, request)?;
+        run.agent_name = agent_name.to_string();
+        Ok(run)
     }
 
     pub fn run(&self, prompt: impl Into<String>) -> Result<AgentRun, String> {
-        let agent = self
-            .default_agent
-            .clone()
-            .unwrap_or_else(|| AgentDefinition::default_for_model("demo"));
-        self.run_with_agent(agent, prompt)
+        if let Some(agent) = self.default_agent.clone() {
+            return self.run_named_agent("default", agent, prompt);
+        }
+        if self.agents.len() == 1 {
+            let (name, definition) = self.agents.iter().next().expect("single agent");
+            return self.run_named_agent(name, definition.clone(), prompt);
+        }
+        self.run_named_agent("demo", AgentDefinition::default_for_model("demo"), prompt)
     }
 
     pub fn query(&self, prompt: impl Into<String>) -> Result<String, String> {
@@ -196,6 +276,32 @@ impl AgentSDKClient {
     ) -> Result<String, String> {
         let run = self.run(prompt)?;
         query_text_from_run(run, require_completed, "Agent query failed")
+    }
+
+    fn get_agent(&self, agent_name: &str) -> Result<&AgentDefinition, String> {
+        if agent_name.is_empty() {
+            return Err("Agent name cannot be empty".to_string());
+        }
+        self.agents.get(agent_name).ok_or_else(|| {
+            let available = self.list_agents().join(", ");
+            format!("Unknown agent: {agent_name}. Available: {available}")
+        })
+    }
+
+    fn effective_definition(&self, mut definition: AgentDefinition) -> AgentDefinition {
+        if definition.system_prompt.is_none() {
+            if let Some(template_name) = definition.system_prompt_template.as_deref() {
+                if let Some(template) = self.prompt_templates.get(template_name) {
+                    if !template.trim().is_empty() {
+                        definition.system_prompt = Some(template.clone());
+                    }
+                }
+            }
+        }
+        if definition.skill_directories.is_empty() && !self.resource_skill_directories.is_empty() {
+            definition.skill_directories = self.resource_skill_directories.clone();
+        }
+        definition
     }
 }
 
