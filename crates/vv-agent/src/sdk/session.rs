@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::background_sessions::{background_session_manager, BackgroundSessionSubscription};
-use crate::runtime::{CancellationToken, StreamCallback};
+use crate::runtime::{
+    BeforeCycleMessageProvider, CancellationToken, InterruptionMessageProvider, StreamCallback,
+};
 use crate::sub_task_manager::SubTaskManager;
 use crate::types::{AgentStatus, Metadata};
 
@@ -36,6 +38,8 @@ pub struct AgentSessionRunRequest {
     pub shared_state: Metadata,
     pub metadata: Metadata,
     pub runtime_event_handler: Option<SessionEventHandler>,
+    pub before_cycle_messages: Option<BeforeCycleMessageProvider>,
+    pub interruption_messages: Option<InterruptionMessageProvider>,
     pub steering_queue: Option<Arc<Mutex<VecDeque<String>>>>,
     pub cancellation_token: Option<CancellationToken>,
     pub stream_callback: Option<StreamCallback>,
@@ -52,6 +56,8 @@ impl AgentSessionRunRequest {
             shared_state: Metadata::new(),
             metadata: Metadata::new(),
             runtime_event_handler: None,
+            before_cycle_messages: None,
+            interruption_messages: None,
             steering_queue: None,
             cancellation_token: None,
             stream_callback: None,
@@ -490,6 +496,8 @@ impl AgentSession {
                 Value::String(self.session_id.clone()),
             )]),
             runtime_event_handler: Some(runtime_event_handler),
+            before_cycle_messages: None,
+            interruption_messages: None,
             steering_queue: Some(Arc::clone(&self.steering_queue)),
             cancellation_token: Some(cancellation_token),
             stream_callback: None,

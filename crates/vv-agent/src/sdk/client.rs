@@ -132,8 +132,8 @@ fn execution_context_from_request(request: &AgentSessionRunRequest) -> Option<Ex
 fn run_controls_from_request(request: &AgentSessionRunRequest) -> RuntimeRunControls {
     RuntimeRunControls {
         log_handler: request.runtime_event_handler.clone(),
-        before_cycle_messages: None,
-        interruption_messages: None,
+        before_cycle_messages: request.before_cycle_messages.clone(),
+        interruption_messages: request.interruption_messages.clone(),
         steering_queue: request.steering_queue.clone(),
         cancellation_token: request.cancellation_token.clone(),
         execution_context: execution_context_from_request(request),

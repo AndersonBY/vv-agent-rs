@@ -7,7 +7,7 @@ use vv_agent::{
     AgentSDKClient, AgentSDKOptions, AgentSessionRunRequest, AgentStatus, BeforeLlmEvent,
     LLMResponse, LlmBuilder, LlmClient, LlmError, LlmRequest, Message, MessageRole, NoToolPolicy,
     ResolvedModelConfig, RuntimeExecutionBackend, RuntimeHook, ScriptedLlmClient, ThreadBackend,
-    ToolCall, ToolExecutionResult, ToolRegistryFactory, ToolResultStatus,
+    ToolCall, ToolDirective, ToolExecutionResult, ToolRegistryFactory, ToolResultStatus,
 };
 
 #[test]
@@ -1042,6 +1042,141 @@ fn sdk_client_run_agent_with_request_passes_shared_state_like_python() {
 
     assert_eq!(run.result.final_answer.as_deref(), Some("done"));
     assert_eq!(run.result.shared_state["seen_seed"], json!("from-request"));
+}
+
+#[test]
+fn sdk_client_run_agent_with_request_passes_before_cycle_messages_like_python() {
+    let captured_messages = Arc::new(Mutex::new(Vec::<Vec<Message>>::new()));
+    let builder: LlmBuilder = {
+        let captured_messages = Arc::clone(&captured_messages);
+        Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
+            let llm: Arc<dyn LlmClient> = Arc::new(CapturingLlmClient {
+                captured_messages: Arc::clone(&captured_messages),
+            });
+            Ok((
+                llm,
+                ResolvedModelConfig::new(
+                    backend.to_string(),
+                    model.to_string(),
+                    model.to_string(),
+                    model.to_string(),
+                    Vec::new(),
+                ),
+            ))
+        })
+    };
+    let mut client = AgentSDKClient::new(AgentSDKOptions {
+        auto_discover_resources: false,
+        llm_builder: Some(builder),
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("demo-model");
+    agent.no_tool_policy = NoToolPolicy::Finish;
+    client
+        .register_agent("demo", agent)
+        .expect("register demo agent");
+    let mut request = AgentSessionRunRequest::new("start");
+    request.before_cycle_messages = Some(Arc::new(|cycle_index, messages, shared_state| {
+        assert_eq!(cycle_index, 1);
+        assert_eq!(messages.len(), 2);
+        assert!(shared_state.contains_key("todo_list"));
+        vec![Message::user("sdk injected before cycle")]
+    }));
+
+    let run = client
+        .run_agent_with_request("demo", request)
+        .expect("run with before-cycle provider");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    let captured = captured_messages.lock().expect("captured messages");
+    assert!(captured[0]
+        .iter()
+        .any(|message| message.content == "sdk injected before cycle"));
+}
+
+#[test]
+fn sdk_client_run_agent_with_request_passes_interruption_messages_like_python() {
+    let custom_tool = "_sdk_noop";
+    let builder: LlmBuilder = Arc::new(move |_, backend, model, _| {
+        let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![
+            LLMResponse::with_tool_calls(
+                "two tools",
+                vec![
+                    ToolCall::new("noop-1", custom_tool, BTreeMap::new()),
+                    ToolCall::new("noop-2", custom_tool, BTreeMap::new()),
+                ],
+            ),
+            LLMResponse::with_tool_calls(
+                "finish",
+                vec![ToolCall::new(
+                    "finish_after_interruption",
+                    "task_finish",
+                    BTreeMap::from([("message".to_string(), json!("saw interruption"))]),
+                )],
+            ),
+        ]));
+        Ok((
+            llm,
+            ResolvedModelConfig::new(
+                backend.to_string(),
+                model.to_string(),
+                model.to_string(),
+                model.to_string(),
+                Vec::new(),
+            ),
+        ))
+    });
+    let factory: ToolRegistryFactory = Arc::new(move || {
+        let mut registry = build_default_registry();
+        registry
+            .register_tool(
+                custom_tool,
+                "SDK no-op tool.",
+                Arc::new(|_context, _arguments| {
+                    let mut result = ToolExecutionResult::success("", "{}");
+                    result.directive = ToolDirective::Continue;
+                    result
+                }),
+            )
+            .expect("register custom tool");
+        registry
+    });
+    let mut client = AgentSDKClient::new(AgentSDKOptions {
+        auto_discover_resources: false,
+        llm_builder: Some(builder),
+        tool_registry_factory: Some(factory),
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("demo-model");
+    agent.max_cycles = 4;
+    agent.extra_tool_names.push(custom_tool.to_string());
+    client
+        .register_agent("demo", agent)
+        .expect("register demo agent");
+    let provider_used = Arc::new(Mutex::new(false));
+    let provider_flag = Arc::clone(&provider_used);
+    let mut request = AgentSessionRunRequest::new("start");
+    request.interruption_messages = Some(Arc::new(move || {
+        let mut used = provider_flag.lock().expect("provider flag");
+        if *used {
+            Vec::new()
+        } else {
+            *used = true;
+            vec![Message::user("SDK_INTERRUPT_NOW")]
+        }
+    }));
+
+    let run = client
+        .run_agent_with_request("demo", request)
+        .expect("run with interruption provider");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(run.result.final_answer.as_deref(), Some("saw interruption"));
+    assert_eq!(
+        run.result.cycles[0].tool_results[1].error_code.as_deref(),
+        Some("skipped_due_to_steering")
+    );
+    assert!(*provider_used.lock().expect("provider flag"));
 }
 
 #[test]

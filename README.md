@@ -599,7 +599,8 @@ The current Rust implementation includes:
   while keeping Rust signatures explicit. `AgentSDKClient::run_agent_with_request`
   and `run_with_agent_request` expose the same one-shot request path used by
   sessions, so callers can pass shared state, initial messages, cancellation,
-  steering, and per-run metadata without constructing a long-lived session.
+  steering, before-cycle message providers, interruption message providers, and
+  per-run metadata without constructing a long-lived session.
 - SDK task preparation now builds Python-style prompt bundles from
   `AgentDefinition.description` when no raw `system_prompt` is provided,
   preserving generated `system_prompt_sections` metadata for cache and
