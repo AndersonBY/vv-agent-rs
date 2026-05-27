@@ -1,7 +1,8 @@
 use serde_json::{json, Value};
+use vv_agent::types::CycleTokenUsage;
 use vv_agent::{
-    AgentResult, AgentStatus, AgentTask, CycleRecord, LLMResponse, Message, NoToolPolicy, ToolCall,
-    ToolDirective, ToolExecutionResult, ToolResultStatus,
+    AgentResult, AgentStatus, AgentTask, CycleRecord, LLMResponse, Message, NoToolPolicy,
+    TokenUsage, ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus,
 };
 
 #[test]
@@ -71,6 +72,35 @@ fn agent_result_dict_round_trips_python_celery_payload_shape() {
     assert_eq!(
         restored.cycles[0].tool_results[0].metadata["path"],
         json!("README.md")
+    );
+}
+
+#[test]
+fn agent_result_dict_round_trips_token_usage_cycles() {
+    let mut result = AgentResult::completed(vec![Message::user("hi")], vec![], "done");
+    result.token_usage.prompt_tokens = 12;
+    result.token_usage.completion_tokens = 4;
+    result.token_usage.total_tokens = 16;
+    result.token_usage.cycles.push(CycleTokenUsage {
+        cycle_index: 7,
+        usage: TokenUsage {
+            prompt_tokens: 12,
+            completion_tokens: 4,
+            total_tokens: 16,
+            raw: json!({"provider": "deepseek"}),
+            ..TokenUsage::default()
+        },
+    });
+
+    let payload = result.to_dict();
+    let restored = AgentResult::from_dict(&payload).expect("agent result from dict");
+
+    assert_eq!(restored.token_usage.prompt_tokens, 12);
+    assert_eq!(restored.token_usage.cycles.len(), 1);
+    assert_eq!(restored.token_usage.cycles[0].cycle_index, 7);
+    assert_eq!(
+        restored.token_usage.cycles[0].usage.raw["provider"],
+        "deepseek"
     );
 }
 

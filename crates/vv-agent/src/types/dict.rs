@@ -746,6 +746,17 @@ fn task_token_usage_to_dict(usage: &TaskTokenUsage) -> Value {
 
 fn task_token_usage_from_dict(value: &Value) -> Result<TaskTokenUsage, String> {
     let object = expect_object(value, "TaskTokenUsage")?;
+    let cycles = read_array(object, "cycles")
+        .unwrap_or(&[])
+        .iter()
+        .map(|cycle| {
+            let cycle_object = expect_object(cycle, "CycleTokenUsage")?;
+            Ok(CycleTokenUsage {
+                cycle_index: read_u32(cycle_object, "cycle_index", 0),
+                usage: token_usage_from_dict(cycle)?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(TaskTokenUsage {
         prompt_tokens: read_u64(object, "prompt_tokens", 0),
         completion_tokens: read_u64(object, "completion_tokens", 0),
@@ -755,6 +766,6 @@ fn task_token_usage_from_dict(value: &Value) -> Result<TaskTokenUsage, String> {
         input_tokens: read_u64(object, "input_tokens", 0),
         output_tokens: read_u64(object, "output_tokens", 0),
         cache_creation_tokens: read_u64(object, "cache_creation_tokens", 0),
-        cycles: Vec::new(),
+        cycles,
     })
 }

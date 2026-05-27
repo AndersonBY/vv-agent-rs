@@ -251,8 +251,9 @@ The current Rust implementation includes:
   Python-style debug request dumps via `debug_dump_dir`.
 - Core runtime types expose Python-style `to_dict` / `from_dict` helpers for
   task, result, message, cycle, tool-call, and tool-result payloads, including
-  legacy tool `status` plus `status_code` for worker interoperability.
-  `Message::to_openai_message` also mirrors Python multimodal/tool-call payload
+  legacy tool `status` plus `status_code` for worker interoperability. Agent
+  result payloads round-trip aggregate and per-cycle token usage as structured
+  data. `Message::to_openai_message` also mirrors Python multimodal/tool-call payload
   shaping, including assistant tool calls with `content: null`, optional
   reasoning content, provider `extra_content`, and user image blocks.
 - `CeleryBackend` now supports a Python-style distributed execution path through
