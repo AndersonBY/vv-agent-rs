@@ -425,6 +425,26 @@ fn sdk_prepare_task_resolves_relative_skill_directories_from_workspace_like_pyth
 }
 
 #[test]
+fn sdk_prepare_task_clamps_runtime_limits_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().to_path_buf(),
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("demo-model");
+    agent.max_cycles = 0;
+    agent.memory_compact_threshold = 0;
+    agent.memory_threshold_percentage = 130;
+
+    let task = client.prepare_task_with_agent(agent, "hello", "demo-model");
+
+    assert_eq!(task.max_cycles, 1);
+    assert_eq!(task.memory_compact_threshold, 1);
+    assert_eq!(task.memory_threshold_percentage, 100);
+}
+
+#[test]
 fn sdk_client_run_requires_agent_when_no_profile_is_configured_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new(
@@ -642,6 +662,90 @@ fn sdk_one_shot_run_can_override_workspace_like_python() {
         "workspace override"
     );
     assert!(!default_workspace.join("marker.txt").exists());
+}
+
+#[test]
+fn sdk_module_level_run_with_options_and_agent_helper_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
+        let llm: Arc<dyn LlmClient> =
+            Arc::new(ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+                "done",
+                vec![ToolCall::new(
+                    "finish",
+                    "task_finish",
+                    BTreeMap::from([("message".to_string(), json!("module-run"))]),
+                )],
+            )]));
+        Ok((
+            llm,
+            ResolvedModelConfig::new(
+                backend.to_string(),
+                model.to_string(),
+                model.to_string(),
+                model.to_string(),
+                Vec::new(),
+            ),
+        ))
+    });
+    let options = AgentSDKOptions {
+        auto_discover_resources: false,
+        workspace: workspace.path().to_path_buf(),
+        llm_builder: Some(builder),
+        tool_registry_factory: Some(Arc::new(build_default_registry)),
+        ..AgentSDKOptions::default()
+    };
+
+    let run = vv_agent::run_with_options_and_agent(
+        options,
+        AgentDefinition::default_for_model("demo-model"),
+        "say ok",
+    )
+    .expect("module run helper");
+
+    assert_eq!(run.result.final_answer.as_deref(), Some("module-run"));
+}
+
+#[test]
+fn sdk_module_level_query_with_options_and_agent_helper_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
+        let llm: Arc<dyn LlmClient> =
+            Arc::new(ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+                "done",
+                vec![ToolCall::new(
+                    "finish",
+                    "task_finish",
+                    BTreeMap::from([("message".to_string(), json!("module-query"))]),
+                )],
+            )]));
+        Ok((
+            llm,
+            ResolvedModelConfig::new(
+                backend.to_string(),
+                model.to_string(),
+                model.to_string(),
+                model.to_string(),
+                Vec::new(),
+            ),
+        ))
+    });
+    let options = AgentSDKOptions {
+        auto_discover_resources: false,
+        workspace: workspace.path().to_path_buf(),
+        llm_builder: Some(builder),
+        tool_registry_factory: Some(Arc::new(build_default_registry)),
+        ..AgentSDKOptions::default()
+    };
+
+    let text = vv_agent::query_with_options_and_agent(
+        options,
+        AgentDefinition::default_for_model("demo-model"),
+        "say ok",
+    )
+    .expect("module query helper");
+
+    assert_eq!(text, "module-query");
 }
 
 #[test]

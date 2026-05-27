@@ -483,7 +483,10 @@ The current Rust implementation includes:
   `execution_backend`, and custom `resource_loader` are applied to SDK flows,
   matching Python's SDK extension points. SDK-built runtimes apply resolved
   vv-llm token limits as `model_context_window` and `reserved_output_tokens`
-  metadata unless the caller already supplied those keys.
+  metadata unless the caller already supplied those keys. Module-level
+  one-shot helpers `run_with_options_and_agent` and
+  `query_with_options_and_agent` mirror Python `sdk.run(...)` / `sdk.query(...)`
+  while keeping Rust signatures explicit.
 - SDK task preparation now builds Python-style prompt bundles from
   `AgentDefinition.description` when no raw `system_prompt` is provided,
   preserving generated `system_prompt_sections` metadata for cache and
@@ -492,7 +495,9 @@ The current Rust implementation includes:
   agent definition text while still going through the full prompt builder.
   Relative `skill_directories` are resolved from the SDK workspace during task
   preparation and one-shot runs, matching Python's available-skills prompt
-  behavior.
+  behavior. Runtime limit fields are clamped during SDK task preparation so
+  invalid `max_cycles`, memory compaction threshold, or memory threshold
+  percentage values fall back to Python-compatible safe ranges.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,

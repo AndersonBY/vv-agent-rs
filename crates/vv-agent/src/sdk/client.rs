@@ -203,9 +203,9 @@ fn task_from_definition_with_workspace(
         system_prompt,
         prompt,
     );
-    task.max_cycles = definition.max_cycles;
-    task.memory_compact_threshold = definition.memory_compact_threshold;
-    task.memory_threshold_percentage = definition.memory_threshold_percentage;
+    task.max_cycles = definition.max_cycles.max(1);
+    task.memory_compact_threshold = definition.memory_compact_threshold.max(1);
+    task.memory_threshold_percentage = definition.memory_threshold_percentage.clamp(1, 100);
     task.no_tool_policy = definition.no_tool_policy;
     task.allow_interruption = definition.allow_interruption;
     task.use_workspace = definition.use_workspace;
@@ -850,6 +850,64 @@ pub fn run(client: &AgentSDKClient, prompt: impl Into<String>) -> Result<AgentRu
     client.run(prompt)
 }
 
+pub fn run_with_options_and_agent(
+    options: AgentSDKOptions,
+    definition: AgentDefinition,
+    prompt: impl Into<String>,
+) -> Result<AgentRun, String> {
+    AgentSDKClient::new(options).run_with_agent(definition, prompt)
+}
+
+pub fn run_with_options_and_agent_in_workspace(
+    options: AgentSDKOptions,
+    definition: AgentDefinition,
+    prompt: impl Into<String>,
+    workspace: impl Into<PathBuf>,
+) -> Result<AgentRun, String> {
+    AgentSDKClient::new(options).run_with_agent_in_workspace(definition, prompt, workspace)
+}
+
 pub fn query(client: &AgentSDKClient, prompt: impl Into<String>) -> Result<String, String> {
     client.query(prompt)
+}
+
+pub fn query_with_options_and_agent(
+    options: AgentSDKOptions,
+    definition: AgentDefinition,
+    prompt: impl Into<String>,
+) -> Result<String, String> {
+    query_with_options_and_agent_with_require_completed(options, definition, prompt, true)
+}
+
+pub fn query_with_options_and_agent_with_require_completed(
+    options: AgentSDKOptions,
+    definition: AgentDefinition,
+    prompt: impl Into<String>,
+    require_completed: bool,
+) -> Result<String, String> {
+    let run = AgentSDKClient::new(options).run_with_agent(definition, prompt)?;
+    query_text_from_run(run, require_completed, "Agent query failed")
+}
+
+pub fn query_with_options_and_agent_in_workspace(
+    options: AgentSDKOptions,
+    definition: AgentDefinition,
+    prompt: impl Into<String>,
+    workspace: impl Into<PathBuf>,
+) -> Result<String, String> {
+    query_with_options_and_agent_in_workspace_with_require_completed(
+        options, definition, prompt, workspace, true,
+    )
+}
+
+pub fn query_with_options_and_agent_in_workspace_with_require_completed(
+    options: AgentSDKOptions,
+    definition: AgentDefinition,
+    prompt: impl Into<String>,
+    workspace: impl Into<PathBuf>,
+    require_completed: bool,
+) -> Result<String, String> {
+    let run =
+        AgentSDKClient::new(options).run_with_agent_in_workspace(definition, prompt, workspace)?;
+    query_text_from_run(run, require_completed, "Agent query failed")
 }
