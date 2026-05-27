@@ -117,6 +117,11 @@ fn tools_module_is_split_into_handler_files() {
         "llm/base.rs",
         "llm/scripted.rs",
         "llm/vv_llm_client.rs",
+        "workspace/mod.rs",
+        "workspace/base.rs",
+        "workspace/local.rs",
+        "workspace/memory.rs",
+        "workspace/s3.rs",
     ] {
         assert!(root.join(relative).is_file(), "missing {relative}");
     }
@@ -142,6 +147,10 @@ fn tools_module_is_split_into_handler_files() {
             "prompt.rs should be split into src/prompt/ modules",
         ),
         ("llm.rs", "llm.rs should be split into src/llm/ modules"),
+        (
+            "workspace.rs",
+            "workspace.rs should be split into src/workspace/ modules",
+        ),
         (
             "tools/schemas.rs",
             "schemas.rs should be split into src/tools/schemas/ domain modules",

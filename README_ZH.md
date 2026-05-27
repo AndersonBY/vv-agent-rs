@@ -139,6 +139,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - shell 解析已抽到 `runtime::shell`，对齐 Python 的 `runtime/shell.py` 拆分；`bash` 实际执行和 tool-planner runtime hint 共用同一套 resolver，避免配置 shell、`bash_env` 环境变量覆盖与 auto-confirm 行为漂移。
 - 内置控制工具（`task_finish`、`ask_user`、`todo_write`），其中 TODO 管理已对齐 Python 风格的 payload 校验、自动 id、status / priority 默认值和 timestamp 保留；核心 workspace 工具（`list_files`、`file_info`、`read_file`、`write_file`、`file_str_replace`、`workspace_grep`、`read_image`，且 image message 注入仅限 `native_multimodal` 任务）；通过 `compress_memory` 记录 memory notes；以及支持捕获输出、stdin、通过 `bash_shell` metadata 选择 shell、前台超时转后台、后台轮询和后台命令终态 listener 自动通知的 `bash` / `check_background_command` 命令工具。
 - 与 Python 一致的 workspace 路径安全策略：`LocalWorkspaceBackend` 默认拒绝访问 workspace 外路径，文件、图片、grep 和 bash 工具仍支持可信任务通过 metadata 显式放行。
+- `workspace/` 已按 Python 的 base / local / memory / s3 层级拆分，同时继续从 crate 顶层导出 `FileInfo`、`WorkspaceBackend` 和各个具体 backend。
 - Python 风格 workspace backend：`LocalWorkspaceBackend` 和 `MemoryWorkspaceBackend` 支持基于 base 的 `**` glob 匹配、稳定的 POSIX 风格路径输出、内存目录元数据，并在读取缺失的内存文件时返回 `NotFound` 错误。`S3WorkspaceBackend` 已接入 Rust `object_store` S3 客户端，支持 S3-compatible bucket、workspace prefix、append、glob listing、metadata lookup 和 Python 风格带点 suffix。Workspace backend 类型也已从 crate 顶层导出。
 - 与 Python 一致的 `read_file` 大文件响应限制：超出行数 / 字符数限制时返回文件统计、请求大小、限制值和建议行范围，不再把大文件直接塞进 LLM 上下文。
 - 与 Python 一致的 tool-call batch directive 处理：当某个工具请求用户输入或结束任务时，同一轮 LLM response 里后续工具调用会被记录为 skipped result，而不是从 transcript 中消失。
