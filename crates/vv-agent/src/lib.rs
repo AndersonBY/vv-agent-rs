@@ -24,8 +24,8 @@ pub mod types;
 pub mod workspace;
 
 pub use background_sessions::{
-    background_session_manager, BackgroundSessionListener, BackgroundSessionManager,
-    BackgroundSessionSubscription,
+    background_session_manager, BackgroundSessionAdoptOptions, BackgroundSessionListener,
+    BackgroundSessionManager, BackgroundSessionStartOptions, BackgroundSessionSubscription,
 };
 pub use config::{
     apply_resolved_model_limits, build_openai_llm_from_local_settings,

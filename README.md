@@ -394,8 +394,9 @@ The current Rust implementation includes:
   listener notifications. `BackgroundSessionManager::start` also mirrors
   Python's manager-level command startup path, including shell preparation,
   stdin, auto-confirm, and process environment overrides. Background listener
-  failures are isolated so one listener cannot prevent the remaining
-  subscribers from receiving terminal events.
+  adoption supports explicit `started_at` timestamps, and listener failures are
+  isolated so one listener cannot prevent the remaining subscribers from
+  receiving terminal events.
 - Python-compatible workspace path safety: `LocalWorkspaceBackend` rejects
   paths outside the workspace by default, expands `~/...` paths before applying
   the same safety checks, and file/image/grep/bash tools keep

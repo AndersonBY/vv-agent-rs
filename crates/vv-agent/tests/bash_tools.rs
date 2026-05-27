@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use vv_agent::background_sessions::{background_session_manager, BackgroundSessionStartOptions};
+use vv_agent::background_sessions::{
+    background_session_manager, BackgroundSessionAdoptOptions, BackgroundSessionStartOptions,
+};
 use vv_agent::processes::{read_captured_output, start_captured_process};
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
@@ -300,6 +302,41 @@ fn background_session_snapshot_keeps_null_shell_like_python() {
     assert_eq!(final_payload["status"], "completed");
     assert_eq!(final_payload["output"], "null-shell");
     assert_eq!(final_payload.get("shell"), Some(&Value::Null));
+}
+
+#[test]
+fn background_session_manager_can_adopt_running_process_with_started_at_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let command = vec![
+        "bash".to_string(),
+        "-lc".to_string(),
+        "sleep 0.4; printf adopt-started-at".to_string(),
+    ];
+    let started = start_captured_process(&command, workspace.path(), None).expect("start process");
+    let session_id = background_session_manager().adopt_running_process_with_options(
+        BackgroundSessionAdoptOptions::new(
+            "sleep 0.4; printf adopt-started-at",
+            workspace.path(),
+            5,
+            started.child,
+            started.output_path,
+        )
+        .with_shell("bash")
+        .with_started_at(Instant::now() - Duration::from_secs(2)),
+    );
+
+    let payload = background_session_manager().check(&session_id);
+
+    assert_eq!(payload["status"], "running");
+    assert_eq!(payload["session_id"], session_id);
+    assert_eq!(payload["command"], "sleep 0.4; printf adopt-started-at");
+    assert_eq!(payload["shell"], "bash");
+    assert!(
+        payload["elapsed_seconds"]
+            .as_f64()
+            .expect("elapsed seconds")
+            >= 1.5
+    );
 }
 
 #[test]

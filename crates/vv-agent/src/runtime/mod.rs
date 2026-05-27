@@ -20,8 +20,8 @@ pub mod tool_planner;
 pub use backends::RuntimeExecutionBackend as ExecutionBackend;
 pub use backends::{InlineBackend, RuntimeExecutionBackend};
 pub use background_sessions::{
-    background_session_manager, BackgroundSessionListener, BackgroundSessionManager,
-    BackgroundSessionSubscription,
+    background_session_manager, BackgroundSessionAdoptOptions, BackgroundSessionListener,
+    BackgroundSessionManager, BackgroundSessionStartOptions, BackgroundSessionSubscription,
 };
 pub use cancellation::{CancellationToken, CancelledError};
 pub use context::{ExecutionContext, StreamCallback};
