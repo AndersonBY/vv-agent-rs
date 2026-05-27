@@ -88,6 +88,23 @@ pub(crate) fn parse_integer_arg(value: &Value) -> Result<i64, ()> {
     }
 }
 
+pub(crate) fn coerce_python_text_arg(value: Option<&Value>, default: &str) -> String {
+    match value {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Number(number)) => number.to_string(),
+        Some(Value::Bool(boolean)) => {
+            if *boolean {
+                "True".to_string()
+            } else {
+                "False".to_string()
+            }
+        }
+        Some(Value::Null) => "None".to_string(),
+        Some(other) => other.to_string(),
+        None => default.to_string(),
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct GrepTextOptions {
     pub(crate) multiline: bool,

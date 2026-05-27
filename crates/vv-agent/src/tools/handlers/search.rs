@@ -6,8 +6,9 @@ use serde_json::{json, Value};
 
 use crate::tools::base::ToolSpec;
 use crate::tools::common::{
-    grep_text, is_hidden_path, is_ignored_root, is_supported_file_type, matches_file_type,
-    parse_integer_arg, path_escapes_workspace_error, supported_file_types_message, GrepTextOptions,
+    coerce_python_text_arg, grep_text, is_hidden_path, is_ignored_root, is_supported_file_type,
+    matches_file_type, parse_integer_arg, path_escapes_workspace_error,
+    supported_file_types_message, GrepTextOptions,
 };
 use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
 use crate::workspace::normalized_glob_pattern;
@@ -22,27 +23,24 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
         "workspace_grep",
         "Search workspace files with grep-style semantics.",
         Arc::new(|context, arguments| {
-            let pattern = arguments
-                .get("pattern")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
+            let pattern = coerce_python_text_arg(arguments.get("pattern"), "")
                 .trim()
                 .to_string();
             if pattern.is_empty() {
                 return grep_error("Search pattern is required");
             }
-            let output_mode = arguments
-                .get("output_mode")
-                .and_then(Value::as_str)
-                .unwrap_or("content");
-            if !matches!(output_mode, "content" | "files_with_matches" | "count") {
+            let output_mode = coerce_python_text_arg(arguments.get("output_mode"), "content");
+            if !matches!(
+                output_mode.as_str(),
+                "content" | "files_with_matches" | "count"
+            ) {
                 return grep_error(format!(
                     "Invalid `output_mode`: {output_mode}. Supported: content, count, files_with_matches"
                 ));
             }
             let file_type = arguments
                 .get("type")
-                .and_then(Value::as_str)
+                .map(|value| coerce_python_text_arg(Some(value), ""))
                 .map(|value| value.trim().to_ascii_lowercase())
                 .filter(|value| !value.is_empty());
             if let Some(file_type) = &file_type {
@@ -53,13 +51,9 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                     ));
                 }
             }
-            let path = arguments.get("path").and_then(Value::as_str).unwrap_or(".");
-            let glob_pattern = normalized_glob_pattern(
-                arguments
-                    .get("glob")
-                    .and_then(Value::as_str)
-                    .unwrap_or("**/*"),
-            );
+            let path = coerce_python_text_arg(arguments.get("path"), ".");
+            let glob = coerce_python_text_arg(arguments.get("glob"), "**/*");
+            let glob_pattern = normalized_glob_pattern(&glob);
             let include_hidden = arguments
                 .get("include_hidden")
                 .and_then(Value::as_bool)
@@ -131,21 +125,21 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 }
             };
 
-            if let Err(error) = context.resolve_workspace_path(path) {
+            if let Err(error) = context.resolve_workspace_path(&path) {
                 return path_escapes_workspace_error(error);
             }
             let backend = context.effective_workspace_backend();
-            let explicit_file_target = backend.is_file(path);
+            let explicit_file_target = backend.is_file(&path);
             let candidate_files = if explicit_file_target {
                 let display_path = backend
-                    .file_info(path)
+                    .file_info(&path)
                     .ok()
                     .flatten()
                     .map(|info| info.path)
                     .unwrap_or_else(|| path.replace('\\', "/"));
-                vec![(path.to_string(), display_path)]
+                vec![(path.clone(), display_path)]
             } else {
-                match backend.list_files(path, &glob_pattern) {
+                match backend.list_files(&path, &glob_pattern) {
                     Ok(files) => files
                         .into_iter()
                         .map(|file_path| (file_path.clone(), file_path))
@@ -197,7 +191,7 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
 
             files_with_matches.sort();
             let files_with_match_count = files_with_matches.len();
-            let total_result_items = match output_mode {
+            let total_result_items = match output_mode.as_str() {
                 "files_with_matches" => files_with_matches.len(),
                 "count" => file_counts.len(),
                 _ => rows.len(),
@@ -205,7 +199,7 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
             let mut head_limited = false;
             let structured_capped;
             if let Some(limit) = head_limit {
-                match output_mode {
+                match output_mode.as_str() {
                     "files_with_matches" => {
                         head_limited = files_with_matches.len() > limit;
                         files_with_matches.truncate(limit);
@@ -222,7 +216,7 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                     }
                 }
             }
-            match output_mode {
+            match output_mode.as_str() {
                 "files_with_matches" => {
                     let (capped_files, capped) = cap_structured_items(files_with_matches, |path| {
                         estimate_file_path_size(path)
@@ -253,11 +247,11 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
             let mut payload = json!({
                 "summary": summary,
                 "pattern": pattern,
-                "output_mode": output_mode,
+                "output_mode": output_mode.clone(),
                 "head_limit": head_limit,
                 "head_limited": head_limited,
                 "total_result_items": total_result_items,
-                "returned_count": match output_mode {
+                "returned_count": match output_mode.as_str() {
                     "files_with_matches" => files_with_matches.len(),
                     "count" => file_counts.len(),
                     _ => rows.len(),
@@ -270,13 +264,13 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 payload["structured_item_limit"] = json!(MAX_STRUCTURED_ITEMS);
                 payload["structured_char_limit"] = json!(MAX_STRUCTURED_CHARS);
             }
-            match output_mode {
+            match output_mode.as_str() {
                 "files_with_matches" => payload["files"] = json!(files_with_matches),
                 "count" => payload["file_counts"] = json!(file_counts),
                 _ => payload["matches"] = Value::Array(rows),
             }
             let content = render_grep_content(
-                output_mode,
+                &output_mode,
                 &pattern,
                 &payload,
                 show_line_numbers,

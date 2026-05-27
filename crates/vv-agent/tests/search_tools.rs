@@ -59,6 +59,29 @@ fn workspace_grep_uses_regex_patterns_like_python() {
 }
 
 #[test]
+fn workspace_grep_coerces_scalar_pattern_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("numbers.txt"), "123\n456").expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "grep_scalar_pattern",
+                "workspace_grep",
+                BTreeMap::from([("pattern".to_string(), json!(123))]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep scalar pattern");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.metadata["summary"]["total_matches"], 1);
+    assert_eq!(result.metadata["matches"][0]["text"], "123");
+}
+
+#[test]
 fn workspace_grep_returns_python_style_text_content_and_structured_metadata() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
@@ -187,6 +210,33 @@ fn workspace_grep_reports_supported_types_for_unknown_type_like_python() {
     assert_eq!(result.metadata["error"], result.content);
     assert!(result.content.contains("dockerfile"));
     assert!(result.content.contains("makefile"));
+}
+
+#[test]
+fn workspace_grep_reports_scalar_type_as_unsupported_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "grep_scalar_type",
+                "workspace_grep",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("token")),
+                    ("type".to_string(), json!(123)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert!(result
+        .content
+        .contains("Unsupported file type: 123. Supported types:"));
+    assert_eq!(result.metadata["error"], result.content);
 }
 
 #[test]

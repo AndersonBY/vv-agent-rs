@@ -5,29 +5,12 @@ use serde_json::{json, Value};
 use crate::tools::base::ToolSpec;
 use crate::tools::common::path_escapes_workspace_error;
 use crate::tools::common::{
-    collect_ignored_roots, is_hidden_path, is_ignored_root, parse_integer_arg, replace_n,
-    tool_error,
+    coerce_python_text_arg, collect_ignored_roots, is_hidden_path, is_ignored_root,
+    parse_integer_arg, replace_n, tool_error,
 };
 
 const READ_FILE_MAX_LINES: usize = 2_000;
 const READ_FILE_MAX_CHARS: usize = 50_000;
-
-fn coerce_python_text(value: Option<&Value>, default: &str) -> String {
-    match value {
-        Some(Value::String(text)) => text.clone(),
-        Some(Value::Number(number)) => number.to_string(),
-        Some(Value::Bool(boolean)) => {
-            if *boolean {
-                "True".to_string()
-            } else {
-                "False".to_string()
-            }
-        }
-        Some(Value::Null) => "None".to_string(),
-        Some(other) => other.to_string(),
-        None => default.to_string(),
-    }
-}
 
 pub(crate) fn list_files_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
@@ -299,7 +282,7 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                 return path_escapes_workspace_error(error);
             }
             let backend = context.effective_workspace_backend();
-            let content = coerce_python_text(arguments.get("content"), "");
+            let content = coerce_python_text_arg(arguments.get("content"), "");
             let append = arguments
                 .get("append")
                 .and_then(Value::as_bool)
@@ -358,11 +341,11 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
             if !backend.is_file(path) {
                 return tool_error(format!("file not found: {path}"));
             }
-            let old_str = coerce_python_text(arguments.get("old_str"), "");
+            let old_str = coerce_python_text_arg(arguments.get("old_str"), "");
             if old_str.is_empty() {
                 return tool_error("`old_str` cannot be empty");
             }
-            let new_str = coerce_python_text(arguments.get("new_str"), "");
+            let new_str = coerce_python_text_arg(arguments.get("new_str"), "");
             let replace_all = arguments
                 .get("replace_all")
                 .and_then(Value::as_bool)
