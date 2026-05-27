@@ -12,6 +12,23 @@ use crate::tools::common::{
 const READ_FILE_MAX_LINES: usize = 2_000;
 const READ_FILE_MAX_CHARS: usize = 50_000;
 
+fn coerce_python_text(value: Option<&Value>, default: &str) -> String {
+    match value {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Number(number)) => number.to_string(),
+        Some(Value::Bool(boolean)) => {
+            if *boolean {
+                "True".to_string()
+            } else {
+                "False".to_string()
+            }
+        }
+        Some(Value::Null) => "None".to_string(),
+        Some(other) => other.to_string(),
+        None => default.to_string(),
+    }
+}
+
 pub(crate) fn list_files_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
         "list_files",
@@ -282,10 +299,7 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                 return path_escapes_workspace_error(error);
             }
             let backend = context.effective_workspace_backend();
-            let content = arguments
-                .get("content")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let content = coerce_python_text(arguments.get("content"), "");
             let append = arguments
                 .get("append")
                 .and_then(Value::as_bool)
@@ -303,7 +317,7 @@ pub(crate) fn write_file_tool() -> ToolSpec {
             let write_content = format!(
                 "{}{}{}",
                 if leading_newline { "\n" } else { "" },
-                content,
+                content.as_str(),
                 if trailing_newline { "\n" } else { "" }
             );
             match backend.write_text(path, &write_content, append) {
@@ -344,16 +358,11 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
             if !backend.is_file(path) {
                 return tool_error(format!("file not found: {path}"));
             }
-            let Some(old_str) = arguments.get("old_str").and_then(Value::as_str) else {
-                return tool_error("missing required argument: old_str");
-            };
+            let old_str = coerce_python_text(arguments.get("old_str"), "");
             if old_str.is_empty() {
                 return tool_error("`old_str` cannot be empty");
             }
-            let new_str = arguments
-                .get("new_str")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let new_str = coerce_python_text(arguments.get("new_str"), "");
             let replace_all = arguments
                 .get("replace_all")
                 .and_then(Value::as_bool)
@@ -367,7 +376,7 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
             };
             match backend.read_text(path) {
                 Ok(text) => {
-                    let occurrence_count = text.matches(old_str).count();
+                    let occurrence_count = text.matches(&old_str).count();
                     if occurrence_count == 0 {
                         return tool_error("`old_str` not found in file");
                     }
@@ -377,9 +386,9 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
                         occurrence_count.min(max_replacements)
                     };
                     let replaced_text = if replace_all {
-                        text.replace(old_str, new_str)
+                        text.replace(&old_str, &new_str)
                     } else {
-                        replace_n(&text, old_str, new_str, max_replacements)
+                        replace_n(&text, &old_str, &new_str, max_replacements)
                     };
                     match backend.write_text(path, &replaced_text, false) {
                         Ok(_) => crate::types::ToolExecutionResult::success(

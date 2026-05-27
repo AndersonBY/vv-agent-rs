@@ -25,12 +25,12 @@ pub(super) fn write_file_schema() -> Value {
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Write content to a file in workspace.\n\nMODES:\n- Overwrite (default): Replaces entire file content.\n- Append: Adds to existing content (`append=true`).\n\nWARNING:\n- By default, this OVERWRITES the entire file.\n- Prefer `file_str_replace` for small or surgical edits to existing files.\n- Use `append=true` to add content instead of replacing content.\n\nBehavior:\n- This can create parent directories when the workspace backend supports them.\n- The result reports `written_chars`, `append`, and newline flags.\n\nPARAMETERS:\n- `path` (required): Workspace-relative path by default. Absolute path is allowed when outside-workspace access is enabled.\n- `content` (required): Content to write.\n- `append` (optional): Set true to append instead of overwrite.\n- `leading_newline`/`trailing_newline` (optional): Add newlines when appending.",
+            "description": "Write content to a file in workspace.\n\nMODES:\n- Overwrite (default): Replaces entire file content.\n- Append: Adds to existing content (`append=true`).\n\nWARNING:\n- By default, this OVERWRITES the entire file.\n- Prefer `file_str_replace` for small or surgical edits to existing files.\n- Use `append=true` to add content instead of replacing content.\n\nBehavior:\n- This can create parent directories when the workspace backend supports them.\n- The result reports `written_chars`, `append`, and newline flags.\n\nPARAMETERS:\n- `path` (required): Workspace-relative path by default. Absolute path is allowed when outside-workspace access is enabled.\n- `content` (required): Content to write. Non-string scalar values are coerced to text for Python compatibility.\n- `append` (optional): Set true to append instead of overwrite.\n- `leading_newline`/`trailing_newline` (optional): Add newlines when appending.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
-                    "content": {"type": "string", "description": "The content to write to the file."},
+                    "content": {"type": "string", "description": "The content to write to the file. Non-string scalar values are coerced to text for Python compatibility."},
                     "append": {"type": "boolean", "description": "Set true to append instead of overwrite. Default is false (overwrite)."},
                     "leading_newline": {"type": "boolean", "description": "Add a leading newline when appending. Default is false."},
                     "trailing_newline": {"type": "boolean", "description": "Add a trailing newline when appending. Default is false."}
@@ -122,8 +122,8 @@ pub(super) fn file_str_replace_schema() -> Value {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
-                    "old_str": {"type": "string", "description": "The exact source text to replace. Include enough context to make the match unique."},
-                    "new_str": {"type": "string", "description": "Replacement text."},
+                    "old_str": {"type": "string", "description": "The exact source text to replace. Include enough context to make the match unique. Non-string scalar values are coerced to text for Python compatibility."},
+                    "new_str": {"type": "string", "description": "Replacement text. Non-string scalar values are coerced to text for Python compatibility."},
                     "replace_all": {"type": "boolean", "description": "Replace all matches when true. Default false."},
                     "max_replacements": {"type": "integer", "minimum": 1, "description": "Optional cap when replace_all=false. Default 1. numeric string values are accepted for Python compatibility."}
                 },

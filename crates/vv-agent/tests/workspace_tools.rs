@@ -67,6 +67,64 @@ fn default_workspace_tools_can_write_read_replace_and_list_files() {
 }
 
 #[test]
+fn write_file_coerces_scalar_content_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "write_number_content",
+                "write_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("number.txt")),
+                    ("content".to_string(), json!(123)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("write_file");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("number.txt")).expect("file"),
+        "123"
+    );
+}
+
+#[test]
+fn file_str_replace_coerces_scalar_text_arguments_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("numbers.txt"), "1 1").expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "replace_scalar_text",
+                "file_str_replace",
+                BTreeMap::from([
+                    ("path".to_string(), json!("numbers.txt")),
+                    ("old_str".to_string(), json!(1)),
+                    ("new_str".to_string(), json!(2)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("file_str_replace");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["replaced_count"], 1);
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("numbers.txt")).expect("file"),
+        "2 1"
+    );
+}
+
+#[test]
 fn file_str_replace_accepts_string_max_replacements_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
