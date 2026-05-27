@@ -31,7 +31,21 @@ pub fn count_messages_tokens(messages: &[Message], model: &str) -> u64 {
         .iter()
         .map(message_to_openai_value)
         .collect::<Vec<_>>();
-    estimate_tokens(&serde_json::to_string(&payload).unwrap_or_default(), model)
+    count_tokens(&serde_json::to_string(&payload).unwrap_or_default(), model)
+}
+
+pub fn count_tokens(text: &str, model: &str) -> u64 {
+    if text.is_empty() {
+        return 0;
+    }
+    if vv_llm_tokenizer_supported(model) {
+        if let Ok(count) = vv_llm::utilities::count_tokens(text, model) {
+            if count > 0 {
+                return count as u64;
+            }
+        }
+    }
+    estimate_tokens(text, model)
 }
 
 pub fn estimate_tokens(text: &str, _model: &str) -> u64 {
@@ -50,6 +64,13 @@ pub fn estimate_tokens(text: &str, _model: &str) -> u64 {
     ((cjk_chars as f64 * 1.5) + (other_chars as f64 * 0.25))
         .floor()
         .max(1.0) as u64
+}
+
+fn vv_llm_tokenizer_supported(model: &str) -> bool {
+    model == "gpt-3.5-turbo"
+        || model.starts_with("gpt-4o")
+        || model.starts_with("o1-")
+        || model.starts_with("o3-")
 }
 
 fn is_cjk(ch: char) -> bool {

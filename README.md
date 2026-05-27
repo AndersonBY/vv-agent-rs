@@ -390,6 +390,9 @@ The current Rust implementation includes:
 - Runtime-backed sub-agent sessions inherit the parent run's LLM stream
   callback, so streamed provider events continue to flow through nested agent
   execution like Python.
+- Memory token utilities now prefer `vv-llm::utilities::count_tokens` for
+  supported tokenizers and fall back to the Python-style CJK-aware estimator for
+  unsupported models.
 - SDK one-shot runs no longer require a prebuilt runtime: by default the client
   builds a `vv-llm` backed runtime from `AgentSDKOptions.settings_file`, while
   tests and embedders can inject an `LlmBuilder` for deterministic clients.

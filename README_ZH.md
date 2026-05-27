@@ -182,6 +182,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - `AgentSDKClient::query` 已对齐 Python client query 语义：completed run 返回最终回答，非 completed 状态会用 `status=wait_user` 这类 snake_case 状态值报告错误原因。
 - `AgentSDKClient` 会自动发现 `.vv-agent/agents.json` 里的命名 profiles，提供 `list_agents`，并可通过 `run_agent` 按名称运行，同时在 `AgentRun.agent_name` 中保留 profile 名称。普通 `run()` 已对齐 Python 的选择语义：优先使用 default agent，只有一个 profile 时自动选择；未配置 profile 或存在多个 profile 时返回清晰错误。
 - Runtime-backed 子 Agent session 会继承父 run 的 LLM stream callback，因此嵌套 Agent 执行中的 provider streaming 事件也会像 Python 一样继续向外转发。
+- Memory token utilities 会优先使用 `vv-llm::utilities::count_tokens` 的 tokenizer；不支持的模型继续使用 Python 风格 CJK-aware 估算。
 - SDK one-shot run 现在不再必须预先传入 runtime：默认会根据 `AgentSDKOptions.settings_file` 构造 `vv-llm` backed runtime；测试和嵌入方也可以注入 `LlmBuilder` 使用确定性 client。`AgentSDKOptions.runtime_hooks` 会同时作用于 SDK 自动构建和外部注入的 runtime，对齐 Python SDK 的扩展点。
 - SDK task preparation 现在会在未提供 raw `system_prompt` 时，根据 `AgentDefinition.description` 构建 Python 风格 prompt bundle，并保留生成的 `system_prompt_sections` metadata，方便 prompt cache 和调试链路继续对齐。
 - 基于 `AgentTask` flags 的 Python 风格工具规划，以及 `.vv-agent` 下 `agents.json`、prompt templates 和 skill directories 的资源发现；`agents.json` 已支持完整 agent 字段，包括 sub-agent definitions、tool flags、shell defaults、metadata 和资源路径。
