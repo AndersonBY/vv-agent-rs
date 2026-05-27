@@ -64,8 +64,9 @@ pub use runtime::{
 };
 pub use sdk::{
     create_agent_session, create_agent_session_with_id, create_agent_session_with_id_and_workspace,
-    create_agent_session_with_workspace, query, query_with_options_and_agent,
-    query_with_options_and_agent_in_workspace,
+    create_agent_session_with_id_and_workspace_and_shared_state,
+    create_agent_session_with_shared_state, create_agent_session_with_workspace, query,
+    query_with_options_and_agent, query_with_options_and_agent_in_workspace,
     query_with_options_and_agent_in_workspace_with_require_completed,
     query_with_options_and_agent_with_require_completed, run, run_with_options_and_agent,
     run_with_options_and_agent_in_workspace, AgentDefinition, AgentResourceLoader, AgentRun,

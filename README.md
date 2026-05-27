@@ -517,6 +517,9 @@ The current Rust implementation includes:
   sessions now also carry a stable `session_id` into every task's metadata;
   callers can use `AgentSDKClient::create_session_with_id` or
   `create_agent_session_with_id` when they need a deterministic session id.
+  Generated session ids now use the same 12-character hex shape as Python, and
+  session constructors/helpers accept initial shared state while still adding
+  Python's default `todo_list: []`.
   Session continuation is covered for Python's multi-tool wait-user case: a
   first `ask_user` pauses the run, later tool calls in the same batch are
   recorded as skipped, and `continue_run(Some(...))` resumes the same
@@ -590,11 +593,12 @@ The current Rust implementation includes:
   percentage values fall back to Python-compatible safe ranges. SDK prepare,
   one-shot run, and session flows now generate Python-style unique task ids
   (`agentName_<8 hex>`), avoiding checkpoint and session-memory scope
-  collisions across repeated SDK runs. SDK sessions now start with Python's
-  default `todo_list: []` shared-state baseline and use the same effective agent
-  definition as one-shot runs, so startup shell defaults, bash environment
-  overrides, prompt templates, and discovered skill directories also apply to
-  session prompts.
+  collisions across repeated SDK runs. `AgentSDKClient::new_with_agent`,
+  `new_with_agents`, `prepare_task`, and `prepare_task_in_workspace` now cover
+  Python's default/only-agent task preparation path while retaining explicit
+  Rust alternatives. SDK sessions use the same effective agent definition as
+  one-shot runs, so startup shell defaults, bash environment overrides, prompt
+  templates, and discovered skill directories also apply to session prompts.
 - SDK clients can now create sessions from the configured default agent or the
   only registered profile through `create_default_session*` helpers, and can
   create sessions by profile name without manually passing the copied

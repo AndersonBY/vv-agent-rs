@@ -400,6 +400,57 @@ fn sdk_client_prepare_task_for_agent_uses_resources_like_python() {
 }
 
 #[test]
+fn sdk_client_new_with_agent_prepares_default_task_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut agent = AgentDefinition::default_for_model("demo-model");
+    agent.description = "default inline agent".to_string();
+
+    let client = AgentSDKClient::new_with_agent(
+        AgentSDKOptions {
+            workspace: workspace.path().to_path_buf(),
+            auto_discover_resources: false,
+            ..AgentSDKOptions::default()
+        },
+        agent,
+    );
+
+    let task = client
+        .prepare_task("preview default", "demo-model-resolved")
+        .expect("prepare default task");
+
+    assert_eq!(task.model, "demo-model-resolved");
+    assert_eq!(task.user_prompt, "preview default");
+    assert_python_style_task_id(&task.task_id, "default");
+    assert!(task.system_prompt.contains("default inline agent"));
+}
+
+#[test]
+fn sdk_client_new_with_agents_resolves_only_agent_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let client = AgentSDKClient::new_with_agents(
+        AgentSDKOptions {
+            workspace: workspace.path().to_path_buf(),
+            auto_discover_resources: false,
+            ..AgentSDKOptions::default()
+        },
+        BTreeMap::from([(
+            "researcher".to_string(),
+            AgentDefinition::default_for_model("demo-model"),
+        )]),
+    )
+    .expect("client with agents");
+
+    assert_eq!(client.list_agents(), vec!["researcher"]);
+
+    let task = client
+        .prepare_task("preview only profile", "demo-model")
+        .expect("prepare only agent");
+
+    assert_python_style_task_id(&task.task_id, "researcher");
+    assert_eq!(task.user_prompt, "preview only profile");
+}
+
+#[test]
 fn sdk_prepare_and_run_use_python_style_unique_task_ids() {
     let workspace = tempfile::tempdir().expect("workspace");
     let mut client = AgentSDKClient::new(AgentSDKOptions {

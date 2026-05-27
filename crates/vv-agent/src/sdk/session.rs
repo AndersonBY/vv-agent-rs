@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -10,6 +11,8 @@ use crate::sub_task_manager::SubTaskManager;
 use crate::types::{AgentStatus, Metadata};
 
 use super::types::{agent_status_value, AgentDefinition, AgentRun};
+
+static SESSION_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub struct AgentSessionState {
@@ -177,6 +180,23 @@ impl AgentSession {
         )
     }
 
+    pub fn new_with_context_and_shared_state(
+        execute_run: Arc<dyn Fn(AgentSessionRunRequest) -> Result<AgentRun, String> + Send + Sync>,
+        agent_name: impl Into<String>,
+        definition: AgentDefinition,
+        workspace: impl Into<PathBuf>,
+        shared_state: Metadata,
+    ) -> Self {
+        Self::new_with_context_and_session_id_and_shared_state(
+            execute_run,
+            generate_session_id(),
+            agent_name,
+            definition,
+            workspace,
+            shared_state,
+        )
+    }
+
     pub fn new_with_context_and_session_id(
         execute_run: Arc<dyn Fn(AgentSessionRunRequest) -> Result<AgentRun, String> + Send + Sync>,
         session_id: impl Into<String>,
@@ -184,8 +204,28 @@ impl AgentSession {
         definition: AgentDefinition,
         workspace: impl Into<PathBuf>,
     ) -> Self {
-        let mut shared_state = Metadata::new();
-        shared_state.insert("todo_list".to_string(), Value::Array(Vec::new()));
+        Self::new_with_context_and_session_id_and_shared_state(
+            execute_run,
+            session_id,
+            agent_name,
+            definition,
+            workspace,
+            Metadata::new(),
+        )
+    }
+
+    pub fn new_with_context_and_session_id_and_shared_state(
+        execute_run: Arc<dyn Fn(AgentSessionRunRequest) -> Result<AgentRun, String> + Send + Sync>,
+        session_id: impl Into<String>,
+        agent_name: impl Into<String>,
+        definition: AgentDefinition,
+        workspace: impl Into<PathBuf>,
+        shared_state: Metadata,
+    ) -> Self {
+        let mut shared_state = shared_state;
+        shared_state
+            .entry("todo_list".to_string())
+            .or_insert_with(|| Value::Array(Vec::new()));
         Self {
             execute_run,
             session_id: normalize_session_id(session_id),
@@ -715,13 +755,12 @@ fn normalize_session_prompt(prompt: String, label: &str) -> Result<String, Strin
 }
 
 fn generate_session_id() -> String {
-    format!(
-        "session-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or_default()
-    )
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let counter = SESSION_ID_COUNTER.fetch_add(1, Ordering::Relaxed) as u128;
+    format!("{:012x}", (nanos ^ counter) & 0xffff_ffff_ffff)
 }
 
 fn normalize_session_id(session_id: impl Into<String>) -> String {

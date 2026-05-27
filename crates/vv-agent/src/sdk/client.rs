@@ -330,6 +330,21 @@ impl AgentSDKClient {
         }
     }
 
+    pub fn new_with_agent(options: AgentSDKOptions, agent: AgentDefinition) -> Self {
+        let mut client = Self::new(options);
+        client.default_agent = Some(agent);
+        client
+    }
+
+    pub fn new_with_agents(
+        options: AgentSDKOptions,
+        agents: BTreeMap<String, AgentDefinition>,
+    ) -> Result<Self, String> {
+        let mut client = Self::new(options);
+        client.register_agents(agents)?;
+        Ok(client)
+    }
+
     pub fn with_runtime<C: LlmClient + Clone + 'static>(
         mut self,
         mut runtime: AgentRuntime<C>,
@@ -480,6 +495,15 @@ impl AgentSDKClient {
         create_agent_session(self, agent_name, definition)
     }
 
+    pub fn create_session_with_shared_state(
+        &self,
+        agent_name: impl Into<String>,
+        definition: AgentDefinition,
+        shared_state: Metadata,
+    ) -> AgentSession {
+        create_agent_session_with_shared_state(self, agent_name, definition, shared_state)
+    }
+
     pub fn create_session_with_id(
         &self,
         agent_name: impl Into<String>,
@@ -575,6 +599,43 @@ impl AgentSDKClient {
         )
     }
 
+    pub fn prepare_task(
+        &self,
+        prompt: impl Into<String>,
+        resolved_model_id: impl Into<String>,
+    ) -> Result<AgentTask, String> {
+        let (name, definition) = self.default_or_only_agent(
+            "No agent configured. Call prepare_task_with_agent(...) or register named agents first.",
+            "Multiple agents configured. Call prepare_task_for_agent(name, ...) with one of:",
+        )?;
+        Ok(self.prepare_task_with_named_agent_in_workspace(
+            &name,
+            definition,
+            prompt,
+            resolved_model_id,
+            self.options.workspace.clone(),
+        ))
+    }
+
+    pub fn prepare_task_in_workspace(
+        &self,
+        prompt: impl Into<String>,
+        resolved_model_id: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+    ) -> Result<AgentTask, String> {
+        let (name, definition) = self.default_or_only_agent(
+            "No agent configured. Call prepare_task_with_agent_in_workspace(...) or register named agents first.",
+            "Multiple agents configured. Call prepare_task_for_agent_in_workspace(name, ...) with one of:",
+        )?;
+        Ok(self.prepare_task_with_named_agent_in_workspace(
+            &name,
+            definition,
+            prompt,
+            resolved_model_id,
+            workspace,
+        ))
+    }
+
     fn prepare_task_with_named_agent_in_workspace(
         &self,
         agent_name: &str,
@@ -663,6 +724,22 @@ impl AgentSDKClient {
         ))
     }
 
+    pub fn create_default_session_with_shared_state(
+        &self,
+        shared_state: Metadata,
+    ) -> Result<AgentSession, String> {
+        let (name, definition) = self.default_or_only_agent(
+            "No agent configured. Call create_session_with_agent(...) or register named agents first.",
+            "Multiple agents configured. Call create_agent_session_by_name_with_shared_state(name, shared_state) with one of:",
+        )?;
+        Ok(create_agent_session_with_shared_state(
+            self,
+            name,
+            definition,
+            shared_state,
+        ))
+    }
+
     pub fn create_agent_session_by_name(
         &self,
         agent_name: impl AsRef<str>,
@@ -706,6 +783,21 @@ impl AgentSDKClient {
         let definition = self.get_agent(agent_name)?.clone();
         Ok(create_agent_session_with_id_and_workspace(
             self, agent_name, definition, session_id, workspace,
+        ))
+    }
+
+    pub fn create_agent_session_by_name_with_shared_state(
+        &self,
+        agent_name: impl AsRef<str>,
+        shared_state: Metadata,
+    ) -> Result<AgentSession, String> {
+        let agent_name = agent_name.as_ref().trim();
+        let definition = self.get_agent(agent_name)?.clone();
+        Ok(create_agent_session_with_shared_state(
+            self,
+            agent_name,
+            definition,
+            shared_state,
         ))
     }
 
@@ -975,11 +1067,42 @@ pub fn create_agent_session(
     )
 }
 
+pub fn create_agent_session_with_shared_state(
+    client: &AgentSDKClient,
+    agent_name: impl Into<String>,
+    definition: AgentDefinition,
+    shared_state: Metadata,
+) -> AgentSession {
+    create_agent_session_with_workspace_and_shared_state(
+        client,
+        agent_name,
+        definition,
+        client.options.workspace.clone(),
+        shared_state,
+    )
+}
+
 pub fn create_agent_session_with_workspace(
     client: &AgentSDKClient,
     agent_name: impl Into<String>,
     definition: AgentDefinition,
     workspace: impl Into<PathBuf>,
+) -> AgentSession {
+    create_agent_session_with_workspace_and_shared_state(
+        client,
+        agent_name,
+        definition,
+        workspace,
+        Metadata::new(),
+    )
+}
+
+pub fn create_agent_session_with_workspace_and_shared_state(
+    client: &AgentSDKClient,
+    agent_name: impl Into<String>,
+    definition: AgentDefinition,
+    workspace: impl Into<PathBuf>,
+    shared_state: Metadata,
 ) -> AgentSession {
     let definition = client.effective_definition(definition);
     let runtime = client.runtime.clone();
@@ -991,7 +1114,13 @@ pub fn create_agent_session_with_workspace(
         }
         runtime.run_with_session(&definition_for_run, request)
     });
-    AgentSession::new_with_context(execute_run, agent_name, definition, workspace)
+    AgentSession::new_with_context_and_shared_state(
+        execute_run,
+        agent_name,
+        definition,
+        workspace,
+        shared_state,
+    )
 }
 
 pub fn create_agent_session_with_id(
@@ -1016,6 +1145,24 @@ pub fn create_agent_session_with_id_and_workspace(
     session_id: impl Into<String>,
     workspace: impl Into<PathBuf>,
 ) -> AgentSession {
+    create_agent_session_with_id_and_workspace_and_shared_state(
+        client,
+        agent_name,
+        definition,
+        session_id,
+        workspace,
+        Metadata::new(),
+    )
+}
+
+pub fn create_agent_session_with_id_and_workspace_and_shared_state(
+    client: &AgentSDKClient,
+    agent_name: impl Into<String>,
+    definition: AgentDefinition,
+    session_id: impl Into<String>,
+    workspace: impl Into<PathBuf>,
+    shared_state: Metadata,
+) -> AgentSession {
     let definition = client.effective_definition(definition);
     let runtime = client.runtime.clone();
     let definition_for_run = definition.clone();
@@ -1026,12 +1173,13 @@ pub fn create_agent_session_with_id_and_workspace(
         }
         runtime.run_with_session(&definition_for_run, request)
     });
-    AgentSession::new_with_context_and_session_id(
+    AgentSession::new_with_context_and_session_id_and_shared_state(
         execute_run,
         session_id,
         agent_name,
         definition,
         workspace,
+        shared_state,
     )
 }
 

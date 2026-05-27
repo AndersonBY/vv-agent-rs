@@ -3,11 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use vv_agent::{
-    create_agent_session, AgentDefinition, AgentRun, AgentRuntime, AgentSDKClient, AgentSDKOptions,
-    AgentSession, AgentStatus, BeforeLlmEvent, BeforeToolCallEvent, BeforeToolCallPatch,
-    CycleRecord, LLMResponse, LlmClient, LlmError, LlmRequest, MessageRole, ResolvedModelConfig,
-    RuntimeHook, ScriptedLlmClient, SessionEventHandler, SubAgentConfig, TokenUsage, ToolCall,
-    ToolDirective, ToolExecutionResult,
+    create_agent_session, create_agent_session_with_shared_state, AgentDefinition, AgentRun,
+    AgentRuntime, AgentSDKClient, AgentSDKOptions, AgentSession, AgentStatus, BeforeLlmEvent,
+    BeforeToolCallEvent, BeforeToolCallPatch, CycleRecord, LLMResponse, LlmClient, LlmError,
+    LlmRequest, MessageRole, ResolvedModelConfig, RuntimeHook, ScriptedLlmClient,
+    SessionEventHandler, SubAgentConfig, TokenUsage, ToolCall, ToolDirective, ToolExecutionResult,
 };
 
 fn preview_text_for_test(text: &str, log_preview_chars: Option<usize>) -> String {
@@ -41,6 +41,86 @@ fn session_state_starts_with_python_style_todo_list() {
         session.state().shared_state["todo_list"],
         Value::Array(vec![])
     );
+}
+
+#[test]
+fn session_id_defaults_to_python_style_hex_prefix() {
+    let execute_run = Arc::new(|prompt: String| Ok(fake_run(&prompt, AgentStatus::Completed)));
+    let session = AgentSession::new(
+        execute_run,
+        "demo",
+        AgentDefinition::default_for_model("demo"),
+        "./workspace",
+    );
+
+    assert_eq!(session.session_id().len(), 12);
+    assert!(session
+        .session_id()
+        .chars()
+        .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()));
+}
+
+#[test]
+fn session_constructor_preserves_initial_shared_state_like_python() {
+    let execute_run = Arc::new(|request: vv_agent::AgentSessionRunRequest| {
+        assert_eq!(
+            request.shared_state.get("seed").and_then(Value::as_str),
+            Some("from-session")
+        );
+        Ok(AgentRun {
+            agent_name: "demo-agent".to_string(),
+            result: vv_agent::AgentResult::completed_with_shared_state(
+                vec![vv_agent::Message::user(request.prompt.clone())],
+                vec![],
+                request.prompt,
+                request.shared_state,
+            ),
+            resolved: ResolvedModelConfig::new("demo", "demo", "demo", "demo", vec![]),
+        })
+    });
+    let mut session = AgentSession::new_with_context_and_shared_state(
+        execute_run,
+        "demo-agent",
+        AgentDefinition::default_for_model("demo-model"),
+        "./workspace",
+        BTreeMap::from([(
+            "seed".to_string(),
+            Value::String("from-session".to_string()),
+        )]),
+    );
+
+    assert_eq!(
+        session.shared_state().get("seed").and_then(Value::as_str),
+        Some("from-session")
+    );
+    assert_eq!(session.shared_state()["todo_list"], Value::Array(vec![]));
+
+    let run = session.prompt("hello").expect("prompt");
+
+    assert_eq!(
+        run.result.shared_state.get("seed").and_then(Value::as_str),
+        Some("from-session")
+    );
+}
+
+#[test]
+fn create_agent_session_helper_accepts_initial_shared_state_like_python() {
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    });
+    let session = create_agent_session_with_shared_state(
+        &client,
+        "demo",
+        AgentDefinition::default_for_model("demo-model"),
+        BTreeMap::from([("seed".to_string(), Value::String("from-helper".to_string()))]),
+    );
+
+    assert_eq!(
+        session.shared_state().get("seed").and_then(Value::as_str),
+        Some("from-helper")
+    );
+    assert_eq!(session.shared_state()["todo_list"], Value::Array(vec![]));
 }
 
 #[test]
@@ -470,7 +550,9 @@ fn session_runtime_injects_session_id_into_task_metadata() {
     let session_id = captured[0]["session_id"]
         .as_str()
         .expect("session_id metadata");
-    assert!(session_id.starts_with("session-"));
+    assert_eq!(session_id, session.session_id());
+    assert_eq!(session_id.len(), 12);
+    assert!(session_id.chars().all(|ch| ch.is_ascii_hexdigit()));
 }
 
 #[test]
