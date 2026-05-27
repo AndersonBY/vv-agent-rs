@@ -204,7 +204,8 @@ The current Rust implementation includes:
   run one LLM planning cycle or one tool-call batch without going through the
   full `AgentRuntime`; `runtime::{Checkpoint, InMemoryStateStore, StateStore}`
   and `runtime::engine` sub-agent session helpers also match Python's direct
-  runtime import paths.
+  runtime import paths. `MAX_PTL_RETRIES` is available as the Python-style
+  prompt-too-long retry constant alias.
 - Runtime hooks modeled after Python `RuntimeHookManager`: callers can patch
   messages before memory compaction, patch LLM request messages/schemas, patch
   LLM responses, patch or short-circuit tool calls, and patch tool results.

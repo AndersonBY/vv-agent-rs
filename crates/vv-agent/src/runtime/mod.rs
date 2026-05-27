@@ -27,6 +27,7 @@ pub use cancellation::{CancellationToken, CancelledError};
 pub use context::{ExecutionContext, StreamCallback};
 pub use cycle_runner::{
     is_prompt_too_long_error, CycleRunRequest, CycleRunner, MAX_PROMPT_TOO_LONG_RETRIES,
+    MAX_PTL_RETRIES,
 };
 pub use engine::{
     AgentRuntime, BeforeCycleMessageProvider, InterruptionMessageProvider, RuntimeEventHandler,

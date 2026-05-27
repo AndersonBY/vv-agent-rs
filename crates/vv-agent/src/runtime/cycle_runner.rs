@@ -12,6 +12,7 @@ use crate::tools::ToolRegistry;
 use crate::types::{AgentTask, CycleRecord, Message};
 
 pub const MAX_PROMPT_TOO_LONG_RETRIES: u32 = 3;
+pub const MAX_PTL_RETRIES: u32 = MAX_PROMPT_TOO_LONG_RETRIES;
 
 const PROMPT_TOO_LONG_PATTERNS: &[&str] = &[
     "prompt is too long",

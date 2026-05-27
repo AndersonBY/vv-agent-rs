@@ -255,6 +255,9 @@ fn runtime_module_exports_python_runtime_public_types() {
     let _managed: Option<vv_agent::runtime::ManagedSubTask> = None;
     let manager = vv_agent::runtime::RuntimeHookManager::default();
     assert!(!manager.has_hooks());
+    assert_eq!(vv_agent::runtime::cycle_runner::MAX_PTL_RETRIES, 3);
+    assert_eq!(vv_agent::runtime::MAX_PTL_RETRIES, 3);
+    assert_eq!(vv_agent::MAX_PTL_RETRIES, 3);
     let _checkpoint = vv_agent::runtime::Checkpoint {
         task_id: "task".to_string(),
         cycle_index: 0,
