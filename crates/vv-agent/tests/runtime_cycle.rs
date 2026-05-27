@@ -6,7 +6,7 @@ use vv_agent::{
     memory::CLEARED_MARKER, AgentRuntime, AgentStatus, AgentTask, BeforeLlmPatch,
     BeforeToolCallPatch, CancellationToken, ExecutionContext, LLMResponse, LlmClient, LlmError,
     LlmRequest, LlmStreamCallback, Message, RuntimeHook, RuntimeRunControls, ScriptedLlmClient,
-    SubAgentConfig, ToolCall, ToolDirective, ToolExecutionResult,
+    SubAgentConfig, TokenUsage, ToolCall, ToolDirective, ToolExecutionResult,
 };
 
 const PNG_1X1: &[u8] = &[
@@ -1081,6 +1081,32 @@ fn runtime_compacts_memory_before_large_follow_up_cycle() {
 }
 
 #[test]
+fn runtime_uses_previous_prompt_tokens_for_memory_compaction_like_python() {
+    let llm = PromptTokenCompactionInspectingLlmClient::default();
+    let inspector = llm.clone();
+    let runtime = AgentRuntime::new(llm);
+    let mut task = AgentTask::new("usage_memory_task", "demo", "system", "short request");
+    task.max_cycles = 2;
+    task.metadata
+        .insert("model_context_window".to_string(), json!(120));
+    task.metadata
+        .insert("reserved_output_tokens".to_string(), json!(10));
+    task.metadata
+        .insert("autocompact_buffer_tokens".to_string(), json!(10));
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let second_request = inspector.second_request_messages();
+    assert!(
+        second_request
+            .iter()
+            .any(|message| message.content.contains("<Compressed Agent Memory>")),
+        "runtime ignored previous provider prompt_tokens when preparing the next cycle: {second_request:#?}"
+    );
+}
+
+#[test]
 fn runtime_hooks_can_patch_messages_before_memory_compaction() {
     let workspace = tempfile::tempdir().expect("workspace");
     let large_tool_payload = "tool output ".repeat(300);
@@ -2034,6 +2060,52 @@ impl LlmClient for MemoryCompactionInspectingLlmClient {
             "finish",
             vec![ToolCall::new(
                 "finish_after_compact",
+                "task_finish",
+                BTreeMap::from([("message".to_string(), json!("memory compacted"))]),
+            )],
+        ))
+    }
+}
+
+#[derive(Clone, Default)]
+struct PromptTokenCompactionInspectingLlmClient {
+    responses_seen: Arc<Mutex<usize>>,
+    second_request_messages: Arc<Mutex<Vec<Message>>>,
+}
+
+impl PromptTokenCompactionInspectingLlmClient {
+    fn second_request_messages(&self) -> Vec<Message> {
+        self.second_request_messages
+            .lock()
+            .expect("messages poisoned")
+            .clone()
+    }
+}
+
+impl LlmClient for PromptTokenCompactionInspectingLlmClient {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        let mut responses_seen = self
+            .responses_seen
+            .lock()
+            .map_err(|_| LlmError::Request("counter poisoned".to_string()))?;
+        *responses_seen += 1;
+        if *responses_seen == 1 {
+            let mut response = LLMResponse::new("continue after measuring prompt tokens");
+            response.token_usage = TokenUsage {
+                prompt_tokens: 101,
+                total_tokens: 120,
+                ..TokenUsage::default()
+            };
+            return Ok(response);
+        }
+        *self
+            .second_request_messages
+            .lock()
+            .expect("messages poisoned") = request.messages.clone();
+        Ok(LLMResponse::with_tool_calls(
+            "finish",
+            vec![ToolCall::new(
+                "finish_after_prompt_usage_compaction",
                 "task_finish",
                 BTreeMap::from([("message".to_string(), json!("memory compacted"))]),
             )],

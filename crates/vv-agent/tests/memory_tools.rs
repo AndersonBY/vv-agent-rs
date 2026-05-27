@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
@@ -89,6 +89,52 @@ fn memory_manager_does_not_compact_small_history() {
 
     assert!(!changed);
     assert_eq!(compacted, messages);
+}
+
+#[test]
+fn memory_manager_uses_provider_tokens_and_recent_tool_ids_like_python() {
+    let mut manager = MemoryManager::new(MemoryManagerConfig {
+        model_context_window: 120,
+        reserved_output_tokens: 10,
+        autocompact_buffer_tokens: 10,
+        microcompact_trigger_ratio: 1.0,
+        tool_result_compact_threshold: 20,
+        tool_result_keep_last: 0,
+        ..MemoryManagerConfig::default()
+    });
+    let mut assistant_call = Message::assistant("plan");
+    assistant_call
+        .tool_calls
+        .push(ToolCall::new("call_1", "bash", BTreeMap::new()));
+    let messages = vec![
+        Message::system("sys"),
+        Message::user("hello"),
+        assistant_call,
+        Message::tool("x".repeat(400), "call_1"),
+    ];
+
+    let (unchanged, changed) = manager.compact_for_cycle_with_usage(
+        &messages,
+        0,
+        false,
+        Some(100),
+        Some(&BTreeSet::new()),
+    );
+    assert!(!changed);
+    assert_eq!(unchanged, messages);
+
+    let recent_tool_ids = BTreeSet::from(["call_1".to_string()]);
+    let (compacted, changed) = manager.compact_for_cycle_with_usage(
+        &messages,
+        0,
+        false,
+        Some(100),
+        Some(&recent_tool_ids),
+    );
+
+    assert!(changed);
+    assert_eq!(compacted.len(), 2);
+    assert!(compacted[1].content.contains("<Compressed Agent Memory>"));
 }
 
 #[test]

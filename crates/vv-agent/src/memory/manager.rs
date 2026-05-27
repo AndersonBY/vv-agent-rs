@@ -90,7 +90,7 @@ impl MemoryManager {
     }
 
     pub fn compact(&mut self, messages: &[Message], force: bool) -> (Vec<Message>, bool) {
-        self.compact_for_cycle(messages, 0, force)
+        self.compact_for_cycle_with_usage(messages, 0, force, None, None)
     }
 
     pub fn compact_for_cycle(
@@ -98,6 +98,17 @@ impl MemoryManager {
         messages: &[Message],
         cycle_index: u32,
         force: bool,
+    ) -> (Vec<Message>, bool) {
+        self.compact_for_cycle_with_usage(messages, cycle_index, force, None, None)
+    }
+
+    pub fn compact_for_cycle_with_usage(
+        &mut self,
+        messages: &[Message],
+        cycle_index: u32,
+        force: bool,
+        total_tokens: Option<u64>,
+        recent_tool_call_ids: Option<&BTreeSet<String>>,
     ) -> (Vec<Message>, bool) {
         if messages.is_empty() {
             return (Vec::new(), false);
@@ -110,7 +121,8 @@ impl MemoryManager {
                 .iter()
                 .zip(messages.iter())
                 .any(|(left, right)| left != right);
-        let message_length = count_messages_tokens(&sanitized, &self.config.model);
+        let message_length =
+            self.calculate_effective_length(&sanitized, total_tokens, recent_tool_call_ids);
         if !force && message_length <= self.autocompact_threshold() {
             if self.should_preemptive_microcompact(message_length) {
                 let (microcompacted, cleared) = self.microcompact_messages(&sanitized, cycle_index);
@@ -147,6 +159,21 @@ impl MemoryManager {
         threshold > 0 && message_length > threshold
     }
 
+    pub fn estimate_memory_usage_percentage(
+        &self,
+        messages: &[Message],
+        total_tokens: Option<u64>,
+        recent_tool_call_ids: Option<&BTreeSet<String>>,
+    ) -> u64 {
+        let threshold = self.autocompact_threshold();
+        if threshold == 0 {
+            return 0;
+        }
+        let used_tokens =
+            self.calculate_effective_length(messages, total_tokens, recent_tool_call_ids);
+        (used_tokens.saturating_mul(100)) / threshold
+    }
+
     pub fn microcompact_messages(
         &self,
         messages: &[Message],
@@ -167,6 +194,41 @@ impl MemoryManager {
     fn microcompact_trigger_threshold(&self) -> u64 {
         let ratio = self.config.microcompact_trigger_ratio.clamp(0.0, 1.0);
         (self.autocompact_threshold() as f64 * ratio).floor() as u64
+    }
+
+    fn calculate_effective_length(
+        &self,
+        messages: &[Message],
+        total_tokens: Option<u64>,
+        recent_tool_call_ids: Option<&BTreeSet<String>>,
+    ) -> u64 {
+        if let Some(total_tokens) = total_tokens.filter(|tokens| *tokens > 0) {
+            return total_tokens
+                + self.estimate_recent_tool_message_length(messages, recent_tool_call_ids);
+        }
+        count_messages_tokens(messages, &self.config.model)
+    }
+
+    fn estimate_recent_tool_message_length(
+        &self,
+        messages: &[Message],
+        recent_tool_call_ids: Option<&BTreeSet<String>>,
+    ) -> u64 {
+        let Some(recent_tool_call_ids) = recent_tool_call_ids.filter(|ids| !ids.is_empty()) else {
+            return 0;
+        };
+        let tool_messages = messages
+            .iter()
+            .filter(|message| {
+                message.role == MessageRole::Tool
+                    && message
+                        .tool_call_id
+                        .as_ref()
+                        .is_some_and(|tool_call_id| recent_tool_call_ids.contains(tool_call_id))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        count_messages_tokens(&tool_messages, &self.config.model)
     }
 
     pub fn emergency_compact(&self, messages: &[Message], drop_ratio: f64) -> Vec<Message> {

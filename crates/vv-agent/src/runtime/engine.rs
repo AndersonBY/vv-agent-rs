@@ -12,7 +12,8 @@ use crate::memory::{
 use crate::sub_task_manager::SubTaskManager;
 use crate::tools::{build_default_registry, ToolContext, ToolRegistry};
 use crate::types::{
-    AgentResult, AgentStatus, AgentTask, Message, ToolCall, ToolDirective, ToolExecutionResult,
+    AgentResult, AgentStatus, AgentTask, CycleRecord, Message, ToolCall, ToolDirective,
+    ToolExecutionResult,
 };
 use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
@@ -276,8 +277,16 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 );
                 let pre_compact_messages =
                     memory_manager.apply_session_memory_context(&pre_compact_messages);
-                let (prepared_messages, memory_compacted) =
-                    memory_manager.compact_for_cycle(&pre_compact_messages, cycle_index, false);
+                let (previous_prompt_tokens, recent_tool_call_ids) =
+                    previous_cycle_memory_usage(cycles);
+                let (prepared_messages, memory_compacted) = memory_manager
+                    .compact_for_cycle_with_usage(
+                        &pre_compact_messages,
+                        cycle_index,
+                        false,
+                        previous_prompt_tokens,
+                        recent_tool_call_ids.as_ref(),
+                    );
                 *messages = prepared_messages;
                 let tool_schemas = self.planned_tool_schemas(&task);
                 let llm_messages = memory_manager.apply_session_memory_context(messages);
@@ -947,6 +956,29 @@ fn system_message_from_task(task: &AgentTask) -> crate::types::Message {
     let mut message = crate::types::Message::system(task.system_prompt.clone());
     message.metadata = task.metadata.clone();
     message
+}
+
+fn previous_cycle_memory_usage(cycles: &[CycleRecord]) -> (Option<u64>, Option<BTreeSet<String>>) {
+    let Some(last_cycle) = cycles.last() else {
+        return (None, None);
+    };
+    let prompt_tokens = if last_cycle.token_usage.prompt_tokens > 0 {
+        last_cycle.token_usage.prompt_tokens
+    } else {
+        last_cycle.token_usage.input_tokens
+    };
+    let recent_tool_call_ids = last_cycle
+        .tool_calls
+        .iter()
+        .filter_map(|tool_call| {
+            let tool_call_id = tool_call.id.trim();
+            (!tool_call_id.is_empty()).then(|| tool_call_id.to_string())
+        })
+        .collect::<BTreeSet<_>>();
+    (
+        (prompt_tokens > 0).then_some(prompt_tokens),
+        (!recent_tool_call_ids.is_empty()).then_some(recent_tool_call_ids),
+    )
 }
 
 fn build_memory_manager<C>(

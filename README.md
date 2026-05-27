@@ -201,7 +201,9 @@ The current Rust implementation includes:
   semantics. Runtime cycle indexes are Python-compatible and start at `1`.
 - Split `memory/` modules with Python-style compaction thresholds, local
   structured summaries, and runtime autocompaction before large follow-up LLM
-  cycles.
+  cycles. Runtime memory decisions can reuse provider prompt token totals from
+  the previous cycle and add recent tool-result token estimates, matching
+  Python `CycleRunner` / `MemoryManager` compaction heuristics.
 - Large historical tool results can be persisted under `.memory/tool_results`
   and replaced with compact retrieval hints, matching Python `v-agent` artifact
   compaction behavior.
