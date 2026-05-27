@@ -30,6 +30,10 @@ use super::cycle_runner::{is_prompt_too_long_error, MAX_PROMPT_TOO_LONG_RETRIES}
 use super::results::{assistant_message_from_response, extract_final_message, extract_wait_reason};
 use super::tool_call_runner::{execute_tool_result, needs_tool_call_id, skipped_tool_result};
 
+pub use crate::sub_agent_sessions::{
+    get_sub_agent_session, steer_sub_agent_session, subscribe_sub_agent_session,
+};
+
 pub type RuntimeLogCallback = dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static;
 pub type RuntimeLogHandler = Arc<Mutex<Box<RuntimeLogCallback>>>;
 pub type RuntimeEventHandler = Arc<dyn Fn(&str, &BTreeMap<String, Value>) + Send + Sync + 'static>;

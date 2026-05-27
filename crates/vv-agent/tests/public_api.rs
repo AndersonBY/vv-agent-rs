@@ -265,4 +265,7 @@ fn runtime_module_exports_python_runtime_public_types() {
     };
     let state_store = vv_agent::runtime::InMemoryStateStore::default();
     let _state_store_ref: &dyn vv_agent::runtime::StateStore = &state_store;
+    let _get_session = vv_agent::runtime::engine::get_sub_agent_session;
+    let _subscribe_session = vv_agent::runtime::engine::subscribe_sub_agent_session;
+    let _steer_session = vv_agent::runtime::engine::steer_sub_agent_session;
 }

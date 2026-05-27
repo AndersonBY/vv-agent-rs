@@ -203,7 +203,8 @@ The current Rust implementation includes:
   `ToolCallRunner` are now public runtime helpers as in Python, so embedders can
   run one LLM planning cycle or one tool-call batch without going through the
   full `AgentRuntime`; `runtime::{Checkpoint, InMemoryStateStore, StateStore}`
-  also match Python's direct runtime import path.
+  and `runtime::engine` sub-agent session helpers also match Python's direct
+  runtime import paths.
 - Runtime hooks modeled after Python `RuntimeHookManager`: callers can patch
   messages before memory compaction, patch LLM request messages/schemas, patch
   LLM responses, patch or short-circuit tool calls, and patch tool results.
