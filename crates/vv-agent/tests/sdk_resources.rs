@@ -568,6 +568,56 @@ fn sdk_client_builds_python_style_system_prompt_from_agent_definition() {
     assert!(system_message.content.contains("task_finish"));
 }
 
+#[test]
+fn sdk_client_applies_resolved_vv_llm_token_limits_to_runtime_memory() {
+    let captured_messages = Arc::new(Mutex::new(Vec::<Vec<Message>>::new()));
+    let builder: LlmBuilder = {
+        let captured_messages = Arc::clone(&captured_messages);
+        Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
+            let llm: Arc<dyn LlmClient> = Arc::new(MemoryLimitInspectingLlmClient {
+                captured_messages: Arc::clone(&captured_messages),
+            });
+            Ok((
+                llm,
+                ResolvedModelConfig::new(
+                    backend.to_string(),
+                    model.to_string(),
+                    model.to_string(),
+                    format!("{model}-resolved"),
+                    Vec::new(),
+                )
+                .with_token_limits(Some(80), Some(10)),
+            ))
+        })
+    };
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        auto_discover_resources: false,
+        llm_builder: Some(builder),
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("demo-model");
+    agent.no_tool_policy = NoToolPolicy::Continue;
+    agent.max_cycles = 2;
+    agent.use_workspace = false;
+    agent
+        .metadata
+        .insert("autocompact_buffer_tokens".to_string(), json!(0));
+
+    let run = client
+        .run_with_agent(agent, "keep context compact")
+        .expect("run through memory limit client");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    let captured = captured_messages.lock().expect("captured messages");
+    let second_request = captured.get(1).expect("second request");
+    assert!(
+        second_request
+            .iter()
+            .any(|message| message.content.contains("<Compressed Agent Memory>")),
+        "SDK-built runtime did not use resolved vv-llm token limits for compaction: {second_request:#?}"
+    );
+}
+
 struct ForceFinishHook;
 
 impl RuntimeHook for ForceFinishHook {
@@ -595,5 +645,31 @@ impl LlmClient for CapturingLlmClient {
             .expect("captured messages")
             .push(request.messages);
         Ok(LLMResponse::new("captured answer"))
+    }
+}
+
+#[derive(Clone)]
+struct MemoryLimitInspectingLlmClient {
+    captured_messages: Arc<Mutex<Vec<Vec<Message>>>>,
+}
+
+impl LlmClient for MemoryLimitInspectingLlmClient {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        let request_index = {
+            let mut captured = self.captured_messages.lock().expect("captured messages");
+            captured.push(request.messages);
+            captured.len()
+        };
+        if request_index == 1 {
+            return Ok(LLMResponse::new("large assistant context ".repeat(80)));
+        }
+        Ok(LLMResponse::with_tool_calls(
+            "finish",
+            vec![ToolCall::new(
+                "finish_after_compaction",
+                "task_finish",
+                BTreeMap::from([("message".to_string(), json!("compacted"))]),
+            )],
+        ))
     }
 }

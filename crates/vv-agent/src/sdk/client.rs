@@ -214,6 +214,19 @@ fn task_from_definition(definition: &AgentDefinition, prompt: String) -> AgentTa
     task
 }
 
+fn apply_resolved_model_limits(task: &mut AgentTask, resolved: &ResolvedModelConfig) {
+    if let Some(context_length) = resolved.context_length {
+        task.metadata
+            .entry("model_context_window".to_string())
+            .or_insert_with(|| Value::from(context_length));
+    }
+    if let Some(max_output_tokens) = resolved.max_output_tokens {
+        task.metadata
+            .entry("reserved_output_tokens".to_string())
+            .or_insert_with(|| Value::from(max_output_tokens));
+    }
+}
+
 fn system_prompt_from_definition(definition: &AgentDefinition) -> (String, Vec<Value>) {
     if let Some(system_prompt) = definition.system_prompt.as_ref() {
         return (
@@ -490,6 +503,7 @@ impl RunAgent for SettingsRunAgent {
         let execution_context = execution_context_from_request(&request);
         let mut task = task_from_definition(definition, request.prompt);
         task.model = resolved.model_id.clone();
+        apply_resolved_model_limits(&mut task, &resolved);
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
         let result = runtime

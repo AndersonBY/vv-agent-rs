@@ -145,8 +145,9 @@ The current Rust implementation includes:
   provider HTTP/protocol handling delegated to `vv-llm`, while keeping
   `ScriptedLlmClient` for deterministic tests. Resolved model metadata keeps
   Python-style ordered `endpoint_options` for all enabled endpoint bindings,
-  and `build_vv_llm_settings` exposes the normalized `vv_llm::LlmSettings`
-  used by the client builder.
+  carries vv-llm `context_length` / `max_output_tokens`, and
+  `build_vv_llm_settings` exposes the normalized `vv_llm::LlmSettings` used by
+  the client builder.
 - Split `llm/` modules matching Python's base/scripted/vv_llm_client layers,
   with the public `LlmClient` trait, scripted test client, and `vv-llm` backed
   production client kept behind stable top-level exports.
@@ -404,7 +405,10 @@ The current Rust implementation includes:
   builds a `vv-llm` backed runtime from `AgentSDKOptions.settings_file`, while
   tests and embedders can inject an `LlmBuilder` for deterministic clients.
   `AgentSDKOptions.runtime_hooks` is applied to both SDK-built and injected
-  runtimes, matching Python's SDK extension point.
+  runtimes, matching Python's SDK extension point. SDK-built runtimes apply
+  resolved vv-llm token limits as `model_context_window` and
+  `reserved_output_tokens` metadata unless the caller already supplied those
+  keys.
 - SDK task preparation now builds Python-style prompt bundles from
   `AgentDefinition.description` when no raw `system_prompt` is provided,
   preserving generated `system_prompt_sections` metadata for cache and

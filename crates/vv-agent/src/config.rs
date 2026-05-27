@@ -55,6 +55,8 @@ pub struct ResolvedModelConfig {
     pub requested_model: String,
     pub selected_model: String,
     pub model_id: String,
+    pub context_length: Option<u64>,
+    pub max_output_tokens: Option<u64>,
     pub endpoint_options: Vec<EndpointOption>,
 }
 
@@ -71,8 +73,20 @@ impl ResolvedModelConfig {
             requested_model: requested_model.into(),
             selected_model: selected_model.into(),
             model_id: model_id.into(),
+            context_length: None,
+            max_output_tokens: None,
             endpoint_options,
         }
+    }
+
+    pub fn with_token_limits(
+        mut self,
+        context_length: Option<u64>,
+        max_output_tokens: Option<u64>,
+    ) -> Self {
+        self.context_length = context_length;
+        self.max_output_tokens = max_output_tokens;
+        self
     }
 
     pub fn endpoint(&self) -> Option<&EndpointConfig> {
@@ -410,6 +424,10 @@ fn resolved_from_vv_llm(
         selected_model,
         resolved.model_id.clone(),
         endpoint_options,
+    )
+    .with_token_limits(
+        resolved.model.context_length.map(u64::from),
+        resolved.model.max_output_tokens.map(u64::from),
     )
 }
 

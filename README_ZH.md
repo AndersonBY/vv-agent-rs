@@ -134,7 +134,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - 同一 package 内的 CLI 目标。
 - 与 Python 包对齐的顶层模块：`background_sessions`、`cli`、`config`、`constants`、`integrations`、`llm`、`memory`、`processes`、`prompt`、`runtime`、`sdk`、`skills`、`tools`、`types` 和 `workspace`。
 - `integrations::SkillIntegration` 公开 trait 已对齐 Python protocol，使用 `enabled()` 作为能力开关。
-- 基于 crates.io 官方 `vv-llm = "0.1.0"` 的 chat client 构建，通过 `build_vv_llm_from_local_settings` 解析配置化 endpoint，并把 provider HTTP / 协议处理交给 `vv-llm`；resolved model metadata 会保留 Python 风格的有序 `endpoint_options`，覆盖所有启用的 endpoint binding，`build_vv_llm_settings` 也会暴露 client builder 使用的归一化 `vv_llm::LlmSettings`；同时保留 `ScriptedLlmClient` 用于确定性测试。`llm/` 也已按 Python 的 base / scripted / vv_llm_client 层级拆分，同时保持 crate 顶层稳定导出。
+- 基于 crates.io 官方 `vv-llm = "0.1.0"` 的 chat client 构建，通过 `build_vv_llm_from_local_settings` 解析配置化 endpoint，并把 provider HTTP / 协议处理交给 `vv-llm`；resolved model metadata 会保留 Python 风格的有序 `endpoint_options`，覆盖所有启用的 endpoint binding，并携带 vv-llm 解析出的 `context_length` / `max_output_tokens`；`build_vv_llm_settings` 也会暴露 client builder 使用的归一化 `vv_llm::LlmSettings`；同时保留 `ScriptedLlmClient` 用于确定性测试。`llm/` 也已按 Python 的 base / scripted / vv_llm_client 层级拆分，同时保持 crate 顶层稳定导出。
 - LLM settings 归一化已兼容 Python 的 `providers` / `backends`、默认 `VERSION`、endpoint API key 后缀提取，以及可选 base64 key 解码，然后再构造 `vv-llm` client。
 - 已支持 Python `.py` settings 字面量模板：`LLM_SETTINGS = {...}` 和 `settings: SettingsDict = {...}` 都会按 Python 风格解析布尔值、空值、注释和尾逗号，再交给 `vv-llm` 做 endpoint / backend 解析。
 - 一个基础 multi-cycle runtime，可以把 tool schemas 发给 LLM、执行工具调用，并通过 `task_finish` 或 `ask_user` 收敛。
@@ -183,7 +183,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - `AgentSDKClient` 会自动发现 `.vv-agent/agents.json` 里的命名 profiles，提供 `list_agents`，并可通过 `run_agent` 按名称运行，同时在 `AgentRun.agent_name` 中保留 profile 名称。普通 `run()` 已对齐 Python 的选择语义：优先使用 default agent，只有一个 profile 时自动选择；未配置 profile 或存在多个 profile 时返回清晰错误。
 - Runtime-backed 子 Agent session 会继承父 run 的 LLM stream callback，因此嵌套 Agent 执行中的 provider streaming 事件也会像 Python 一样继续向外转发。
 - Memory token utilities 会优先使用 `vv-llm::utilities::count_tokens` 的 tokenizer；不支持的模型继续使用 Python 风格 CJK-aware 估算。
-- SDK one-shot run 现在不再必须预先传入 runtime：默认会根据 `AgentSDKOptions.settings_file` 构造 `vv-llm` backed runtime；测试和嵌入方也可以注入 `LlmBuilder` 使用确定性 client。`AgentSDKOptions.runtime_hooks` 会同时作用于 SDK 自动构建和外部注入的 runtime，对齐 Python SDK 的扩展点。
+- SDK one-shot run 现在不再必须预先传入 runtime：默认会根据 `AgentSDKOptions.settings_file` 构造 `vv-llm` backed runtime；测试和嵌入方也可以注入 `LlmBuilder` 使用确定性 client。`AgentSDKOptions.runtime_hooks` 会同时作用于 SDK 自动构建和外部注入的 runtime，对齐 Python SDK 的扩展点。SDK 自动构建的 runtime 会把 vv-llm resolved token limits 写入 `model_context_window` 和 `reserved_output_tokens` metadata，但调用方显式传入的同名 metadata 优先。
 - SDK task preparation 现在会在未提供 raw `system_prompt` 时，根据 `AgentDefinition.description` 构建 Python 风格 prompt bundle，并保留生成的 `system_prompt_sections` metadata，方便 prompt cache 和调试链路继续对齐。`prepare_task_for_agent` 也已暴露命名 profile 的 task 预览路径；`system_prompt_template` 会像 Python 一样替换 agent definition 文本，但仍走完整 prompt builder。
 - 基于 `AgentTask` flags 的 Python 风格工具规划，以及 `.vv-agent` 下 `agents.json`、prompt templates 和 skill directories 的资源发现；`agents.json` 已支持完整 agent 字段，包括 sub-agent definitions、tool flags、shell defaults、metadata 和资源路径。资源路径会像 Python 一样展开 `~`，`AgentResourceLoader::discover_force_reload` 可在磁盘资源变更后刷新缓存；`.vv-agent/hooks` 下的 Python hook 文件会被发现并通过 diagnostics 报告，Rust hook 执行使用 `AgentSDKOptions.runtime_hooks` 注入。
 - SDK 客户端、工具注册表、工作区后端，以及共享协议类型。

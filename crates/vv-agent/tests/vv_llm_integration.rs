@@ -52,6 +52,8 @@ fn settings_builder_returns_vv_llm_backed_client() {
     assert_eq!(resolved.requested_model, "kimi-k2.5");
     assert_eq!(resolved.selected_model, "kimi-k2.5");
     assert_eq!(resolved.model_id, "kimi-k2-thinking");
+    assert_eq!(resolved.context_length, Some(128_000));
+    assert_eq!(resolved.max_output_tokens, Some(16_384));
     assert_eq!(resolved.endpoint().unwrap().endpoint_id, "moonshot-default");
     assert_eq!(client.provider_name(), "openai-compatible");
     assert_eq!(client.model_id(), "kimi-k2-thinking");
