@@ -433,6 +433,48 @@ fn workspace_file_tools_can_access_outside_paths_when_metadata_allows_it() {
 }
 
 #[test]
+fn workspace_paths_expand_home_like_python() {
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+        return;
+    };
+    let workspace = tempfile::tempdir().expect("workspace");
+    let home_file = tempfile::NamedTempFile::new_in(&home).expect("home temp file");
+    std::fs::write(home_file.path(), "home expanded").expect("write home temp file");
+    let home_relative_path = format!(
+        "~/{}",
+        home_file
+            .path()
+            .file_name()
+            .expect("home filename")
+            .to_string_lossy()
+    );
+
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.metadata.insert(
+        "allow_outside_workspace_paths".to_string(),
+        Value::Bool(true),
+    );
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "read_home",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!(home_relative_path))]),
+            ),
+            &mut context,
+        )
+        .expect("read_file");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(
+        serde_json::from_str::<Value>(&result.content).expect("payload")["content"],
+        "home expanded"
+    );
+}
+
+#[test]
 fn read_file_returns_file_info_when_requested_slice_exceeds_limits() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

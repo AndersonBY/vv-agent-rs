@@ -35,6 +35,47 @@ pub(super) fn absolutize_path(path: &Path) -> PathBuf {
     }
 }
 
+pub(crate) fn expand_home_path(raw_path: &str) -> PathBuf {
+    if raw_path == "~" {
+        return home_dir().unwrap_or_else(|| PathBuf::from(raw_path));
+    }
+    if let Some(rest) = raw_path.strip_prefix("~/") {
+        if let Some(home) = home_dir() {
+            return home.join(rest);
+        }
+    }
+    #[cfg(windows)]
+    if let Some(rest) = raw_path.strip_prefix("~\\") {
+        if let Some(home) = home_dir() {
+            return home.join(rest);
+        }
+    }
+    PathBuf::from(raw_path)
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .filter(|home| !home.is_empty())
+                .map(PathBuf::from)
+        })
+        .or_else(|| {
+            let drive = std::env::var_os("HOMEDRIVE")?;
+            let path = std::env::var_os("HOMEPATH")?;
+            if drive.is_empty() || path.is_empty() {
+                return None;
+            }
+            Some(PathBuf::from(format!(
+                "{}{}",
+                drive.to_string_lossy(),
+                path.to_string_lossy()
+            )))
+        })
+}
+
 pub(super) fn normalize_path_lexically(path: PathBuf) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {

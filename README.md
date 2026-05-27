@@ -318,10 +318,11 @@ The current Rust implementation includes:
   handoff, background polling, and automatic terminal background-session
   listener notifications.
 - Python-compatible workspace path safety: `LocalWorkspaceBackend` rejects
-  paths outside the workspace by default, and file/image/grep/bash tools keep
-  metadata-controlled outside-path access for trusted tasks. Tool contexts
-  merge `ExecutionContext.metadata` with task metadata, with task metadata
-  taking precedence, matching Python runtime integration behavior.
+  paths outside the workspace by default, expands `~/...` paths before applying
+  the same safety checks, and file/image/grep/bash tools keep
+  metadata-controlled outside-path access for trusted tasks. Tool contexts merge
+  `ExecutionContext.metadata` with task metadata, with task metadata taking
+  precedence, matching Python runtime integration behavior.
 - Split `workspace/` modules matching Python's base/local/memory/s3 layers while
   keeping `FileInfo`, `WorkspaceBackend`, and concrete backends exported from
   the crate root.

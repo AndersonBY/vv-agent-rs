@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use super::{
-    absolutize_path, glob_match, normalize_path_lexically, normalized_glob_pattern, path_to_posix,
-    suffix_with_dot, FileInfo, WorkspaceBackend,
+    absolutize_path, expand_home_path, glob_match, normalize_path_lexically,
+    normalized_glob_pattern, path_to_posix, suffix_with_dot, FileInfo, WorkspaceBackend,
 };
 
 #[derive(Debug, Clone)]
@@ -25,11 +25,11 @@ impl LocalWorkspaceBackend {
 
     fn resolve_path(&self, path: &str) -> std::io::Result<PathBuf> {
         let root = self.normalized_root();
-        let candidate = Path::new(path);
+        let candidate = expand_home_path(path);
         let target = if candidate.is_absolute() {
-            candidate.to_path_buf()
+            candidate
         } else {
-            root.join(candidate)
+            root.join(&candidate)
         };
         let normalized = normalize_path_lexically(target);
         if !self.allow_outside_root && normalized != root && !normalized.starts_with(&root) {

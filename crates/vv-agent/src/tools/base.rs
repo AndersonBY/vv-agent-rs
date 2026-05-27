@@ -104,11 +104,11 @@ pub(crate) fn resolve_workspace_path_checked(
     let base = workspace
         .canonicalize()
         .unwrap_or_else(|_| absolutize_without_canonicalizing(workspace));
-    let candidate = Path::new(raw_path);
+    let candidate = crate::workspace::expand_home_path(raw_path);
     let target = if candidate.is_absolute() {
-        absolutize_without_canonicalizing(candidate)
+        absolutize_without_canonicalizing(&candidate)
     } else {
-        absolutize_without_canonicalizing(&base.join(candidate))
+        absolutize_without_canonicalizing(&base.join(&candidate))
     };
     let normalized = normalize_path(target);
     if !allow_outside_workspace_paths && normalized != base && !normalized.starts_with(&base) {
