@@ -5,14 +5,13 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-use super::AgentRuntime;
+use super::{AgentRuntime, ExecutionContext, RuntimeRunControls, StreamCallback};
 use crate::config::build_vv_llm_from_local_settings;
 use crate::llm::LlmClient;
 use crate::prompt::{
     build_raw_system_prompt_sections, build_system_prompt_bundle_with_options,
     BuildSystemPromptOptions,
 };
-use crate::runtime::RuntimeRunControls;
 use crate::sub_agent_sessions::{
     register_sub_agent_session, unregister_sub_agent_session, SubAgentSession,
     SubAgentSessionListener, SubAgentSessionUnsubscribe,
@@ -33,6 +32,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         workspace_backend: Arc<dyn WorkspaceBackend>,
         parent_shared_state: BTreeMap<String, Value>,
         sub_task_manager: SubTaskManager,
+        stream_callback: Option<StreamCallback>,
     ) -> Option<SubTaskRunner> {
         if parent_task.sub_agents.is_empty() {
             return None;
@@ -51,6 +51,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             settings_file: self.settings_file.clone(),
             default_backend: self.default_backend.clone(),
             sub_agent_timeout_seconds: self.sub_agent_timeout_seconds,
+            stream_callback,
         };
         Some(Arc::new(move |request| {
             run_sub_task(sub_task_context.clone(), request)
@@ -70,6 +71,7 @@ struct SubTaskRunContext {
     settings_file: Option<PathBuf>,
     default_backend: Option<String>,
     sub_agent_timeout_seconds: f64,
+    stream_callback: Option<StreamCallback>,
 }
 
 struct SubTaskBuildInputs<'a> {
@@ -180,6 +182,7 @@ fn run_sub_task(context: SubTaskRunContext, request: SubTaskRequest) -> SubTaskO
         agent_name: request.agent_name.clone(),
         session_id: sub_session_id.clone(),
         resolved: resolved_client.payload,
+        stream_callback: context.stream_callback.clone(),
     }));
     let sub_agent_session: Arc<dyn SubAgentSession> = session.clone();
     context.sub_task_manager.attach_session(
@@ -289,6 +292,7 @@ struct RuntimeSubAgentSession {
     agent_name: String,
     session_id: String,
     resolved: BTreeMap<String, String>,
+    stream_callback: Option<StreamCallback>,
     state: Mutex<RuntimeSubAgentSessionState>,
     running: Mutex<bool>,
     steering_queue: Arc<Mutex<VecDeque<String>>>,
@@ -305,6 +309,7 @@ struct RuntimeSubAgentSessionParts {
     agent_name: String,
     session_id: String,
     resolved: BTreeMap<String, String>,
+    stream_callback: Option<StreamCallback>,
 }
 
 #[derive(Default)]
@@ -326,6 +331,7 @@ impl RuntimeSubAgentSession {
             agent_name: parts.agent_name,
             session_id: parts.session_id,
             resolved: parts.resolved,
+            stream_callback: parts.stream_callback,
             state: Mutex::new(RuntimeSubAgentSessionState::default()),
             running: Mutex::new(false),
             steering_queue: Arc::new(Mutex::new(VecDeque::new())),
@@ -388,6 +394,10 @@ impl RuntimeSubAgentSession {
             .with_tool_registry(self.tool_registry.clone());
         runtime.default_workspace = Some(self.workspace_path.clone());
         runtime.workspace_backend = self.workspace_backend.clone();
+        let execution_context = self
+            .stream_callback
+            .clone()
+            .map(|callback| ExecutionContext::default().with_stream_callback(callback));
         let result = runtime
             .run_with_controls(
                 task,
@@ -396,7 +406,7 @@ impl RuntimeSubAgentSession {
                     before_cycle_messages: None,
                     steering_queue: Some(self.steering_queue.clone()),
                     cancellation_token: None,
-                    execution_context: None,
+                    execution_context,
                 },
             )
             .map_err(|error| error.to_string())?;

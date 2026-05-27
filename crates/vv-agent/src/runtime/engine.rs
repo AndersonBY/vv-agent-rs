@@ -437,6 +437,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     self.workspace_backend.clone(),
                     shared_state.clone(),
                     sub_task_manager.clone(),
+                    effective_stream_callback.clone(),
                 );
                 let mut tool_metadata = controls
                     .execution_context

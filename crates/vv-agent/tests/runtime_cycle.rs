@@ -5,8 +5,8 @@ use serde_json::json;
 use vv_agent::{
     memory::CLEARED_MARKER, AgentRuntime, AgentStatus, AgentTask, BeforeLlmPatch,
     BeforeToolCallPatch, CancellationToken, ExecutionContext, LLMResponse, LlmClient, LlmError,
-    LlmRequest, Message, RuntimeHook, RuntimeRunControls, ScriptedLlmClient, SubAgentConfig,
-    ToolCall, ToolDirective, ToolExecutionResult,
+    LlmRequest, LlmStreamCallback, Message, RuntimeHook, RuntimeRunControls, ScriptedLlmClient,
+    SubAgentConfig, ToolCall, ToolDirective, ToolExecutionResult,
 };
 
 const PNG_1X1: &[u8] = &[
@@ -324,6 +324,44 @@ fn runtime_executes_configured_sub_agent_with_real_runner() {
     assert_eq!(payload["status"], "completed");
     assert_eq!(payload["agent_name"], "researcher");
     assert_eq!(payload["final_answer"], "child found vv-llm");
+}
+
+#[test]
+fn runtime_forwards_stream_callback_to_runtime_backed_sub_agent_like_python() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let stream_callback: LlmStreamCallback = {
+        let events = Arc::clone(&events);
+        Arc::new(move |event| {
+            events.lock().expect("events").push(event.clone());
+        })
+    };
+    let runtime = AgentRuntime::new(StreamingSubAgentLlmClient::default());
+    let mut task = AgentTask::new("parent_stream", "demo", "parent system", "delegate");
+    task.sub_agents.insert(
+        "researcher".to_string(),
+        SubAgentConfig::new("demo", "research profile"),
+    );
+
+    let result = runtime
+        .run_with_controls(
+            task,
+            RuntimeRunControls {
+                execution_context: Some(
+                    ExecutionContext::default().with_stream_callback(stream_callback),
+                ),
+                ..RuntimeRunControls::default()
+            },
+        )
+        .expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert!(events.lock().expect("events").iter().any(|event| {
+        event.get("event").and_then(serde_json::Value::as_str) == Some("sub_agent_delta")
+            && event
+                .get("content_delta")
+                .and_then(serde_json::Value::as_str)
+                == Some("checking")
+    }));
 }
 
 #[test]
@@ -1890,6 +1928,66 @@ impl LlmClient for AlwaysPromptTooLongLlmClient {
         Err(LlmError::Request(
             "Prompt is too long for this model".to_string(),
         ))
+    }
+}
+
+#[derive(Clone, Default)]
+struct StreamingSubAgentLlmClient {
+    calls_seen: Arc<Mutex<usize>>,
+}
+
+impl LlmClient for StreamingSubAgentLlmClient {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        self.complete_with_stream(request, None)
+    }
+
+    fn complete_with_stream(
+        &self,
+        _request: LlmRequest,
+        stream_callback: Option<LlmStreamCallback>,
+    ) -> Result<LLMResponse, LlmError> {
+        let mut calls_seen = self
+            .calls_seen
+            .lock()
+            .map_err(|_| LlmError::Request("call counter poisoned".to_string()))?;
+        *calls_seen += 1;
+        match *calls_seen {
+            1 => Ok(LLMResponse::with_tool_calls(
+                "delegate",
+                vec![ToolCall::new(
+                    "parent_sub_call",
+                    "create_sub_task",
+                    BTreeMap::from([
+                        ("agent_id".to_string(), json!("researcher")),
+                        ("task_description".to_string(), json!("Collect core facts")),
+                    ]),
+                )],
+            )),
+            2 => {
+                if let Some(callback) = stream_callback {
+                    callback(&BTreeMap::from([
+                        ("event".to_string(), json!("sub_agent_delta")),
+                        ("content_delta".to_string(), json!("checking")),
+                    ]));
+                }
+                Ok(LLMResponse::with_tool_calls(
+                    "sub finish",
+                    vec![ToolCall::new(
+                        "sub_finish",
+                        "task_finish",
+                        BTreeMap::from([("message".to_string(), json!("sub done"))]),
+                    )],
+                ))
+            }
+            _ => Ok(LLMResponse::with_tool_calls(
+                "parent finish",
+                vec![ToolCall::new(
+                    "parent_finish",
+                    "task_finish",
+                    BTreeMap::from([("message".to_string(), json!("parent done"))]),
+                )],
+            )),
+        }
     }
 }
 
