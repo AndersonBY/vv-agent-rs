@@ -621,8 +621,9 @@ fn sdk_client_query_reports_wait_user_status() {
         raw: BTreeMap::new(),
         token_usage: TokenUsage::default(),
     }];
-    let client = AgentSDKClient::new(AgentSDKOptions::default())
+    let mut client = AgentSDKClient::new(AgentSDKOptions::default())
         .with_runtime(AgentRuntime::new(ScriptedLlmClient::new(responses)));
+    client.set_default_agent(AgentDefinition::default_for_model("demo"));
 
     let error = client.query("ask").expect_err("query error");
 

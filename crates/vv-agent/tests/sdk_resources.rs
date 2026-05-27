@@ -169,6 +169,54 @@ fn sdk_client_auto_discovers_resource_agents_and_runs_by_name() {
 }
 
 #[test]
+fn sdk_client_run_requires_agent_when_no_profile_is_configured_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new(
+        "should not run",
+    )]));
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().to_path_buf(),
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    })
+    .with_runtime(runtime);
+
+    let error = client
+        .run("use no configured profile")
+        .expect_err("no profile");
+
+    assert!(error.contains("No agent configured"));
+}
+
+#[test]
+fn sdk_client_run_requires_agent_when_multiple_profiles_are_configured_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new(
+        "should not run",
+    )]));
+    let mut client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().to_path_buf(),
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    })
+    .with_runtime(runtime);
+    client
+        .register_agent("a", AgentDefinition::default_for_model("model-a"))
+        .expect("register a");
+    client
+        .register_agent("b", AgentDefinition::default_for_model("model-b"))
+        .expect("register b");
+
+    let error = client
+        .run("ambiguous profile")
+        .expect_err("multiple profiles");
+
+    assert!(error.contains("Multiple agents configured"));
+    assert!(error.contains("a"));
+    assert!(error.contains("b"));
+}
+
+#[test]
 fn sdk_client_uses_llm_builder_when_runtime_is_not_injected() {
     let calls = Arc::new(Mutex::new(Vec::<(String, String, String, f64)>::new()));
     let builder: LlmBuilder = {

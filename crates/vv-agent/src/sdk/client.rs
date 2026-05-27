@@ -323,7 +323,16 @@ impl AgentSDKClient {
             let (name, definition) = self.agents.iter().next().expect("single agent");
             return self.run_named_agent(name, definition.clone(), prompt);
         }
-        self.run_named_agent("demo", AgentDefinition::default_for_model("demo"), prompt)
+        if self.agents.is_empty() {
+            return Err(
+                "No agent configured. Call run_with_agent(...) or register named agents first."
+                    .to_string(),
+            );
+        }
+        let available = self.list_agents().join(", ");
+        Err(format!(
+            "Multiple agents configured. Call run_agent(name, ...) with one of: {available}"
+        ))
     }
 
     pub fn query(&self, prompt: impl Into<String>) -> Result<String, String> {
