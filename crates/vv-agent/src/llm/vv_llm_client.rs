@@ -9,6 +9,16 @@ use crate::types::{LLMResponse, Message, MessageRole, TokenUsage, ToolCall};
 
 use super::{LlmClient, LlmError, LlmRequest, LlmStreamCallback};
 
+const STREAM_MODEL_PREFIXES: &[&str] = &[
+    "qwen3", "claude", "gemini", "kimi", "glm-4.", "glm-5", "gpt-5", "minimax",
+];
+const STREAM_MODEL_EXACT: &[&str] = &[
+    "deepseek-reasoner",
+    "deepseek-r1-tools",
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+];
+
 #[derive(Clone)]
 pub struct VvLlmClient {
     pub backend: String,
@@ -54,17 +64,18 @@ impl LlmClient for VvLlmClient {
         request: LlmRequest,
         stream_callback: Option<LlmStreamCallback>,
     ) -> Result<LLMResponse, LlmError> {
-        let should_stream = stream_callback.is_some()
-            || request
-                .metadata
-                .get("stream")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
         let effective_model = if request.model.is_empty() {
             self.model_id.clone()
         } else {
             request.model.clone()
         };
+        let should_stream = stream_callback.is_some()
+            || request
+                .metadata
+                .get("stream")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            || should_use_stream(&effective_model);
         let estimated_prompt_tokens = count_messages_tokens(&request.messages, &effective_model);
         let mut chat_request = vv_llm::ChatRequest {
             model: effective_model.clone(),
@@ -112,6 +123,16 @@ impl LlmClient for VvLlmClient {
             }),
         ))
     }
+}
+
+fn should_use_stream(model: &str) -> bool {
+    let normalized = model.trim().to_ascii_lowercase();
+    STREAM_MODEL_EXACT
+        .iter()
+        .any(|candidate| normalized == *candidate)
+        || STREAM_MODEL_PREFIXES
+            .iter()
+            .any(|prefix| normalized.starts_with(prefix))
 }
 
 impl std::fmt::Debug for VvLlmClient {
@@ -541,5 +562,13 @@ mod tests {
         assert_eq!(tool.name, "task_finish");
         assert_eq!(tool.description.as_deref(), Some("Finish task"));
         assert_eq!(tool.parameters["properties"]["message"]["type"], "string");
+    }
+
+    #[test]
+    fn should_use_stream_matches_python_model_rules() {
+        assert!(should_use_stream("deepseek-v4-pro"));
+        assert!(should_use_stream("MiniMax-M2.1"));
+        assert!(should_use_stream("claude-sonnet-4-6-thinking"));
+        assert!(!should_use_stream("gpt-4o-mini"));
     }
 }

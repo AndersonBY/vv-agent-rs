@@ -231,6 +231,31 @@ fn vv_llm_client_estimates_usage_when_provider_omits_usage_like_python() {
     );
 }
 
+#[test]
+fn vv_llm_client_auto_streams_deepseek_v4_models_like_python() {
+    let chat_client = StreamingChatClient::default();
+    let probe = chat_client.clone();
+    let llm = VvLlmClient::new(
+        "deepseek",
+        "deepseek-v4-pro",
+        "deepseek-v4-pro",
+        Box::new(chat_client),
+        90.0,
+    );
+
+    let response = llm
+        .complete(LlmRequest::new(
+            "deepseek-v4-pro",
+            vec![Message::user("finish via automatic stream")],
+        ))
+        .expect("automatic streaming completion");
+
+    assert_eq!(response.content, "streamed content");
+    assert_eq!(response.tool_calls[0].name, "task_finish");
+    assert_eq!(probe.completion_calls(), 0);
+    assert_eq!(probe.stream_calls(), 1);
+}
+
 #[derive(Clone, Default)]
 struct UsageMissingChatClient;
 
