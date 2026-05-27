@@ -136,6 +136,63 @@ fn settings_resolution_accepts_embedded_llm_settings() {
 }
 
 #[test]
+fn settings_resolution_collects_all_endpoint_options_like_python() {
+    let raw = serde_json::json!({
+        "VERSION": "2",
+        "endpoints": [
+            {
+                "id": "deepseek-default",
+                "api_base": "https://api.deepseek.com",
+                "api_key": "sk-default"
+            },
+            {
+                "id": "deepseek-backup",
+                "api_base": "https://backup.deepseek.com",
+                "api_key": "sk-backup"
+            }
+        ],
+        "backends": {
+            "deepseek": {
+                "models": {
+                    "deepseek-v4-pro": {
+                        "id": "deepseek-v4-pro",
+                        "endpoints": [
+                            {"endpoint_id": "deepseek-default", "model_id": "deepseek-v4-pro"},
+                            {"endpoint_id": "deepseek-backup", "model_id": "deepseek-chat"}
+                        ]
+                    }
+                }
+            }
+        },
+        "embedding_backends": {},
+        "rerank_backends": {}
+    });
+
+    let resolved =
+        resolve_model_endpoint(&raw, "deepseek", "deepseek-v4-pro").expect("resolve model");
+
+    let endpoint_options = resolved
+        .endpoint_options
+        .iter()
+        .map(|option| {
+            (
+                option.endpoint.endpoint_id.as_str(),
+                option.endpoint.api_key.as_str(),
+                option.model_id.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        endpoint_options,
+        vec![
+            ("deepseek-default", "sk-default", "deepseek-v4-pro"),
+            ("deepseek-backup", "sk-backup", "deepseek-chat"),
+        ]
+    );
+}
+
+#[test]
 fn settings_resolution_accepts_providers_alias_and_decodes_api_keys() {
     let raw = serde_json::json!({
         "VERSION": "2",

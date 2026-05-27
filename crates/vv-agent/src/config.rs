@@ -158,6 +158,7 @@ pub fn resolve_model_endpoint(
         model,
         &selected_model,
         resolved,
+        &settings,
     ))
 }
 
@@ -174,7 +175,13 @@ pub fn build_vv_llm_from_local_settings(
     let vv_resolved = settings
         .resolve_chat_model(backend_type, &selected_model)
         .map_err(|error| ConfigError::InvalidSettings(error.to_string()))?;
-    let resolved = resolved_from_vv_llm(backend, model, &selected_model, vv_resolved.clone());
+    let resolved = resolved_from_vv_llm(
+        backend,
+        model,
+        &selected_model,
+        vv_resolved.clone(),
+        &settings,
+    );
     let chat_client = vv_llm::create_chat_client_from_resolved(vv_resolved)
         .map_err(|error| ConfigError::InvalidSettings(error.to_string()))?;
     let llm = VvLlmClient::new(
@@ -313,25 +320,58 @@ fn resolved_from_vv_llm(
     requested_model: &str,
     selected_model: &str,
     resolved: vv_llm::ResolvedModelConfig,
+    settings: &vv_llm::LlmSettings,
 ) -> ResolvedModelConfig {
+    let endpoint_options = endpoint_options_from_vv_llm(&resolved, settings);
     ResolvedModelConfig::new(
         backend,
         requested_model,
         selected_model,
         resolved.model_id.clone(),
-        vec![EndpointOption {
-            endpoint: EndpointConfig {
-                endpoint_id: resolved.endpoint.id,
-                api_key: resolved.endpoint.api_key.unwrap_or_default(),
-                api_base: resolved.endpoint.api_base.unwrap_or_default(),
-                endpoint_type: resolved
-                    .endpoint
-                    .endpoint_type
-                    .unwrap_or_else(|| "default".to_string()),
-            },
-            model_id: resolved.model_id,
-        }],
+        endpoint_options,
     )
+}
+
+fn endpoint_options_from_vv_llm(
+    resolved: &vv_llm::ResolvedModelConfig,
+    settings: &vv_llm::LlmSettings,
+) -> Vec<EndpointOption> {
+    let mut endpoint_options = resolved
+        .model
+        .endpoints
+        .iter()
+        .filter(|binding| binding.enabled())
+        .filter_map(|binding| {
+            let endpoint = settings
+                .endpoints
+                .iter()
+                .find(|endpoint| endpoint.id == binding.endpoint_id())?;
+            Some(EndpointOption {
+                endpoint: endpoint_config_from_vv_llm(endpoint.clone()),
+                model_id: binding.model_id(&resolved.model.id).to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if endpoint_options.is_empty() {
+        endpoint_options.push(EndpointOption {
+            endpoint: endpoint_config_from_vv_llm(resolved.endpoint.clone()),
+            model_id: resolved.model_id.clone(),
+        });
+    }
+
+    endpoint_options
+}
+
+fn endpoint_config_from_vv_llm(endpoint: vv_llm::EndpointConfig) -> EndpointConfig {
+    EndpointConfig {
+        endpoint_id: endpoint.id,
+        api_key: endpoint.api_key.unwrap_or_default(),
+        api_base: endpoint.api_base.unwrap_or_default(),
+        endpoint_type: endpoint
+            .endpoint_type
+            .unwrap_or_else(|| "default".to_string()),
+    }
 }
 
 fn extract_suffix_key(value: &str) -> Option<String> {
