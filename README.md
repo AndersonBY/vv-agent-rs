@@ -289,7 +289,9 @@ The current Rust implementation includes:
   execution, so `bash` advertises the actual shell prefix or invalid shell
   configuration in the LLM-visible description. Runtime runs freeze that hint
   into task metadata before backend dispatch so distributed workers and later
-  cycles use the same shell guidance.
+  cycles use the same shell guidance. Tool planning also keeps Python-style
+  `extra_tool_names` in the planned name list and includes `todo_write` in the
+  default workspace tool set before schema filtering.
 - Shell resolution now lives in `runtime::shell`, matching Python's
   `runtime/shell.py` split. Bash execution and tool-planner runtime hints share
   the same resolver, so configured shells, `bash_env` environment overrides,
@@ -453,15 +455,16 @@ The current Rust implementation includes:
   execution like Python.
 - Memory token utilities now prefer `vv-llm::utilities::count_tokens` for
   supported tokenizers and fall back to the Python-style CJK-aware estimator for
-  unsupported models.
+  unsupported models. They also accept structured JSON payloads by serializing
+  them before estimation, matching Python's lenient token-count helper.
 - SDK one-shot runs no longer require a prebuilt runtime: by default the client
   builds a `vv-llm` backed runtime from `AgentSDKOptions.settings_file`, while
   tests and embedders can inject an `LlmBuilder` for deterministic clients.
-  `AgentSDKOptions.runtime_hooks` is applied to both SDK-built and injected
-  runtimes, matching Python's SDK extension point. SDK-built runtimes apply
-  resolved vv-llm token limits as `model_context_window` and
-  `reserved_output_tokens` metadata unless the caller already supplied those
-  keys.
+  `AgentSDKOptions.runtime_hooks`, `log_handler`, `tool_registry_factory`, and
+  `execution_backend` are applied to both SDK-built and injected runtimes,
+  matching Python's SDK extension points. SDK-built runtimes apply resolved
+  vv-llm token limits as `model_context_window` and `reserved_output_tokens`
+  metadata unless the caller already supplied those keys.
 - SDK task preparation now builds Python-style prompt bundles from
   `AgentDefinition.description` when no raw `system_prompt` is provided,
   preserving generated `system_prompt_sections` metadata for cache and

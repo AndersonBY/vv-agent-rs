@@ -34,18 +34,41 @@ pub fn count_messages_tokens(messages: &[Message], model: &str) -> u64 {
     count_tokens(&serde_json::to_string(&payload).unwrap_or_default(), model)
 }
 
-pub fn count_tokens(text: &str, model: &str) -> u64 {
+pub trait TokenCountPayload {
+    fn to_token_count_text(&self) -> String;
+}
+
+impl TokenCountPayload for str {
+    fn to_token_count_text(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl TokenCountPayload for String {
+    fn to_token_count_text(&self) -> String {
+        self.clone()
+    }
+}
+
+impl TokenCountPayload for Value {
+    fn to_token_count_text(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
+}
+
+pub fn count_tokens<T: TokenCountPayload + ?Sized>(payload: &T, model: &str) -> u64 {
+    let text = payload.to_token_count_text();
     if text.is_empty() {
         return 0;
     }
     if vv_llm_tokenizer_supported(model) {
-        if let Ok(count) = vv_llm::utilities::count_tokens(text, model) {
+        if let Ok(count) = vv_llm::utilities::count_tokens(&text, model) {
             if count > 0 {
                 return count as u64;
             }
         }
     }
-    estimate_tokens(text, model)
+    estimate_tokens(&text, model)
 }
 
 pub fn estimate_tokens(text: &str, _model: &str) -> u64 {

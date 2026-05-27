@@ -6,7 +6,9 @@ use serde_json::Value;
 
 use crate::config::ResolvedModelConfig;
 use crate::llm::LlmClient;
-use crate::runtime::{RuntimeHook, StreamCallback};
+use crate::runtime::backends::RuntimeExecutionBackend;
+use crate::runtime::{RuntimeEventHandler, RuntimeHook, StreamCallback};
+use crate::tools::ToolRegistry;
 use crate::types::{AgentResult, AgentStatus, Metadata, NoToolPolicy, SubAgentConfig};
 
 pub type SdkLlmClient = Arc<dyn LlmClient>;
@@ -16,6 +18,7 @@ pub type LlmBuilder = Arc<
         + Sync
         + 'static,
 >;
+pub type ToolRegistryFactory = Arc<dyn Fn() -> ToolRegistry + Send + Sync + 'static>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentDefinition {
@@ -84,6 +87,9 @@ pub struct AgentSDKOptions {
     pub timeout_seconds: f64,
     pub log_preview_chars: Option<usize>,
     pub llm_builder: Option<LlmBuilder>,
+    pub tool_registry_factory: Option<ToolRegistryFactory>,
+    pub log_handler: Option<RuntimeEventHandler>,
+    pub execution_backend: Option<RuntimeExecutionBackend>,
     pub auto_discover_resources: bool,
     pub debug_dump_dir: Option<String>,
     pub stream_callback: Option<StreamCallback>,
@@ -103,6 +109,12 @@ impl std::fmt::Debug for AgentSDKOptions {
             .field("timeout_seconds", &self.timeout_seconds)
             .field("log_preview_chars", &self.log_preview_chars)
             .field("has_llm_builder", &self.llm_builder.is_some())
+            .field("has_log_handler", &self.log_handler.is_some())
+            .field(
+                "has_tool_registry_factory",
+                &self.tool_registry_factory.is_some(),
+            )
+            .field("execution_backend", &self.execution_backend)
             .field("auto_discover_resources", &self.auto_discover_resources)
             .field("debug_dump_dir", &self.debug_dump_dir)
             .field("has_stream_callback", &self.stream_callback.is_some())
@@ -123,6 +135,9 @@ impl Default for AgentSDKOptions {
             timeout_seconds: 90.0,
             log_preview_chars: None,
             llm_builder: None,
+            tool_registry_factory: None,
+            log_handler: None,
+            execution_backend: None,
             auto_discover_resources: true,
             debug_dump_dir: None,
             stream_callback: None,

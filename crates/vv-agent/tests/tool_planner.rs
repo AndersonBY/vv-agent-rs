@@ -15,6 +15,20 @@ fn planned_tool_schemas_respect_task_capability_flags() {
 }
 
 #[test]
+fn planned_tool_schemas_include_todo_write_like_python_workspace_tools() {
+    let registry = build_default_registry();
+    let task = AgentTask::new("task_planner", "dummy", "sys", "user");
+
+    let names = registry.planned_tool_names(&task);
+
+    assert!(names.contains(&"todo_write".to_string()));
+    assert!(registry
+        .planned_openai_schemas(&task)
+        .iter()
+        .any(|schema| schema["function"]["name"] == "todo_write"));
+}
+
+#[test]
 fn planned_tool_schemas_add_computer_sub_agent_skill_and_multimodal_tools() {
     let registry = build_default_registry();
     let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
@@ -54,6 +68,24 @@ fn planned_tool_schemas_exclude_tools() {
     assert!(!names.contains(&"read_file".to_string()));
     assert!(!names.contains(&"write_file".to_string()));
     assert!(names.contains(&"task_finish".to_string()));
+}
+
+#[test]
+fn planned_tool_names_keep_unregistered_extra_tools_like_python() {
+    let registry = build_default_registry();
+    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    task.extra_tool_names
+        .push("external_custom_tool".to_string());
+
+    let names = registry.planned_tool_names(&task);
+    let schema_names = registry
+        .planned_openai_schemas(&task)
+        .iter()
+        .filter_map(|schema| schema["function"]["name"].as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+
+    assert!(names.contains(&"external_custom_tool".to_string()));
+    assert!(!schema_names.contains(&"external_custom_tool".to_string()));
 }
 
 #[test]

@@ -3,10 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use vv_agent::{
-    AfterLlmEvent, AgentDefinition, AgentResourceLoader, AgentRuntime, AgentSDKClient,
-    AgentSDKOptions, AgentStatus, LLMResponse, LlmBuilder, LlmClient, LlmError, LlmRequest,
-    Message, MessageRole, NoToolPolicy, ResolvedModelConfig, RuntimeHook, ScriptedLlmClient,
-    ToolCall,
+    build_default_registry, AfterLlmEvent, AgentDefinition, AgentResourceLoader, AgentRuntime,
+    AgentSDKClient, AgentSDKOptions, AgentStatus, LLMResponse, LlmBuilder, LlmClient, LlmError,
+    LlmRequest, Message, MessageRole, NoToolPolicy, ResolvedModelConfig, RuntimeExecutionBackend,
+    RuntimeHook, ScriptedLlmClient, ThreadBackend, ToolCall, ToolExecutionResult,
+    ToolRegistryFactory, ToolResultStatus,
 };
 
 #[test]
@@ -457,6 +458,143 @@ fn sdk_client_uses_llm_builder_when_runtime_is_not_injected() {
             12.5,
         )]
     );
+}
+
+#[test]
+fn sdk_options_tool_registry_factory_runs_custom_tools_like_python() {
+    let custom_tool = "_workflow_custom_run";
+    let builder: LlmBuilder = Arc::new(move |_, backend, model, _| {
+        let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![
+            LLMResponse::with_tool_calls(
+                "run custom workflow",
+                vec![ToolCall::new(
+                    "custom_call",
+                    custom_tool,
+                    BTreeMap::from([("workflow".to_string(), json!("wf_translate"))]),
+                )],
+            ),
+            LLMResponse::with_tool_calls(
+                "finish",
+                vec![ToolCall::new(
+                    "finish_call",
+                    "task_finish",
+                    BTreeMap::from([("message".to_string(), json!("done"))]),
+                )],
+            ),
+        ]));
+        Ok((
+            llm,
+            ResolvedModelConfig::new(
+                backend.to_string(),
+                model.to_string(),
+                model.to_string(),
+                model.to_string(),
+                Vec::new(),
+            ),
+        ))
+    });
+    let factory: ToolRegistryFactory = Arc::new(move || {
+        let mut registry = build_default_registry();
+        registry
+            .register_tool_with_parameters(
+                custom_tool,
+                "Run workflow via custom integration layer.",
+                json!({
+                    "type": "object",
+                    "properties": {"workflow": {"type": "string"}},
+                    "required": ["workflow"],
+                }),
+                Arc::new(|context, arguments| {
+                    if !matches!(
+                        context.execution_backend.as_ref(),
+                        Some(RuntimeExecutionBackend::Thread(_))
+                    ) {
+                        let mut result =
+                            ToolExecutionResult::error("", "missing SDK execution backend");
+                        result.error_code = Some("missing_execution_backend".to_string());
+                        return result;
+                    }
+                    context.shared_state.insert(
+                        "custom_workflow".to_string(),
+                        arguments.get("workflow").cloned().unwrap_or(json!(null)),
+                    );
+                    ToolExecutionResult::success("", json!({"ok": true}).to_string())
+                }),
+            )
+            .expect("register custom tool");
+        registry
+    });
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        auto_discover_resources: false,
+        llm_builder: Some(builder),
+        tool_registry_factory: Some(factory),
+        execution_backend: Some(RuntimeExecutionBackend::Thread(ThreadBackend::new(2))),
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("demo-model");
+    agent.extra_tool_names.push(custom_tool.to_string());
+
+    let run = client
+        .run_with_agent(agent, "run the custom workflow")
+        .expect("run through custom tool registry");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(run.result.final_answer.as_deref(), Some("done"));
+    assert_eq!(
+        run.result.shared_state["custom_workflow"],
+        json!("wf_translate")
+    );
+    assert_eq!(
+        run.result.cycles[0].tool_results[0].status,
+        ToolResultStatus::Success
+    );
+}
+
+#[test]
+fn sdk_options_log_handler_receives_runtime_events_like_python() {
+    let events = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink = Arc::clone(&events);
+    let builder: LlmBuilder = Arc::new(move |_, backend, model, _| {
+        let llm: Arc<dyn LlmClient> =
+            Arc::new(ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+                "finish",
+                vec![ToolCall::new(
+                    "finish_call",
+                    "task_finish",
+                    BTreeMap::from([("message".to_string(), json!("done"))]),
+                )],
+            )]));
+        Ok((
+            llm,
+            ResolvedModelConfig::new(
+                backend.to_string(),
+                model.to_string(),
+                model.to_string(),
+                model.to_string(),
+                Vec::new(),
+            ),
+        ))
+    });
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        auto_discover_resources: false,
+        llm_builder: Some(builder),
+        log_handler: Some(Arc::new(move |event, _payload| {
+            sink.lock().expect("events").push(event.to_string());
+        })),
+        ..AgentSDKOptions::default()
+    });
+
+    let run = client
+        .run_with_agent(
+            AgentDefinition::default_for_model("demo-model"),
+            "finish through log handler",
+        )
+        .expect("run through SDK log handler");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    let events = events.lock().expect("events");
+    assert!(events.iter().any(|event| event == "run_started"));
+    assert!(events.iter().any(|event| event == "run_completed"));
 }
 
 #[test]

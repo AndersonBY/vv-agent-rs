@@ -1,3 +1,4 @@
+use serde_json::json;
 use vv_agent::memory::token_utils::{count_tokens, estimate_tokens};
 
 #[test]
@@ -18,6 +19,17 @@ fn count_tokens_falls_back_to_cjk_aware_estimate_for_unknown_models() {
     assert_eq!(
         count_tokens("你好hello", "demo"),
         estimate_tokens("你好hello", "demo")
+    );
+}
+
+#[test]
+fn count_tokens_accepts_json_payload_like_python() {
+    let payload = json!({"role": "user", "content": "hello"});
+    let expected_payload = serde_json::to_string(&payload).expect("json payload");
+
+    assert_eq!(
+        count_tokens(&payload, "demo"),
+        estimate_tokens(&expected_payload, "demo")
     );
 }
 

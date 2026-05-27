@@ -63,7 +63,7 @@ pub use sdk::{
     create_agent_session_with_workspace, query, run, AgentDefinition, AgentResourceLoader,
     AgentRun, AgentSDKClient, AgentSDKOptions, AgentSession, AgentSessionRunRequest,
     AgentSessionState, LlmBuilder, SdkLlmClient, SessionCancellationHandle, SessionEventHandler,
-    SessionListenerId, SessionSteeringHandle,
+    SessionListenerId, SessionSteeringHandle, ToolRegistryFactory,
 };
 pub use sub_agent_sessions::{
     continue_sub_agent_session, get_sub_agent_session, register_sub_agent_session,

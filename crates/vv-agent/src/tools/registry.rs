@@ -103,6 +103,7 @@ impl ToolRegistry {
                     "file_str_replace",
                     "workspace_grep",
                     "compress_memory",
+                    "todo_write",
                 ]
                 .into_iter()
                 .map(str::to_string),
@@ -132,7 +133,7 @@ impl ToolRegistry {
         }
         let mut deduped = Vec::new();
         for name in names {
-            if self.has_schema(&name) && !deduped.contains(&name) {
+            if !deduped.contains(&name) {
                 deduped.push(name);
             }
         }
