@@ -123,11 +123,7 @@ fn list_files_local_rg(request: RgListFilesRequest<'_>) -> Option<RgListFilesRes
     let truncated = matched_count > files.len() || scan_limited;
     Some(RgListFilesResult {
         files,
-        total_count: if scan_limited {
-            scan_limit
-        } else {
-            matched_count
-        },
+        total_count: matched_count,
         truncated,
         scan_limited,
     })
@@ -599,20 +595,25 @@ mod tests {
     use crate::tools::base::ToolContext;
 
     #[cfg(unix)]
-    #[test]
-    fn list_files_rg_fast_path_normalizes_dot_slash_glob_matches() {
+    fn write_fake_rg(workspace: &Path, script: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
 
-        let workspace = tempfile::tempdir().expect("workspace");
-        let fake_rg = workspace.path().join("fake-rg");
-        std::fs::write(
-            &fake_rg,
-            "#!/bin/sh\nprintf './doc.md\\0./nested/inner.md\\0note.txt\\0'\n",
-        )
-        .expect("fake rg");
+        let fake_rg = workspace.join("fake-rg");
+        std::fs::write(&fake_rg, script).expect("fake rg");
         let mut permissions = std::fs::metadata(&fake_rg).expect("metadata").permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(&fake_rg, permissions).expect("chmod");
+        fake_rg
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_files_rg_fast_path_normalizes_dot_slash_glob_matches() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let fake_rg = write_fake_rg(
+            workspace.path(),
+            "#!/bin/sh\nprintf './doc.md\\0./nested/inner.md\\0note.txt\\0'\n",
+        );
 
         let context = ToolContext::new(workspace.path());
         let result = list_files_local_rg(RgListFilesRequest {
@@ -633,5 +634,35 @@ mod tests {
         assert_eq!(result.total_count, 1);
         assert!(!result.truncated);
         assert!(!result.scan_limited);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_files_rg_scan_limited_count_reports_matched_items_like_python() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let fake_rg = write_fake_rg(
+            workspace.path(),
+            "#!/bin/sh\nprintf 'a.txt\\0b.txt\\0doc.md\\0late.md\\0'\n",
+        );
+
+        let context = ToolContext::new(workspace.path());
+        let result = list_files_local_rg(RgListFilesRequest {
+            context: &context,
+            base_path: workspace.path(),
+            base_is_workspace_root: true,
+            glob: "*.md",
+            include_hidden: false,
+            include_ignored: false,
+            ignored_root_names: &[],
+            max_results: 10,
+            scan_limit: 3,
+            rg_executable: &fake_rg,
+        })
+        .expect("rg result");
+
+        assert_eq!(result.files, vec!["doc.md"]);
+        assert_eq!(result.total_count, 1);
+        assert!(result.truncated);
+        assert!(result.scan_limited);
     }
 }
