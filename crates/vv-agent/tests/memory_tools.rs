@@ -354,6 +354,39 @@ fn memory_manager_restores_key_file_context_after_compaction() {
 }
 
 #[test]
+fn memory_manager_second_compaction_preserves_original_user_messages_like_python() {
+    let mut manager = MemoryManager::new(MemoryManagerConfig {
+        compact_threshold: 10,
+        model_context_window: 60,
+        reserved_output_tokens: 10,
+        autocompact_buffer_tokens: 0,
+        keep_recent_messages: 2,
+        ..MemoryManagerConfig::default()
+    });
+    let first_messages = vec![
+        Message::system("sys"),
+        Message::user("please preserve this exact request"),
+        Message::assistant("working"),
+    ];
+
+    let (first_compacted, first_changed) = manager.compact(&first_messages, true);
+    assert!(first_changed);
+
+    let second_messages = vec![
+        first_compacted[0].clone(),
+        first_compacted[1].clone(),
+        Message::assistant("made progress"),
+        Message::user("and keep this follow-up too"),
+    ];
+    let (second_compacted, second_changed) = manager.compact(&second_messages, true);
+
+    assert!(second_changed);
+    assert!(second_compacted[1].content.contains(
+        "\"original_user_messages\":[\"please preserve this exact request\",\"and keep this follow-up too\"]"
+    ));
+}
+
+#[test]
 fn memory_manager_uses_microcompact_before_full_summary() {
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         compact_threshold: 1_000,

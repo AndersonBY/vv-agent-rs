@@ -213,6 +213,9 @@ The current Rust implementation includes:
   before full summary and recomputes the prompt length without stale provider
   totals. Previously processed image payloads are also compacted by dropping
   historical `image_url` data once a later assistant message has consumed them.
+  Repeated compaction preserves `original_user_messages` from earlier
+  compressed memory blocks, so long sessions keep the user's initial request
+  across multiple summary passes.
 - Persistent session memory modeled after Python `SessionMemory`: durable
   entries are normalized, deduplicated, budget-pruned, optionally persisted
   under `.memory/session`, and injected back into runtime LLM requests as a

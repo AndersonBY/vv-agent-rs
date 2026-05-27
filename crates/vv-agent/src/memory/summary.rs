@@ -50,23 +50,33 @@ impl LocalSummary {
 }
 
 fn collect_original_user_messages(messages: &[Message]) -> Vec<String> {
-    messages
-        .iter()
-        .skip(1)
-        .filter(|message| message.role == MessageRole::User)
-        .filter_map(|message| {
-            let content = message.content.trim();
-            if content.is_empty() || content.contains("<Compressed Agent Memory>") {
-                None
-            } else {
-                Some(
-                    extract_original_user_request(content)
-                        .unwrap_or(content)
-                        .to_string(),
-                )
+    let mut collected = Vec::new();
+    for message in messages.iter().skip(1) {
+        if message.role != MessageRole::User {
+            continue;
+        }
+        let content = message.content.trim();
+        if content.is_empty() {
+            continue;
+        }
+        let compressed_originals = extract_compressed_original_user_messages(content);
+        if !compressed_originals.is_empty() {
+            for original in compressed_originals {
+                push_unique_original(&mut collected, original);
             }
-        })
-        .collect()
+            continue;
+        }
+        if content.contains("<Compressed Agent Memory>") {
+            continue;
+        }
+        push_unique_original(
+            &mut collected,
+            extract_original_user_request(content)
+                .unwrap_or(content)
+                .to_string(),
+        );
+    }
+    collected
 }
 
 fn build_progress_events(messages: &[Message], event_limit: usize) -> Vec<String> {
@@ -208,6 +218,49 @@ fn extract_original_user_request(content: &str) -> Option<&str> {
     let rest = &content[start + "<Original User Request>".len()..];
     let end = rest.find("</Original User Request>")?;
     Some(rest[..end].trim())
+}
+
+fn extract_compressed_original_user_messages(content: &str) -> Vec<String> {
+    let Some(summary_block) = extract_between(
+        content,
+        "<Compressed Agent Memory>",
+        "</Compressed Agent Memory>",
+    ) else {
+        return Vec::new();
+    };
+    summary_block
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with('{'))
+        .and_then(|line| serde_json::from_str::<Value>(line).ok())
+        .and_then(|value| {
+            value
+                .get("original_user_messages")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::trim)
+                        .filter(|item| !item.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+        })
+        .unwrap_or_default()
+}
+
+fn extract_between<'a>(text: &'a str, start_marker: &str, end_marker: &str) -> Option<&'a str> {
+    let start = text.find(start_marker)?;
+    let rest = &text[start + start_marker.len()..];
+    let end = rest.find(end_marker)?;
+    Some(rest[..end].trim())
+}
+
+fn push_unique_original(collected: &mut Vec<String>, original: String) {
+    if !original.is_empty() && !collected.iter().any(|known| known == &original) {
+        collected.push(original);
+    }
 }
 
 fn normalize_excerpt(content: &str, limit: usize) -> String {
