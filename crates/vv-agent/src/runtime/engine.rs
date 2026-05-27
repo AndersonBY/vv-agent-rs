@@ -45,6 +45,7 @@ pub struct RuntimeRunControls {
     pub execution_context: Option<ExecutionContext>,
     pub workspace: Option<PathBuf>,
     pub workspace_backend: Option<Arc<dyn WorkspaceBackend>>,
+    pub sub_task_manager: Option<SubTaskManager>,
 }
 
 impl RuntimeRunControls {
@@ -159,7 +160,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 self.workspace_backend.clone()
             }
         });
-        let sub_task_manager = SubTaskManager::default();
+        let sub_task_manager = controls.sub_task_manager.clone().unwrap_or_default();
         self.emit_log(
             &controls,
             "run_started",

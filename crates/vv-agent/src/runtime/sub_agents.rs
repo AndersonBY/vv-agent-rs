@@ -410,6 +410,7 @@ impl RuntimeSubAgentSession {
                     execution_context,
                     workspace: None,
                     workspace_backend: None,
+                    sub_task_manager: None,
                 },
             )
             .map_err(|error| error.to_string())?;

@@ -404,6 +404,9 @@ The current Rust implementation includes:
   Session workspace overrides are supported through
   `AgentSDKClient::create_session_with_workspace`; the override updates session
   state, runtime workspace metadata, and the file-tool workspace backend.
+  Sessions also reuse one `SubTaskManager` across turns, so a later prompt can
+  inspect or continue async sub-tasks created by an earlier prompt in the same
+  session.
 - `AgentSDKClient::query` mirrors Python client query semantics: it returns the
   final answer for completed runs and reports non-completed statuses with
   snake_case status values such as `status=wait_user`.

@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::background_sessions::{background_session_manager, BackgroundSessionSubscription};
 use crate::runtime::{CancellationToken, StreamCallback};
+use crate::sub_task_manager::SubTaskManager;
 use crate::types::{AgentStatus, Metadata};
 
 use super::types::{agent_status_value, AgentDefinition, AgentRun};
@@ -34,6 +35,7 @@ pub struct AgentSessionRunRequest {
     pub steering_queue: Option<Arc<Mutex<VecDeque<String>>>>,
     pub cancellation_token: Option<CancellationToken>,
     pub stream_callback: Option<StreamCallback>,
+    pub sub_task_manager: Option<SubTaskManager>,
 }
 
 impl AgentSessionRunRequest {
@@ -48,6 +50,7 @@ impl AgentSessionRunRequest {
             steering_queue: None,
             cancellation_token: None,
             stream_callback: None,
+            sub_task_manager: None,
         }
     }
 }
@@ -124,6 +127,7 @@ pub struct AgentSession {
     steering_queue: Arc<Mutex<VecDeque<String>>>,
     follow_up_queue: Arc<Mutex<VecDeque<String>>>,
     active_cancellation_token: Arc<Mutex<Option<CancellationToken>>>,
+    sub_task_manager: SubTaskManager,
 }
 
 impl AgentSession {
@@ -194,6 +198,7 @@ impl AgentSession {
             steering_queue: Arc::new(Mutex::new(VecDeque::new())),
             follow_up_queue: Arc::new(Mutex::new(VecDeque::new())),
             active_cancellation_token: Arc::new(Mutex::new(None)),
+            sub_task_manager: SubTaskManager::default(),
         }
     }
 
@@ -415,6 +420,7 @@ impl AgentSession {
             steering_queue: Some(Arc::clone(&self.steering_queue)),
             cancellation_token: Some(cancellation_token),
             stream_callback: None,
+            sub_task_manager: Some(self.sub_task_manager.clone()),
         });
         self.running = false;
         *self

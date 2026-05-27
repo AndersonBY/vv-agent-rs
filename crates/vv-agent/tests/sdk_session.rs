@@ -5,8 +5,9 @@ use serde_json::Value;
 use vv_agent::{
     create_agent_session, AgentDefinition, AgentRun, AgentRuntime, AgentSDKClient, AgentSDKOptions,
     AgentSession, AgentStatus, BeforeLlmEvent, BeforeToolCallEvent, BeforeToolCallPatch,
-    CycleRecord, LLMResponse, ResolvedModelConfig, RuntimeHook, ScriptedLlmClient,
-    SessionEventHandler, TokenUsage, ToolCall, ToolDirective, ToolExecutionResult,
+    CycleRecord, LLMResponse, LlmClient, LlmError, LlmRequest, MessageRole, ResolvedModelConfig,
+    RuntimeHook, ScriptedLlmClient, SessionEventHandler, SubAgentConfig, TokenUsage, ToolCall,
+    ToolDirective, ToolExecutionResult,
 };
 
 fn preview_text_for_test(text: &str, log_preview_chars: Option<usize>) -> String {
@@ -727,6 +728,29 @@ fn sdk_session_workspace_override_is_used_for_tool_context_and_state() {
 }
 
 #[test]
+fn sdk_session_reuses_sub_task_manager_across_turns() {
+    let llm = SessionSubTaskManagerLlm;
+    let client = AgentSDKClient::new(AgentSDKOptions::default())
+        .with_runtime(AgentRuntime::new(llm.clone()));
+    let mut definition = AgentDefinition::default_for_model("demo");
+    definition.enable_sub_agents = true;
+    definition.sub_agents.insert(
+        "researcher".to_string(),
+        SubAgentConfig::new("demo", "research profile"),
+    );
+    let mut session = create_agent_session(&client, "demo", definition);
+
+    let first = session.prompt("start child task").expect("first prompt");
+    let second = session.prompt("check prior child").expect("second prompt");
+
+    assert_eq!(first.result.final_answer.as_deref(), Some("created child"));
+    assert_eq!(
+        second.result.final_answer.as_deref(),
+        Some("found prior child")
+    );
+}
+
+#[test]
 fn sdk_runtime_applies_startup_shell_defaults_to_tool_context_like_python() {
     let responses = vec![
         LLMResponse {
@@ -919,6 +943,110 @@ impl RuntimeHook for WorkspaceRecordingHook {
             .expect("workspaces")
             .push(event.context.workspace.clone());
         None
+    }
+}
+
+#[derive(Clone, Default)]
+struct SessionSubTaskManagerLlm;
+
+impl LlmClient for SessionSubTaskManagerLlm {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        let is_child_request = request.messages.iter().any(|message| {
+            message.role == MessageRole::User && message.content.contains("collect session facts")
+        });
+        if is_child_request {
+            return Ok(LLMResponse::with_tool_calls(
+                "",
+                vec![ToolCall::new(
+                    "child_finish",
+                    "task_finish",
+                    json_args(serde_json::json!({"message": "child complete"})),
+                )],
+            ));
+        }
+
+        let latest_user = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == MessageRole::User)
+            .map(|message| message.content.as_str())
+            .unwrap_or_default();
+        let latest_task_id = request.messages.iter().rev().find_map(|message| {
+            if message.role != MessageRole::Tool
+                || message.tool_call_id.as_deref() != Some("session_sub_create")
+            {
+                return None;
+            }
+            let payload = serde_json::from_str::<Value>(&message.content).ok()?;
+            payload
+                .get("task_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
+
+        if let Some(status_payload) = request.messages.iter().rev().find_map(|message| {
+            if message.role != MessageRole::Tool
+                || message.tool_call_id.as_deref() != Some("session_sub_status")
+            {
+                return None;
+            }
+            serde_json::from_str::<Value>(&message.content).ok()
+        }) {
+            let found = status_payload["tasks"]
+                .as_array()
+                .and_then(|tasks| tasks.first())
+                .is_some_and(|task| task.get("error").is_none());
+            return Ok(LLMResponse::with_tool_calls(
+                "",
+                vec![ToolCall::new(
+                    "session_finish_after_status",
+                    "task_finish",
+                    json_args(serde_json::json!({
+                        "message": if found { "found prior child" } else { "lost prior child" }
+                    })),
+                )],
+            ));
+        }
+
+        if latest_user.contains("check prior child") {
+            let task_id = latest_task_id.unwrap_or_else(|| "missing-task-id".to_string());
+            return Ok(LLMResponse::with_tool_calls(
+                "",
+                vec![ToolCall::new(
+                    "session_sub_status",
+                    "sub_task_status",
+                    json_args(serde_json::json!({
+                        "task_ids": [task_id],
+                        "detail_level": "snapshot"
+                    })),
+                )],
+            ));
+        }
+
+        if latest_task_id.is_some() {
+            return Ok(LLMResponse::with_tool_calls(
+                "",
+                vec![ToolCall::new(
+                    "session_finish_after_create",
+                    "task_finish",
+                    json_args(serde_json::json!({"message": "created child"})),
+                )],
+            ));
+        }
+
+        Ok(LLMResponse::with_tool_calls(
+            "",
+            vec![ToolCall::new(
+                "session_sub_create",
+                "create_sub_task",
+                json_args(serde_json::json!({
+                    "agent_id": "researcher",
+                    "task_description": "collect session facts",
+                    "wait_for_completion": false
+                })),
+            )],
+        ))
     }
 }
 
