@@ -11,6 +11,9 @@ use crate::tools::common::{
 };
 use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
 
+const MAX_STRUCTURED_ITEMS: usize = 200;
+const MAX_STRUCTURED_CHARS: usize = 20_000;
+
 pub(crate) fn workspace_grep_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
         "workspace_grep",
@@ -158,12 +161,14 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
             }
 
             files_with_matches.sort();
+            let files_with_match_count = files_with_matches.len();
             let total_result_items = match output_mode {
                 "files_with_matches" => files_with_matches.len(),
                 "count" => file_counts.len(),
                 _ => rows.len(),
             };
             let mut head_limited = false;
+            let structured_capped;
             if let Some(limit) = head_limit {
                 match output_mode {
                     "files_with_matches" => {
@@ -182,10 +187,32 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                     }
                 }
             }
+            match output_mode {
+                "files_with_matches" => {
+                    let (capped_files, capped) = cap_structured_items(files_with_matches, |path| {
+                        estimate_file_path_size(path)
+                    });
+                    files_with_matches = capped_files;
+                    structured_capped = capped;
+                }
+                "count" => {
+                    let count_items = file_counts.into_iter().collect::<Vec<_>>();
+                    let (capped_items, capped) =
+                        cap_structured_items(count_items, estimate_file_count_size);
+                    file_counts = capped_items.into_iter().collect();
+                    structured_capped = capped;
+                }
+                _ => {
+                    let (capped_rows, capped) = cap_structured_items(rows, estimate_match_row_size);
+                    rows = capped_rows;
+                    structured_capped = capped;
+                }
+            }
+            let structured_truncated = head_limited || structured_capped;
 
             let summary = json!({
                 "files_searched": searched_files,
-                "files_with_matches": file_counts.len(),
+                "files_with_matches": files_with_match_count,
                 "total_matches": total_matches,
             });
             let mut payload = json!({
@@ -200,8 +227,14 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                     "count" => file_counts.len(),
                     _ => rows.len(),
                 },
-                "truncated": head_limited,
+                "content_truncated": false,
+                "structured_truncated": structured_truncated,
+                "truncated": structured_truncated,
             });
+            if structured_capped {
+                payload["structured_item_limit"] = json!(MAX_STRUCTURED_ITEMS);
+                payload["structured_char_limit"] = json!(MAX_STRUCTURED_CHARS);
+            }
             match output_mode {
                 "files_with_matches" => payload["files"] = json!(files_with_matches),
                 "count" => payload["file_counts"] = json!(file_counts),
@@ -212,7 +245,7 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 &pattern,
                 &payload,
                 show_line_numbers,
-                head_limited,
+                structured_truncated,
             );
             let metadata = payload
                 .as_object()
@@ -326,4 +359,40 @@ fn render_grep_content(
             lines.join("\n")
         }
     }
+}
+
+fn estimate_match_row_size(row: &Value) -> usize {
+    row["path"].as_str().map_or(0, str::len)
+        + row["line"]
+            .as_u64()
+            .map_or(0, |line| line.to_string().len())
+        + row["text"].as_str().map_or(0, str::len)
+        + 32
+}
+
+fn estimate_file_path_size(path: &str) -> usize {
+    path.len() + 4
+}
+
+fn estimate_file_count_size((path, count): &(String, usize)) -> usize {
+    path.len() + count.to_string().len() + 8
+}
+
+fn cap_structured_items<T>(items: Vec<T>, estimator: impl Fn(&T) -> usize) -> (Vec<T>, bool) {
+    let mut capped = Vec::new();
+    let mut used_chars = 0usize;
+
+    for item in items {
+        let item_size = estimator(&item).max(1);
+        if !capped.is_empty()
+            && (capped.len() >= MAX_STRUCTURED_ITEMS
+                || used_chars.saturating_add(item_size) > MAX_STRUCTURED_CHARS)
+        {
+            return (capped, true);
+        }
+        capped.push(item);
+        used_chars = used_chars.saturating_add(item_size);
+    }
+
+    (capped, false)
 }

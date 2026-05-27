@@ -52,6 +52,50 @@ fn workspace_grep_returns_python_style_text_content_and_structured_metadata() {
 }
 
 #[test]
+fn workspace_grep_caps_structured_payload_without_duplication_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    for index in 0..205 {
+        std::fs::write(
+            workspace.path().join(format!("match_{index:03}.txt")),
+            "token\n",
+        )
+        .expect("file");
+    }
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "grep_structured_cap",
+                "workspace_grep",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("token")),
+                    ("output_mode".to_string(), json!("content")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep");
+
+    assert_eq!(result.metadata["total_result_items"], 205);
+    assert_eq!(result.metadata["returned_count"], 200);
+    assert_eq!(result.metadata["structured_truncated"], true);
+    assert_eq!(result.metadata["truncated"], true);
+    assert_eq!(result.metadata["structured_item_limit"], 200);
+    assert_eq!(result.metadata["structured_char_limit"], 20_000);
+    assert_eq!(
+        result.metadata["matches"]
+            .as_array()
+            .expect("matches")
+            .len(),
+        200
+    );
+    assert!(result.content.contains("Showing first 200 rows."));
+    assert!(!result.content.contains("\"matches\""));
+}
+
+#[test]
 fn workspace_grep_supports_files_and_count_modes_with_type_filter() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
