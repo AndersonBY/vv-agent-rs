@@ -159,6 +159,34 @@ fn workspace_grep_truncates_large_text_content_like_python() {
 }
 
 #[test]
+fn workspace_grep_reports_supported_types_for_unknown_type_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "grep_unknown_type",
+                "workspace_grep",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("token")),
+                    ("type".to_string(), json!("unknown")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert!(result
+        .content
+        .contains("Unsupported file type: unknown. Supported types:"));
+    assert!(result.content.contains("dockerfile"));
+    assert!(result.content.contains("makefile"));
+}
+
+#[test]
 fn workspace_grep_supports_files_and_count_modes_with_type_filter() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

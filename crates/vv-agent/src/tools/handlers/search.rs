@@ -7,8 +7,8 @@ use serde_json::{json, Value};
 use crate::tools::base::ToolSpec;
 use crate::tools::common::{
     collect_workspace_files, grep_text, is_hidden_path, is_ignored_root, is_supported_file_type,
-    matches_file_type, parse_integer_arg, path_escapes_workspace_error, tool_error,
-    workspace_relative_path_or_absolute, GrepTextOptions,
+    matches_file_type, parse_integer_arg, path_escapes_workspace_error,
+    supported_file_types_message, tool_error, workspace_relative_path_or_absolute, GrepTextOptions,
 };
 use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
 
@@ -47,7 +47,10 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 .filter(|value| !value.is_empty());
             if let Some(file_type) = &file_type {
                 if !is_supported_file_type(file_type) {
-                    return tool_error(format!("Unsupported file type: {file_type}"));
+                    return tool_error(format!(
+                        "Unsupported file type: {file_type}. Supported types: {}",
+                        supported_file_types_message()
+                    ));
                 }
             }
             let path = arguments.get("path").and_then(Value::as_str).unwrap_or(".");

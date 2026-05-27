@@ -195,32 +195,38 @@ pub(crate) fn is_hidden_path(path: &str) -> bool {
     path.split('/').any(|part| part.starts_with('.'))
 }
 
+const SUPPORTED_FILE_TYPES: &[&str] = &[
+    "c",
+    "cpp",
+    "css",
+    "dockerfile",
+    "go",
+    "html",
+    "ini",
+    "java",
+    "js",
+    "json",
+    "log",
+    "makefile",
+    "md",
+    "php",
+    "py",
+    "rb",
+    "rust",
+    "sh",
+    "sql",
+    "ts",
+    "txt",
+    "xml",
+    "yaml",
+];
+
+pub(crate) fn supported_file_types_message() -> String {
+    SUPPORTED_FILE_TYPES.join(", ")
+}
+
 pub(crate) fn is_supported_file_type(file_type: &str) -> bool {
-    matches!(
-        file_type,
-        "py" | "js"
-            | "ts"
-            | "html"
-            | "css"
-            | "java"
-            | "c"
-            | "cpp"
-            | "rust"
-            | "go"
-            | "php"
-            | "rb"
-            | "sh"
-            | "sql"
-            | "json"
-            | "xml"
-            | "yaml"
-            | "md"
-            | "txt"
-            | "log"
-            | "ini"
-            | "dockerfile"
-            | "makefile"
-    )
+    SUPPORTED_FILE_TYPES.contains(&file_type)
 }
 
 pub(crate) fn matches_file_type(path: &str, file_type: Option<&str>) -> bool {
