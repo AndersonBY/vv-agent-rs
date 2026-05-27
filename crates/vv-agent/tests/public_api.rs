@@ -133,3 +133,9 @@ fn constants_module_exports_python_tool_names_and_workspace_tool_list() {
         ]
     );
 }
+
+#[test]
+fn memory_module_exports_compactable_tools_like_python() {
+    assert!(vv_agent::memory::COMPACTABLE_TOOLS.contains(&"read_file"));
+    assert!(vv_agent::memory::COMPACTABLE_TOOLS.contains(&"workspace_grep"));
+}

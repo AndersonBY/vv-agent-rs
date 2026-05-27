@@ -476,6 +476,8 @@ The current Rust implementation includes:
   supported tokenizers and fall back to the Python-style CJK-aware estimator for
   unsupported models. They also accept structured JSON payloads by serializing
   them before estimation, matching Python's lenient token-count helper.
+  `memory::COMPACTABLE_TOOLS` exposes the same default microcompact tool
+  allowlist as Python.
 - SDK one-shot runs no longer require a prebuilt runtime: by default the client
   builds a `vv-llm` backed runtime from `AgentSDKOptions.settings_file`, while
   tests and embedders can inject an `LlmBuilder` for deterministic clients.

@@ -17,6 +17,7 @@ pub use message_sanitizer::{
 };
 pub use microcompact::{
     is_microcompacted_tool_content, microcompact, MicrocompactConfig, CLEARED_MARKER,
+    COMPACTABLE_TOOLS,
 };
 pub use post_compact_restore::{restore_key_files, PostCompactRestoreConfig};
 pub use session::{

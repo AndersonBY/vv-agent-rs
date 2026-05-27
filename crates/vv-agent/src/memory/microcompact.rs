@@ -6,7 +6,7 @@ use crate::types::{Message, MessageRole};
 
 pub const CLEARED_MARKER: &str = "[Old tool result content cleared by microcompact]";
 
-const DEFAULT_COMPACTABLE_TOOLS: &[&str] = &[
+pub const COMPACTABLE_TOOLS: &[&str] = &[
     "read_file",
     "write_file",
     "file_str_replace",
@@ -79,7 +79,7 @@ pub fn is_microcompacted_tool_content(content: &str) -> bool {
 }
 
 fn default_compactable_tools() -> BTreeSet<String> {
-    DEFAULT_COMPACTABLE_TOOLS
+    COMPACTABLE_TOOLS
         .iter()
         .map(|tool| (*tool).to_string())
         .collect()
