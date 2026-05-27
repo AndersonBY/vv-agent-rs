@@ -35,6 +35,13 @@ vv-agent-rs/
         mod.rs
         templates.rs
       runtime/
+        backends/
+          base.rs
+          celery.rs
+          celery_tasks.rs
+          inline.rs
+          mod.rs
+          thread.rs
         background_sessions.rs
         cancellation.rs
         context.rs
@@ -187,8 +194,8 @@ The current Rust implementation includes:
   stores, `engine.rs` main runtime execution, cycle-runner retry helpers,
   tool-call running helpers, tool-result extraction, sub-agent execution,
   sub-agent session registry, sub-task manager, and Python-style
-  `runtime/backends/` submodules for inline/thread/celery/celery_tasks paths so
-  deeper Python parity work can stay localized. `CycleRunner` and
+  `runtime/backends/` submodules for base/inline/thread/celery/celery_tasks
+  paths so deeper Python parity work can stay localized. `CycleRunner` and
   `ToolCallRunner` are now public runtime helpers as in Python, so embedders can
   run one LLM planning cycle or one tool-call batch without going through the
   full `AgentRuntime`.

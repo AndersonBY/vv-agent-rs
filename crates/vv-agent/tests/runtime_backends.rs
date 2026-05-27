@@ -12,6 +12,12 @@ use vv_agent::{
 };
 
 #[test]
+fn runtime_backends_exports_python_base_execution_backend_paths() {
+    let _direct = vv_agent::runtime::backends::ExecutionBackend::default();
+    let _base = vv_agent::runtime::backends::base::ExecutionBackend::default();
+}
+
+#[test]
 fn inline_backend_parallel_map_runs_serially_and_preserves_order() {
     let backend = InlineBackend;
 

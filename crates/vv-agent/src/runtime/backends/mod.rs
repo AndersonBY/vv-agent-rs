@@ -1,3 +1,4 @@
+pub mod base;
 pub mod celery;
 pub mod celery_tasks;
 pub mod inline;
@@ -18,6 +19,7 @@ pub use celery::{CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher};
 pub use celery_tasks::run_checkpointed_cycle;
 pub use inline::InlineBackend;
 pub use thread::ThreadBackend;
+pub use RuntimeExecutionBackend as ExecutionBackend;
 
 #[derive(Debug, Clone)]
 pub enum RuntimeExecutionBackend {
