@@ -4,7 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use vv_agent::background_sessions::background_session_manager;
+use vv_agent::background_sessions::{background_session_manager, BackgroundSessionStartOptions};
 use vv_agent::processes::read_captured_output;
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
@@ -220,6 +220,48 @@ fn background_command_listener_is_notified_without_polling() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0]["status"], "completed");
     assert_eq!(events[0]["output"], "watched");
+}
+
+#[test]
+fn background_session_manager_can_start_process_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let session_id = background_session_manager()
+        .start(
+            "printf \"$VV_AGENT_BG_ENV\"",
+            workspace.path(),
+            5,
+            BackgroundSessionStartOptions {
+                shell: Some("bash".to_string()),
+                env: Some(BTreeMap::from([(
+                    "VV_AGENT_BG_ENV".to_string(),
+                    "from-manager-start".to_string(),
+                )])),
+                ..Default::default()
+            },
+        )
+        .expect("background session start");
+
+    assert!(session_id.starts_with("bg_"));
+
+    let mut final_payload = None;
+    for _ in 0..20 {
+        let payload = background_session_manager().check(&session_id);
+        if payload["status"] == "running" {
+            thread::sleep(Duration::from_millis(50));
+            continue;
+        }
+        final_payload = Some(payload);
+        break;
+    }
+
+    let final_payload = final_payload.expect("background manager task finished");
+    assert_eq!(final_payload["status"], "completed");
+    assert_eq!(final_payload["exit_code"], 0);
+    assert_eq!(final_payload["output"], "from-manager-start");
+    assert!(final_payload["command"]
+        .as_str()
+        .expect("command")
+        .contains("VV_AGENT_BG_ENV"));
 }
 
 #[test]

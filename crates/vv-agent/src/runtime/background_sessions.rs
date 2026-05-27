@@ -8,7 +8,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::processes::{kill_process_tree, read_captured_output, remove_captured_output};
+use crate::processes::{
+    kill_process_tree, read_captured_output, remove_captured_output,
+    start_captured_process_with_env,
+};
 
 const OUTPUT_LIMIT: usize = 50_000;
 
@@ -19,6 +22,15 @@ pub fn background_session_manager() -> &'static BackgroundSessionManager {
     MANAGER.get_or_init(BackgroundSessionManager::default)
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct BackgroundSessionStartOptions {
+    pub stdin: Option<String>,
+    pub auto_confirm: bool,
+    pub shell: Option<String>,
+    pub windows_shell_priority: Option<Vec<String>>,
+    pub env: Option<BTreeMap<String, String>>,
+}
+
 #[derive(Default)]
 pub struct BackgroundSessionManager {
     sessions: Mutex<BTreeMap<String, BackgroundSession>>,
@@ -27,6 +39,39 @@ pub struct BackgroundSessionManager {
 }
 
 impl BackgroundSessionManager {
+    pub fn start(
+        &self,
+        command: impl Into<String>,
+        cwd: impl Into<PathBuf>,
+        timeout_seconds: u64,
+        options: BackgroundSessionStartOptions,
+    ) -> Result<String, String> {
+        let command = command.into();
+        let cwd = cwd.into();
+        let prepared = super::shell::prepare_shell_execution(
+            &command,
+            options.auto_confirm,
+            options.stdin.as_deref(),
+            options.shell.as_deref(),
+            options.windows_shell_priority.as_deref(),
+        )?;
+        let started = start_captured_process_with_env(
+            &prepared.command,
+            &cwd,
+            prepared.stdin.as_deref(),
+            options.env.as_ref(),
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(self.adopt_running_process(
+            command,
+            cwd,
+            timeout_seconds,
+            started.child,
+            started.output_path,
+            prepared.shell,
+        ))
+    }
+
     pub fn adopt_running_process(
         &self,
         command: impl Into<String>,
