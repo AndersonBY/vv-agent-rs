@@ -11,6 +11,7 @@ use crate::tools::common::{
     supported_file_types_message, tool_error, workspace_relative_path_or_absolute, GrepTextOptions,
 };
 use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
+use crate::workspace::{glob_match, normalized_glob_pattern};
 
 const MAX_STRUCTURED_ITEMS: usize = 200;
 const MAX_STRUCTURED_CHARS: usize = 20_000;
@@ -54,6 +55,12 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 }
             }
             let path = arguments.get("path").and_then(Value::as_str).unwrap_or(".");
+            let glob_pattern = normalized_glob_pattern(
+                arguments
+                    .get("glob")
+                    .and_then(Value::as_str)
+                    .unwrap_or("**/*"),
+            );
             let include_hidden = arguments
                 .get("include_hidden")
                 .and_then(Value::as_bool)
@@ -132,7 +139,7 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
             let mut candidate_files = Vec::new();
             let explicit_file_target = target_path.is_file();
             if explicit_file_target {
-                candidate_files.push(target_path);
+                candidate_files.push(target_path.clone());
             } else {
                 match collect_workspace_files(&target_path) {
                     Ok(files) => candidate_files = files,
@@ -158,6 +165,15 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                     && relative_path.split('/').next().is_some_and(is_ignored_root)
                 {
                     continue;
+                }
+                if !explicit_file_target {
+                    let glob_path = file_path
+                        .strip_prefix(&target_path)
+                        .map(|path| path.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_else(|_| relative_path.clone());
+                    if !glob_match(&glob_path, &glob_pattern) {
+                        continue;
+                    }
                 }
                 if !matches_file_type(&relative_path, file_type.as_deref()) {
                     continue;

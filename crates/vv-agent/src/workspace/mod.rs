@@ -12,7 +12,7 @@ pub use local::LocalWorkspaceBackend;
 pub use memory::MemoryWorkspaceBackend;
 pub use s3::{S3WorkspaceBackend, S3WorkspaceConfig};
 
-pub(super) fn normalized_glob_pattern(glob: &str) -> String {
+pub(crate) fn normalized_glob_pattern(glob: &str) -> String {
     let pattern = glob.trim();
     if pattern.is_empty() {
         "**/*".to_string()
@@ -114,7 +114,7 @@ pub(super) fn non_empty_option(value: Option<String>) -> Option<String> {
     })
 }
 
-pub(super) fn glob_match(path: &str, pattern: &str) -> bool {
+pub(crate) fn glob_match(path: &str, pattern: &str) -> bool {
     glob_match_bytes(path.as_bytes(), pattern.as_bytes())
 }
 

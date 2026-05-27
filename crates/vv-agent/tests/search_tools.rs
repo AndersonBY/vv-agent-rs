@@ -231,6 +231,37 @@ fn workspace_grep_supports_files_and_count_modes_with_type_filter() {
 }
 
 #[test]
+fn workspace_grep_applies_glob_relative_to_search_path_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::create_dir_all(workspace.path().join("src")).expect("dir");
+    std::fs::write(workspace.path().join("src/main.rs"), "token rust").expect("rs");
+    std::fs::write(workspace.path().join("src/readme.md"), "token docs").expect("md");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "grep_glob",
+                "workspace_grep",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("token")),
+                    ("path".to_string(), json!("src")),
+                    ("glob".to_string(), json!("*.rs")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep glob");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.metadata["summary"]["total_matches"], 1);
+    let rows = result.metadata["matches"].as_array().expect("matches");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["path"], "src/main.rs");
+}
+
+#[test]
 fn workspace_grep_respects_hidden_and_ignored_defaults() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
