@@ -288,8 +288,9 @@ The current Rust implementation includes:
   `read_file`, `write_file`, `file_str_replace`, `workspace_grep`,
   `read_image`, with image-message injection limited to `native_multimodal`
   tasks, Python-style `read_file` numeric-string line range parsing,
-  `list_files` numeric-string limits, hidden-file filtering, and scan-limit
-  estimate payloads, and
+  `list_files` numeric-string limits, `file_str_replace` numeric-string
+  replacement limits, hidden-file filtering, and scan-limit estimate payloads,
+  and
   `workspace_grep` regex search, numeric-string limits/context parsing, text
   content with structured matches kept in metadata, Python-style text
   truncation, and Python-style structured payload limits, plus single-file grep

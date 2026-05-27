@@ -125,7 +125,7 @@ pub(super) fn file_str_replace_schema() -> Value {
                     "old_str": {"type": "string", "description": "The exact source text to replace. Include enough context to make the match unique."},
                     "new_str": {"type": "string", "description": "Replacement text."},
                     "replace_all": {"type": "boolean", "description": "Replace all matches when true. Default false."},
-                    "max_replacements": {"type": "integer", "minimum": 1, "description": "Optional cap when replace_all=false. Default 1."}
+                    "max_replacements": {"type": "integer", "minimum": 1, "description": "Optional cap when replace_all=false. Default 1. numeric string values are accepted for Python compatibility."}
                 },
                 "required": ["path", "old_str", "new_str"]
             }

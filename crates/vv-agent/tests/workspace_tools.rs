@@ -67,6 +67,38 @@ fn default_workspace_tools_can_write_read_replace_and_list_files() {
 }
 
 #[test]
+fn file_str_replace_accepts_string_max_replacements_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("edit.txt"), "one one one").expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "replace_string_limit",
+                "file_str_replace",
+                BTreeMap::from([
+                    ("path".to_string(), json!("edit.txt")),
+                    ("old_str".to_string(), json!("one")),
+                    ("new_str".to_string(), json!("two")),
+                    ("max_replacements".to_string(), json!("2")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("file_str_replace");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["replaced_count"], 2);
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("edit.txt")).expect("file"),
+        "two two one"
+    );
+}
+
+#[test]
 fn list_files_skips_common_dependency_roots_by_default() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

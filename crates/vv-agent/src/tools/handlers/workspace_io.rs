@@ -358,11 +358,13 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
                 .get("replace_all")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            let max_replacements = arguments
-                .get("max_replacements")
-                .and_then(Value::as_u64)
-                .unwrap_or(1)
-                .max(1) as usize;
+            let max_replacements = match arguments.get("max_replacements") {
+                Some(value) => match parse_integer_arg(value) {
+                    Ok(limit) => limit.max(1) as usize,
+                    Err(_) => return tool_error("`max_replacements` must be an integer"),
+                },
+                None => 1,
+            };
             match backend.read_text(path) {
                 Ok(text) => {
                     let occurrence_count = text.matches(old_str).count();
