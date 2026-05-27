@@ -139,3 +139,10 @@ fn memory_module_exports_compactable_tools_like_python() {
     assert!(vv_agent::memory::COMPACTABLE_TOOLS.contains(&"read_file"));
     assert!(vv_agent::memory::COMPACTABLE_TOOLS.contains(&"workspace_grep"));
 }
+
+#[test]
+fn runtime_module_exports_python_runtime_public_types() {
+    let _inline = vv_agent::runtime::InlineBackend;
+    let _cancelled = vv_agent::runtime::CancelledError::new("Operation was cancelled");
+    let _managed: Option<vv_agent::runtime::ManagedSubTask> = None;
+}

@@ -485,7 +485,7 @@ impl SubTaskManager {
     }
 }
 
-struct ManagedSubTask {
+pub struct ManagedSubTask {
     task_id: String,
     session_id: String,
     agent_name: String,

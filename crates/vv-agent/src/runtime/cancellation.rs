@@ -1,6 +1,31 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CancelledError {
+    message: String,
+}
+
+impl CancelledError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl std::fmt::Display for CancelledError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CancelledError {}
+
 #[derive(Clone, Default)]
 pub struct CancellationToken {
     inner: Arc<CancellationState>,

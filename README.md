@@ -472,6 +472,9 @@ The current Rust implementation includes:
   execution like Python. Child stream events are enriched with `task_id`,
   `session_id`, and `sub_agent_name`, and parent log/event handlers receive
   matching `sub_agent_*` events.
+- The `runtime` module now exposes Python-style public names including
+  `InlineBackend`, `CancelledError`, and `ManagedSubTask` alongside the existing
+  hook, state-store, cancellation, cycle-runner, and tool-runner types.
 - Memory token utilities now prefer `vv-llm::utilities::count_tokens` for
   supported tokenizers and fall back to the Python-style CJK-aware estimator for
   unsupported models. They also accept structured JSON payloads by serializing

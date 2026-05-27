@@ -18,11 +18,12 @@ pub mod tool_call_runner;
 mod tool_planner;
 
 pub use backends::RuntimeExecutionBackend as ExecutionBackend;
+pub use backends::{InlineBackend, RuntimeExecutionBackend};
 pub use background_sessions::{
     background_session_manager, BackgroundSessionListener, BackgroundSessionManager,
     BackgroundSessionSubscription,
 };
-pub use cancellation::CancellationToken;
+pub use cancellation::{CancellationToken, CancelledError};
 pub use context::{ExecutionContext, StreamCallback};
 pub use cycle_runner::{
     is_prompt_too_long_error, CycleRunRequest, CycleRunner, MAX_PROMPT_TOO_LONG_RETRIES,
@@ -49,7 +50,7 @@ pub use sub_agent_sessions::{
     unregister_sub_agent_session, SubAgentSession, SubAgentSessionListener,
     SubAgentSessionRegistry, SubAgentSessionUnsubscribe,
 };
-pub use sub_task_manager::SubTaskManager;
+pub use sub_task_manager::{ManagedSubTask, SubTaskManager};
 pub use token_usage::{normalize_token_usage, summarize_task_token_usage};
 pub use tool_call_runner::{ToolCallRunner, ToolRunOutcome, ToolRunRequest};
 pub use tool_planner::{freeze_dynamic_tool_schema_hints, patch_dynamic_tool_schema_hints};

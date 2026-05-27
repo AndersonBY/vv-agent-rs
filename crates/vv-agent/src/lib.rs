@@ -56,9 +56,10 @@ pub use runtime::{
     AfterLLMEvent, AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BaseRuntimeHook,
     BeforeCycleMessageProvider, BeforeLLMEvent, BeforeLLMPatch, BeforeLlmEvent, BeforeLlmPatch,
     BeforeMemoryCompactEvent, BeforeToolCallEvent, BeforeToolCallPatch, CancellationToken,
-    CycleRunRequest, CycleRunner, ExecutionBackend, ExecutionContext, InterruptionMessageProvider,
-    RuntimeEventHandler, RuntimeHook, RuntimeHookManager, RuntimeRunControls, StreamCallback,
-    ToolCallRunner, ToolRunOutcome, ToolRunRequest, MAX_PROMPT_TOO_LONG_RETRIES,
+    CancelledError, CycleRunRequest, CycleRunner, ExecutionBackend, ExecutionContext,
+    InterruptionMessageProvider, RuntimeEventHandler, RuntimeHook, RuntimeHookManager,
+    RuntimeRunControls, StreamCallback, ToolCallRunner, ToolRunOutcome, ToolRunRequest,
+    MAX_PROMPT_TOO_LONG_RETRIES,
 };
 pub use sdk::{
     create_agent_session, create_agent_session_with_id, create_agent_session_with_id_and_workspace,
@@ -77,7 +78,7 @@ pub use sub_agent_sessions::{
     unregister_sub_agent_session, SubAgentSession, SubAgentSessionListener,
     SubAgentSessionRegistry, SubAgentSessionUnsubscribe,
 };
-pub use sub_task_manager::SubTaskManager;
+pub use sub_task_manager::{ManagedSubTask, SubTaskManager};
 pub use tools::{build_default_registry, ToolContext, ToolHandler, ToolRegistry, ToolSpec};
 pub use types::{
     AgentResult, AgentStatus, AgentTask, CycleRecord, CycleStatus, LLMResponse, Message,
