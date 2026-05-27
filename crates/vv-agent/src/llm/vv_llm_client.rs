@@ -9,6 +9,9 @@ use crate::types::{LLMResponse, Message, MessageRole, TokenUsage, ToolCall};
 
 use super::{LlmClient, LlmError, LlmRequest, LlmStreamCallback};
 
+pub type EndpointClientSpec = (String, Box<dyn vv_llm::ChatClient>);
+pub type NamedEndpointClientSpec = (String, String, Box<dyn vv_llm::ChatClient>);
+
 const STREAM_MODEL_PREFIXES: &[&str] = &[
     "qwen3", "claude", "gemini", "kimi", "glm-4.", "glm-5", "gpt-5", "minimax",
 ];
@@ -25,6 +28,13 @@ pub struct VvLlmClient {
     pub selected_model: String,
     pub model_id: String,
     pub timeout_seconds: f64,
+    endpoint_clients: Vec<EndpointChatClient>,
+}
+
+#[derive(Clone)]
+struct EndpointChatClient {
+    endpoint_id: String,
+    model_id: String,
     chat_client: Arc<dyn vv_llm::ChatClient>,
 }
 
@@ -36,21 +46,71 @@ impl VvLlmClient {
         chat_client: Box<dyn vv_llm::ChatClient>,
         timeout_seconds: f64,
     ) -> Self {
+        let model_id = model_id.into();
+        Self::new_with_named_endpoint_clients(
+            backend,
+            selected_model,
+            model_id.clone(),
+            vec![(model_id.clone(), model_id, chat_client)],
+            timeout_seconds,
+        )
+    }
+
+    pub fn new_with_endpoint_clients(
+        backend: impl Into<String>,
+        selected_model: impl Into<String>,
+        model_id: impl Into<String>,
+        endpoint_clients: Vec<EndpointClientSpec>,
+        timeout_seconds: f64,
+    ) -> Self {
+        Self::new_with_named_endpoint_clients(
+            backend,
+            selected_model,
+            model_id,
+            endpoint_clients
+                .into_iter()
+                .map(|(model_id, chat_client)| (model_id.clone(), model_id, chat_client))
+                .collect(),
+            timeout_seconds,
+        )
+    }
+
+    pub fn new_with_named_endpoint_clients(
+        backend: impl Into<String>,
+        selected_model: impl Into<String>,
+        model_id: impl Into<String>,
+        endpoint_clients: Vec<NamedEndpointClientSpec>,
+        timeout_seconds: f64,
+    ) -> Self {
         Self {
             backend: backend.into(),
             selected_model: selected_model.into(),
             model_id: model_id.into(),
             timeout_seconds,
-            chat_client: Arc::from(chat_client),
+            endpoint_clients: endpoint_clients
+                .into_iter()
+                .map(|(endpoint_id, model_id, chat_client)| EndpointChatClient {
+                    endpoint_id,
+                    model_id,
+                    chat_client: Arc::from(chat_client),
+                })
+                .collect(),
         }
     }
 
     pub fn provider_name(&self) -> &'static str {
-        self.chat_client.provider_name()
+        self.endpoint_clients
+            .first()
+            .map(|endpoint| endpoint.chat_client.provider_name())
+            .unwrap_or("unknown")
     }
 
     pub fn model_id(&self) -> &str {
         &self.model_id
+    }
+
+    pub fn endpoint_count(&self) -> usize {
+        self.endpoint_clients.len()
     }
 }
 
@@ -64,11 +124,34 @@ impl LlmClient for VvLlmClient {
         request: LlmRequest,
         stream_callback: Option<LlmStreamCallback>,
     ) -> Result<LLMResponse, LlmError> {
-        let effective_model = if request.model.is_empty() {
-            self.model_id.clone()
-        } else {
-            request.model.clone()
-        };
+        if self.endpoint_clients.is_empty() {
+            return Err(LlmError::Request(
+                "No endpoint targets configured".to_string(),
+            ));
+        }
+
+        let mut errors = Vec::new();
+        for endpoint in &self.endpoint_clients {
+            match self.complete_with_endpoint(endpoint, request.clone(), stream_callback.clone()) {
+                Ok(response) => return Ok(response),
+                Err(error) => errors.push(format!("{}: {error}", endpoint.endpoint_id)),
+            }
+        }
+        Err(LlmError::Request(format!(
+            "all endpoint targets failed: {}",
+            errors.join("; ")
+        )))
+    }
+}
+
+impl VvLlmClient {
+    fn complete_with_endpoint(
+        &self,
+        endpoint: &EndpointChatClient,
+        request: LlmRequest,
+        stream_callback: Option<LlmStreamCallback>,
+    ) -> Result<LLMResponse, LlmError> {
+        let effective_model = self.effective_model_for_endpoint(&request.model, endpoint);
         let should_stream = stream_callback.is_some()
             || request
                 .metadata
@@ -100,29 +183,68 @@ impl LlmClient for VvLlmClient {
             .build()
             .map_err(|error| LlmError::Request(error.to_string()))?;
         if should_stream {
-            return runtime.block_on(collect_vv_llm_stream(
-                Arc::clone(&self.chat_client),
+            let mut response = runtime.block_on(collect_vv_llm_stream(
+                Arc::clone(&endpoint.chat_client),
                 chat_request,
                 stream_callback,
                 Some(UsageEstimateContext {
-                    model: effective_model,
+                    model: effective_model.clone(),
                     prompt_tokens: estimated_prompt_tokens,
                 }),
-            ));
+            ))?;
+            annotate_endpoint_response(&mut response, endpoint, &effective_model, should_stream);
+            return Ok(response);
         }
 
         let response = runtime
-            .block_on(self.chat_client.create_completion(chat_request))
+            .block_on(endpoint.chat_client.create_completion(chat_request))
             .map_err(|error| LlmError::Request(error.to_string()))?;
 
-        Ok(from_vv_llm_response(
+        let mut response = from_vv_llm_response(
             response,
             Some(UsageEstimateContext {
-                model: effective_model,
+                model: effective_model.clone(),
                 prompt_tokens: estimated_prompt_tokens,
             }),
-        ))
+        );
+        annotate_endpoint_response(&mut response, endpoint, &effective_model, should_stream);
+        Ok(response)
     }
+
+    fn effective_model_for_endpoint(
+        &self,
+        requested_model: &str,
+        endpoint: &EndpointChatClient,
+    ) -> String {
+        let requested_model = requested_model.trim();
+        if requested_model.is_empty()
+            || requested_model == self.model_id
+            || requested_model == self.selected_model
+        {
+            endpoint.model_id.clone()
+        } else {
+            requested_model.to_string()
+        }
+    }
+}
+
+fn annotate_endpoint_response(
+    response: &mut LLMResponse,
+    endpoint: &EndpointChatClient,
+    model_id: &str,
+    stream_mode: bool,
+) {
+    response.raw.insert(
+        "used_endpoint_id".to_string(),
+        Value::String(endpoint.endpoint_id.clone()),
+    );
+    response.raw.insert(
+        "used_model_id".to_string(),
+        Value::String(model_id.to_string()),
+    );
+    response
+        .raw
+        .insert("stream_mode".to_string(), Value::Bool(stream_mode));
 }
 
 fn should_use_stream(model: &str) -> bool {

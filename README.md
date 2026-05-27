@@ -145,9 +145,11 @@ The current Rust implementation includes:
   provider HTTP/protocol handling delegated to `vv-llm`, while keeping
   `ScriptedLlmClient` for deterministic tests. Resolved model metadata keeps
   Python-style ordered `endpoint_options` for all enabled endpoint bindings,
-  carries vv-llm `context_length` / `max_output_tokens`, and
-  `build_vv_llm_settings` exposes the normalized `vv_llm::LlmSettings` used by
-  the client builder.
+  the client builder constructs a vv-llm chat client for each enabled endpoint
+  and fails over in order, responses record `used_endpoint_id` /
+  `used_model_id` / `stream_mode`, resolved metadata carries vv-llm
+  `context_length` / `max_output_tokens`, and `build_vv_llm_settings` exposes
+  the normalized `vv_llm::LlmSettings` used by the client builder.
 - Split `llm/` modules matching Python's base/scripted/vv_llm_client layers,
   with the public `LlmClient` trait, scripted test client, and `vv-llm` backed
   production client kept behind stable top-level exports.

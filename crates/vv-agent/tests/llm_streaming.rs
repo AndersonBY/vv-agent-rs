@@ -256,6 +256,107 @@ fn vv_llm_client_auto_streams_deepseek_v4_models_like_python() {
     assert_eq!(probe.stream_calls(), 1);
 }
 
+#[test]
+fn vv_llm_client_fails_over_to_next_endpoint_client_like_python() {
+    let llm = VvLlmClient::new_with_named_endpoint_clients(
+        "openai",
+        "gpt-4o-alias",
+        "gpt-4o-mini",
+        vec![
+            (
+                "primary-endpoint".to_string(),
+                "gpt-4o-mini".to_string(),
+                Box::new(FailingChatClient) as Box<dyn vv_llm::ChatClient>,
+            ),
+            (
+                "backup-endpoint".to_string(),
+                "gpt-4o-mini-backup".to_string(),
+                Box::new(UsageMissingChatClient) as Box<dyn vv_llm::ChatClient>,
+            ),
+        ],
+        90.0,
+    );
+
+    let response = llm
+        .complete(LlmRequest::new(
+            "gpt-4o-alias",
+            vec![Message::user("fall over to backup endpoint")],
+        ))
+        .expect("completion from fallback endpoint");
+
+    assert_eq!(response.content, "estimated usage response");
+    assert_eq!(response.raw["used_endpoint_id"], json!("backup-endpoint"));
+    assert_eq!(response.raw["used_model_id"], json!("gpt-4o-mini-backup"));
+    assert_eq!(response.raw["stream_mode"], json!(false));
+}
+
+#[test]
+fn vv_llm_client_uses_endpoint_model_for_selected_alias_like_python() {
+    let llm = VvLlmClient::new_with_named_endpoint_clients(
+        "openai",
+        "gpt-alias",
+        "gpt-provider-model",
+        vec![(
+            "primary-endpoint".to_string(),
+            "gpt-provider-model".to_string(),
+            Box::new(UsageMissingChatClient) as Box<dyn vv_llm::ChatClient>,
+        )],
+        90.0,
+    );
+
+    let response = llm
+        .complete(LlmRequest::new(
+            "gpt-alias",
+            vec![Message::user("use provider model id")],
+        ))
+        .expect("completion from primary endpoint");
+
+    assert_eq!(response.raw["used_model_id"], json!("gpt-provider-model"));
+}
+
+#[derive(Clone, Default)]
+struct FailingChatClient;
+
+impl vv_llm::ChatClient for FailingChatClient {
+    fn provider_name(&self) -> &'static str {
+        "failing"
+    }
+
+    fn create_completion<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatResponse, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move { Err(vv_llm::VvLlmError::Provider("primary down".to_string())) })
+    }
+
+    fn create_stream<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatStream, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move { Err(vv_llm::VvLlmError::Provider("primary down".to_string())) })
+    }
+}
+
 #[derive(Clone, Default)]
 struct UsageMissingChatClient;
 

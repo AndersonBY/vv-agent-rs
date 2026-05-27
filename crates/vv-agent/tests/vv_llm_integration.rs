@@ -195,6 +195,52 @@ fn settings_resolution_collects_all_endpoint_options_like_python() {
 }
 
 #[test]
+fn settings_builder_uses_all_enabled_endpoint_options_for_failover_like_python() {
+    let mut settings_file = tempfile::NamedTempFile::new().expect("settings file");
+    write!(
+        settings_file,
+        r#"{{
+          "VERSION": "2",
+          "endpoints": [
+            {{
+              "id": "deepseek-default",
+              "api_base": "https://api.deepseek.com",
+              "api_key": "sk-default"
+            }},
+            {{
+              "id": "deepseek-backup",
+              "api_base": "https://backup.deepseek.com",
+              "api_key": "sk-backup"
+            }}
+          ],
+          "backends": {{
+            "deepseek": {{
+              "models": {{
+                "deepseek-v4-pro": {{
+                  "id": "deepseek-v4-pro",
+                  "endpoints": [
+                    {{"endpoint_id": "deepseek-default", "model_id": "deepseek-v4-pro"}},
+                    {{"endpoint_id": "deepseek-backup", "model_id": "deepseek-chat"}}
+                  ]
+                }}
+              }}
+            }}
+          }},
+          "embedding_backends": {{}},
+          "rerank_backends": {{}}
+        }}"#
+    )
+    .expect("write settings");
+
+    let (client, resolved) =
+        build_vv_llm_from_local_settings(settings_file.path(), "deepseek", "deepseek-v4-pro", 90.0)
+            .expect("build llm");
+
+    assert_eq!(resolved.endpoint_options.len(), 2);
+    assert_eq!(client.endpoint_count(), 2);
+}
+
+#[test]
 fn build_vv_llm_settings_normalizes_provider_aliases_keys_and_endpoint_options_like_python() {
     let raw = serde_json::json!({
         "endpoints": [

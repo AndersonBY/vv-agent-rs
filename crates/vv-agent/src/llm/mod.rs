@@ -4,4 +4,4 @@ pub mod vv_llm_client;
 
 pub use base::{EndpointTarget, LlmClient, LlmError, LlmRequest, LlmStreamCallback};
 pub use scripted::ScriptedLlmClient;
-pub use vv_llm_client::VvLlmClient;
+pub use vv_llm_client::{EndpointClientSpec, NamedEndpointClientSpec, VvLlmClient};
