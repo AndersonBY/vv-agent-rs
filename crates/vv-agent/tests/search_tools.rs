@@ -184,6 +184,7 @@ fn workspace_grep_reports_supported_types_for_unknown_type_like_python() {
     assert!(result
         .content
         .contains("Unsupported file type: unknown. Supported types:"));
+    assert_eq!(result.metadata["error"], result.content);
     assert!(result.content.contains("dockerfile"));
     assert!(result.content.contains("makefile"));
 }

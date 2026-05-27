@@ -7,8 +7,7 @@ use serde_json::{json, Value};
 use crate::tools::base::ToolSpec;
 use crate::tools::common::{
     grep_text, is_hidden_path, is_ignored_root, is_supported_file_type, matches_file_type,
-    parse_integer_arg, path_escapes_workspace_error, supported_file_types_message, tool_error,
-    GrepTextOptions,
+    parse_integer_arg, path_escapes_workspace_error, supported_file_types_message, GrepTextOptions,
 };
 use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
 use crate::workspace::normalized_glob_pattern;
@@ -30,14 +29,14 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 .trim()
                 .to_string();
             if pattern.is_empty() {
-                return tool_error("Search pattern is required");
+                return grep_error("Search pattern is required");
             }
             let output_mode = arguments
                 .get("output_mode")
                 .and_then(Value::as_str)
                 .unwrap_or("content");
             if !matches!(output_mode, "content" | "files_with_matches" | "count") {
-                return tool_error(format!(
+                return grep_error(format!(
                     "Invalid `output_mode`: {output_mode}. Supported: content, count, files_with_matches"
                 ));
             }
@@ -48,7 +47,7 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 .filter(|value| !value.is_empty());
             if let Some(file_type) = &file_type {
                 if !is_supported_file_type(file_type) {
-                    return tool_error(format!(
+                    return grep_error(format!(
                         "Unsupported file type: {file_type}. Supported types: {}",
                         supported_file_types_message()
                     ));
@@ -85,20 +84,20 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 };
             let context_lines = match parse_optional_usize("c", 0) {
                 Ok(value) => value,
-                Err(error) => return tool_error(error),
+                Err(error) => return grep_error(error),
             };
             let before_context = match context_lines {
                 Some(value) => value,
                 None => match parse_optional_usize("b", 0) {
                     Ok(value) => value.unwrap_or(0),
-                    Err(error) => return tool_error(error),
+                    Err(error) => return grep_error(error),
                 },
             };
             let after_context = match context_lines {
                 Some(value) => value,
                 None => match parse_optional_usize("a", 0) {
                     Ok(value) => value.unwrap_or(0),
-                    Err(error) => return tool_error(error),
+                    Err(error) => return grep_error(error),
                 },
             };
             let head_limit_raw = arguments
@@ -107,7 +106,7 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
             let head_limit = match head_limit_raw {
                 Some(value) => match parse_integer_arg(value) {
                     Ok(parsed) => Some(parsed.max(1) as usize),
-                    Err(_) => return tool_error("`head_limit` must be an integer"),
+                    Err(_) => return grep_error("`head_limit` must be an integer"),
                 },
                 None => None,
             };
@@ -128,7 +127,7 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
             {
                 Ok(regex) => regex,
                 Err(error) => {
-                    return tool_error(format!("Invalid regular expression: {error}"));
+                    return grep_error(format!("Invalid regular expression: {error}"));
                 }
             };
 
@@ -151,7 +150,7 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                         .into_iter()
                         .map(|file_path| (file_path.clone(), file_path))
                         .collect(),
-                    Err(error) => return tool_error(error.to_string()),
+                    Err(error) => return grep_error(error.to_string()),
                 }
             };
 
@@ -398,6 +397,20 @@ fn render_grep_content(
             }
             lines.join("\n")
         }
+    }
+}
+
+fn grep_error(message: impl Into<String>) -> ToolExecutionResult {
+    let message = message.into();
+    ToolExecutionResult {
+        tool_call_id: String::new(),
+        content: message.clone(),
+        status: ToolResultStatus::Error,
+        directive: ToolDirective::Continue,
+        error_code: None,
+        metadata: BTreeMap::from([("error".to_string(), Value::String(message))]),
+        image_url: None,
+        image_path: None,
     }
 }
 
