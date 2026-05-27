@@ -812,3 +812,37 @@ fn memory_manager_preserves_session_memory_across_compaction() {
         .content
         .contains("preserve prior decisions"));
 }
+
+#[test]
+fn memory_manager_compact_directly_applies_session_memory_context_like_python() {
+    let mut session_memory = SessionMemory::new(SessionMemoryConfig {
+        token_model: "demo".to_string(),
+        ..SessionMemoryConfig::default()
+    });
+    session_memory.state.entries = vec![SessionMemoryEntry::new(
+        "decision",
+        "keep the Rust API aligned with Python",
+        2,
+        9,
+    )];
+    let mut manager = MemoryManager::new(MemoryManagerConfig {
+        compact_threshold: 10_000,
+        model_context_window: 20_000,
+        reserved_output_tokens: 100,
+        autocompact_buffer_tokens: 0,
+        model: "demo".to_string(),
+        session_memory: Some(session_memory),
+        ..MemoryManagerConfig::default()
+    });
+    let messages = vec![Message::system("sys"), Message::user("small")];
+
+    let (updated, changed) = manager.compact(&messages, false);
+
+    assert!(!changed);
+    assert_eq!(updated.len(), 2);
+    assert!(updated[0].content.starts_with("sys"));
+    assert!(updated[0].content.contains("<Session Memory>"));
+    assert!(updated[0]
+        .content
+        .contains("keep the Rust API aligned with Python"));
+}

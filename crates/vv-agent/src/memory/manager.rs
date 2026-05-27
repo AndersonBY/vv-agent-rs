@@ -284,24 +284,26 @@ impl MemoryManager {
                 .iter()
                 .zip(messages.iter())
                 .any(|(left, right)| left != right);
+        let working_messages = self.apply_session_memory_context(&sanitized);
         let message_length =
-            self.calculate_effective_length(&sanitized, total_tokens, recent_tool_call_ids);
+            self.calculate_effective_length(&working_messages, total_tokens, recent_tool_call_ids);
         if !force && message_length <= self.autocompact_threshold() {
             let (warned, warning_inserted) =
-                self.maybe_append_memory_warning(&sanitized, message_length);
+                self.maybe_append_memory_warning(&working_messages, message_length);
             if warning_inserted {
                 return (warned, true);
             }
             if self.should_preemptive_microcompact(message_length) {
-                let (microcompacted, cleared) = self.microcompact_messages(&sanitized, cycle_index);
+                let (microcompacted, cleared) =
+                    self.microcompact_messages(&working_messages, cycle_index);
                 if cleared > 0 {
                     return (microcompacted, true);
                 }
             }
-            return (sanitized, changed_by_sanitize);
+            return (working_messages, changed_by_sanitize);
         }
         if let Some(session_memory) = self.session_memory.as_mut() {
-            let text_messages = sanitized
+            let text_messages = working_messages
                 .iter()
                 .filter(|message| {
                     !matches!(message.role, MessageRole::System | MessageRole::Tool)
@@ -309,12 +311,13 @@ impl MemoryManager {
                 })
                 .count();
             if session_memory.should_extract(message_length, text_messages) {
-                session_memory.extract(&sanitized, 0, message_length);
+                session_memory.extract(&working_messages, 0, message_length);
             }
         }
-        let mut summary_source = sanitized.clone();
+        let mut summary_source = self.strip_session_memory_context(&working_messages);
         if !force {
-            let (image_compacted, image_changed) = compact_processed_image_messages(&sanitized);
+            let (image_compacted, image_changed) =
+                compact_processed_image_messages(&working_messages);
             let (artifact_compacted, artifact_changed) =
                 self.compact_large_tool_results(&image_compacted);
             if (image_changed || artifact_changed)
@@ -546,6 +549,23 @@ impl MemoryManager {
         updated
     }
 
+    pub fn strip_session_memory_context(&self, messages: &[Message]) -> Vec<Message> {
+        let mut updated = messages.to_vec();
+        let Some(system_message) = updated
+            .iter_mut()
+            .find(|message| message.role == MessageRole::System)
+        else {
+            return updated;
+        };
+        let Some(marker_index) = system_message.content.find("<Session Memory>") else {
+            return updated;
+        };
+        system_message.content = system_message.content[..marker_index]
+            .trim_end()
+            .to_string();
+        updated
+    }
+
     fn remove_previous_summary(&self, messages: &[Message]) -> Vec<Message> {
         messages
             .iter()
@@ -558,14 +578,15 @@ impl MemoryManager {
     }
 
     fn compress_memory(&self, messages: &[Message]) -> (Vec<Message>, bool) {
+        let messages = self.strip_session_memory_context(messages);
         if messages.len() <= 2 {
-            return (messages.to_vec(), false);
+            return (messages, false);
         }
         let system_message = messages
             .iter()
             .find(|message| message.role == MessageRole::System)
             .cloned();
-        let (messages_for_summary, _normalized) = self.normalize_compaction_messages(messages);
+        let (messages_for_summary, _normalized) = self.normalize_compaction_messages(&messages);
         let (messages_for_summary, artifacts, _compacted_tools) = compact_tool_results(
             &messages_for_summary,
             &ToolResultArtifactConfig {
@@ -577,7 +598,7 @@ impl MemoryManager {
                 excerpt_tail: self.config.tool_result_excerpt_tail,
             },
         );
-        let original_request = extract_original_user_request(messages).unwrap_or_default();
+        let original_request = extract_original_user_request(&messages).unwrap_or_default();
         let summary_prompt = self.build_compress_memory_prompt(&messages_for_summary);
         let mut compressed_memory = self.generate_summary(&summary_prompt, &messages_for_summary);
         if let Ok(summary_data) = serde_json::from_str(&compressed_memory) {
