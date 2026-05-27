@@ -224,4 +224,14 @@ fn runtime_module_exports_python_runtime_public_types() {
     let _managed: Option<vv_agent::runtime::ManagedSubTask> = None;
     let manager = vv_agent::runtime::RuntimeHookManager::default();
     assert!(!manager.has_hooks());
+    let _checkpoint = vv_agent::runtime::Checkpoint {
+        task_id: "task".to_string(),
+        cycle_index: 0,
+        status: vv_agent::AgentStatus::Pending,
+        messages: vec![],
+        cycles: vec![],
+        shared_state: BTreeMap::new(),
+    };
+    let state_store = vv_agent::runtime::InMemoryStateStore::default();
+    let _state_store_ref: &dyn vv_agent::runtime::StateStore = &state_store;
 }

@@ -44,6 +44,7 @@ pub use processes::{
     kill_process_tree, read_captured_output, remove_captured_output, start_captured_process,
     start_captured_process_with_env, wait_for_child, CapturedProcess,
 };
+pub use state::{Checkpoint, InMemoryStateStore, StateStore};
 pub use sub_agent_sessions::{
     continue_sub_agent_session, get_sub_agent_session, register_sub_agent_session,
     steer_sub_agent_session, sub_agent_session_registry, subscribe_sub_agent_session,
