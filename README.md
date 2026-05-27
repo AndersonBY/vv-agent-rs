@@ -33,6 +33,7 @@ vv-agent-rs/
         mod.rs
         templates.rs
       runtime/
+        engine.rs
         hooks.rs
         mod.rs
         results.rs
@@ -147,8 +148,8 @@ The current Rust implementation includes:
 - A basic multi-cycle runtime that sends tool schemas to the LLM, executes tool
   calls, and converges on `task_finish` or `ask_user`.
 - Split `runtime/` modules for cancellation, hooks, shell resolution, state
-  stores, the main cycle, cycle-runner retry helpers, tool-call running helpers,
-  tool-result extraction, sub-agent execution, and Python-style
+  stores, `engine.rs` main runtime execution, cycle-runner retry helpers,
+  tool-call running helpers, tool-result extraction, sub-agent execution, and Python-style
   `runtime/backends/` submodules for inline/thread/celery/celery_tasks paths so
   deeper Python parity work can stay localized.
 - Runtime hooks modeled after Python `RuntimeHookManager`: callers can patch

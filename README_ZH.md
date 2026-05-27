@@ -33,6 +33,7 @@ vv-agent-rs/
         mod.rs
         templates.rs
       runtime/
+        engine.rs
         hooks.rs
         mod.rs
         results.rs
@@ -128,7 +129,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - LLM settings 归一化已兼容 Python 的 `providers` / `backends`、默认 `VERSION`、endpoint API key 后缀提取，以及可选 base64 key 解码，然后再构造 `vv-llm` client。
 - 已支持 Python `.py` settings 字面量模板：`LLM_SETTINGS = {...}` 和 `settings: SettingsDict = {...}` 都会按 Python 风格解析布尔值、空值、注释和尾逗号，再交给 `vv-llm` 做 endpoint / backend 解析。
 - 一个基础 multi-cycle runtime，可以把 tool schemas 发给 LLM、执行工具调用，并通过 `task_finish` 或 `ask_user` 收敛。
-- `runtime/` 已拆成 cancellation、hooks、shell resolution、state stores、主循环、cycle-runner retry helper、tool-call runner helper、工具结果解析、sub-agent 执行模块，以及 Python 风格 `runtime/backends/` 子模块（inline / thread / celery / celery_tasks），让后续继续补齐 Python parity 时改动更集中。
+- `runtime/` 已拆成 cancellation、hooks、shell resolution、state stores、`engine.rs` 主运行时、cycle-runner retry helper、tool-call runner helper、工具结果解析、sub-agent 执行模块，以及 Python 风格 `runtime/backends/` 子模块（inline / thread / celery / celery_tasks），让后续继续补齐 Python parity 时改动更集中。
 - 已加入参考 Python `RuntimeHookManager` 的 runtime hooks：调用方可以在 memory compaction 前改写 messages，改写 LLM 请求的 messages / schemas、改写 LLM 响应、改写或短路工具调用，并改写工具结果。
 - `log_handler` 已可接收 Python 风格 runtime 生命周期事件，包括 run start、cycle start、LLM response、tool result、completed、wait-user 和 max-cycles，并提供可配置的 assistant / content / final-answer preview 字段。
 - 同一 package 内的 `vv-agent` CLI 已对齐 Python `cli.py` 的核心参数：prompt、backend/model、settings file、workspace、max cycles、language、agent type、verbose logs、prompt bundle 构建和 JSON 结果输出。

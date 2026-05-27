@@ -87,6 +87,7 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/backends/celery_tasks.rs",
         "runtime/cancellation.rs",
         "runtime/cycle_runner.rs",
+        "runtime/engine.rs",
         "runtime/hooks.rs",
         "runtime/results.rs",
         "runtime/shell.rs",
