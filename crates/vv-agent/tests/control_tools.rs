@@ -41,6 +41,38 @@ fn todo_handlers_expose_python_style_read_and_write_functions() {
 }
 
 #[test]
+fn handler_common_helpers_match_python_module() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut context = ToolContext::new(workspace.path());
+    let common = vv_agent::tools::handlers::common::to_json(&json!({"text": "你好"}));
+    assert_eq!(common, r#"{"text":"你好"}"#);
+    assert!(vv_agent::tools::handlers::common::is_string_keyed_dict(
+        &json!({"a": 1})
+    ));
+    assert!(!vv_agent::tools::handlers::common::is_string_keyed_dict(
+        &json!(["a"])
+    ));
+
+    let todos = vv_agent::tools::handlers::common::get_todo_list(&mut context.shared_state);
+    todos.push(json!({"title": "existing", "done": true}));
+    assert_eq!(
+        context.shared_state["todo_list"][0]["title"],
+        json!("existing")
+    );
+
+    let normalized = vv_agent::tools::handlers::common::normalize_todo_items(&json!([
+        {"title": "  keep  ", "done": 1},
+        {"title": " "},
+        "skip"
+    ]));
+    assert_eq!(normalized, vec![json!({"title": "keep", "done": true})]);
+
+    let resolved = vv_agent::tools::handlers::common::resolve_workspace_path(&context, "notes.md")
+        .expect("resolved path");
+    assert!(resolved.ends_with("notes.md"));
+}
+
+#[test]
 fn todo_write_updates_shared_state_and_enforces_single_in_progress() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

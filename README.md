@@ -83,6 +83,7 @@ vv-agent-rs/
         handlers/
           background.rs
           bash.rs
+          common.rs
           control.rs
           image.rs
           memory.rs
@@ -300,10 +301,12 @@ The current Rust implementation includes:
   templates, available skills rendering, and prompt-cache break tracking.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `builtins`,
   `registry`, dispatcher, canonical `schemas/` domain modules, shared `common`
-  helpers, and focused handler modules. `tools::builtins` exposes the
-  Python-matched `build_default_registry` import path, while `ToolRegistry`
-  supports Python-style custom tool registration with default empty parameters
-  or explicit JSON Schema parameters. `tools::handlers::todo_read` and
+  helpers, and focused handler modules. `tools::handlers::common` mirrors the
+  Python handler helper import path for JSON rendering, TODO-list normalization,
+  and workspace path resolution. `tools::builtins` exposes the Python-matched
+  `build_default_registry` import path, while `ToolRegistry` supports
+  Python-style custom tool registration with default empty parameters or
+  explicit JSON Schema parameters. `tools::handlers::todo_read` and
   `todo_write` are also exposed as direct Python-style handler entrypoints.
 - Python-style tool dispatch normalizes raw LLM tool arguments into structured
   error tool results, fills missing / pending tool call ids, maps wait-user
