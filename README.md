@@ -212,7 +212,8 @@ The current Rust implementation includes:
   clients handle session-memory extraction without custom provider adapters.
 - Python-style microcompact support clears old, large, compactable tool results
   before full summary compaction, preserving recent tool context while reducing
-  prompt pressure during long runs.
+  prompt pressure during long runs. Task metadata can override the compactable
+  tool allowlist with `microcompact_compactable_tools`.
 - Prompt-too-long retries modeled after Python `CycleRunner`: runtime detects
   common provider context-window errors, forces normal memory compaction once,
   then falls back to emergency compaction slices that preserve system and recent

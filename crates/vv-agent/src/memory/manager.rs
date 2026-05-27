@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use crate::memory::artifacts::{
@@ -32,6 +33,7 @@ pub struct MemoryManagerConfig {
     pub microcompact_trigger_ratio: f64,
     pub microcompact_keep_recent_cycles: usize,
     pub microcompact_min_result_length: usize,
+    pub microcompact_compactable_tools: Option<BTreeSet<String>>,
     pub workspace: Option<PathBuf>,
     pub session_memory: Option<SessionMemory>,
 }
@@ -56,6 +58,7 @@ impl Default for MemoryManagerConfig {
             microcompact_trigger_ratio: 0.75,
             microcompact_keep_recent_cycles: 3,
             microcompact_min_result_length: 500,
+            microcompact_compactable_tools: None,
             workspace: None,
             session_memory: None,
         }
@@ -156,7 +159,7 @@ impl MemoryManager {
                 trigger_ratio: self.config.microcompact_trigger_ratio,
                 keep_recent_cycles: self.config.microcompact_keep_recent_cycles,
                 min_result_length: self.config.microcompact_min_result_length,
-                compactable_tools: None,
+                compactable_tools: self.config.microcompact_compactable_tools.clone(),
             },
         )
     }

@@ -149,7 +149,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - `memory/` 已拆成 manager、summary 和 token_utils，支持 Python 风格压缩阈值、本地结构化摘要，并在长上下文 follow-up cycle 前自动压缩。
 - 历史大工具结果可以持久化到 `.memory/tool_results`，并在上下文里替换为带 retrieval hint 的压缩内容，对齐 Python `v-agent` 的 artifact compaction 行为。
 - 已加入参考 Python `SessionMemory` 的持久化 session memory： durable entries 会归一化、去重、按预算裁剪，可保存到 `.memory/session`，并在 compaction 前后作为 `<Session Memory>` system context 注入后续 LLM 请求。默认 runtime 可以直接使用已配置的 `LlmClient` 作为 extraction callback，因此 vv-llm-backed client 不需要额外 provider adapter。
-- 已加入 Python 风格 microcompact：在 full summary compaction 之前清理旧的大型可压缩工具结果，保留近期工具上下文，同时降低长任务的 prompt 压力。
+- 已加入 Python 风格 microcompact：在 full summary compaction 之前清理旧的大型可压缩工具结果，保留近期工具上下文，同时降低长任务的 prompt 压力；task metadata 可以通过 `microcompact_compactable_tools` 覆盖可压缩工具 allowlist。
 - 已加入参考 Python `CycleRunner` 的 prompt-too-long 重试：runtime 会识别常见 provider 上下文超限错误，先强制 normal memory compaction，再退到 emergency compaction 切片，并保留 system message 和近期工具上下文后重试。若所有 PTL 重试都耗尽，runtime 会返回 Python 风格 `CompactionExhaustedError`，包含 attempts 和最后一个 provider error。
 - 已加入参考 Python `post_compact_restore` 的 compaction 后关键文件恢复：summary 会用结构化 `path/action/summary` 记录文件动作，并在预算内把关键 workspace 文件内容放回 `<Post-Compaction File Context>`。
 - 已加入 Python 风格 resume / compaction message sanitizer：会移除空 assistant、thinking-only assistant、孤儿 tool result 和未完成的尾部 tool calls，并在 memory compaction 前归一化陈旧 tool-call 边界。

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -1016,6 +1016,10 @@ where
             "microcompact_min_result_length",
             500,
         ),
+        microcompact_compactable_tools: read_string_set_metadata(
+            &task.metadata,
+            "microcompact_compactable_tools",
+        ),
         workspace: workspace.clone(),
         session_memory: build_session_memory(task, workspace, memory_summary_client),
     })
@@ -1130,6 +1134,21 @@ fn read_bool_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: bo
         .get(key)
         .and_then(Value::as_bool)
         .unwrap_or(default)
+}
+
+fn read_string_set_metadata(
+    metadata: &BTreeMap<String, Value>,
+    key: &str,
+) -> Option<BTreeSet<String>> {
+    let values = metadata.get(key)?.as_array()?;
+    let values = values
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    (!values.is_empty()).then_some(values)
 }
 
 fn metadata_path(metadata: &BTreeMap<String, Value>, key: &str, default: &str) -> PathBuf {
