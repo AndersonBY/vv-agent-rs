@@ -90,7 +90,7 @@ pub(super) fn workspace_grep_schema() -> Value {
                 "type": "object",
                 "properties": {
                     "pattern": {"type": "string", "description": "Regex pattern to search for."},
-                    "path": {"type": "string", "description": "Optional search root or single file path. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'."},
+                    "path": {"type": "string", "description": "Optional search root or single file path. A single file path searches that file directly, even if it is hidden or under an ignored root. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'."},
                     "glob": {"type": "string", "description": "Optional file glob filter. Default **/*."},
                     "include_hidden": {"type": "boolean", "description": "Whether hidden files are included. Default false."},
                     "include_ignored": {"type": "boolean", "description": "When searching workspace root, include files under common dependency/cache directories. Default false."},

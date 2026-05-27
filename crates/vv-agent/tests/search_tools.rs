@@ -182,6 +182,32 @@ fn workspace_grep_respects_hidden_and_ignored_defaults() {
 }
 
 #[test]
+fn workspace_grep_file_path_target_can_read_hidden_file_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join(".hidden.txt"), "secret Agent marker").expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "grep_hidden_file_target",
+                "workspace_grep",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("Agent")),
+                    ("path".to_string(), json!(".hidden.txt")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep hidden file target");
+
+    assert_eq!(result.metadata["summary"]["files_searched"], 1);
+    assert_eq!(result.metadata["summary"]["total_matches"], 1);
+    assert_eq!(result.metadata["matches"][0]["path"], ".hidden.txt");
+}
+
+#[test]
 fn workspace_grep_supports_context_lines_and_file_targets() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

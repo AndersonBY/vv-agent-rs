@@ -101,7 +101,8 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 Err(error) => return path_escapes_workspace_error(error),
             };
             let mut candidate_files = Vec::new();
-            if target_path.is_file() {
+            let explicit_file_target = target_path.is_file();
+            if explicit_file_target {
                 candidate_files.push(target_path);
             } else {
                 match collect_workspace_files(&target_path) {
@@ -119,10 +120,11 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
             for file_path in candidate_files {
                 let relative_path =
                     workspace_relative_path_or_absolute(&context.workspace, &file_path);
-                if !include_hidden && is_hidden_path(&relative_path) {
+                if !explicit_file_target && !include_hidden && is_hidden_path(&relative_path) {
                     continue;
                 }
-                if !include_ignored
+                if !explicit_file_target
+                    && !include_ignored
                     && path == "."
                     && relative_path.split('/').next().is_some_and(is_ignored_root)
                 {
