@@ -286,6 +286,7 @@ impl AgentSDKClient {
             runtime.default_workspace = Some(workspace.clone());
             runtime.workspace_backend = Arc::new(LocalWorkspaceBackend::new(workspace));
         }
+        runtime.hooks.extend(self.options.runtime_hooks.clone());
         self.runtime = Arc::new(runtime);
         self
     }
@@ -509,6 +510,7 @@ fn configure_runtime_from_options<C: LlmClient + Clone + 'static>(
         runtime.default_workspace = Some(workspace.clone());
         runtime.workspace_backend = Arc::new(LocalWorkspaceBackend::new(workspace));
     }
+    runtime.hooks.extend(options.runtime_hooks.clone());
 }
 
 pub fn create_agent_session(

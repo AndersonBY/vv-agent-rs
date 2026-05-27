@@ -1,10 +1,12 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use vv_agent::{
-    AgentDefinition, AgentResourceLoader, AgentRuntime, AgentSDKClient, AgentSDKOptions,
-    AgentStatus, LLMResponse, LlmBuilder, LlmClient, LlmError, LlmRequest, Message, MessageRole,
-    NoToolPolicy, ResolvedModelConfig, ScriptedLlmClient,
+    AfterLlmEvent, AgentDefinition, AgentResourceLoader, AgentRuntime, AgentSDKClient,
+    AgentSDKOptions, AgentStatus, LLMResponse, LlmBuilder, LlmClient, LlmError, LlmRequest,
+    Message, MessageRole, NoToolPolicy, ResolvedModelConfig, RuntimeHook, ScriptedLlmClient,
+    ToolCall,
 };
 
 #[test]
@@ -275,6 +277,64 @@ fn sdk_client_uses_llm_builder_when_runtime_is_not_injected() {
 }
 
 #[test]
+fn sdk_options_runtime_hooks_patch_llm_response_like_python() {
+    let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
+        let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![LLMResponse::new(
+            "plain response",
+        )]));
+        Ok((
+            llm,
+            ResolvedModelConfig::new(
+                backend.to_string(),
+                model.to_string(),
+                model.to_string(),
+                model.to_string(),
+                Vec::new(),
+            ),
+        ))
+    });
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        auto_discover_resources: false,
+        llm_builder: Some(builder),
+        runtime_hooks: vec![Arc::new(ForceFinishHook)],
+        ..AgentSDKOptions::default()
+    });
+
+    let run = client
+        .run_with_agent(
+            AgentDefinition::default_for_model("demo-model"),
+            "use sdk hook",
+        )
+        .expect("run through hook");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(run.result.final_answer.as_deref(), Some("hook-finish"));
+}
+
+#[test]
+fn sdk_options_runtime_hooks_apply_to_injected_runtime_like_python() {
+    let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new(
+        "plain response",
+    )]));
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        auto_discover_resources: false,
+        runtime_hooks: vec![Arc::new(ForceFinishHook)],
+        ..AgentSDKOptions::default()
+    })
+    .with_runtime(runtime);
+
+    let run = client
+        .run_with_agent(
+            AgentDefinition::default_for_model("demo-model"),
+            "use injected runtime hook",
+        )
+        .expect("run through injected hook");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(run.result.final_answer.as_deref(), Some("hook-finish"));
+}
+
+#[test]
 fn sdk_client_builds_python_style_system_prompt_from_agent_definition() {
     let captured_messages = Arc::new(Mutex::new(Vec::<Vec<Message>>::new()));
     let builder: LlmBuilder = {
@@ -323,6 +383,21 @@ fn sdk_client_builds_python_style_system_prompt_from_agent_definition() {
         .contains("Research profile must inspect files before answering."));
     assert!(system_message.content.contains("<Tools>"));
     assert!(system_message.content.contains("task_finish"));
+}
+
+struct ForceFinishHook;
+
+impl RuntimeHook for ForceFinishHook {
+    fn after_llm(&self, event: AfterLlmEvent<'_>) -> Option<LLMResponse> {
+        Some(LLMResponse::with_tool_calls(
+            event.response.content.clone(),
+            vec![ToolCall::new(
+                "hook-finish",
+                "task_finish",
+                BTreeMap::from([("message".to_string(), json!("hook-finish"))]),
+            )],
+        ))
+    }
 }
 
 #[derive(Clone)]

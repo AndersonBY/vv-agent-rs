@@ -390,6 +390,8 @@ The current Rust implementation includes:
 - SDK one-shot runs no longer require a prebuilt runtime: by default the client
   builds a `vv-llm` backed runtime from `AgentSDKOptions.settings_file`, while
   tests and embedders can inject an `LlmBuilder` for deterministic clients.
+  `AgentSDKOptions.runtime_hooks` is applied to both SDK-built and injected
+  runtimes, matching Python's SDK extension point.
 - SDK task preparation now builds Python-style prompt bundles from
   `AgentDefinition.description` when no raw `system_prompt` is provided,
   preserving generated `system_prompt_sections` metadata for cache and

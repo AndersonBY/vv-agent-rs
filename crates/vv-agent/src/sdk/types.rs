@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::config::ResolvedModelConfig;
 use crate::llm::LlmClient;
-use crate::runtime::StreamCallback;
+use crate::runtime::{RuntimeHook, StreamCallback};
 use crate::types::{AgentResult, AgentStatus, Metadata, NoToolPolicy, SubAgentConfig};
 
 pub type SdkLlmClient = Arc<dyn LlmClient>;
@@ -87,6 +87,7 @@ pub struct AgentSDKOptions {
     pub auto_discover_resources: bool,
     pub debug_dump_dir: Option<String>,
     pub stream_callback: Option<StreamCallback>,
+    pub runtime_hooks: Vec<Arc<dyn RuntimeHook>>,
     pub bash_shell: Option<String>,
     pub windows_shell_priority: Vec<String>,
     pub bash_env: BTreeMap<String, String>,
@@ -105,6 +106,7 @@ impl std::fmt::Debug for AgentSDKOptions {
             .field("auto_discover_resources", &self.auto_discover_resources)
             .field("debug_dump_dir", &self.debug_dump_dir)
             .field("has_stream_callback", &self.stream_callback.is_some())
+            .field("runtime_hooks", &self.runtime_hooks.len())
             .field("bash_shell", &self.bash_shell)
             .field("windows_shell_priority", &self.windows_shell_priority)
             .field("bash_env", &self.bash_env)
@@ -124,6 +126,7 @@ impl Default for AgentSDKOptions {
             auto_discover_resources: true,
             debug_dump_dir: None,
             stream_callback: None,
+            runtime_hooks: Vec::new(),
             bash_shell: None,
             windows_shell_priority: Vec::new(),
             bash_env: BTreeMap::new(),
