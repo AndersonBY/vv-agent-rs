@@ -160,7 +160,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - `sdk/` 已按 Python 的 `types`、`resources`、`session` 和 `client` 层级拆分，同时保持 crate 顶层 SDK 导出稳定。
 - `activate_skill` 现在复用公开 skill parser / normalization 层，handler 内只保留 activation state helper。
 - 默认工具 schema 使用参考 Python `v-agent` 的高信息量描述，并对 `task_finish`、`list_files`、`write_file`、`file_str_replace`、`file_info`、`compress_memory`、`check_background_command`、`read_image` 等高影响工具补充更具体的操作约束，让模型拿到文件访问、grep、bash / 后台命令、todo、skills、图片和 sub-agent 的完整操作指引。
-- planned tool schemas 已加入 Python 风格动态 runtime shell hint，`bash` 会在 LLM 可见 description 里提示实际 shell 前缀或 shell 配置错误。
+- planned tool schemas 已加入 Python 风格动态 runtime shell hint，`bash` 会在 LLM 可见 description 里提示实际 shell 前缀或 shell 配置错误；runtime 会在 backend dispatch 前把该 hint 冻结进 task metadata，确保分布式 worker 和后续 cycle 使用同一份 shell 指引。
 - shell 解析已抽到 `runtime::shell`，对齐 Python 的 `runtime/shell.py` 拆分；`bash` 实际执行和 tool-planner runtime hint 共用同一套 resolver，避免配置 shell、`bash_env` 环境变量覆盖与 auto-confirm 行为漂移。
 - 内置控制工具（`task_finish`、`ask_user`、`todo_write`），其中 TODO 管理已对齐 Python 风格的 payload 校验、自动 id、status / priority 默认值和 timestamp 保留；核心 workspace 工具（`list_files`、`file_info`、`read_file`、`write_file`、`file_str_replace`、`workspace_grep`、`read_image`，且 image message 注入仅限 `native_multimodal` 任务）；通过 `compress_memory` 记录 memory notes；以及支持捕获输出、stdin、通过 `bash_shell` metadata 选择 shell、前台超时转后台、后台轮询和后台命令终态 listener 自动通知的 `bash` / `check_background_command` 命令工具。
 - 与 Python 一致的 workspace 路径安全策略：`LocalWorkspaceBackend` 默认拒绝访问 workspace 外路径，文件、图片、grep 和 bash 工具仍支持可信任务通过 metadata 显式放行。

@@ -339,6 +339,61 @@ fn runtime_delegates_cycle_execution_to_configured_backend() {
 }
 
 #[derive(Debug)]
+struct MetadataSnapshotDispatcher {
+    seen_bash_hint: Arc<Mutex<Option<Value>>>,
+}
+
+impl CycleTaskDispatcher for MetadataSnapshotDispatcher {
+    fn dispatch_cycle(
+        &self,
+        task: &AgentTask,
+        _recipe: &RuntimeRecipe,
+        _cycle_task_name: &str,
+        _cycle_index: u32,
+    ) -> Result<CycleTaskDispatchResult, String> {
+        *self.seen_bash_hint.lock().expect("seen hint") =
+            task.metadata.get("_vv_agent_bash_runtime_hint").cloned();
+        Ok(CycleTaskDispatchResult::finished(
+            AgentResult::completed_with_shared_state(
+                Vec::new(),
+                Vec::new(),
+                "metadata captured",
+                Default::default(),
+            ),
+        ))
+    }
+}
+
+#[test]
+fn runtime_freezes_dynamic_tool_schema_hints_before_distributed_dispatch() {
+    let recipe = RuntimeRecipe::new("settings.py", "deepseek", "deepseek-v4-pro", ".");
+    let store = Arc::new(InMemoryStateStore::new());
+    let seen_bash_hint = Arc::new(Mutex::new(None));
+    let dispatcher = Arc::new(MetadataSnapshotDispatcher {
+        seen_bash_hint: seen_bash_hint.clone(),
+    });
+    let backend = CeleryBackend::distributed_with_dispatcher(recipe, store, dispatcher);
+    let runtime = AgentRuntime::new(ScriptedLlmClient::new(Vec::new()))
+        .with_execution_backend(RuntimeExecutionBackend::Celery(backend));
+    let mut task = AgentTask::new("runtime-frozen-hint", "deepseek-v4-pro", "system", "prompt");
+    task.agent_type = Some("computer".to_string());
+    task.metadata
+        .insert("bash_shell".to_string(), json!("bash"));
+
+    let result = runtime.run(task).expect("distributed runtime result");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let cached = seen_bash_hint
+        .lock()
+        .expect("seen hint")
+        .clone()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .expect("cached hint passed to backend");
+    assert!(cached.contains("Runtime shell hint:"));
+    assert!(cached.contains("bash"));
+}
+
+#[derive(Debug)]
 struct FailingDispatcher;
 
 impl CycleTaskDispatcher for FailingDispatcher {

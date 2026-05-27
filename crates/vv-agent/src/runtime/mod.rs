@@ -43,4 +43,4 @@ pub use sub_agent_sessions::{
 };
 pub use sub_task_manager::SubTaskManager;
 pub use token_usage::{normalize_token_usage, summarize_task_token_usage};
-pub use tool_planner::patch_dynamic_tool_schema_hints;
+pub use tool_planner::{freeze_dynamic_tool_schema_hints, patch_dynamic_tool_schema_hints};

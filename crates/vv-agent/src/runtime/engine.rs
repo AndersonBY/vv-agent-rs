@@ -132,7 +132,9 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         task: AgentTask,
         controls: RuntimeRunControls,
     ) -> Result<AgentResult, LlmError> {
+        let mut task = task;
         let messages = build_initial_messages(&task);
+        super::tool_planner::freeze_dynamic_tool_schema_hints(&mut task);
 
         let cycles = Vec::new();
         let mut shared_state = task.initial_shared_state.clone();

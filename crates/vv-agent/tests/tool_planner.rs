@@ -1,4 +1,5 @@
 use serde_json::json;
+use vv_agent::runtime::freeze_dynamic_tool_schema_hints;
 use vv_agent::{build_default_registry, AgentTask, SubAgentConfig};
 
 #[test]
@@ -102,4 +103,42 @@ fn planned_tool_schemas_reports_invalid_windows_shell_priority_config() {
 
     assert!(description.contains("Runtime shell hint:"));
     assert!(description.contains("invalid shell config"));
+}
+
+#[test]
+fn freeze_dynamic_tool_schema_hints_caches_computer_shell_hint_like_python() {
+    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    task.agent_type = Some("computer".to_string());
+    task.metadata
+        .insert("bash_shell".to_string(), json!("bash"));
+
+    freeze_dynamic_tool_schema_hints(&mut task);
+
+    let cached = task
+        .metadata
+        .get("_vv_agent_bash_runtime_hint")
+        .and_then(|value| value.as_str())
+        .expect("cached bash hint");
+    assert!(cached.contains("Runtime shell hint:"));
+    assert!(cached.contains("bash"));
+}
+
+#[test]
+fn freeze_dynamic_tool_schema_hints_also_caches_explicit_bash_tool_like_python() {
+    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    task.agent_type = Some("assistant".to_string());
+    task.extra_tool_names.push("bash".to_string());
+
+    freeze_dynamic_tool_schema_hints(&mut task);
+
+    assert!(task.metadata.contains_key("_vv_agent_bash_runtime_hint"));
+}
+
+#[test]
+fn freeze_dynamic_tool_schema_hints_skips_tasks_without_bash_access() {
+    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+
+    freeze_dynamic_tool_schema_hints(&mut task);
+
+    assert!(!task.metadata.contains_key("_vv_agent_bash_runtime_hint"));
 }

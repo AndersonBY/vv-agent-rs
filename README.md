@@ -252,7 +252,9 @@ The current Rust implementation includes:
   bash/background commands, todos, skills, images, and sub-agents.
 - Planned tool schemas include Python-style dynamic runtime hints for shell
   execution, so `bash` advertises the actual shell prefix or invalid shell
-  configuration in the LLM-visible description.
+  configuration in the LLM-visible description. Runtime runs freeze that hint
+  into task metadata before backend dispatch so distributed workers and later
+  cycles use the same shell guidance.
 - Shell resolution now lives in `runtime::shell`, matching Python's
   `runtime/shell.py` split. Bash execution and tool-planner runtime hints share
   the same resolver, so configured shells, `bash_env` environment overrides,

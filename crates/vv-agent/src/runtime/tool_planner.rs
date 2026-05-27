@@ -6,6 +6,18 @@ use super::shell::{normalize_windows_shell_priority, resolve_shell_invocation};
 
 const BASH_RUNTIME_HINT_METADATA_KEY: &str = "_vv_agent_bash_runtime_hint";
 
+pub fn freeze_dynamic_tool_schema_hints(task: &mut AgentTask) {
+    if task.agent_type.as_deref() == Some("computer")
+        || task.extra_tool_names.iter().any(|name| name == "bash")
+    {
+        let hint = build_bash_runtime_hint(task);
+        task.metadata.insert(
+            BASH_RUNTIME_HINT_METADATA_KEY.to_string(),
+            Value::String(hint),
+        );
+    }
+}
+
 pub fn patch_dynamic_tool_schema_hints(task: &AgentTask, tool_schemas: Vec<Value>) -> Vec<Value> {
     let mut bash_hint = None::<String>;
     tool_schemas
