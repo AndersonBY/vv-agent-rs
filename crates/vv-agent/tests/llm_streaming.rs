@@ -276,6 +276,7 @@ fn vv_llm_client_fails_over_to_next_endpoint_client_like_python() {
         ],
         90.0,
     )
+    .with_randomize_endpoints(false)
     .with_retry_policy(1, 0.0);
 
     let response = llm
@@ -313,6 +314,7 @@ fn vv_llm_client_prefers_last_successful_endpoint_like_python() {
         ],
         90.0,
     )
+    .with_randomize_endpoints(false)
     .with_retry_policy(1, 0.0);
 
     let first = llm
@@ -328,6 +330,32 @@ fn vv_llm_client_prefers_last_successful_endpoint_like_python() {
     assert_eq!(first.raw["used_endpoint_id"], json!("backup-endpoint"));
     assert_eq!(second.raw["used_endpoint_id"], json!("backup-endpoint"));
     assert_eq!(primary_probe.calls(), 1);
+}
+
+#[test]
+fn vv_llm_client_exposes_python_style_endpoint_randomization_policy() {
+    let llm = VvLlmClient::new_with_named_endpoint_clients(
+        "openai",
+        "gpt-4o-mini",
+        "gpt-4o-mini",
+        vec![
+            (
+                "primary-endpoint".to_string(),
+                "gpt-4o-mini".to_string(),
+                Box::new(UsageMissingChatClient) as Box<dyn vv_llm::ChatClient>,
+            ),
+            (
+                "backup-endpoint".to_string(),
+                "gpt-4o-mini".to_string(),
+                Box::new(UsageMissingChatClient) as Box<dyn vv_llm::ChatClient>,
+            ),
+        ],
+        90.0,
+    );
+
+    assert!(llm.randomize_endpoints());
+    let llm = llm.with_randomize_endpoints(false);
+    assert!(!llm.randomize_endpoints());
 }
 
 #[test]

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
 use serde_json::Value;
@@ -50,7 +50,9 @@ pub struct VvLlmClient {
     pub debug_dump_dir: Option<PathBuf>,
     pub max_retries_per_endpoint: usize,
     pub backoff_seconds: f64,
+    pub randomize_endpoints: bool,
     request_counter: Arc<Mutex<u64>>,
+    endpoint_order_counter: Arc<Mutex<u64>>,
     preferred_endpoint_id: Arc<Mutex<Option<String>>>,
     endpoint_clients: Vec<EndpointChatClient>,
 }
@@ -114,7 +116,9 @@ impl VvLlmClient {
             debug_dump_dir: None,
             max_retries_per_endpoint: 3,
             backoff_seconds: 2.0,
+            randomize_endpoints: true,
             request_counter: Arc::new(Mutex::new(0)),
+            endpoint_order_counter: Arc::new(Mutex::new(0)),
             preferred_endpoint_id: Arc::new(Mutex::new(None)),
             endpoint_clients: endpoint_clients
                 .into_iter()
@@ -140,6 +144,15 @@ impl VvLlmClient {
 
     pub fn endpoint_count(&self) -> usize {
         self.endpoint_clients.len()
+    }
+
+    pub fn randomize_endpoints(&self) -> bool {
+        self.randomize_endpoints
+    }
+
+    pub fn with_randomize_endpoints(mut self, randomize_endpoints: bool) -> Self {
+        self.randomize_endpoints = randomize_endpoints;
+        self
     }
 
     pub fn with_debug_dump_dir(mut self, debug_dump_dir: impl AsRef<Path>) -> Self {
@@ -311,8 +324,15 @@ impl VvLlmClient {
                 .position(|endpoint| endpoint.endpoint_id == preferred_endpoint_id)
             {
                 let preferred = endpoints.remove(index);
+                if self.randomize_endpoints {
+                    shuffle_endpoint_clients(&mut endpoints, self.next_endpoint_shuffle_seed());
+                }
                 endpoints.insert(0, preferred);
+                return endpoints;
             }
+        }
+        if self.randomize_endpoints {
+            shuffle_endpoint_clients(&mut endpoints, self.next_endpoint_shuffle_seed());
         }
         endpoints
     }
@@ -439,6 +459,7 @@ impl std::fmt::Debug for VvLlmClient {
             .field("debug_dump_dir", &self.debug_dump_dir)
             .field("max_retries_per_endpoint", &self.max_retries_per_endpoint)
             .field("backoff_seconds", &self.backoff_seconds)
+            .field("randomize_endpoints", &self.randomize_endpoints)
             .finish()
     }
 }
@@ -478,6 +499,47 @@ impl VvLlmClient {
             self.backoff_seconds * attempt as f64,
         ));
     }
+
+    fn next_endpoint_shuffle_seed(&self) -> u64 {
+        let counter = self
+            .endpoint_order_counter
+            .lock()
+            .map(|mut counter| {
+                *counter = counter.wrapping_add(1);
+                *counter
+            })
+            .unwrap_or(0);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos() as u64)
+            .unwrap_or(0);
+        nanos ^ counter.rotate_left(17)
+    }
+}
+
+fn shuffle_endpoint_clients(endpoints: &mut [EndpointChatClient], seed: u64) {
+    if endpoints.len() < 2 {
+        return;
+    }
+
+    let mut state = seed ^ ((endpoints.len() as u64) << 32) ^ 0x9E37_79B9_7F4A_7C15;
+    for index in (1..endpoints.len()).rev() {
+        let swap_index = (next_shuffle_u64(&mut state) as usize) % (index + 1);
+        endpoints.swap(index, swap_index);
+    }
+}
+
+fn next_shuffle_u64(state: &mut u64) -> u64 {
+    let mut value = if *state == 0 {
+        0xA076_1D64_78BD_642F
+    } else {
+        *state
+    };
+    value ^= value << 7;
+    value ^= value >> 9;
+    value ^= value << 8;
+    *state = value;
+    value
 }
 
 fn safe_model_filename(model_name: &str) -> String {
