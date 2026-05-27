@@ -220,6 +220,21 @@ fn memory_module_exports_compactable_tools_like_python() {
 }
 
 #[test]
+fn memory_submodules_match_python_import_paths() {
+    let _error =
+        vv_agent::memory::errors::CompactionExhaustedError::new(2, Some("last".to_string()));
+    let _manager_config = vv_agent::memory::manager::MemoryManagerConfig::default();
+    let _microcompact_config = vv_agent::memory::microcompact::MicrocompactConfig::default();
+    assert!(vv_agent::memory::microcompact::COMPACTABLE_TOOLS.contains(&"workspace_grep"));
+    let _restore_config =
+        vv_agent::memory::post_compact_restore::PostCompactRestoreConfig::default();
+    let _session_config = vv_agent::memory::session_memory::SessionMemoryConfig::default();
+    let _session_state = vv_agent::memory::session_memory::SessionMemoryState::default();
+    let sanitized = vv_agent::memory::message_sanitizer::sanitize_for_resume(&[]);
+    assert!(sanitized.is_empty());
+}
+
+#[test]
 fn runtime_module_exports_python_runtime_public_types() {
     let _inline = vv_agent::runtime::InlineBackend;
     let _cancelled = vv_agent::runtime::CancelledError::new("Operation was cancelled");

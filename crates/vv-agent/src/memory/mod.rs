@@ -1,10 +1,11 @@
 mod artifacts;
-mod errors;
-mod manager;
-mod message_sanitizer;
-mod microcompact;
-mod post_compact_restore;
+pub mod errors;
+pub mod manager;
+pub mod message_sanitizer;
+pub mod microcompact;
+pub mod post_compact_restore;
 mod session;
+pub mod session_memory;
 mod summary;
 pub mod token_utils;
 

@@ -173,6 +173,9 @@ The current Rust implementation includes:
   production client kept behind stable top-level exports. Python-style public
   aliases such as `LLMClient`, `ScriptedLLM`, and `VVLlmClient` are also
   exported for callers porting code from `v-agent`.
+- Split `memory/` submodules are public on the same import paths as Python,
+  including `errors`, `manager`, `message_sanitizer`, `microcompact`,
+  `post_compact_restore`, `session_memory`, and `token_utils`.
 - `llm::apply_claude_prompt_cache` mirrors Python's Anthropic prompt-cache
   planning helper for Claude direct and Vertex requests, including stable
   system sections, tool-schema breakpoints, history breakpoints, thinking-block
