@@ -152,7 +152,9 @@ The current Rust implementation includes:
   `cli`, `config`, `constants`, `integrations`, `llm`, `memory`, `processes`,
   `prompt`, `runtime`, `sdk`, `skills`, `tools`, `types`, and `workspace`.
 - The `integrations::SkillIntegration` public trait mirrors the Python
-  protocol with an `enabled()` capability check.
+  protocol with an `enabled()` capability check, and
+  `integrations::protocols::SkillIntegration` is re-exported to match Python's
+  `vv_agent.integrations.protocols` import path.
 - The `constants` module exposes Python-style tool names, `WORKSPACE_TOOLS`,
   default tool schemas, workspace tool schemas, and convenience accessors for
   the `task_finish`, `ask_user`, and `activate_skill` schemas. It also exposes
