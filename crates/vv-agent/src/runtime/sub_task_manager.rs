@@ -44,8 +44,8 @@ impl SubTaskManager {
         agent_name: impl Into<String>,
         task_title: impl Into<String>,
         runner: impl FnOnce() -> SubTaskOutcome + Send + 'static,
-    ) {
-        self.submit_with_workspace(task_id, session_id, agent_name, task_title, None, runner);
+    ) -> Result<(), String> {
+        self.submit_with_workspace(task_id, session_id, agent_name, task_title, None, runner)
     }
 
     pub fn submit_with_workspace(
@@ -56,13 +56,16 @@ impl SubTaskManager {
         task_title: impl Into<String>,
         workspace_backend: Option<Arc<dyn WorkspaceBackend>>,
         runner: impl FnOnce() -> SubTaskOutcome + Send + 'static,
-    ) {
+    ) -> Result<(), String> {
         let task_id = task_id.into();
         let session_id = session_id.into();
         let agent_name = agent_name.into();
         let task_title = task_title.into();
         {
             let mut tasks = self.tasks.lock().expect("sub-task manager poisoned");
+            if tasks.get(&task_id).is_some_and(ManagedSubTask::is_running) {
+                return Err(format!("Sub-task {task_id} is already running."));
+            }
             tasks.insert(
                 task_id.clone(),
                 ManagedSubTask {
@@ -102,6 +105,7 @@ impl SubTaskManager {
             record.handle = Some(handle);
             record.updated_at = now_millis();
         }
+        Ok(())
     }
 
     pub fn record_outcome(&self, task_id: &str, outcome: SubTaskOutcome) {

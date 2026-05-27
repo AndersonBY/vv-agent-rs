@@ -474,10 +474,12 @@ The current Rust implementation includes:
   sub-tasks are now session-driven and temporarily registered only while a run
   is active, so completed async sub-tasks can be continued through
   `sub_task_status(message=...)` while preserving prior messages and shared
-  state without leaking stale global sessions. Before a completed session is
-  resumed, stale resume messages are sanitized the same way as Python: empty /
-  thinking-only assistant messages and unresolved tail tool calls are removed
-  before the continuation prompt is appended.
+  state without leaking stale global sessions. `SubTaskManager::submit` rejects
+  duplicate running `task_id` submissions like Python instead of overwriting the
+  active record. Before a completed session is resumed, stale resume messages
+  are sanitized the same way as Python: empty / thinking-only assistant messages
+  and unresolved tail tool calls are removed before the continuation prompt is
+  appended.
 - Sub-agent model/backend resolution follows Python safety rules: a different
   sub-agent model requires a runtime `settings_file`, otherwise the sub-task
   fails explicitly instead of silently reusing the parent LLM client. When

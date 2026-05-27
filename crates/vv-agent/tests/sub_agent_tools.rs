@@ -379,6 +379,52 @@ fn create_sub_task_can_start_async_task_and_query_status() {
 }
 
 #[test]
+fn sub_task_manager_rejects_duplicate_running_submit_like_python() {
+    let manager = SubTaskManager::default();
+    manager
+        .submit("sub-dup", "session-dup", "researcher", "first run", || {
+            thread::sleep(Duration::from_millis(100));
+            SubTaskOutcome {
+                task_id: "sub-dup".to_string(),
+                agent_name: "researcher".to_string(),
+                status: AgentStatus::Completed,
+                session_id: Some("session-dup".to_string()),
+                final_answer: Some("done".to_string()),
+                wait_reason: None,
+                error: None,
+                cycles: 1,
+                todo_list: Vec::new(),
+                resolved: BTreeMap::new(),
+            }
+        })
+        .expect("first submit");
+
+    let error = manager
+        .submit(
+            "sub-dup",
+            "session-dup-2",
+            "researcher",
+            "second run",
+            || SubTaskOutcome {
+                task_id: "sub-dup".to_string(),
+                agent_name: "researcher".to_string(),
+                status: AgentStatus::Completed,
+                session_id: Some("session-dup-2".to_string()),
+                final_answer: Some("should not run".to_string()),
+                wait_reason: None,
+                error: None,
+                cycles: 1,
+                todo_list: Vec::new(),
+                resolved: BTreeMap::new(),
+            },
+        )
+        .expect_err("duplicate running submit should fail");
+
+    assert!(error.contains("already running"));
+    assert!(manager.wait("sub-dup", Some(Duration::from_secs(5))));
+}
+
+#[test]
 fn sub_task_status_reports_missing_and_invalid_task_ids() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
@@ -425,27 +471,29 @@ fn sub_task_status_can_steer_registered_running_session() {
             received: Arc::clone(&received),
         }),
     );
-    manager.submit(
-        "sub-task-1",
-        "sub-session-1",
-        "researcher",
-        "Collect facts",
-        || {
-            thread::sleep(Duration::from_millis(100));
-            SubTaskOutcome {
-                task_id: "sub-task-1".to_string(),
-                agent_name: "researcher".to_string(),
-                status: AgentStatus::Completed,
-                session_id: Some("sub-session-1".to_string()),
-                final_answer: Some("done".to_string()),
-                wait_reason: None,
-                error: None,
-                cycles: 1,
-                todo_list: Vec::new(),
-                resolved: BTreeMap::new(),
-            }
-        },
-    );
+    manager
+        .submit(
+            "sub-task-1",
+            "sub-session-1",
+            "researcher",
+            "Collect facts",
+            || {
+                thread::sleep(Duration::from_millis(100));
+                SubTaskOutcome {
+                    task_id: "sub-task-1".to_string(),
+                    agent_name: "researcher".to_string(),
+                    status: AgentStatus::Completed,
+                    session_id: Some("sub-session-1".to_string()),
+                    final_answer: Some("done".to_string()),
+                    wait_reason: None,
+                    error: None,
+                    cycles: 1,
+                    todo_list: Vec::new(),
+                    resolved: BTreeMap::new(),
+                }
+            },
+        )
+        .expect("submit running sub-task");
 
     let result = registry
         .execute(
@@ -733,27 +781,29 @@ fn sub_task_status_snapshot_tracks_session_activity_and_workspace_files() {
     let mut context = ToolContext::new(workspace.path());
     context.sub_task_manager = Some(manager.clone());
     let session = Arc::new(EventingSubAgentSession::default());
-    manager.submit(
-        "sub-task-snapshot",
-        "sub-session-snapshot",
-        "researcher",
-        "Inspect docs",
-        || {
-            thread::sleep(Duration::from_millis(100));
-            SubTaskOutcome {
-                task_id: "sub-task-snapshot".to_string(),
-                agent_name: "researcher".to_string(),
-                status: AgentStatus::Completed,
-                session_id: Some("sub-session-snapshot".to_string()),
-                final_answer: Some("done".to_string()),
-                wait_reason: None,
-                error: None,
-                cycles: 1,
-                todo_list: Vec::new(),
-                resolved: BTreeMap::new(),
-            }
-        },
-    );
+    manager
+        .submit(
+            "sub-task-snapshot",
+            "sub-session-snapshot",
+            "researcher",
+            "Inspect docs",
+            || {
+                thread::sleep(Duration::from_millis(100));
+                SubTaskOutcome {
+                    task_id: "sub-task-snapshot".to_string(),
+                    agent_name: "researcher".to_string(),
+                    status: AgentStatus::Completed,
+                    session_id: Some("sub-session-snapshot".to_string()),
+                    final_answer: Some("done".to_string()),
+                    wait_reason: None,
+                    error: None,
+                    cycles: 1,
+                    todo_list: Vec::new(),
+                    resolved: BTreeMap::new(),
+                }
+            },
+        )
+        .expect("submit snapshot sub-task");
     manager.attach_session(
         "sub-task-snapshot",
         "sub-session-snapshot",

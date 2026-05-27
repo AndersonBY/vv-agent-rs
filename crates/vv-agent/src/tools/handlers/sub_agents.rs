@@ -106,14 +106,16 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                         .insert("session_id".to_string(), Value::String(session_id.clone()));
                     let agent_name = request.agent_name.clone();
                     let task_description = request.task_description.clone();
-                    manager.submit_with_workspace(
+                    if let Err(error) = manager.submit_with_workspace(
                         task_id.clone(),
                         session_id.clone(),
                         agent_name.clone(),
                         task_description.clone(),
                         Some(context.workspace_backend.clone()),
                         move || runner(request),
-                    );
+                    ) {
+                        return tool_error_with_code(error, "sub_task_already_running");
+                    }
                     return tool_result(
                         ToolResultStatus::Success,
                         json!({
@@ -213,14 +215,24 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                         .insert("session_id".to_string(), Value::String(session_id.clone()));
                     let task_title = request.task_description.clone();
                     let runner = runner.clone();
-                    manager.submit_with_workspace(
+                    if let Err(error) = manager.submit_with_workspace(
                         task_id.clone(),
                         session_id.clone(),
                         agent_name.clone(),
                         task_title.clone(),
                         Some(context.workspace_backend.clone()),
                         move || runner(request),
-                    );
+                    ) {
+                        results.push(json!({
+                            "index": index,
+                            "task_id": task_id,
+                            "session_id": session_id,
+                            "agent_name": agent_name,
+                            "status": "failed",
+                            "error": error,
+                        }));
+                        continue;
+                    }
                     started += 1;
                     task_ids.push(task_id.clone());
                     results.push(json!({
