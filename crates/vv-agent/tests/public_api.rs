@@ -211,6 +211,20 @@ fn constants_module_exports_python_tool_names_and_workspace_tool_list() {
         constants::activate_skill_tool_schema()["function"]["name"],
         constants::ACTIVATE_SKILL_TOOL_NAME
     );
+    assert_eq!(
+        constants::tool_names::ASK_USER_TOOL_NAME,
+        constants::ASK_USER_TOOL_NAME
+    );
+    assert_eq!(
+        constants::workspace::WORKSPACE_TOOLS[0],
+        constants::LIST_FILES_TOOL_NAME
+    );
+    assert!(constants::workspace::get_default_tool_schemas()
+        .contains_key(constants::TASK_FINISH_TOOL_NAME));
+    assert_eq!(
+        constants::workspace::task_finish_tool_schema()["function"]["name"],
+        constants::TASK_FINISH_TOOL_NAME
+    );
 }
 
 #[test]

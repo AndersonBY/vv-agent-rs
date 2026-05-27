@@ -155,7 +155,8 @@ The current Rust implementation includes:
   protocol with an `enabled()` capability check.
 - The `constants` module exposes Python-style tool names, `WORKSPACE_TOOLS`,
   default tool schemas, workspace tool schemas, and convenience accessors for
-  the `task_finish`, `ask_user`, and `activate_skill` schemas.
+  the `task_finish`, `ask_user`, and `activate_skill` schemas. It also exposes
+  Python-matched `constants::tool_names` and `constants::workspace` submodules.
 - `vv-llm = "0.1.0"` backed chat client construction through
   `build_vv_llm_from_local_settings`, settings-based endpoint resolution, and
   provider HTTP/protocol handling delegated to `vv-llm`, while keeping

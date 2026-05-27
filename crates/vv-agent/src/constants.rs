@@ -59,3 +59,30 @@ pub fn activate_skill_tool_schema() -> Value {
 fn schema_or_null(name: &str) -> Value {
     crate::tools::schemas::schema_for(name).unwrap_or(Value::Null)
 }
+
+pub mod tool_names {
+    pub use super::{
+        ACTIVATE_SKILL_TOOL_NAME, ASK_USER_TOOL_NAME, BASH_TOOL_NAME,
+        CHECK_BACKGROUND_COMMAND_TOOL_NAME, COMPRESS_MEMORY_TOOL_NAME, CREATE_SUB_TASK_TOOL_NAME,
+        FILE_INFO_TOOL_NAME, FILE_STR_REPLACE_TOOL_NAME, LIST_FILES_TOOL_NAME, READ_FILE_TOOL_NAME,
+        READ_IMAGE_TOOL_NAME, SUB_TASK_STATUS_TOOL_NAME, TASK_FINISH_TOOL_NAME,
+        TODO_INCOMPLETE_ERROR_CODE, TODO_WRITE_TOOL_NAME, WORKSPACE_GREP_TOOL_NAME,
+        WRITE_FILE_TOOL_NAME,
+    };
+}
+
+pub mod workspace {
+    pub use super::{get_default_tool_schemas, workspace_tools_schemas, WORKSPACE_TOOLS};
+
+    pub fn task_finish_tool_schema() -> serde_json::Value {
+        super::task_finish_tool_schema()
+    }
+
+    pub fn ask_user_tool_schema() -> serde_json::Value {
+        super::ask_user_tool_schema()
+    }
+
+    pub fn activate_skill_tool_schema() -> serde_json::Value {
+        super::activate_skill_tool_schema()
+    }
+}
