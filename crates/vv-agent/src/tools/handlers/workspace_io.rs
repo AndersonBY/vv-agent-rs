@@ -24,6 +24,11 @@ pub(crate) fn list_files_tool() -> ToolSpec {
                 .and_then(Value::as_u64)
                 .unwrap_or(500)
                 .clamp(1, 5_000) as usize;
+            let scan_limit = arguments
+                .get("scan_limit")
+                .and_then(Value::as_u64)
+                .unwrap_or(50_000)
+                .max(max_results as u64) as usize;
             let include_ignored = arguments
                 .get("include_ignored")
                 .and_then(Value::as_bool)
@@ -46,17 +51,31 @@ pub(crate) fn list_files_tool() -> ToolSpec {
                                 .is_none_or(|root| !is_ignored_root(root))
                         });
                     }
-                    let count = files.len();
+                    let actual_count = files.len();
+                    let scan_limited = actual_count > scan_limit;
+                    let count = if scan_limited {
+                        scan_limit
+                    } else {
+                        actual_count
+                    };
                     let returned = files.into_iter().take(max_results).collect::<Vec<_>>();
                     let mut payload = json!({
                         "files": returned,
                         "count": count,
                         "returned_count": count.min(max_results),
-                        "truncated": count > max_results,
+                        "truncated": scan_limited || count > max_results,
                         "max_results": max_results,
                     });
                     if count > max_results {
                         payload["remaining_count"] = Value::Number((count - max_results).into());
+                    }
+                    if scan_limited {
+                        payload["count_is_estimate"] = Value::Bool(true);
+                        payload["scan_limit"] = Value::Number(scan_limit.into());
+                        payload["message"] = Value::String(
+                            "Listing stopped early due to scan limit. Narrow `path`/`glob` or increase `scan_limit` for more complete results."
+                                .to_string(),
+                        );
                     }
                     if !ignored_roots.is_empty() {
                         payload["ignored_roots"] = Value::Array(

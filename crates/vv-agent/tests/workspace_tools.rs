@@ -89,6 +89,37 @@ fn list_files_skips_common_dependency_roots_by_default() {
 }
 
 #[test]
+fn list_files_reports_estimated_count_when_scan_limit_is_reached_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    for index in 0..40 {
+        std::fs::write(workspace.path().join(format!("scan_{index:03}.txt")), "x")
+            .expect("scan file");
+    }
+
+    let list = registry
+        .execute(
+            &ToolCall::new(
+                "list_scan_limit",
+                "list_files",
+                BTreeMap::from([
+                    ("max_results".to_string(), json!(10)),
+                    ("scan_limit".to_string(), json!(12)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("list tool");
+    let payload: Value = serde_json::from_str(&list.content).expect("list payload");
+
+    assert_eq!(payload["returned_count"], 10);
+    assert_eq!(payload["truncated"], true);
+    assert_eq!(payload["count_is_estimate"], true);
+    assert_eq!(payload["scan_limit"], 12);
+}
+
+#[test]
 fn file_info_reports_file_metadata() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
