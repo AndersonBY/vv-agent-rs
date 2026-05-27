@@ -176,7 +176,8 @@ The current Rust implementation includes:
   preview fields.
 - The in-crate `vv-agent` CLI mirrors Python `cli.py` flags for prompt,
   backend/model, settings file, workspace, max cycles, language, agent type,
-  verbose logs, prompt bundle construction, and JSON result payloads.
+  verbose logs, prompt bundle construction, JSON result payloads, and resolved
+  vv-llm token-limit propagation into runtime memory metadata.
 - Python-style runtime token usage helpers normalize raw provider usage payloads
   across prompt/completion and input/output naming variants, preserve the raw
   usage payload, and summarize per-cycle totals.

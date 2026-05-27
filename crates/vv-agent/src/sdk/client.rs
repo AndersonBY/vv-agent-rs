@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::config::{build_vv_llm_from_local_settings, ResolvedModelConfig};
+use crate::config::{
+    apply_resolved_model_limits, build_vv_llm_from_local_settings, ResolvedModelConfig,
+};
 use crate::llm::{LlmClient, ScriptedLlmClient};
 use crate::prompt::{
     build_raw_system_prompt_sections, build_system_prompt_bundle_with_options,
@@ -212,19 +214,6 @@ fn task_from_definition(definition: &AgentDefinition, prompt: String) -> AgentTa
             .or_insert(Value::Array(system_prompt_sections));
     }
     task
-}
-
-fn apply_resolved_model_limits(task: &mut AgentTask, resolved: &ResolvedModelConfig) {
-    if let Some(context_length) = resolved.context_length {
-        task.metadata
-            .entry("model_context_window".to_string())
-            .or_insert_with(|| Value::from(context_length));
-    }
-    if let Some(max_output_tokens) = resolved.max_output_tokens {
-        task.metadata
-            .entry("reserved_output_tokens".to_string())
-            .or_insert_with(|| Value::from(max_output_tokens));
-    }
 }
 
 fn system_prompt_from_definition(definition: &AgentDefinition) -> (String, Vec<Value>) {

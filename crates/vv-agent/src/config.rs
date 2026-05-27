@@ -6,6 +6,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::llm::VvLlmClient;
+use crate::types::AgentTask;
 
 mod python_settings;
 
@@ -91,6 +92,19 @@ impl ResolvedModelConfig {
 
     pub fn endpoint(&self) -> Option<&EndpointConfig> {
         self.endpoint_options.first().map(|option| &option.endpoint)
+    }
+}
+
+pub fn apply_resolved_model_limits(task: &mut AgentTask, resolved: &ResolvedModelConfig) {
+    if let Some(context_length) = resolved.context_length {
+        task.metadata
+            .entry("model_context_window".to_string())
+            .or_insert_with(|| Value::from(context_length));
+    }
+    if let Some(max_output_tokens) = resolved.max_output_tokens {
+        task.metadata
+            .entry("reserved_output_tokens".to_string())
+            .or_insert_with(|| Value::from(max_output_tokens));
     }
 }
 

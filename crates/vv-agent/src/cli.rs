@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 use chrono::{SecondsFormat, Utc};
 use serde_json::{json, Value};
 
-use crate::config::{build_vv_llm_from_local_settings, ResolvedModelConfig};
+use crate::config::{
+    apply_resolved_model_limits, build_vv_llm_from_local_settings, ResolvedModelConfig,
+};
 use crate::prompt::{build_system_prompt_bundle_with_options, BuildSystemPromptOptions};
 use crate::runtime::{AgentRuntime, RuntimeLogCallback};
 use crate::types::{AgentResult, AgentStatus, AgentTask};
@@ -136,6 +138,16 @@ pub fn build_cli_task(
     Ok(task)
 }
 
+pub fn build_cli_task_from_resolved(
+    args: &CliArgs,
+    resolved: &ResolvedModelConfig,
+    task_id: impl Into<String>,
+) -> Result<AgentTask, String> {
+    let mut task = build_cli_task(args, resolved.model_id.clone(), task_id)?;
+    apply_resolved_model_limits(&mut task, resolved);
+    Ok(task)
+}
+
 pub fn result_payload(result: &AgentResult, resolved: &ResolvedModelConfig) -> Value {
     json!({
         "status": status_value(result.status),
@@ -166,7 +178,7 @@ pub fn main() -> Result<(), String> {
     runtime.workspace_backend = Arc::new(LocalWorkspaceBackend::new(args.workspace.clone()));
     runtime.log_handler = build_cli_log_handler(args.verbose);
 
-    let task = build_cli_task(&args, resolved.model_id.clone(), generate_task_id())?;
+    let task = build_cli_task_from_resolved(&args, &resolved, generate_task_id())?;
     let result = runtime.run(task).map_err(|err| err.to_string())?;
     let payload = result_payload(&result, &resolved);
     let output = serde_json::to_string_pretty(&payload).map_err(|err| err.to_string())?;

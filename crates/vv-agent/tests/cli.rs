@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use vv_agent::cli::{build_cli_task, parse_cli_args_from_with_default_settings, result_payload};
+use vv_agent::cli::{
+    build_cli_task, build_cli_task_from_resolved, parse_cli_args_from_with_default_settings,
+    result_payload,
+};
 use vv_agent::{AgentResult, AgentStatus, ResolvedModelConfig};
 
 #[test]
@@ -66,6 +69,35 @@ fn cli_task_uses_prompt_bundle_and_metadata_sections() {
         .contains("Vector Vein agent runtime demo"));
     assert_eq!(task.metadata["language"], "zh-CN");
     assert!(task.metadata["system_prompt_sections"].is_array());
+}
+
+#[test]
+fn cli_task_applies_resolved_vv_llm_token_limits_to_memory_metadata() {
+    let args = parse_cli_args_from_with_default_settings(
+        [
+            "vv-agent",
+            "--prompt",
+            "inspect screenshot",
+            "--workspace",
+            ".",
+        ],
+        "dev_settings.json",
+    )
+    .expect("parse args");
+    let resolved = ResolvedModelConfig::new(
+        "deepseek",
+        "deepseek-v4-pro",
+        "deepseek-v4-pro",
+        "deepseek-v4-pro",
+        vec![],
+    )
+    .with_token_limits(Some(1_000_000), Some(384_000));
+
+    let task = build_cli_task_from_resolved(&args, &resolved, "task_fixed").expect("task");
+
+    assert_eq!(task.model, "deepseek-v4-pro");
+    assert_eq!(task.metadata["model_context_window"], 1_000_000);
+    assert_eq!(task.metadata["reserved_output_tokens"], 384_000);
 }
 
 #[test]
