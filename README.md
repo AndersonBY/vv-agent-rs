@@ -14,7 +14,11 @@ vv-agent-rs/
       config.rs
       constants.rs
       integrations.rs
-      llm.rs
+      llm/
+        base.rs
+        mod.rs
+        scripted.rs
+        vv_llm_client.rs
       memory/
         artifacts.rs
         manager.rs
@@ -34,7 +38,12 @@ vv-agent-rs/
         results.rs
         sub_agents.rs
         token_usage.rs
-      sdk.rs
+      sdk/
+        client.rs
+        mod.rs
+        resources.rs
+        session.rs
+        types.rs
       skills/
         errors.rs
         mod.rs
@@ -72,7 +81,12 @@ vv-agent-rs/
           sub_agents.rs
           workspace_io.rs
       types.rs
-      workspace.rs
+      workspace/
+        base.rs
+        local.rs
+        memory.rs
+        mod.rs
+        s3.rs
       cli.rs
       main.rs
     tests/
@@ -214,6 +228,8 @@ The current Rust implementation includes:
   discovery, frontmatter parsing, metadata normalization, validation modes,
   diagnostics, and `<available_skills>` prompt rendering with the same
   progressive budget degradation used by `v-agent`.
+- Split `sdk/` modules matching Python's `types`, `resources`, `session`, and
+  `client` layers while keeping the crate-level SDK exports stable.
 - `activate_skill` now reuses the public skill parser / normalization layer and
   keeps handler-local state helpers for activation tracking.
 - Default tool schemas now use reference-quality descriptions derived from

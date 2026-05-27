@@ -14,7 +14,11 @@ vv-agent-rs/
       config.rs
       constants.rs
       integrations.rs
-      llm.rs
+      llm/
+        base.rs
+        mod.rs
+        scripted.rs
+        vv_llm_client.rs
       memory/
         artifacts.rs
         manager.rs
@@ -34,7 +38,12 @@ vv-agent-rs/
         results.rs
         sub_agents.rs
         token_usage.rs
-      sdk.rs
+      sdk/
+        client.rs
+        mod.rs
+        resources.rs
+        session.rs
+        types.rs
       skills/
         errors.rs
         mod.rs
@@ -72,7 +81,12 @@ vv-agent-rs/
           sub_agents.rs
           workspace_io.rs
       types.rs
-      workspace.rs
+      workspace/
+        base.rs
+        local.rs
+        memory.rs
+        mod.rs
+        s3.rs
       cli.rs
       main.rs
     tests/
@@ -133,6 +147,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - `tools/` 已按 Python `v-agent` 的结构拆分为 `base`、`registry`、dispatcher、canonical `schemas/` domain modules、共享 `common` helper 和各个 handler 模块；`ToolRegistry` 支持 Python 风格自定义工具注册，可使用默认空参数 schema 或显式 JSON Schema 参数。
 - 已补 Python 风格 tool dispatch：会把 LLM 原始工具参数解析错误转换成结构化 tool result，补齐 missing / pending tool call id，把 wait-user directive 映射为 `WAIT_RESPONSE`，并在未知工具时返回 `tool_not_found`，避免 transcript 丢失工具结果。
 - 公开 `skills/` 模块已拆成 Python 风格的 skill model、目录发现、frontmatter 解析、metadata 归一化、validation mode、diagnostics 和 `<available_skills>` prompt 渲染，并支持与 `v-agent` 一致的预算降级策略。
+- `sdk/` 已按 Python 的 `types`、`resources`、`session` 和 `client` 层级拆分，同时保持 crate 顶层 SDK 导出稳定。
 - `activate_skill` 现在复用公开 skill parser / normalization 层，handler 内只保留 activation state helper。
 - 默认工具 schema 使用参考 Python `v-agent` 的高信息量描述，并对 `task_finish`、`list_files`、`write_file`、`file_str_replace`、`file_info`、`compress_memory`、`check_background_command`、`read_image` 等高影响工具补充更具体的操作约束，让模型拿到文件访问、grep、bash / 后台命令、todo、skills、图片和 sub-agent 的完整操作指引。
 - planned tool schemas 已加入 Python 风格动态 runtime shell hint，`bash` 会在 LLM 可见 description 里提示实际 shell 前缀或 shell 配置错误。

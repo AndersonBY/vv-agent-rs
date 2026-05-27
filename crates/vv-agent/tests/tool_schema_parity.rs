@@ -122,6 +122,11 @@ fn tools_module_is_split_into_handler_files() {
         "workspace/local.rs",
         "workspace/memory.rs",
         "workspace/s3.rs",
+        "sdk/mod.rs",
+        "sdk/types.rs",
+        "sdk/resources.rs",
+        "sdk/session.rs",
+        "sdk/client.rs",
     ] {
         assert!(root.join(relative).is_file(), "missing {relative}");
     }
@@ -151,6 +156,7 @@ fn tools_module_is_split_into_handler_files() {
             "workspace.rs",
             "workspace.rs should be split into src/workspace/ modules",
         ),
+        ("sdk.rs", "sdk.rs should be split into src/sdk/ modules"),
         (
             "tools/schemas.rs",
             "schemas.rs should be split into src/tools/schemas/ domain modules",
