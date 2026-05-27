@@ -138,6 +138,11 @@ fn normalize_rg_relative_path(path: std::borrow::Cow<'_, str>) -> String {
         .to_string()
 }
 
+fn is_workspace_root_path(path: &str) -> bool {
+    let normalized = path.trim();
+    normalized.is_empty() || normalized.replace('\\', "/") == "."
+}
+
 fn local_ignored_root_names(base_path: &Path) -> Vec<String> {
     let mut roots = std::fs::read_dir(base_path)
         .ok()
@@ -197,6 +202,7 @@ pub(crate) fn list_files_tool() -> ToolSpec {
                 Err(error) => return path_escapes_workspace_error(error),
             };
             let backend = context.effective_workspace_backend();
+            let root_listing = is_workspace_root_path(path);
             let rg_result = backend
                 .as_any()
                 .downcast_ref::<LocalWorkspaceBackend>()
@@ -204,7 +210,6 @@ pub(crate) fn list_files_tool() -> ToolSpec {
                     if !resolved_path.is_dir() {
                         return None;
                     }
-                    let root_listing = path == ".";
                     let ignored_root_names = if root_listing && !include_ignored {
                         local_ignored_root_names(&resolved_path)
                     } else {
@@ -237,12 +242,12 @@ pub(crate) fn list_files_tool() -> ToolSpec {
             } else {
                 match backend.list_files(path, glob) {
                     Ok(mut files) => {
-                        let ignored_roots = if include_ignored || path != "." {
+                        let ignored_roots = if include_ignored || !root_listing {
                             Vec::new()
                         } else {
                             collect_ignored_roots(&files)
                         };
-                        if !include_ignored && path == "." {
+                        if !include_ignored && root_listing {
                             files.retain(|path| {
                                 path.split('/')
                                     .next()

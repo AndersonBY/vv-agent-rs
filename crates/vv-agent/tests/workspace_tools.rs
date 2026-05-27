@@ -179,6 +179,32 @@ fn list_files_skips_common_dependency_roots_by_default() {
 }
 
 #[test]
+fn list_files_empty_path_is_workspace_root_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::create_dir_all(workspace.path().join("src")).expect("src dir");
+    std::fs::create_dir_all(workspace.path().join("node_modules/pkg")).expect("node_modules dir");
+    std::fs::write(workspace.path().join("src/main.rs"), "fn main() {}").expect("src file");
+    std::fs::write(workspace.path().join("node_modules/pkg/a.js"), "a").expect("ignored file");
+
+    let list = registry
+        .execute(
+            &ToolCall::new(
+                "list_empty_path",
+                "list_files",
+                BTreeMap::from([("path".to_string(), json!(""))]),
+            ),
+            &mut context,
+        )
+        .expect("list tool");
+
+    assert!(list.content.contains("src/main.rs"));
+    assert!(!list.content.contains("node_modules/pkg/a.js"));
+    assert!(list.content.contains("ignored_roots"));
+}
+
+#[test]
 fn list_files_excludes_hidden_by_default_and_can_include_them_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
