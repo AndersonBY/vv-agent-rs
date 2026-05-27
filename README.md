@@ -11,6 +11,7 @@ vv-agent-rs/
   Cargo.toml
   crates/vv-agent/
     src/
+      background_sessions.rs
       config.rs
       constants.rs
       integrations.rs
@@ -33,11 +34,17 @@ vv-agent-rs/
         mod.rs
         templates.rs
       runtime/
+        background_sessions.rs
+        cancellation.rs
+        context.rs
         engine.rs
         hooks.rs
         mod.rs
+        processes.rs
         results.rs
         sub_agents.rs
+        sub_agent_sessions.rs
+        sub_task_manager.rs
         token_usage.rs
       sdk/
         client.rs
@@ -54,6 +61,8 @@ vv-agent-rs/
         prompt.rs
         validator.rs
       sub_agent_sessions.rs
+      sub_task_manager.rs
+      processes.rs
       tools/
         base.rs
         common.rs
@@ -147,9 +156,11 @@ The current Rust implementation includes:
   is delegated to `vv-llm`.
 - A basic multi-cycle runtime that sends tool schemas to the LLM, executes tool
   calls, and converges on `task_finish` or `ask_user`.
-- Split `runtime/` modules for cancellation, hooks, shell resolution, state
+- Split `runtime/` modules for background sessions, captured processes,
+  cancellation, hooks, shell resolution, state
   stores, `engine.rs` main runtime execution, cycle-runner retry helpers,
-  tool-call running helpers, tool-result extraction, sub-agent execution, and Python-style
+  tool-call running helpers, tool-result extraction, sub-agent execution,
+  sub-agent session registry, sub-task manager, and Python-style
   `runtime/backends/` submodules for inline/thread/celery/celery_tasks paths so
   deeper Python parity work can stay localized.
 - Runtime hooks modeled after Python `RuntimeHookManager`: callers can patch
