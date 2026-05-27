@@ -11,7 +11,7 @@ pub(super) fn bash_schema() -> Value {
                 "properties": {
                     "command": {"type": "string", "description": "Shell command string executed through the configured shell."},
                     "exec_dir": {"type": "string", "description": "Execution directory (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
-                    "timeout": {"type": "integer", "description": "Timeout seconds, default 300, max 600."},
+                    "timeout": {"type": "integer", "description": "Timeout seconds, default 300, max 600. numeric string values are accepted for Python compatibility."},
                     "stdin": {"type": "string", "description": "Optional stdin content."},
                     "auto_confirm": {"type": "boolean", "description": "Pipe yes to command when true."},
                     "run_in_background": {"type": "boolean", "description": "Run command in background and return session_id for polling."}

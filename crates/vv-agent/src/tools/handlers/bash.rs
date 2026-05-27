@@ -11,7 +11,7 @@ use crate::processes::{
 use crate::runtime::shell::{normalize_windows_shell_priority, prepare_shell_execution};
 use crate::tools::base::ToolSpec;
 use crate::tools::common::{
-    path_escapes_workspace_error, tool_error_with_code, tool_result,
+    parse_integer_arg, path_escapes_workspace_error, tool_error_with_code, tool_result,
     workspace_relative_path_or_absolute,
 };
 use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
@@ -59,11 +59,18 @@ pub(crate) fn bash_tool() -> ToolSpec {
                     "invalid_exec_dir",
                 );
             }
-            let timeout_seconds = arguments
-                .get("timeout")
-                .and_then(Value::as_u64)
-                .unwrap_or(300)
-                .clamp(1, 600);
+            let timeout_seconds = match arguments.get("timeout") {
+                Some(value) => match parse_integer_arg(value) {
+                    Ok(timeout) => timeout.clamp(1, 600) as u64,
+                    Err(_) => {
+                        return tool_error_with_code(
+                            "`timeout` must be an integer",
+                            "invalid_timeout",
+                        );
+                    }
+                },
+                None => 300,
+            };
             let stdin_text = arguments.get("stdin").and_then(Value::as_str);
             let auto_confirm = arguments
                 .get("auto_confirm")

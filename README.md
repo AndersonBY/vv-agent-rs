@@ -298,9 +298,10 @@ The current Rust implementation includes:
   targets that bypass hidden/ignored directory filtering like Python);
   memory notes through `compress_memory`; and `bash` /
   `check_background_command` command tools with captured output, Python-style
-  replacement decoding, stdin, metadata-controlled shell selection via
-  `bash_shell`, foreground timeout handoff, background polling, and automatic
-  terminal background-session listener notifications.
+  replacement decoding, stdin, numeric-string timeout parsing,
+  metadata-controlled shell selection via `bash_shell`, foreground timeout
+  handoff, background polling, and automatic terminal background-session
+  listener notifications.
 - Python-compatible workspace path safety: `LocalWorkspaceBackend` rejects
   paths outside the workspace by default, and file/image/grep/bash tools keep
   metadata-controlled outside-path access for trusted tasks. Tool contexts

@@ -258,6 +258,35 @@ fn foreground_timeout_moves_command_to_background() {
 }
 
 #[test]
+fn bash_tool_accepts_string_timeout_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "bash_string_timeout",
+                "bash",
+                BTreeMap::from([
+                    ("command".to_string(), json!("printf partial; sleep 2")),
+                    ("timeout".to_string(), json!("1")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("bash string timeout");
+
+    assert_eq!(result.status, ToolResultStatus::Running);
+    let payload: Value = serde_json::from_str(&result.content).expect("timeout payload");
+    assert_eq!(payload["transitioned_to_background"], true);
+    assert!(payload["output"]
+        .as_str()
+        .expect("output")
+        .contains("partial"));
+}
+
+#[test]
 fn bash_tool_passes_stdin_to_command() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
