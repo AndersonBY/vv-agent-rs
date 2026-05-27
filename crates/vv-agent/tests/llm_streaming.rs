@@ -445,6 +445,36 @@ fn vv_llm_stream_collects_raw_content_blocks_like_python() {
     assert_eq!(raw_content[1]["text"], json!("visible text"));
 }
 
+#[test]
+fn vv_llm_client_debug_dump_writes_request_messages_like_python() {
+    let dump_dir = tempfile::tempdir().expect("dump dir");
+    let chat_client = RecordingMessagesChatClient::default();
+    let llm = VvLlmClient::new(
+        "openai",
+        "gpt/4o-mini",
+        "gpt/4o-mini",
+        Box::new(chat_client),
+        90.0,
+    )
+    .with_debug_dump_dir(dump_dir.path());
+
+    let response = llm
+        .complete(LlmRequest::new("gpt/4o-mini", vec![Message::user("hello")]))
+        .expect("debug dump request");
+
+    assert_eq!(response.content, "recorded");
+    let dump_files = std::fs::read_dir(dump_dir.path())
+        .expect("read dump dir")
+        .map(|entry| entry.expect("dump entry").file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(dump_files, vec!["request_001_gpt_4o-mini.json"]);
+    let payload =
+        std::fs::read_to_string(dump_dir.path().join(&dump_files[0])).expect("read dump payload");
+    assert!(payload.contains("\"request_index\": 1"));
+    assert!(payload.contains("\"message_count\": 1"));
+}
+
 #[derive(Clone, Default)]
 struct RawContentChatClient;
 

@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
 use serde_json::Value;
@@ -38,6 +39,8 @@ pub struct VvLlmClient {
     pub selected_model: String,
     pub model_id: String,
     pub timeout_seconds: f64,
+    pub debug_dump_dir: Option<PathBuf>,
+    request_counter: Arc<Mutex<u64>>,
     endpoint_clients: Vec<EndpointChatClient>,
 }
 
@@ -97,6 +100,8 @@ impl VvLlmClient {
             selected_model: selected_model.into(),
             model_id: model_id.into(),
             timeout_seconds,
+            debug_dump_dir: None,
+            request_counter: Arc::new(Mutex::new(0)),
             endpoint_clients: endpoint_clients
                 .into_iter()
                 .map(|(endpoint_id, model_id, chat_client)| EndpointChatClient {
@@ -121,6 +126,11 @@ impl VvLlmClient {
 
     pub fn endpoint_count(&self) -> usize {
         self.endpoint_clients.len()
+    }
+
+    pub fn with_debug_dump_dir(mut self, debug_dump_dir: impl AsRef<Path>) -> Self {
+        self.debug_dump_dir = Some(debug_dump_dir.as_ref().to_path_buf());
+        self
     }
 }
 
@@ -197,6 +207,7 @@ impl VvLlmClient {
         if should_stream {
             chat_request.options.stream = Some(true);
         }
+        self.dump_request_messages(&chat_request.messages, &request_model);
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -335,7 +346,55 @@ impl std::fmt::Debug for VvLlmClient {
             .field("model_id", &self.model_id)
             .field("provider_name", &self.provider_name())
             .field("timeout_seconds", &self.timeout_seconds)
+            .field("debug_dump_dir", &self.debug_dump_dir)
             .finish()
+    }
+}
+
+impl VvLlmClient {
+    fn dump_request_messages(&self, messages: &[vv_llm::Message], model_name: &str) {
+        let Some(dump_dir) = &self.debug_dump_dir else {
+            return;
+        };
+        let Ok(mut request_counter) = self.request_counter.lock() else {
+            return;
+        };
+        *request_counter += 1;
+        let request_index = *request_counter;
+
+        let _ = std::fs::create_dir_all(dump_dir);
+        let filename = format!(
+            "request_{request_index:03}_{}.json",
+            safe_model_filename(model_name)
+        );
+        let payload = serde_json::json!({
+            "request_index": request_index,
+            "model": model_name,
+            "message_count": messages.len(),
+            "messages": messages,
+        });
+        if let Ok(content) = serde_json::to_string_pretty(&payload) {
+            let _ = std::fs::write(dump_dir.join(filename), content);
+        }
+    }
+}
+
+fn safe_model_filename(model_name: &str) -> String {
+    let safe = model_name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let safe = safe.trim_matches('_');
+    if safe.is_empty() {
+        "model".to_string()
+    } else {
+        safe.to_string()
     }
 }
 

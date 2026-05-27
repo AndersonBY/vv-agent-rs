@@ -191,7 +191,9 @@ The current Rust implementation includes:
   client now applies vv-llm-supported Python request options for DeepSeek
   reasoning temperature, Claude thinking model normalization and token budget,
   Gemini 3 preview routing, MiniMax multi-system message preparation, and
-  Python-style streaming `raw_content` block aggregation.
+  Python-style streaming `raw_content` block aggregation. `VvLlmClient` and
+  SDK-built vv-llm runtimes also support Python-style debug request dumps via
+  `debug_dump_dir`.
 - Core runtime types expose Python-style `to_dict` / `from_dict` helpers for
   task, result, message, cycle, tool-call, and tool-result payloads, including
   legacy tool `status` plus `status_code` for worker interoperability.

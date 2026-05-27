@@ -557,13 +557,16 @@ fn build_llm_from_options(
             options.timeout_seconds,
         );
     }
-    let (llm, resolved) = build_vv_llm_from_local_settings(
+    let (mut llm, resolved) = build_vv_llm_from_local_settings(
         &options.settings_file,
         backend,
         model,
         options.timeout_seconds,
     )
     .map_err(|err| err.to_string())?;
+    if let Some(debug_dump_dir) = &options.debug_dump_dir {
+        llm = llm.with_debug_dump_dir(debug_dump_dir);
+    }
     Ok((Arc::new(llm), resolved))
 }
 
