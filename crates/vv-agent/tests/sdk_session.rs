@@ -44,6 +44,47 @@ fn session_state_starts_with_python_style_todo_list() {
 }
 
 #[test]
+fn session_exposes_python_style_state_accessors() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let execute_run = Arc::new(|prompt: String| {
+        Ok(AgentRun {
+            agent_name: "demo-agent".to_string(),
+            result: vv_agent::AgentResult::completed(
+                vec![vv_agent::Message::user(prompt.clone())],
+                vec![],
+                prompt,
+            ),
+            resolved: ResolvedModelConfig::new("demo", "demo", "demo", "demo", vec![]),
+        })
+    });
+    let mut definition = AgentDefinition::default_for_model("demo-model");
+    definition.description = "Demo session agent".to_string();
+    let mut session = AgentSession::new(
+        execute_run,
+        "demo-agent",
+        definition.clone(),
+        workspace.path(),
+    );
+
+    assert_eq!(session.agent_name(), "demo-agent");
+    assert_eq!(session.definition(), &definition);
+    assert_eq!(session.workspace(), workspace.path());
+    assert!(!session.running());
+    assert_eq!(session.messages(), Vec::new());
+    assert_eq!(session.shared_state()["todo_list"], Value::Array(vec![]));
+    assert!(session.latest_run().is_none());
+
+    session.prompt("hello").expect("prompt");
+
+    assert!(!session.running());
+    assert_eq!(session.messages()[0].content, "hello");
+    assert_eq!(
+        session.latest_run().unwrap().result.final_answer.as_deref(),
+        Some("hello")
+    );
+}
+
+#[test]
 fn session_prompt_supports_follow_up_queue() {
     let calls = Arc::new(Mutex::new(Vec::<String>::new()));
     let execute_run = {

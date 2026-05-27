@@ -524,6 +524,9 @@ The current Rust implementation includes:
   Session workspace overrides are supported through
   `AgentSDKClient::create_session_with_workspace`; the override updates session
   state, runtime workspace metadata, and the file-tool workspace backend.
+  `AgentSession` also exposes Python-style read accessors for `agent_name`,
+  `definition`, `workspace`, `messages`, `shared_state`, `latest_run`, and
+  `running`.
   One-shot SDK runs can also use per-call workspace overrides through
   `run_with_agent_in_workspace`, `run_agent_in_workspace`, or `run_in_workspace`,
   matching Python `run(..., workspace=...)` behavior.

@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -208,6 +208,34 @@ impl AgentSession {
 
     pub fn session_id(&self) -> &str {
         &self.session_id
+    }
+
+    pub fn agent_name(&self) -> &str {
+        &self._agent_name
+    }
+
+    pub fn definition(&self) -> &AgentDefinition {
+        &self._definition
+    }
+
+    pub fn workspace(&self) -> &Path {
+        &self.workspace
+    }
+
+    pub fn messages(&self) -> Vec<crate::types::Message> {
+        self.messages.clone()
+    }
+
+    pub fn shared_state(&self) -> Metadata {
+        self.shared_state.clone()
+    }
+
+    pub fn latest_run(&self) -> Option<AgentRun> {
+        self.latest_run.clone()
+    }
+
+    pub fn running(&self) -> bool {
+        self.running
     }
 
     pub fn subscribe(&mut self, listener: SessionEventHandler) -> SessionListenerId {
