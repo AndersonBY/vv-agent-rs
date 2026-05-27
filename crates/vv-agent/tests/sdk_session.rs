@@ -384,6 +384,72 @@ fn session_runtime_receives_previous_messages_and_shared_state() {
 }
 
 #[test]
+fn session_runtime_injects_session_id_into_task_metadata() {
+    let captured_metadata = Arc::new(Mutex::new(Vec::new()));
+    let responses = vec![LLMResponse {
+        content: "finish".to_string(),
+        tool_calls: vec![ToolCall::new(
+            "finish-1",
+            "task_finish",
+            json_args(serde_json::json!({"message": "ok"})),
+        )],
+        raw: BTreeMap::new(),
+        token_usage: TokenUsage::default(),
+    }];
+    let mut runtime = AgentRuntime::new(ScriptedLlmClient::new(responses));
+    runtime.hooks.push(Arc::new(TaskMetadataCaptureHook {
+        captured_metadata: Arc::clone(&captured_metadata),
+    }));
+    let client = AgentSDKClient::new(AgentSDKOptions::default()).with_runtime(runtime);
+    let mut session =
+        create_agent_session(&client, "demo", AgentDefinition::default_for_model("demo"));
+
+    let run = session.prompt("start").expect("prompt");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    let captured = captured_metadata.lock().expect("captured metadata");
+    assert_eq!(captured.len(), 1);
+    let session_id = captured[0]["session_id"]
+        .as_str()
+        .expect("session_id metadata");
+    assert!(session_id.starts_with("session-"));
+}
+
+#[test]
+fn session_runtime_uses_explicit_session_id_in_task_metadata() {
+    let captured_metadata = Arc::new(Mutex::new(Vec::new()));
+    let responses = vec![LLMResponse {
+        content: "finish".to_string(),
+        tool_calls: vec![ToolCall::new(
+            "finish-1",
+            "task_finish",
+            json_args(serde_json::json!({"message": "ok"})),
+        )],
+        raw: BTreeMap::new(),
+        token_usage: TokenUsage::default(),
+    }];
+    let mut runtime = AgentRuntime::new(ScriptedLlmClient::new(responses));
+    runtime.hooks.push(Arc::new(TaskMetadataCaptureHook {
+        captured_metadata: Arc::clone(&captured_metadata),
+    }));
+    let client = AgentSDKClient::new(AgentSDKOptions::default()).with_runtime(runtime);
+    let mut session = client.create_session_with_id(
+        "demo",
+        AgentDefinition::default_for_model("demo"),
+        "session-metadata-test",
+    );
+
+    let run = session.prompt("start").expect("prompt");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(
+        captured_metadata.lock().expect("captured metadata")[0]["session_id"],
+        Value::String("session-metadata-test".to_string())
+    );
+    assert_eq!(session.state().session_id, "session-metadata-test");
+}
+
+#[test]
 fn session_runtime_event_listener_can_queue_steering() {
     let responses = vec![
         LLMResponse {
@@ -714,6 +780,20 @@ type RecordedEvents = Arc<Mutex<Vec<(String, BTreeMap<String, Value>)>>>;
 
 struct ShellMetadataCaptureHook {
     captured_metadata: Arc<Mutex<Vec<BTreeMap<String, Value>>>>,
+}
+
+struct TaskMetadataCaptureHook {
+    captured_metadata: Arc<Mutex<Vec<BTreeMap<String, Value>>>>,
+}
+
+impl RuntimeHook for TaskMetadataCaptureHook {
+    fn before_llm(&self, event: BeforeLlmEvent<'_>) -> Option<vv_agent::BeforeLlmPatch> {
+        self.captured_metadata
+            .lock()
+            .expect("captured metadata")
+            .push(event.task.metadata.clone());
+        None
+    }
 }
 
 impl RuntimeHook for ShellMetadataCaptureHook {

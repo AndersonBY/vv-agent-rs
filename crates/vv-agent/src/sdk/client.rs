@@ -12,7 +12,7 @@ use crate::prompt::{
     BuildSystemPromptOptions,
 };
 use crate::runtime::{AgentRuntime, ExecutionContext, RuntimeRunControls};
-use crate::types::AgentTask;
+use crate::types::{AgentTask, Metadata};
 use crate::workspace::LocalWorkspaceBackend;
 
 use super::resources::AgentResourceLoader;
@@ -50,6 +50,7 @@ impl<C: LlmClient + Clone + 'static> RunAgent for AgentRuntime<C> {
     ) -> Result<AgentRun, String> {
         let execution_context = execution_context_from_request(&request);
         let mut task = task_from_definition(definition, request.prompt);
+        merge_request_metadata(&mut task, request.metadata);
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
         let result = self
@@ -92,6 +93,7 @@ impl RunAgent for ScriptedLlmClient {
         let runtime = AgentRuntime::new(self.clone());
         let execution_context = execution_context_from_request(&request);
         let mut task = task_from_definition(definition, request.prompt);
+        merge_request_metadata(&mut task, request.metadata);
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
         runtime
@@ -376,6 +378,23 @@ impl AgentSDKClient {
         Ok(run)
     }
 
+    pub fn create_session(
+        &self,
+        agent_name: impl Into<String>,
+        definition: AgentDefinition,
+    ) -> AgentSession {
+        create_agent_session(self, agent_name, definition)
+    }
+
+    pub fn create_session_with_id(
+        &self,
+        agent_name: impl Into<String>,
+        definition: AgentDefinition,
+        session_id: impl Into<String>,
+    ) -> AgentSession {
+        create_agent_session_with_id(self, agent_name, definition, session_id)
+    }
+
     pub fn prepare_task_for_agent(
         &self,
         agent_name: impl AsRef<str>,
@@ -493,6 +512,7 @@ impl RunAgent for SettingsRunAgent {
         let mut task = task_from_definition(definition, request.prompt);
         task.model = resolved.model_id.clone();
         apply_resolved_model_limits(&mut task, &resolved);
+        merge_request_metadata(&mut task, request.metadata);
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
         let result = runtime
@@ -554,6 +574,12 @@ fn configure_runtime_from_options<C: LlmClient + Clone + 'static>(
     runtime.hooks.extend(options.runtime_hooks.clone());
 }
 
+fn merge_request_metadata(task: &mut AgentTask, metadata: Metadata) {
+    for (key, value) in metadata {
+        task.metadata.entry(key).or_insert(value);
+    }
+}
+
 pub fn create_agent_session(
     client: &AgentSDKClient,
     agent_name: impl Into<String>,
@@ -570,6 +596,30 @@ pub fn create_agent_session(
     });
     AgentSession::new_with_context(
         execute_run,
+        agent_name,
+        definition,
+        client.options.workspace.clone(),
+    )
+}
+
+pub fn create_agent_session_with_id(
+    client: &AgentSDKClient,
+    agent_name: impl Into<String>,
+    definition: AgentDefinition,
+    session_id: impl Into<String>,
+) -> AgentSession {
+    let runtime = client.runtime.clone();
+    let definition_for_run = definition.clone();
+    let stream_callback = client.options.stream_callback.clone();
+    let execute_run = Arc::new(move |mut request: AgentSessionRunRequest| {
+        if request.stream_callback.is_none() {
+            request.stream_callback = stream_callback.clone();
+        }
+        runtime.run_with_session(&definition_for_run, request)
+    });
+    AgentSession::new_with_context_and_session_id(
+        execute_run,
+        session_id,
         agent_name,
         definition,
         client.options.workspace.clone(),

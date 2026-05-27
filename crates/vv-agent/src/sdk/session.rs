@@ -13,6 +13,7 @@ use super::types::{agent_status_value, AgentDefinition, AgentRun};
 #[derive(Debug, Clone)]
 pub struct AgentSessionState {
     pub running: bool,
+    pub session_id: String,
     pub workspace: PathBuf,
     pub messages: Vec<crate::types::Message>,
     pub shared_state: Metadata,
@@ -27,6 +28,7 @@ pub struct AgentSessionRunRequest {
     pub prompt: String,
     pub initial_messages: Vec<crate::types::Message>,
     pub shared_state: Metadata,
+    pub metadata: Metadata,
     pub runtime_event_handler: Option<SessionEventHandler>,
     pub steering_queue: Option<Arc<Mutex<VecDeque<String>>>>,
     pub cancellation_token: Option<CancellationToken>,
@@ -39,6 +41,7 @@ impl AgentSessionRunRequest {
             prompt: prompt.into(),
             initial_messages: Vec::new(),
             shared_state: Metadata::new(),
+            metadata: Metadata::new(),
             runtime_event_handler: None,
             steering_queue: None,
             cancellation_token: None,
@@ -105,7 +108,7 @@ impl SessionCancellationHandle {
 
 pub struct AgentSession {
     execute_run: Arc<dyn Fn(AgentSessionRunRequest) -> Result<AgentRun, String> + Send + Sync>,
-    _session_id: String,
+    session_id: String,
     _agent_name: String,
     _definition: AgentDefinition,
     workspace: PathBuf,
@@ -133,21 +136,49 @@ impl AgentSession {
         Self::new_with_context(execute_run, agent_name, definition, workspace)
     }
 
+    pub fn new_with_session_id(
+        execute_run: Arc<dyn Fn(String) -> Result<AgentRun, String> + Send + Sync>,
+        session_id: impl Into<String>,
+        agent_name: impl Into<String>,
+        definition: AgentDefinition,
+        workspace: impl Into<PathBuf>,
+    ) -> Self {
+        let execute_run =
+            Arc::new(move |request: AgentSessionRunRequest| execute_run(request.prompt));
+        Self::new_with_context_and_session_id(
+            execute_run,
+            session_id,
+            agent_name,
+            definition,
+            workspace,
+        )
+    }
+
     pub fn new_with_context(
         execute_run: Arc<dyn Fn(AgentSessionRunRequest) -> Result<AgentRun, String> + Send + Sync>,
         agent_name: impl Into<String>,
         definition: AgentDefinition,
         workspace: impl Into<PathBuf>,
     ) -> Self {
+        Self::new_with_context_and_session_id(
+            execute_run,
+            generate_session_id(),
+            agent_name,
+            definition,
+            workspace,
+        )
+    }
+
+    pub fn new_with_context_and_session_id(
+        execute_run: Arc<dyn Fn(AgentSessionRunRequest) -> Result<AgentRun, String> + Send + Sync>,
+        session_id: impl Into<String>,
+        agent_name: impl Into<String>,
+        definition: AgentDefinition,
+        workspace: impl Into<PathBuf>,
+    ) -> Self {
         Self {
             execute_run,
-            _session_id: format!(
-                "session-{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|duration| duration.as_nanos())
-                    .unwrap_or_default()
-            ),
+            session_id: normalize_session_id(session_id),
             _agent_name: agent_name.into(),
             _definition: definition,
             workspace: workspace.into(),
@@ -162,6 +193,10 @@ impl AgentSession {
             follow_up_queue: Arc::new(Mutex::new(VecDeque::new())),
             active_cancellation_token: Arc::new(Mutex::new(None)),
         }
+    }
+
+    pub fn session_id(&self) -> &str {
+        &self.session_id
     }
 
     pub fn subscribe(&mut self, listener: SessionEventHandler) -> SessionListenerId {
@@ -369,6 +404,10 @@ impl AgentSession {
             prompt,
             initial_messages: self.messages.clone(),
             shared_state: self.shared_state.clone(),
+            metadata: BTreeMap::from([(
+                "session_id".to_string(),
+                Value::String(self.session_id.clone()),
+            )]),
             runtime_event_handler: Some(runtime_event_handler),
             steering_queue: Some(Arc::clone(&self.steering_queue)),
             cancellation_token: Some(cancellation_token),
@@ -430,6 +469,7 @@ impl AgentSession {
     pub fn state(&self) -> AgentSessionState {
         AgentSessionState {
             running: self.running,
+            session_id: self.session_id.clone(),
             workspace: self.workspace.clone(),
             messages: self.messages.clone(),
             shared_state: self.shared_state.clone(),
@@ -630,4 +670,23 @@ fn normalize_session_prompt(prompt: String, label: &str) -> Result<String, Strin
         return Err(format!("{label} cannot be empty"));
     }
     Ok(prompt.to_string())
+}
+
+fn generate_session_id() -> String {
+    format!(
+        "session-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    )
+}
+
+fn normalize_session_id(session_id: impl Into<String>) -> String {
+    let session_id = session_id.into().trim().to_string();
+    if session_id.is_empty() {
+        generate_session_id()
+    } else {
+        session_id
+    }
 }

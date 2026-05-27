@@ -59,10 +59,10 @@ pub use runtime::{
     RuntimeHook, RuntimeHookManager, RuntimeRunControls, StreamCallback,
 };
 pub use sdk::{
-    create_agent_session, query, run, AgentDefinition, AgentResourceLoader, AgentRun,
-    AgentSDKClient, AgentSDKOptions, AgentSession, AgentSessionRunRequest, AgentSessionState,
-    LlmBuilder, SdkLlmClient, SessionCancellationHandle, SessionEventHandler, SessionListenerId,
-    SessionSteeringHandle,
+    create_agent_session, create_agent_session_with_id, query, run, AgentDefinition,
+    AgentResourceLoader, AgentRun, AgentSDKClient, AgentSDKOptions, AgentSession,
+    AgentSessionRunRequest, AgentSessionState, LlmBuilder, SdkLlmClient, SessionCancellationHandle,
+    SessionEventHandler, SessionListenerId, SessionSteeringHandle,
 };
 pub use sub_agent_sessions::{
     continue_sub_agent_session, get_sub_agent_session, register_sub_agent_session,
