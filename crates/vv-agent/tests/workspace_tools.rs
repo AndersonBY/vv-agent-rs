@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
+use std::sync::Arc;
 
 use object_store::memory::InMemory;
 use serde_json::{json, Value};
@@ -202,6 +203,30 @@ fn list_files_empty_path_is_workspace_root_like_python() {
     assert!(list.content.contains("src/main.rs"));
     assert!(!list.content.contains("node_modules/pkg/a.js"));
     assert!(list.content.contains("ignored_roots"));
+}
+
+#[test]
+fn list_files_non_local_backend_does_not_summarize_ignored_roots_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let backend = MemoryWorkspaceBackend::default();
+    backend.mkdir("node_modules/pkg").expect("node_modules dir");
+    backend
+        .write_text("node_modules/pkg/a.js", "a", false)
+        .expect("ignored root file");
+    let mut context = ToolContext::new(workspace.path());
+    context.workspace_backend = Arc::new(backend);
+
+    let list = registry
+        .execute(
+            &ToolCall::new("list_memory_root", "list_files", BTreeMap::new()),
+            &mut context,
+        )
+        .expect("list tool");
+    let payload: Value = serde_json::from_str(&list.content).expect("list payload");
+
+    assert_eq!(payload["files"], json!(["node_modules/pkg/a.js"]));
+    assert!(payload.get("ignored_roots").is_none());
 }
 
 #[test]

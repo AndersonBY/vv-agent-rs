@@ -203,6 +203,7 @@ pub(crate) fn list_files_tool() -> ToolSpec {
             };
             let backend = context.effective_workspace_backend();
             let root_listing = is_workspace_root_path(path);
+            let is_local_backend = backend.as_any().is::<LocalWorkspaceBackend>();
             let rg_result = backend
                 .as_any()
                 .downcast_ref::<LocalWorkspaceBackend>()
@@ -242,12 +243,14 @@ pub(crate) fn list_files_tool() -> ToolSpec {
             } else {
                 match backend.list_files(path, glob) {
                     Ok(mut files) => {
-                        let ignored_roots = if include_ignored || !root_listing {
-                            Vec::new()
-                        } else {
+                        let summarize_ignored_roots =
+                            is_local_backend && root_listing && !include_ignored;
+                        let ignored_roots = if summarize_ignored_roots {
                             collect_ignored_roots(&files)
+                        } else {
+                            Vec::new()
                         };
-                        if !include_ignored && root_listing {
+                        if summarize_ignored_roots {
                             files.retain(|path| {
                                 path.split('/')
                                     .next()
