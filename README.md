@@ -343,7 +343,8 @@ The current Rust implementation includes:
   `status=wait_user`. Sessions also support listener registration for queue and
   run lifecycle events such as `session_run_start`, `session_run_end`,
   `session_follow_up_queued`, and `session_steer_queued`, and `AgentRun::to_dict`
-  includes structured aggregate and per-cycle token usage. Runtime-backed
+  includes Python-style status details, todo list, resolved model metadata, and
+  structured aggregate/per-cycle token usage. Runtime-backed
   sessions forward runtime events such as `tool_result` to session listeners;
   a cloneable `SessionSteeringHandle` lets those listeners queue steering while
   a run is active, which injects the prompt before the next cycle or interrupts

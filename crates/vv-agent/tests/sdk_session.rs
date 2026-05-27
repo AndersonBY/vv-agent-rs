@@ -245,6 +245,16 @@ fn session_cancel_requests_active_runtime_and_clears_queues() {
 #[test]
 fn session_run_to_dict_contains_structured_token_usage() {
     let mut run = fake_run("ok", AgentStatus::Completed);
+    run.resolved = ResolvedModelConfig::new(
+        "deepseek",
+        "deepseek-v4-pro",
+        "deepseek-v4-pro",
+        "deepseek-chat",
+        vec![vv_agent::EndpointOption::new(
+            vv_agent::EndpointConfig::new("primary", "secret", "https://api.example.test"),
+            "deepseek-chat",
+        )],
+    );
     run.result = vv_agent::AgentResult::completed(
         vec![],
         vec![CycleRecord {
@@ -264,10 +274,41 @@ fn session_run_to_dict_contains_structured_token_usage() {
         }],
         "ok",
     );
+    run.result.wait_reason = Some("not needed".to_string());
+    run.result.error = Some("none".to_string());
+    run.result.shared_state.insert(
+        "todo_list".to_string(),
+        serde_json::json!([{"id": "t1", "title": "done", "status": "completed"}]),
+    );
 
     let payload = run.to_dict();
     let usage = payload.get("token_usage").expect("token_usage");
 
+    assert_eq!(
+        payload["wait_reason"],
+        Value::String("not needed".to_string())
+    );
+    assert_eq!(payload["error"], Value::String("none".to_string()));
+    assert_eq!(
+        payload["todo_list"][0]["id"],
+        Value::String("t1".to_string())
+    );
+    assert_eq!(
+        payload["resolved"]["backend"],
+        Value::String("deepseek".to_string())
+    );
+    assert_eq!(
+        payload["resolved"]["selected_model"],
+        Value::String("deepseek-v4-pro".to_string())
+    );
+    assert_eq!(
+        payload["resolved"]["model_id"],
+        Value::String("deepseek-chat".to_string())
+    );
+    assert_eq!(
+        payload["resolved"]["endpoint"],
+        Value::String("primary".to_string())
+    );
     assert_eq!(usage["prompt_tokens"], Value::from(11));
     assert_eq!(usage["completion_tokens"], Value::from(7));
     assert_eq!(usage["total_tokens"], Value::from(18));
