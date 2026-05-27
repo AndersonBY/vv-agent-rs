@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-use crate::config::load_memory_summary_defaults_from_file;
+use crate::config::{
+    load_llm_settings_from_file, load_memory_summary_defaults_from_file, resolve_model_endpoint,
+};
 use crate::llm::{LlmClient, LlmError, LlmRequest};
 use crate::memory::{
     CompactionExhaustedError, MemoryManager, MemoryManagerConfig, SessionMemory,
@@ -1036,6 +1038,8 @@ where
     )
     .or(local_summary_defaults.model)
     .unwrap_or_else(|| task.model.clone());
+    let (resolved_context_window, resolved_max_output_tokens) =
+        resolve_runtime_model_token_limits(settings_file, default_backend, &task.model);
     MemoryManager::new(MemoryManagerConfig {
         compact_threshold: task.memory_compact_threshold,
         keep_recent_messages: read_usize_metadata(
@@ -1044,8 +1048,16 @@ where
             10,
         ),
         model: task.model.clone(),
-        model_context_window: read_u64_metadata(&task.metadata, "model_context_window", 200_000),
-        reserved_output_tokens: read_u64_metadata(&task.metadata, "reserved_output_tokens", 16_000),
+        model_context_window: read_u64_metadata(
+            &task.metadata,
+            "model_context_window",
+            resolved_context_window.unwrap_or(200_000),
+        ),
+        reserved_output_tokens: read_u64_metadata(
+            &task.metadata,
+            "reserved_output_tokens",
+            resolved_max_output_tokens.unwrap_or(16_000),
+        ),
         autocompact_buffer_tokens: read_u64_metadata(
             &task.metadata,
             "autocompact_buffer_tokens",
@@ -1110,6 +1122,23 @@ where
             summary_model,
         ),
     })
+}
+
+fn resolve_runtime_model_token_limits(
+    settings_file: Option<&std::path::Path>,
+    default_backend: Option<&str>,
+    model: &str,
+) -> (Option<u64>, Option<u64>) {
+    let (Some(settings_file), Some(default_backend)) = (settings_file, default_backend) else {
+        return (None, None);
+    };
+    let Ok(settings) = load_llm_settings_from_file(settings_file) else {
+        return (None, None);
+    };
+    let Ok(resolved) = resolve_model_endpoint(&settings, default_backend, model) else {
+        return (None, None);
+    };
+    (resolved.context_length, resolved.max_output_tokens)
 }
 
 fn build_session_memory<C>(

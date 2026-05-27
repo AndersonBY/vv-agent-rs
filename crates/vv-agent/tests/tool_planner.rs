@@ -1,5 +1,6 @@
 use serde_json::json;
 use vv_agent::runtime::freeze_dynamic_tool_schema_hints;
+use vv_agent::runtime::tool_planner::{plan_tool_names, plan_tool_schemas};
 use vv_agent::{build_default_registry, AgentTask, SubAgentConfig};
 
 #[test]
@@ -10,8 +11,10 @@ fn planned_tool_schemas_respect_task_capability_flags() {
     task.use_workspace = false;
 
     let names = registry.planned_tool_names(&task);
+    let free_names = plan_tool_names(&task, None);
 
     assert_eq!(names, vec!["task_finish".to_string()]);
+    assert_eq!(free_names, names);
 }
 
 #[test]
@@ -60,7 +63,12 @@ fn planned_tool_schemas_exclude_tools() {
     task.exclude_tools = vec!["read_file".to_string(), "write_file".to_string()];
 
     let schemas = registry.planned_openai_schemas(&task);
+    let free_schemas = plan_tool_schemas(&registry, &task, None);
     let names = schemas
+        .iter()
+        .filter_map(|schema| schema["function"]["name"].as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    let free_names = free_schemas
         .iter()
         .filter_map(|schema| schema["function"]["name"].as_str().map(str::to_string))
         .collect::<Vec<_>>();
@@ -68,6 +76,7 @@ fn planned_tool_schemas_exclude_tools() {
     assert!(!names.contains(&"read_file".to_string()));
     assert!(!names.contains(&"write_file".to_string()));
     assert!(names.contains(&"task_finish".to_string()));
+    assert_eq!(free_names, names);
 }
 
 #[test]

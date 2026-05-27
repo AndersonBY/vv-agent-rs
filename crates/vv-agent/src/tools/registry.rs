@@ -89,63 +89,11 @@ impl ToolRegistry {
     }
 
     pub fn planned_tool_names(&self, task: &AgentTask) -> Vec<String> {
-        let mut names = vec!["task_finish".to_string()];
-        if task.allow_interruption {
-            names.push("ask_user".to_string());
-        }
-        if task.use_workspace {
-            names.extend(
-                [
-                    "list_files",
-                    "file_info",
-                    "read_file",
-                    "write_file",
-                    "file_str_replace",
-                    "workspace_grep",
-                    "compress_memory",
-                    "todo_write",
-                ]
-                .into_iter()
-                .map(str::to_string),
-            );
-        }
-        if task.agent_type.as_deref() == Some("computer") {
-            names.push("bash".to_string());
-            names.push("check_background_command".to_string());
-        }
-        if task.sub_agents_enabled() {
-            names.push("create_sub_task".to_string());
-            names.push("sub_task_status".to_string());
-        }
-        if task
-            .metadata
-            .get("available_skills")
-            .is_some_and(|value| !value.is_null())
-        {
-            names.push("activate_skill".to_string());
-        }
-        if task.native_multimodal {
-            names.push("read_image".to_string());
-        }
-        names.extend(task.extra_tool_names.clone());
-        if !task.exclude_tools.is_empty() {
-            names.retain(|name| !task.exclude_tools.contains(name));
-        }
-        let mut deduped = Vec::new();
-        for name in names {
-            if !deduped.contains(&name) {
-                deduped.push(name);
-            }
-        }
-        deduped
+        crate::runtime::tool_planner::plan_tool_names(task, None)
     }
 
     pub fn planned_openai_schemas(&self, task: &AgentTask) -> Vec<Value> {
-        let names = self.planned_tool_names(task);
-        crate::runtime::patch_dynamic_tool_schema_hints(
-            task,
-            self.list_openai_schemas(Some(&names)),
-        )
+        crate::runtime::tool_planner::plan_tool_schemas(self, task, None)
     }
 
     pub fn register_tool(

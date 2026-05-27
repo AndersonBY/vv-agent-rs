@@ -1,10 +1,70 @@
 use serde_json::Value;
 
+use crate::constants::{
+    ACTIVATE_SKILL_TOOL_NAME, ASK_USER_TOOL_NAME, BASH_TOOL_NAME,
+    CHECK_BACKGROUND_COMMAND_TOOL_NAME, CREATE_SUB_TASK_TOOL_NAME, READ_IMAGE_TOOL_NAME,
+    SUB_TASK_STATUS_TOOL_NAME, TASK_FINISH_TOOL_NAME, WORKSPACE_TOOLS,
+};
+use crate::tools::ToolRegistry;
 use crate::types::AgentTask;
 
 use super::shell::{normalize_windows_shell_priority, resolve_shell_invocation};
 
 const BASH_RUNTIME_HINT_METADATA_KEY: &str = "_vv_agent_bash_runtime_hint";
+
+pub fn plan_tool_names(task: &AgentTask, memory_usage_percentage: Option<u32>) -> Vec<String> {
+    let _ = memory_usage_percentage;
+    let mut names = vec![TASK_FINISH_TOOL_NAME.to_string()];
+    if task.allow_interruption {
+        names.push(ASK_USER_TOOL_NAME.to_string());
+    }
+    if task.use_workspace {
+        names.extend(WORKSPACE_TOOLS.into_iter().map(str::to_string));
+    }
+    if task.agent_type.as_deref() == Some("computer") {
+        names.push(BASH_TOOL_NAME.to_string());
+        names.push(CHECK_BACKGROUND_COMMAND_TOOL_NAME.to_string());
+    }
+    if task.sub_agents_enabled() {
+        names.push(CREATE_SUB_TASK_TOOL_NAME.to_string());
+        names.push(SUB_TASK_STATUS_TOOL_NAME.to_string());
+    }
+    if task
+        .metadata
+        .get("available_skills")
+        .is_some_and(|value| !value.is_null())
+    {
+        names.push(ACTIVATE_SKILL_TOOL_NAME.to_string());
+    }
+    if task.native_multimodal {
+        names.push(READ_IMAGE_TOOL_NAME.to_string());
+    }
+    names.extend(task.extra_tool_names.clone());
+    if !task.exclude_tools.is_empty() {
+        names.retain(|name| !task.exclude_tools.contains(name));
+    }
+
+    let mut deduped = Vec::new();
+    for name in names {
+        if !deduped.contains(&name) {
+            deduped.push(name);
+        }
+    }
+    deduped
+}
+
+pub fn plan_tool_schemas(
+    registry: &ToolRegistry,
+    task: &AgentTask,
+    memory_usage_percentage: Option<u32>,
+) -> Vec<Value> {
+    let names = plan_tool_names(task, memory_usage_percentage);
+    let available_names = names
+        .into_iter()
+        .filter(|name| registry.has_tool(name) && registry.has_schema(name))
+        .collect::<Vec<_>>();
+    patch_dynamic_tool_schema_hints(task, registry.list_openai_schemas(Some(&available_names)))
+}
 
 pub fn freeze_dynamic_tool_schema_hints(task: &mut AgentTask) {
     if task.agent_type.as_deref() == Some("computer")

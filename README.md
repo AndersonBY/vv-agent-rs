@@ -184,6 +184,8 @@ The current Rust implementation includes:
 - Runtime hooks modeled after Python `RuntimeHookManager`: callers can patch
   messages before memory compaction, patch LLM request messages/schemas, patch
   LLM responses, patch or short-circuit tool calls, and patch tool results.
+  `RuntimeHookManager::has_hooks()` is available as a Python-style convenience
+  alias for embedders.
 - Runtime assistant messages preserve provider `raw.reasoning_content` in the
   transcript, matching Python `CycleRunner` behavior for reasoning-chain and
   resume flows.
@@ -191,6 +193,10 @@ The current Rust implementation includes:
   run start, cycle start, LLM response, tool result, completion, wait-user, and
   max-cycle exits, including configurable assistant/content/final-answer
   preview fields.
+- Direct `AgentRuntime` usage now also resolves model context and output-token
+  limits from the configured vv-llm `settings_file` plus `default_backend`
+  before building memory thresholds; explicit task metadata still takes
+  precedence.
 - The in-crate `vv-agent` CLI mirrors Python `cli.py` flags for prompt,
   backend/model, settings file, workspace, max cycles, language, agent type,
   verbose logs, prompt bundle construction, JSON result payloads, and resolved
@@ -303,7 +309,10 @@ The current Rust implementation includes:
   execution, so `bash` advertises the actual shell prefix or invalid shell
   configuration in the LLM-visible description. Runtime runs freeze that hint
   into task metadata before backend dispatch so distributed workers and later
-  cycles use the same shell guidance. Tool planning also keeps Python-style
+  cycles use the same shell guidance. The public
+  `runtime::tool_planner::{plan_tool_names, plan_tool_schemas}` functions now
+  mirror Python's `runtime.tool_planner` module, while `ToolRegistry` keeps thin
+  compatibility wrappers. Tool planning also keeps Python-style
   `extra_tool_names` in the planned name list and includes `todo_write` in the
   default workspace tool set before schema filtering.
 - Shell resolution now lives in `runtime::shell`, matching Python's

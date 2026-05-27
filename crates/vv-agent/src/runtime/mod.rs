@@ -15,7 +15,7 @@ mod sub_agents;
 pub mod sub_task_manager;
 pub mod token_usage;
 pub mod tool_call_runner;
-mod tool_planner;
+pub mod tool_planner;
 
 pub use backends::RuntimeExecutionBackend as ExecutionBackend;
 pub use backends::{InlineBackend, RuntimeExecutionBackend};
@@ -53,4 +53,7 @@ pub use sub_agent_sessions::{
 pub use sub_task_manager::{ManagedSubTask, SubTaskManager};
 pub use token_usage::{normalize_token_usage, summarize_task_token_usage};
 pub use tool_call_runner::{ToolCallRunner, ToolRunOutcome, ToolRunRequest};
-pub use tool_planner::{freeze_dynamic_tool_schema_hints, patch_dynamic_tool_schema_hints};
+pub use tool_planner::{
+    freeze_dynamic_tool_schema_hints, patch_dynamic_tool_schema_hints, plan_tool_names,
+    plan_tool_schemas,
+};

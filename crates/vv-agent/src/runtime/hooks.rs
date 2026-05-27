@@ -92,6 +92,10 @@ impl RuntimeHookManager {
         self.hooks.is_empty()
     }
 
+    pub fn has_hooks(&self) -> bool {
+        !self.hooks.is_empty()
+    }
+
     pub fn apply_before_memory_compact(
         &self,
         task: &AgentTask,

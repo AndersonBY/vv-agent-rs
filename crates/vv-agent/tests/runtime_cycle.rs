@@ -1386,6 +1386,70 @@ DEFAULT_USER_MEMORY_SUMMARIZE_MODEL = "settings-model"
 }
 
 #[test]
+fn runtime_uses_settings_model_token_limits_for_direct_runtime_memory_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let settings_file = workspace.path().join("llm_settings.json");
+    fs::write(
+        &settings_file,
+        json!({
+            "VERSION": "2",
+            "endpoints": [{
+                "id": "deepseek-primary",
+                "api_key": "sk-test",
+                "api_base": "https://api.deepseek.test"
+            }],
+            "backends": {
+                "deepseek": {
+                    "models": {
+                        "deepseek-v4-pro": {
+                            "id": "deepseek-v4-pro",
+                            "endpoints": ["deepseek-primary"],
+                            "context_length": 1000,
+                            "max_output_tokens": 100
+                        }
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .expect("settings");
+
+    let llm = DefaultSessionMemoryInspectingLlmClient::default();
+    let inspector = llm.clone();
+    let runtime = AgentRuntime::new(llm)
+        .with_settings_file(settings_file)
+        .with_default_backend("deepseek");
+    let mut task = AgentTask::new(
+        "direct_runtime_limits",
+        "deepseek-v4-pro",
+        "system",
+        "Please remember this direct runtime token-limit check.",
+    );
+    task.max_cycles = 1;
+    task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
+    task.memory_compact_threshold = 0;
+    task.memory_threshold_percentage = 1;
+    task.metadata
+        .insert("include_memory_warning".to_string(), json!(true));
+    task.metadata
+        .insert("autocompact_buffer_tokens".to_string(), json!(0));
+    task.metadata
+        .insert("session_memory_enabled".to_string(), json!(false));
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let first_request = inspector.first_request_messages();
+    assert!(
+        first_request
+            .iter()
+            .any(|message| message.content.contains("当前记忆已使用容量超过 1%")),
+        "direct runtime did not use settings-derived token limits for memory warning: {first_request:#?}"
+    );
+}
+
+#[test]
 fn runtime_microcompacts_before_full_memory_compaction() {
     let workspace = tempfile::tempdir().expect("workspace");
     let large_tool_payload = "tool output ".repeat(300);

@@ -171,4 +171,6 @@ fn runtime_module_exports_python_runtime_public_types() {
     let _inline = vv_agent::runtime::InlineBackend;
     let _cancelled = vv_agent::runtime::CancelledError::new("Operation was cancelled");
     let _managed: Option<vv_agent::runtime::ManagedSubTask> = None;
+    let manager = vv_agent::runtime::RuntimeHookManager::default();
+    assert!(!manager.has_hooks());
 }
