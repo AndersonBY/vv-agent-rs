@@ -215,6 +215,8 @@ The current Rust implementation includes:
   `<Session Memory>` system context before and after compaction. The default runtime can
   use the configured `LlmClient` as the extraction callback, so vv-llm-backed
   clients handle session-memory extraction without custom provider adapters.
+  Main tasks enable session memory by default like Python, while generated
+  sub-tasks explicitly opt out unless overridden.
 - Python-style microcompact support clears old, large, compactable tool results
   before full summary compaction, preserving recent tool context while reducing
   prompt pressure during long runs. Task metadata can override the compactable

@@ -1068,9 +1068,7 @@ fn build_session_memory<C>(
 where
     C: LlmClient + Clone + 'static,
 {
-    if !read_bool_metadata(&task.metadata, "session_memory_enabled", false)
-        && !read_bool_metadata(&task.metadata, "enable_session_memory", false)
-        && !task.metadata.contains_key("session_memory_seed")
+    if !session_memory_enabled(&task.metadata) && !task.metadata.contains_key("session_memory_seed")
     {
         return None;
     }
@@ -1165,10 +1163,25 @@ fn read_usize_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: u
 }
 
 fn read_bool_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: bool) -> bool {
-    metadata
-        .get(key)
-        .and_then(Value::as_bool)
-        .unwrap_or(default)
+    read_optional_bool_metadata(metadata, key).unwrap_or(default)
+}
+
+fn read_optional_bool_metadata(metadata: &BTreeMap<String, Value>, key: &str) -> Option<bool> {
+    metadata.get(key).and_then(|value| match value {
+        Value::Bool(flag) => Some(*flag),
+        Value::String(text) => match text.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "y" | "on" => Some(true),
+            "false" | "0" | "no" | "n" | "off" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+fn session_memory_enabled(metadata: &BTreeMap<String, Value>) -> bool {
+    read_optional_bool_metadata(metadata, "session_memory_enabled")
+        .or_else(|| read_optional_bool_metadata(metadata, "enable_session_memory"))
+        .unwrap_or_else(|| !read_bool_metadata(metadata, "is_sub_task", false))
 }
 
 fn read_string_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: &str) -> String {

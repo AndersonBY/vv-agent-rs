@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::fs;
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
@@ -1185,6 +1186,58 @@ fn runtime_injects_session_memory_context_after_compaction() {
                     .content
                     .contains("sub-agent findings survive compaction")),
         "second request did not include session memory context: {second_request:#?}"
+    );
+}
+
+#[test]
+fn runtime_loads_session_memory_by_default_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let storage_dir = workspace
+        .path()
+        .join(".memory/session/session_memory_default_task");
+    fs::create_dir_all(&storage_dir).expect("session memory dir");
+    fs::write(
+        storage_dir.join("session_memory.json"),
+        json!({
+            "entries": [{
+                "category": "key_fact",
+                "content": "default session memory is loaded",
+                "source_cycle": 3,
+                "importance": 9
+            }],
+            "last_extracted_message_index": -1,
+            "tokens_at_last_extraction": 0,
+            "initialized": true
+        })
+        .to_string(),
+    )
+    .expect("session memory file");
+    let llm = DefaultSessionMemoryInspectingLlmClient::default();
+    let inspector = llm.clone();
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.default_workspace = Some(workspace.path().to_path_buf());
+    runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
+        workspace.path(),
+    ));
+    let mut task = AgentTask::new(
+        "session_memory_default_task",
+        "demo",
+        "system",
+        "inspect memory",
+    );
+    task.max_cycles = 1;
+    task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let first_request = inspector.first_request_messages();
+    assert!(
+        first_request
+            .first()
+            .is_some_and(|message| message.content.contains("<Session Memory>")
+                && message.content.contains("default session memory is loaded")),
+        "runtime did not load session memory by default: {first_request:#?}"
     );
 }
 
@@ -2383,5 +2436,32 @@ impl LlmClient for SessionMemoryExtractingLlmClient {
                 BTreeMap::from([("message".to_string(), json!("memory compacted"))]),
             )],
         ))
+    }
+}
+
+#[derive(Clone, Default)]
+struct DefaultSessionMemoryInspectingLlmClient {
+    first_request_messages: Arc<Mutex<Vec<Message>>>,
+}
+
+impl DefaultSessionMemoryInspectingLlmClient {
+    fn first_request_messages(&self) -> Vec<Message> {
+        self.first_request_messages
+            .lock()
+            .expect("messages poisoned")
+            .clone()
+    }
+}
+
+impl LlmClient for DefaultSessionMemoryInspectingLlmClient {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        let mut first_request = self
+            .first_request_messages
+            .lock()
+            .map_err(|_| LlmError::Request("messages poisoned".to_string()))?;
+        if first_request.is_empty() {
+            *first_request = request.messages;
+        }
+        Ok(LLMResponse::new("done"))
     }
 }
