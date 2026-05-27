@@ -157,17 +157,22 @@ impl MemoryManager {
                 session_memory.extract(&sanitized, 0, message_length);
             }
         }
+        let mut summary_source = sanitized.clone();
         if !force {
+            let (image_compacted, image_changed) = compact_processed_image_messages(&sanitized);
             let (artifact_compacted, artifact_changed) =
-                self.compact_large_tool_results(&sanitized);
-            if artifact_changed
+                self.compact_large_tool_results(&image_compacted);
+            if (image_changed || artifact_changed)
                 && count_messages_tokens(&artifact_compacted, &self.config.model)
                     <= self.autocompact_threshold()
             {
                 return (artifact_compacted, true);
             }
+            if image_changed {
+                summary_source = image_compacted;
+            }
         }
-        let (compacted, changed) = self.compress_memory(&sanitized);
+        let (compacted, changed) = self.compress_memory(&summary_source);
         if changed {
             if let Some(session_memory) = self.session_memory.as_mut() {
                 session_memory
@@ -625,4 +630,40 @@ fn adjust_start_for_tool_context(messages: &[Message], mut start_index: usize) -
         start_index -= 1;
     }
     start_index
+}
+
+fn compact_processed_image_messages(messages: &[Message]) -> (Vec<Message>, bool) {
+    let assistant_indices = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, message)| (message.role == MessageRole::Assistant).then_some(index))
+        .collect::<Vec<_>>();
+    if assistant_indices.is_empty() {
+        return (messages.to_vec(), false);
+    }
+
+    let mut changed = false;
+    let compacted = messages
+        .iter()
+        .enumerate()
+        .map(|(index, message)| {
+            if message.role == MessageRole::User
+                && message.image_url.is_some()
+                && assistant_indices
+                    .iter()
+                    .any(|assistant_index| *assistant_index > index)
+            {
+                changed = true;
+                let mut updated = message.clone();
+                updated.image_url = None;
+                updated.content = format!("{} [image payload compacted]", updated.content)
+                    .trim()
+                    .to_string();
+                updated
+            } else {
+                message.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    (compacted, changed)
 }

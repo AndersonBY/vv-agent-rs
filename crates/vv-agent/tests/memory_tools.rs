@@ -210,6 +210,38 @@ fn memory_manager_recomputes_length_after_tool_artifact_compaction_like_python()
 }
 
 #[test]
+fn memory_manager_compacts_processed_image_payloads_like_python() {
+    let mut manager = MemoryManager::new(MemoryManagerConfig {
+        model_context_window: 160,
+        reserved_output_tokens: 10,
+        autocompact_buffer_tokens: 10,
+        ..MemoryManagerConfig::default()
+    });
+    let image_payload = format!("data:image/png;base64,{}", "a".repeat(400));
+    let mut image_message = Message::user("[Image loaded] img.png");
+    image_message.image_url = Some(image_payload);
+    let messages = vec![
+        Message::system("sys"),
+        Message::user("original request"),
+        image_message,
+        Message::assistant("image parsed"),
+        Message::assistant("next"),
+    ];
+
+    let (compacted, changed) =
+        manager.compact_for_cycle_with_usage(&messages, 2, false, Some(500), None);
+
+    assert!(changed);
+    assert!(compacted.len() > 2);
+    let compacted_image = compacted
+        .iter()
+        .find(|message| message.content.starts_with("[Image loaded]"))
+        .expect("compacted image message");
+    assert!(compacted_image.image_url.is_none());
+    assert!(compacted_image.content.contains("image payload compacted"));
+}
+
+#[test]
 fn memory_threshold_uses_configured_and_model_derived_ceiling() {
     assert_eq!(
         compute_compaction_threshold(128_000, 200_000, 16_000, 13_000),
