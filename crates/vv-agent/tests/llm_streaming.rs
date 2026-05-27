@@ -417,6 +417,104 @@ fn vv_llm_client_normalizes_supported_thinking_model_options_like_python() {
     assert_eq!(gemini_request.options.temperature, Some(1.0));
 }
 
+#[test]
+fn vv_llm_stream_collects_raw_content_blocks_like_python() {
+    let llm = VvLlmClient::new(
+        "moonshot",
+        "kimi-k2.5",
+        "kimi-k2.5",
+        Box::new(RawContentChatClient),
+        90.0,
+    );
+
+    let response = llm
+        .complete(LlmRequest::new(
+            "kimi-k2.5",
+            vec![Message::user("collect raw blocks")],
+        ))
+        .expect("raw content stream");
+
+    assert_eq!(response.content, "done");
+    let raw_content = response.raw["raw_content"]
+        .as_array()
+        .expect("raw content array");
+    assert_eq!(raw_content[0]["type"], json!("thinking"));
+    assert_eq!(raw_content[0]["thinking"], json!("step-1"));
+    assert_eq!(raw_content[0]["signature"], json!("sig-1"));
+    assert_eq!(raw_content[1]["type"], json!("text"));
+    assert_eq!(raw_content[1]["text"], json!("visible text"));
+}
+
+#[derive(Clone, Default)]
+struct RawContentChatClient;
+
+impl vv_llm::ChatClient for RawContentChatClient {
+    fn provider_name(&self) -> &'static str {
+        "raw-content"
+    }
+
+    fn create_completion<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatResponse, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            Ok(vv_llm::ChatResponse {
+                id: "raw-content-response".to_string(),
+                model: "kimi-k2.5".to_string(),
+                content: String::new(),
+                tool_calls: Vec::new(),
+                usage: None,
+            })
+        })
+    }
+
+    fn create_stream<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatStream, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let deltas = vec![
+                Ok(vv_llm::ChatStreamDelta {
+                    raw_content: Some(json!({"type": "thinking_delta", "thinking": "step-1"})),
+                    ..vv_llm::ChatStreamDelta::default()
+                }),
+                Ok(vv_llm::ChatStreamDelta {
+                    raw_content: Some(json!({"type": "signature_delta", "signature": "sig-1"})),
+                    ..vv_llm::ChatStreamDelta::default()
+                }),
+                Ok(vv_llm::ChatStreamDelta {
+                    content: "done".to_string(),
+                    raw_content: Some(json!({"type": "text_delta", "text": "visible text"})),
+                    done: true,
+                    ..vv_llm::ChatStreamDelta::default()
+                }),
+            ];
+            let chat_stream: vv_llm::ChatStream = Box::pin(stream::iter(deltas));
+            Ok(chat_stream)
+        })
+    }
+}
+
 #[derive(Clone, Default)]
 struct RecordingMessagesChatClient {
     requests: Arc<Mutex<Vec<vv_llm::ChatRequest>>>,
