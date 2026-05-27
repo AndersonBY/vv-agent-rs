@@ -129,6 +129,48 @@ fn execution_context_from_request(request: &AgentSessionRunRequest) -> Option<Ex
 
 fn task_from_definition(definition: &AgentDefinition, prompt: String) -> AgentTask {
     let (system_prompt, system_prompt_sections) = system_prompt_from_definition(definition);
+    let mut metadata = definition.metadata.clone();
+    metadata
+        .entry("language".to_string())
+        .or_insert_with(|| Value::String(definition.language.clone()));
+    if let Some(shell) = definition.bash_shell.as_ref() {
+        metadata
+            .entry("bash_shell".to_string())
+            .or_insert_with(|| Value::String(shell.clone()));
+    }
+    if !definition.windows_shell_priority.is_empty() {
+        metadata
+            .entry("windows_shell_priority".to_string())
+            .or_insert_with(|| {
+                Value::Array(
+                    definition
+                        .windows_shell_priority
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                )
+            });
+    }
+    if !definition.bash_env.is_empty() {
+        metadata
+            .entry("bash_env".to_string())
+            .or_insert_with(|| serde_json::to_value(&definition.bash_env).unwrap_or(Value::Null));
+    }
+    if !definition.sub_agents.is_empty() {
+        metadata
+            .entry("sub_agent_names".to_string())
+            .or_insert_with(|| {
+                Value::Array(
+                    definition
+                        .sub_agents
+                        .keys()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                )
+            });
+    }
     let mut task = AgentTask::new(
         format!("{}-task", definition.model),
         definition.model.clone(),
@@ -147,7 +189,7 @@ fn task_from_definition(definition: &AgentDefinition, prompt: String) -> AgentTa
     task.native_multimodal = definition.native_multimodal;
     task.extra_tool_names = definition.extra_tool_names.clone();
     task.exclude_tools = definition.exclude_tools.clone();
-    task.metadata = definition.metadata.clone();
+    task.metadata = metadata;
     if !system_prompt_sections.is_empty() {
         task.metadata
             .entry("system_prompt_sections".to_string())
@@ -359,6 +401,19 @@ impl AgentSDKClient {
     }
 
     fn effective_definition(&self, mut definition: AgentDefinition) -> AgentDefinition {
+        if self.options.bash_shell.is_some() && definition.bash_shell.is_none() {
+            definition.bash_shell = self.options.bash_shell.clone();
+        }
+        if !self.options.windows_shell_priority.is_empty()
+            && definition.windows_shell_priority.is_empty()
+        {
+            definition.windows_shell_priority = self.options.windows_shell_priority.clone();
+        }
+        if !self.options.bash_env.is_empty() {
+            let mut bash_env = self.options.bash_env.clone();
+            bash_env.extend(definition.bash_env.clone());
+            definition.bash_env = bash_env;
+        }
         if definition.system_prompt.is_none() {
             if let Some(template_name) = definition.system_prompt_template.as_deref() {
                 if let Some(template) = self.prompt_templates.get(template_name) {

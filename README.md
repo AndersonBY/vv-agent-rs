@@ -375,7 +375,9 @@ The current Rust implementation includes:
   instead of starting from a fresh task. SDK-created runtime sessions also
   inherit `AgentSDKOptions.workspace` for both session state and tool execution
   context, and `AgentSDKOptions.log_preview_chars` for forwarded runtime event
-  previews.
+  previews. SDK startup shell defaults (`bash_shell`,
+  `windows_shell_priority`, and `bash_env`) are merged into agent task metadata
+  like Python, with agent-level environment values taking precedence.
 - `AgentSDKClient::query` mirrors Python client query semantics: it returns the
   final answer for completed runs and reports non-completed statuses with
   snake_case status values such as `status=wait_user`.

@@ -6,7 +6,7 @@ use vv_agent::{
     create_agent_session, AgentDefinition, AgentRun, AgentRuntime, AgentSDKClient, AgentSDKOptions,
     AgentSession, AgentStatus, BeforeLlmEvent, BeforeToolCallEvent, BeforeToolCallPatch,
     CycleRecord, LLMResponse, ResolvedModelConfig, RuntimeHook, ScriptedLlmClient,
-    SessionEventHandler, TokenUsage, ToolCall,
+    SessionEventHandler, TokenUsage, ToolCall, ToolDirective, ToolExecutionResult,
 };
 
 fn preview_text_for_test(text: &str, log_preview_chars: Option<usize>) -> String {
@@ -610,6 +610,71 @@ fn sdk_runtime_uses_options_workspace_for_tool_context_and_sessions() {
 }
 
 #[test]
+fn sdk_runtime_applies_startup_shell_defaults_to_tool_context_like_python() {
+    let responses = vec![
+        LLMResponse {
+            content: "run shell".to_string(),
+            tool_calls: vec![ToolCall::new(
+                "bash-1",
+                "bash",
+                json_args(serde_json::json!({"command": "echo skipped"})),
+            )],
+            raw: BTreeMap::new(),
+            token_usage: TokenUsage::default(),
+        },
+        LLMResponse {
+            content: "finish".to_string(),
+            tool_calls: vec![ToolCall::new(
+                "finish-1",
+                "task_finish",
+                json_args(serde_json::json!({"message": "ok"})),
+            )],
+            raw: BTreeMap::new(),
+            token_usage: TokenUsage::default(),
+        },
+    ];
+    let captured_metadata = Arc::new(Mutex::new(Vec::new()));
+    let mut runtime = AgentRuntime::new(ScriptedLlmClient::new(responses));
+    runtime.hooks.push(Arc::new(ShellMetadataCaptureHook {
+        captured_metadata: Arc::clone(&captured_metadata),
+    }));
+    let mut client = AgentSDKClient::new(AgentSDKOptions {
+        bash_shell: Some("powershell".to_string()),
+        windows_shell_priority: vec!["git-bash".to_string(), "powershell".to_string()],
+        bash_env: BTreeMap::from([
+            (
+                "VV_AGENT_OPTION_ONLY".to_string(),
+                "from-option".to_string(),
+            ),
+            ("VV_AGENT_SHARED".to_string(), "from-option".to_string()),
+        ]),
+        ..AgentSDKOptions::default()
+    })
+    .with_runtime(runtime);
+    let mut definition = AgentDefinition::default_for_model("demo");
+    definition.extra_tool_names = vec!["bash".to_string()];
+    definition.bash_env = BTreeMap::from([
+        ("VV_AGENT_AGENT_ONLY".to_string(), "from-agent".to_string()),
+        ("VV_AGENT_SHARED".to_string(), "from-agent".to_string()),
+    ]);
+    client.set_default_agent(definition);
+
+    let run = client.query("run shell").expect("query");
+
+    assert_eq!(run, "ok");
+    let captured = captured_metadata.lock().expect("captured metadata");
+    let metadata = captured.first().expect("bash metadata");
+    assert_eq!(metadata["bash_shell"], "powershell");
+    assert_eq!(
+        metadata["windows_shell_priority"],
+        serde_json::json!(["git-bash", "powershell"])
+    );
+    assert_eq!(metadata["bash_env"]["VV_AGENT_OPTION_ONLY"], "from-option");
+    assert_eq!(metadata["bash_env"]["VV_AGENT_AGENT_ONLY"], "from-agent");
+    assert_eq!(metadata["bash_env"]["VV_AGENT_SHARED"], "from-agent");
+}
+
+#[test]
 fn sdk_client_query_reports_wait_user_status() {
     let responses = vec![LLMResponse {
         content: "ask".to_string(),
@@ -646,6 +711,28 @@ fn fake_run(prompt: &str, status: AgentStatus) -> AgentRun {
 }
 
 type RecordedEvents = Arc<Mutex<Vec<(String, BTreeMap<String, Value>)>>>;
+
+struct ShellMetadataCaptureHook {
+    captured_metadata: Arc<Mutex<Vec<BTreeMap<String, Value>>>>,
+}
+
+impl RuntimeHook for ShellMetadataCaptureHook {
+    fn before_tool_call(&self, event: BeforeToolCallEvent<'_>) -> Option<BeforeToolCallPatch> {
+        if event.call.name != "bash" {
+            return None;
+        }
+        self.captured_metadata
+            .lock()
+            .expect("captured metadata")
+            .push(event.context.metadata.clone());
+        let mut result = ToolExecutionResult::success(event.call.id.clone(), "{}");
+        result.directive = ToolDirective::Continue;
+        Some(BeforeToolCallPatch {
+            call: None,
+            result: Some(result),
+        })
+    }
+}
 
 fn recorded_events() -> RecordedEvents {
     Arc::new(Mutex::new(Vec::new()))
