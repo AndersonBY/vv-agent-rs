@@ -291,6 +291,44 @@ fn vv_llm_client_fails_over_to_next_endpoint_client_like_python() {
 }
 
 #[test]
+fn vv_llm_client_prefers_last_successful_endpoint_like_python() {
+    let primary = CountingFailingChatClient::default();
+    let primary_probe = primary.clone();
+    let llm = VvLlmClient::new_with_named_endpoint_clients(
+        "openai",
+        "gpt-4o-mini",
+        "gpt-4o-mini",
+        vec![
+            (
+                "primary-endpoint".to_string(),
+                "gpt-4o-mini".to_string(),
+                Box::new(primary) as Box<dyn vv_llm::ChatClient>,
+            ),
+            (
+                "backup-endpoint".to_string(),
+                "gpt-4o-mini".to_string(),
+                Box::new(UsageMissingChatClient) as Box<dyn vv_llm::ChatClient>,
+            ),
+        ],
+        90.0,
+    );
+
+    let first = llm
+        .complete(LlmRequest::new("gpt-4o-mini", vec![Message::user("first")]))
+        .expect("first fallback completion");
+    let second = llm
+        .complete(LlmRequest::new(
+            "gpt-4o-mini",
+            vec![Message::user("second")],
+        ))
+        .expect("second preferred completion");
+
+    assert_eq!(first.raw["used_endpoint_id"], json!("backup-endpoint"));
+    assert_eq!(second.raw["used_endpoint_id"], json!("backup-endpoint"));
+    assert_eq!(primary_probe.calls(), 1);
+}
+
+#[test]
 fn vv_llm_client_uses_endpoint_model_for_selected_alias_like_python() {
     let llm = VvLlmClient::new_with_named_endpoint_clients(
         "openai",
@@ -473,6 +511,65 @@ fn vv_llm_client_debug_dump_writes_request_messages_like_python() {
         std::fs::read_to_string(dump_dir.path().join(&dump_files[0])).expect("read dump payload");
     assert!(payload.contains("\"request_index\": 1"));
     assert!(payload.contains("\"message_count\": 1"));
+}
+
+#[derive(Clone, Default)]
+struct CountingFailingChatClient {
+    calls: Arc<Mutex<u32>>,
+}
+
+impl CountingFailingChatClient {
+    fn calls(&self) -> u32 {
+        *self.calls.lock().expect("counting calls lock")
+    }
+}
+
+impl vv_llm::ChatClient for CountingFailingChatClient {
+    fn provider_name(&self) -> &'static str {
+        "counting-failing"
+    }
+
+    fn create_completion<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatResponse, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        let calls = Arc::clone(&self.calls);
+        Box::pin(async move {
+            *calls.lock().expect("counting calls lock") += 1;
+            Err(vv_llm::VvLlmError::Provider("primary down".to_string()))
+        })
+    }
+
+    fn create_stream<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatStream, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        let calls = Arc::clone(&self.calls);
+        Box::pin(async move {
+            *calls.lock().expect("counting calls lock") += 1;
+            Err(vv_llm::VvLlmError::Provider("primary down".to_string()))
+        })
+    }
 }
 
 #[derive(Clone, Default)]

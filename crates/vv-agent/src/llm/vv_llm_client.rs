@@ -41,6 +41,7 @@ pub struct VvLlmClient {
     pub timeout_seconds: f64,
     pub debug_dump_dir: Option<PathBuf>,
     request_counter: Arc<Mutex<u64>>,
+    preferred_endpoint_id: Arc<Mutex<Option<String>>>,
     endpoint_clients: Vec<EndpointChatClient>,
 }
 
@@ -102,6 +103,7 @@ impl VvLlmClient {
             timeout_seconds,
             debug_dump_dir: None,
             request_counter: Arc::new(Mutex::new(0)),
+            preferred_endpoint_id: Arc::new(Mutex::new(None)),
             endpoint_clients: endpoint_clients
                 .into_iter()
                 .map(|(endpoint_id, model_id, chat_client)| EndpointChatClient {
@@ -151,9 +153,12 @@ impl LlmClient for VvLlmClient {
         }
 
         let mut errors = Vec::new();
-        for endpoint in &self.endpoint_clients {
-            match self.complete_with_endpoint(endpoint, request.clone(), stream_callback.clone()) {
-                Ok(response) => return Ok(response),
+        for endpoint in self.ordered_endpoint_clients() {
+            match self.complete_with_endpoint(&endpoint, request.clone(), stream_callback.clone()) {
+                Ok(response) => {
+                    self.remember_preferred_endpoint(&endpoint.endpoint_id);
+                    return Ok(response);
+                }
                 Err(error) => errors.push(format!("{}: {error}", endpoint.endpoint_id)),
             }
         }
@@ -254,6 +259,31 @@ impl VvLlmClient {
             endpoint.model_id.clone()
         } else {
             requested_model.to_string()
+        }
+    }
+
+    fn ordered_endpoint_clients(&self) -> Vec<EndpointChatClient> {
+        let mut endpoints = self.endpoint_clients.clone();
+        let preferred_endpoint_id = self
+            .preferred_endpoint_id
+            .lock()
+            .ok()
+            .and_then(|preferred| preferred.clone());
+        if let Some(preferred_endpoint_id) = preferred_endpoint_id {
+            if let Some(index) = endpoints
+                .iter()
+                .position(|endpoint| endpoint.endpoint_id == preferred_endpoint_id)
+            {
+                let preferred = endpoints.remove(index);
+                endpoints.insert(0, preferred);
+            }
+        }
+        endpoints
+    }
+
+    fn remember_preferred_endpoint(&self, endpoint_id: &str) {
+        if let Ok(mut preferred_endpoint_id) = self.preferred_endpoint_id.lock() {
+            *preferred_endpoint_id = Some(endpoint_id.to_string());
         }
     }
 }
