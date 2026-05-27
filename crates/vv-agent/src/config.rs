@@ -61,6 +61,12 @@ pub struct ResolvedModelConfig {
     pub endpoint_options: Vec<EndpointOption>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MemorySummaryDefaults {
+    pub backend: Option<String>,
+    pub model: Option<String>,
+}
+
 impl ResolvedModelConfig {
     pub fn new(
         backend: impl Into<String>,
@@ -105,6 +111,30 @@ pub fn apply_resolved_model_limits(task: &mut AgentTask, resolved: &ResolvedMode
         task.metadata
             .entry("reserved_output_tokens".to_string())
             .or_insert_with(|| Value::from(max_output_tokens));
+    }
+}
+
+pub fn load_memory_summary_defaults_from_file(path: &Path) -> MemorySummaryDefaults {
+    let Ok(source) = fs::read_to_string(path) else {
+        return MemorySummaryDefaults::default();
+    };
+    MemorySummaryDefaults {
+        backend: python_settings::parse_string_assignment(
+            &source,
+            &[
+                "DEFAULT_USER_MEMORY_SUMMARIZE_BACKEND",
+                "DEFAULT_MEMORY_SUMMARIZE_BACKEND",
+                "VV_AGENT_MEMORY_SUMMARY_BACKEND",
+            ],
+        ),
+        model: python_settings::parse_string_assignment(
+            &source,
+            &[
+                "DEFAULT_USER_MEMORY_SUMMARIZE_MODEL",
+                "DEFAULT_MEMORY_SUMMARIZE_MODEL",
+                "VV_AGENT_MEMORY_SUMMARY_MODEL",
+            ],
+        ),
     }
 }
 

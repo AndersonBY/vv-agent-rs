@@ -24,6 +24,17 @@ pub(super) fn parse_llm_settings_source(source: &str) -> Result<Value, PythonSet
     }
 }
 
+pub(super) fn parse_string_assignment(source: &str, targets: &[&str]) -> Option<String> {
+    let literal = extract_assignment_literal(source, targets).ok()?;
+    let json_source = python_literal_to_json(literal).ok()?;
+    let value = serde_json::from_str::<Value>(&json_source).ok()?;
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 fn extract_assignment_literal<'a>(
     source: &'a str,
     targets: &[&str],
@@ -93,6 +104,10 @@ fn collect_balanced_literal(source: &str) -> Result<&str, PythonSettingsError> {
             }
             if ch == active_quote {
                 quote = None;
+                if started && depth == 0 {
+                    let end = index + ch.len_utf8();
+                    return Ok(tail[..end].trim());
+                }
             }
             continue;
         }

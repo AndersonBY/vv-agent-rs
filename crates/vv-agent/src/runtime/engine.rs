@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
+use crate::config::load_memory_summary_defaults_from_file;
 use crate::llm::{LlmClient, LlmError, LlmRequest};
 use crate::memory::{
     CompactionExhaustedError, MemoryManager, MemoryManagerConfig, SessionMemory,
@@ -163,8 +164,13 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             ]),
         );
 
-        let mut memory_manager =
-            build_memory_manager(&task, workspace_path.clone(), Some(self.llm_client.clone()));
+        let mut memory_manager = build_memory_manager(
+            &task,
+            workspace_path.clone(),
+            Some(self.llm_client.clone()),
+            self.settings_file.as_deref(),
+            self.default_backend.as_deref(),
+        );
 
         if controls_cancelled(&controls) {
             self.emit_log(
@@ -985,11 +991,36 @@ fn build_memory_manager<C>(
     task: &AgentTask,
     workspace_path: PathBuf,
     memory_summary_client: Option<C>,
+    settings_file: Option<&std::path::Path>,
+    default_backend: Option<&str>,
 ) -> MemoryManager
 where
     C: LlmClient + Clone + 'static,
 {
     let workspace = task.use_workspace.then_some(workspace_path.clone());
+    let local_summary_defaults = settings_file
+        .map(load_memory_summary_defaults_from_file)
+        .unwrap_or_default();
+    let summary_backend = read_optional_string_metadata(
+        &task.metadata,
+        &[
+            "memory_summary_backend",
+            "compress_memory_summary_backend",
+            "memory_compress_backend",
+        ],
+    )
+    .or(local_summary_defaults.backend)
+    .or_else(|| default_backend.map(str::to_string));
+    let summary_model = read_optional_string_metadata(
+        &task.metadata,
+        &[
+            "memory_summary_model",
+            "compress_memory_summary_model",
+            "memory_compress_model",
+        ],
+    )
+    .or(local_summary_defaults.model)
+    .unwrap_or_else(|| task.model.clone());
     MemoryManager::new(MemoryManagerConfig {
         compact_threshold: task.memory_compact_threshold,
         keep_recent_messages: read_usize_metadata(
@@ -1056,7 +1087,13 @@ where
             "microcompact_compactable_tools",
         ),
         workspace: workspace.clone(),
-        session_memory: build_session_memory(task, workspace, memory_summary_client),
+        session_memory: build_session_memory(
+            task,
+            workspace,
+            memory_summary_client,
+            summary_backend,
+            summary_model,
+        ),
     })
 }
 
@@ -1064,6 +1101,8 @@ fn build_session_memory<C>(
     task: &AgentTask,
     workspace: Option<PathBuf>,
     memory_summary_client: Option<C>,
+    summary_backend: Option<String>,
+    summary_model: String,
 ) -> Option<SessionMemory>
 where
     C: LlmClient + Clone + 'static,
@@ -1077,13 +1116,7 @@ where
         .get("session_memory_extraction_model")
         .and_then(Value::as_str)
         .map(str::to_string)
-        .or_else(|| {
-            task.metadata
-                .get("memory_summary_model")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| task.model.clone());
+        .unwrap_or(summary_model);
     let extraction_callback =
         memory_summary_client.map(|client| build_session_memory_extraction_callback(client));
     let mut session_memory = SessionMemory::with_workspace(
@@ -1115,7 +1148,8 @@ where
                 .metadata
                 .get("session_memory_extraction_backend")
                 .and_then(Value::as_str)
-                .map(str::to_string),
+                .map(str::to_string)
+                .or(summary_backend),
             extraction_model: Some(extraction_model),
             token_model: task.model.clone(),
         },
@@ -1192,6 +1226,20 @@ fn read_string_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: 
         .filter(|value| !value.is_empty())
         .unwrap_or(default)
         .to_string()
+}
+
+fn read_optional_string_metadata(
+    metadata: &BTreeMap<String, Value>,
+    keys: &[&str],
+) -> Option<String> {
+    keys.iter().find_map(|key| {
+        metadata
+            .get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
 }
 
 fn read_string_set_metadata(

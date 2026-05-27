@@ -1242,6 +1242,98 @@ fn runtime_loads_session_memory_by_default_like_python() {
 }
 
 #[test]
+fn runtime_uses_memory_summary_metadata_model_for_session_extraction_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let settings_file = workspace.path().join("local_settings.py");
+    fs::write(
+        &settings_file,
+        r#"
+DEFAULT_USER_MEMORY_SUMMARIZE_BACKEND = "settings-backend"
+DEFAULT_USER_MEMORY_SUMMARIZE_MODEL = "settings-model"
+"#,
+    )
+    .expect("settings file");
+    let llm = SummaryModelInspectingLlmClient::default();
+    let inspector = llm.clone();
+    let mut runtime = AgentRuntime::new(llm)
+        .with_settings_file(settings_file)
+        .with_default_backend("fallback-backend");
+    runtime.default_workspace = Some(workspace.path().to_path_buf());
+    runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
+        workspace.path(),
+    ));
+    let mut task = AgentTask::new(
+        "summary_model_priority_task",
+        "task-model",
+        "system",
+        "inspect memory",
+    );
+    task.memory_compact_threshold = 1;
+    task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
+    task.metadata
+        .insert("memory_summary_model".to_string(), json!("metadata-model"));
+    task.metadata.insert(
+        "memory_summary_backend".to_string(),
+        json!("metadata-backend"),
+    );
+    task.metadata
+        .insert("session_memory_min_tokens".to_string(), json!(1));
+    task.metadata
+        .insert("session_memory_min_text_messages".to_string(), json!(1));
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(
+        inspector.extraction_model(),
+        Some("metadata-model".to_string())
+    );
+}
+
+#[test]
+fn runtime_uses_local_memory_summary_model_defaults_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let settings_file = workspace.path().join("local_settings.py");
+    fs::write(
+        &settings_file,
+        r#"
+DEFAULT_USER_MEMORY_SUMMARIZE_BACKEND = "settings-backend"
+DEFAULT_USER_MEMORY_SUMMARIZE_MODEL = "settings-model"
+"#,
+    )
+    .expect("settings file");
+    let llm = SummaryModelInspectingLlmClient::default();
+    let inspector = llm.clone();
+    let mut runtime = AgentRuntime::new(llm)
+        .with_settings_file(settings_file)
+        .with_default_backend("fallback-backend");
+    runtime.default_workspace = Some(workspace.path().to_path_buf());
+    runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
+        workspace.path(),
+    ));
+    let mut task = AgentTask::new(
+        "summary_model_settings_task",
+        "task-model",
+        "system",
+        "inspect memory",
+    );
+    task.memory_compact_threshold = 1;
+    task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
+    task.metadata
+        .insert("session_memory_min_tokens".to_string(), json!(1));
+    task.metadata
+        .insert("session_memory_min_text_messages".to_string(), json!(1));
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(
+        inspector.extraction_model(),
+        Some("settings-model".to_string())
+    );
+}
+
+#[test]
 fn runtime_microcompacts_before_full_memory_compaction() {
     let workspace = tempfile::tempdir().expect("workspace");
     let large_tool_payload = "tool output ".repeat(300);
@@ -2461,6 +2553,41 @@ impl LlmClient for DefaultSessionMemoryInspectingLlmClient {
             .map_err(|_| LlmError::Request("messages poisoned".to_string()))?;
         if first_request.is_empty() {
             *first_request = request.messages;
+        }
+        Ok(LLMResponse::new("done"))
+    }
+}
+
+#[derive(Clone, Default)]
+struct SummaryModelInspectingLlmClient {
+    extraction_model: Arc<Mutex<Option<String>>>,
+}
+
+impl SummaryModelInspectingLlmClient {
+    fn extraction_model(&self) -> Option<String> {
+        self.extraction_model
+            .lock()
+            .expect("model poisoned")
+            .clone()
+    }
+}
+
+impl LlmClient for SummaryModelInspectingLlmClient {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        if request.tools.is_empty()
+            && request.messages.len() == 1
+            && request.messages[0]
+                .content
+                .contains("extract durable facts that should survive context compression")
+        {
+            *self
+                .extraction_model
+                .lock()
+                .map_err(|_| LlmError::Request("model poisoned".to_string()))? =
+                Some(request.model.clone());
+            return Ok(LLMResponse::new(
+                r#"[{"category":"key_fact","content":"summary model captured","importance":8}]"#,
+            ));
         }
         Ok(LLMResponse::new("done"))
     }
