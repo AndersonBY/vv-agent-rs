@@ -467,7 +467,9 @@ The current Rust implementation includes:
   `steer_sub_agent_session`, and `sub_task_status(message=...)` can queue
   steering messages for sessions registered during active runs or continue
   completed sessions attached to `SubTaskManager`, including Python-style
-  `wait_for_response` coercion and max-cycle continuation rejection.
+  `wait_for_response` coercion and max-cycle continuation rejection. The
+  Python-private `_register_sub_agent_session` / `_unregister_sub_agent_session`
+  guarded aliases are also exposed for `runtime::engine` parity.
   `SubTaskManager::attach_session` also
   tracks Python-style session event snapshots with recent activity, latest
   cycle/tool-call metadata, and visible workspace file listings. Runtime-backed

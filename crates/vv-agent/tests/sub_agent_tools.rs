@@ -8,10 +8,11 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 use vv_agent::{
-    build_default_registry, register_sub_agent_session, sub_agent_session_registry,
-    unregister_sub_agent_session, AgentStatus, Message, RuntimeExecutionBackend, SubAgentSession,
-    SubAgentSessionListener, SubTaskManager, SubTaskOutcome, SubTaskSessionAttachment,
-    ThreadBackend, ToolCall, ToolContext, ToolResultStatus,
+    _register_sub_agent_session, _unregister_sub_agent_session, build_default_registry,
+    register_sub_agent_session, sub_agent_session_registry, unregister_sub_agent_session,
+    AgentStatus, Message, RuntimeExecutionBackend, SubAgentSession, SubAgentSessionListener,
+    SubTaskManager, SubTaskOutcome, SubTaskSessionAttachment, ThreadBackend, ToolCall, ToolContext,
+    ToolResultStatus,
 };
 
 struct SubAgentRegistryTestLock {
@@ -571,6 +572,28 @@ fn sub_task_status_can_steer_registered_running_session() {
     let payload: Value = serde_json::from_str(&result.content).expect("payload");
     assert_eq!(payload["interaction"]["task_id"], "sub-task-1");
     assert_eq!(payload["interaction"]["action"], "message_queued");
+}
+
+#[test]
+fn sub_agent_session_private_alias_unregisters_only_matching_session_like_python() {
+    let _registry_lock = isolated_sub_agent_registry();
+    let first: Arc<dyn SubAgentSession> = Arc::new(RecordingSubAgentSession {
+        received: Arc::new(Mutex::new(Vec::new())),
+    });
+    let second: Arc<dyn SubAgentSession> = Arc::new(RecordingSubAgentSession {
+        received: Arc::new(Mutex::new(Vec::new())),
+    });
+
+    _register_sub_agent_session("guarded-session", first.clone());
+    _unregister_sub_agent_session("guarded-session", Some(second.clone()));
+    assert!(sub_agent_session_registry()
+        .get("guarded-session")
+        .is_some());
+
+    _unregister_sub_agent_session("guarded-session", Some(first));
+    assert!(sub_agent_session_registry()
+        .get("guarded-session")
+        .is_none());
 }
 
 #[test]

@@ -30,7 +30,8 @@ use super::results::{assistant_message_from_response, extract_final_message, ext
 use super::tool_call_runner::{execute_tool_result, needs_tool_call_id, skipped_tool_result};
 
 pub use crate::sub_agent_sessions::{
-    get_sub_agent_session, steer_sub_agent_session, subscribe_sub_agent_session,
+    _register_sub_agent_session, _unregister_sub_agent_session, get_sub_agent_session,
+    steer_sub_agent_session, subscribe_sub_agent_session,
 };
 
 pub type RuntimeLogCallback = dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static;

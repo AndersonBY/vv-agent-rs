@@ -47,12 +47,14 @@ pub use processes::{
 };
 pub use state::{Checkpoint, InMemoryStateStore, StateStore};
 pub use sub_agent_sessions::{
-    continue_sub_agent_session, get_sub_agent_session, register_sub_agent_session,
-    steer_sub_agent_session, sub_agent_session_registry, subscribe_sub_agent_session,
-    unregister_sub_agent_session, SubAgentSession, SubAgentSessionListener,
-    SubAgentSessionRegistry, SubAgentSessionUnsubscribe,
+    _register_sub_agent_session, _unregister_sub_agent_session, continue_sub_agent_session,
+    get_sub_agent_session, register_sub_agent_session, steer_sub_agent_session,
+    sub_agent_session_registry, subscribe_sub_agent_session, unregister_sub_agent_session,
+    SubAgentSession, SubAgentSessionListener, SubAgentSessionRegistry, SubAgentSessionUnsubscribe,
 };
-pub use sub_task_manager::{ManagedSubTask, SubTaskManager};
+pub use sub_task_manager::{
+    ManagedSubTask, ManagedSubTaskSnapshot, SubTaskManager, SubTaskSessionAttachment,
+};
 pub use token_usage::{normalize_token_usage, summarize_task_token_usage};
 pub use tool_call_runner::{ToolCallRunner, ToolRunOutcome, ToolRunRequest};
 pub use tool_planner::{

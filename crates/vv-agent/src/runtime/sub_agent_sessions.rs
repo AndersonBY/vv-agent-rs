@@ -54,6 +54,30 @@ impl SubAgentSessionRegistry {
             .remove(session_id);
     }
 
+    pub fn unregister_if_matches(
+        &self,
+        session_id: &str,
+        session: Option<&Arc<dyn SubAgentSession>>,
+    ) -> bool {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return false;
+        }
+        let mut sessions = self
+            .sessions
+            .lock()
+            .expect("sub-agent session registry poisoned");
+        let Some(registered) = sessions.get(session_id) else {
+            return false;
+        };
+        if let Some(expected) = session {
+            if !Arc::ptr_eq(registered, expected) {
+                return false;
+            }
+        }
+        sessions.remove(session_id).is_some()
+    }
+
     pub fn get(&self, session_id: &str) -> Option<Arc<dyn SubAgentSession>> {
         let session_id = session_id.trim();
         if session_id.is_empty() {
@@ -89,6 +113,20 @@ pub fn register_sub_agent_session(
 
 pub fn unregister_sub_agent_session(session_id: &str) {
     sub_agent_session_registry().unregister(session_id);
+}
+
+pub fn _register_sub_agent_session(
+    session_id: impl Into<String>,
+    session: Arc<dyn SubAgentSession>,
+) {
+    register_sub_agent_session(session_id, session);
+}
+
+pub fn _unregister_sub_agent_session(
+    session_id: &str,
+    session: Option<Arc<dyn SubAgentSession>>,
+) -> bool {
+    sub_agent_session_registry().unregister_if_matches(session_id, session.as_ref())
 }
 
 pub fn get_sub_agent_session(session_id: &str) -> Option<Arc<dyn SubAgentSession>> {
