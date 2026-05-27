@@ -482,6 +482,135 @@ fn vv_llm_client_normalizes_supported_thinking_model_options_like_python() {
 }
 
 #[test]
+fn vv_llm_client_normalizes_more_provider_model_aliases_like_python() {
+    let qwen_client = RecordingMessagesChatClient::default();
+    let qwen_probe = qwen_client.clone();
+    let qwen = VvLlmClient::new(
+        "qwen",
+        "qwen3-32b-thinking",
+        "qwen3-32b-thinking",
+        Box::new(qwen_client),
+        90.0,
+    );
+    let _ = qwen
+        .complete(LlmRequest::new(
+            "qwen3-32b-thinking",
+            vec![Message::user("think")],
+        ))
+        .expect("qwen thinking request");
+    assert_eq!(
+        qwen_probe.last_request().expect("qwen request").model,
+        "qwen3-32b"
+    );
+
+    let qwen_keep_client = RecordingMessagesChatClient::default();
+    let qwen_keep_probe = qwen_keep_client.clone();
+    let qwen_keep = VvLlmClient::new(
+        "qwen",
+        "qwen3-next-80b-a3b-thinking",
+        "qwen3-next-80b-a3b-thinking",
+        Box::new(qwen_keep_client),
+        90.0,
+    );
+    let _ = qwen_keep
+        .complete(LlmRequest::new(
+            "qwen3-next-80b-a3b-thinking",
+            vec![Message::user("keep suffix")],
+        ))
+        .expect("qwen keep suffix request");
+    assert_eq!(
+        qwen_keep_probe
+            .last_request()
+            .expect("qwen keep request")
+            .model,
+        "qwen3-next-80b-a3b-thinking"
+    );
+
+    let glm_client = RecordingMessagesChatClient::default();
+    let glm_probe = glm_client.clone();
+    let glm = VvLlmClient::new(
+        "zhipuai",
+        "glm-5-air-thinking",
+        "glm-5-air-thinking",
+        Box::new(glm_client),
+        90.0,
+    );
+    let _ = glm
+        .complete(LlmRequest::new(
+            "glm-5-air-thinking",
+            vec![Message::user("think")],
+        ))
+        .expect("glm thinking request");
+    assert_eq!(
+        glm_probe.last_request().expect("glm request").model,
+        "glm-5-air"
+    );
+
+    let gpt_client = RecordingMessagesChatClient::default();
+    let gpt_probe = gpt_client.clone();
+    let gpt = VvLlmClient::new(
+        "openai",
+        "gpt-5-high",
+        "gpt-5-high",
+        Box::new(gpt_client),
+        90.0,
+    );
+    let _ = gpt
+        .complete(LlmRequest::new(
+            "gpt-5-high",
+            vec![Message::user("high effort")],
+        ))
+        .expect("gpt high request");
+    assert_eq!(
+        gpt_probe.last_request().expect("gpt request").model,
+        "gpt-5"
+    );
+
+    let o3_client = RecordingMessagesChatClient::default();
+    let o3_probe = o3_client.clone();
+    let o3 = VvLlmClient::new(
+        "openai",
+        "o3-mini-high",
+        "o3-mini-high",
+        Box::new(o3_client),
+        90.0,
+    );
+    let _ = o3
+        .complete(LlmRequest::new(
+            "o3-mini-high",
+            vec![Message::user("high effort")],
+        ))
+        .expect("o3 high request");
+    assert_eq!(
+        o3_probe.last_request().expect("o3 request").model,
+        "o3-mini"
+    );
+}
+
+#[test]
+fn vv_llm_client_normalizes_tool_call_ids_and_names_like_python() {
+    let llm = VvLlmClient::new(
+        "openai",
+        "demo-model",
+        "demo-model",
+        Box::new(UnnormalizedToolCallChatClient),
+        90.0,
+    );
+
+    let response = llm
+        .complete(LlmRequest::new(
+            "demo-model",
+            vec![Message::user("call a tool")],
+        ))
+        .expect("tool call response");
+
+    assert_eq!(response.tool_calls.len(), 1);
+    assert_eq!(response.tool_calls[0].name, "task_finish");
+    assert!(!response.tool_calls[0].id.is_empty());
+    assert_eq!(response.tool_calls[0].arguments["message"], json!("done"));
+}
+
+#[test]
 fn vv_llm_stream_collects_raw_content_blocks_like_python() {
     let llm = VvLlmClient::new(
         "moonshot",
@@ -743,6 +872,64 @@ impl vv_llm::ChatClient for RawContentChatClient {
                 }),
             ];
             let chat_stream: vv_llm::ChatStream = Box::pin(stream::iter(deltas));
+            Ok(chat_stream)
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct UnnormalizedToolCallChatClient;
+
+impl vv_llm::ChatClient for UnnormalizedToolCallChatClient {
+    fn provider_name(&self) -> &'static str {
+        "unnormalized-tool-call"
+    }
+
+    fn create_completion<'life0, 'async_trait>(
+        &'life0 self,
+        request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatResponse, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            Ok(vv_llm::ChatResponse {
+                id: "unnormalized-response".to_string(),
+                model: request.model,
+                content: String::new(),
+                tool_calls: vec![vv_llm::ToolCall::function(
+                    "",
+                    "task _finish",
+                    r#"{"message":"done"}"#,
+                )],
+                usage: None,
+            })
+        })
+    }
+
+    fn create_stream<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatStream, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let chat_stream: vv_llm::ChatStream = Box::pin(stream::empty());
             Ok(chat_stream)
         })
     }

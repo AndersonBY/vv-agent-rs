@@ -191,10 +191,11 @@ The current Rust implementation includes:
   DeepSeek v4, Claude, Gemini, Kimi, Qwen3, GLM, GPT-5, and MiniMax. The same
   client now applies vv-llm-supported Python request options for DeepSeek
   reasoning temperature, Claude thinking model normalization and token budget,
-  Gemini 3 preview routing, MiniMax multi-system message preparation, and
-  Python-style streaming `raw_content` block aggregation. `VvLlmClient` and
-  SDK-built vv-llm runtimes also support Python-style debug request dumps via
-  `debug_dump_dir`.
+  Gemini 3 preview routing, Qwen/GLM `-thinking` suffix routing, GPT/O-series
+  `-high` alias routing, MiniMax multi-system message preparation, Python-style
+  streaming `raw_content` block aggregation, and provider tool-call id/name
+  normalization. `VvLlmClient` and SDK-built vv-llm runtimes also support
+  Python-style debug request dumps via `debug_dump_dir`.
 - Core runtime types expose Python-style `to_dict` / `from_dict` helpers for
   task, result, message, cycle, tool-call, and tool-result payloads, including
   legacy tool `status` plus `status_code` for worker interoperability.

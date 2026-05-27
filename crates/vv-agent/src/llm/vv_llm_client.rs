@@ -33,6 +33,13 @@ const CLAUDE_THINKING_MODELS: &[&str] = &[
     "claude-opus-4-6-thinking",
     "claude-sonnet-4-6-thinking",
 ];
+const QWEN_THINKING_KEEP_SUFFIX_MODELS: &[&str] = &[
+    "qwen3-next-80b-a3b-thinking",
+    "qwen3-vl-235b-a22b-thinking",
+    "qwen3-vl-32b-thinking",
+    "qwen3-vl-30b-a3b-thinking",
+    "qwen3-vl-8b-thinking",
+];
 
 #[derive(Clone)]
 pub struct VvLlmClient {
@@ -345,6 +352,30 @@ fn resolve_request_options(model: &str) -> ResolvedRequestOptions {
         max_tokens = Some(20_000);
     }
 
+    if matches!(normalized_model.as_str(), "o3-mini-high" | "o4-mini-high")
+        || (normalized_model.starts_with("gpt-5") && normalized_model.ends_with("-high"))
+    {
+        resolved_model = remove_suffix_case_insensitive(&resolved_model, "-high");
+        normalized_model = resolved_model.to_ascii_lowercase();
+    }
+
+    if normalized_model.starts_with("qwen3")
+        && normalized_model.ends_with("-thinking")
+        && !QWEN_THINKING_KEEP_SUFFIX_MODELS
+            .iter()
+            .any(|candidate| normalized_model == *candidate)
+    {
+        resolved_model = remove_suffix_case_insensitive(&resolved_model, "-thinking");
+        normalized_model = resolved_model.to_ascii_lowercase();
+    }
+
+    if (normalized_model.starts_with("glm-4.") || normalized_model.starts_with("glm-5"))
+        && normalized_model.ends_with("-thinking")
+    {
+        resolved_model = remove_suffix_case_insensitive(&resolved_model, "-thinking");
+        normalized_model = resolved_model.to_ascii_lowercase();
+    }
+
     if normalized_model.starts_with("gemini-3") {
         temperature.get_or_insert(1.0);
         if normalized_model == "gemini-3-pro" || normalized_model == "gemini-3-flash" {
@@ -585,19 +616,33 @@ fn from_vv_llm_response(
         tool_calls: response
             .tool_calls
             .into_iter()
-            .map(from_vv_llm_tool_call)
+            .enumerate()
+            .map(|(index, tool_call)| from_vv_llm_tool_call(tool_call, index))
             .collect(),
         raw,
         token_usage,
     }
 }
 
-fn from_vv_llm_tool_call(tool_call: vv_llm::ToolCall) -> ToolCall {
+fn from_vv_llm_tool_call(tool_call: vv_llm::ToolCall, index: usize) -> ToolCall {
     ToolCall::from_raw_arguments(
-        tool_call.id,
-        tool_call.name,
+        normalize_tool_call_id(&tool_call.id, index),
+        normalize_tool_call_name(&tool_call.name),
         Value::String(tool_call.arguments),
     )
+}
+
+fn normalize_tool_call_id(id: &str, index: usize) -> String {
+    let id = id.trim();
+    if id.is_empty() {
+        format!("call_generated_{index}")
+    } else {
+        id.to_string()
+    }
+}
+
+fn normalize_tool_call_name(name: &str) -> String {
+    name.replace(' ', "")
 }
 
 fn from_vv_llm_usage(usage: vv_llm::ChatUsage) -> TokenUsage {
@@ -822,12 +867,12 @@ async fn collect_vv_llm_stream(
             .into_iter()
             .filter_map(|key| tool_calls.remove(&key))
             .filter(|parts| !parts.name.is_empty())
-            .map(|parts| {
-                from_vv_llm_tool_call(vv_llm::ToolCall::function(
-                    parts.id,
-                    parts.name,
-                    parts.arguments,
-                ))
+            .enumerate()
+            .map(|(index, parts)| {
+                from_vv_llm_tool_call(
+                    vv_llm::ToolCall::function(parts.id, parts.name, parts.arguments),
+                    index,
+                )
             })
             .collect(),
         raw,
