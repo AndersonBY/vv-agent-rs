@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use vv_agent::{
     build_default_registry, AfterLlmEvent, AgentDefinition, AgentResourceLoader, AgentRuntime,
-    AgentSDKClient, AgentSDKOptions, AgentSessionRunRequest, AgentStatus, LLMResponse, LlmBuilder,
-    LlmClient, LlmError, LlmRequest, Message, MessageRole, NoToolPolicy, ResolvedModelConfig,
-    RuntimeExecutionBackend, RuntimeHook, ScriptedLlmClient, ThreadBackend, ToolCall,
-    ToolExecutionResult, ToolRegistryFactory, ToolResultStatus,
+    AgentSDKClient, AgentSDKOptions, AgentSessionRunRequest, AgentStatus, BeforeLlmEvent,
+    LLMResponse, LlmBuilder, LlmClient, LlmError, LlmRequest, Message, MessageRole, NoToolPolicy,
+    ResolvedModelConfig, RuntimeExecutionBackend, RuntimeHook, ScriptedLlmClient, ThreadBackend,
+    ToolCall, ToolExecutionResult, ToolRegistryFactory, ToolResultStatus,
 };
 
 #[test]
@@ -396,6 +396,88 @@ fn sdk_client_prepare_task_for_agent_uses_resources_like_python() {
         task.metadata["system_prompt_sections"][0]["id"],
         "agent_definition"
     );
+}
+
+#[test]
+fn sdk_prepare_and_run_use_python_style_unique_task_ids() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().to_path_buf(),
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    });
+    client
+        .register_agent(
+            "researcher",
+            AgentDefinition::default_for_model("demo-model"),
+        )
+        .expect("register researcher");
+
+    let first = client
+        .prepare_task_for_agent("researcher", "preview one", "demo-model")
+        .expect("first task");
+    let second = client
+        .prepare_task_for_agent("researcher", "preview two", "demo-model")
+        .expect("second task");
+    assert_python_style_task_id(&first.task_id, "researcher");
+    assert_python_style_task_id(&second.task_id, "researcher");
+    assert_ne!(first.task_id, second.task_id);
+
+    let inline = client.prepare_task_with_agent(
+        AgentDefinition::default_for_model("demo-model"),
+        "preview inline",
+        "demo-model",
+    );
+    assert_python_style_task_id(&inline.task_id, "inline");
+
+    let captured_task_ids = Arc::new(Mutex::new(Vec::<String>::new()));
+    let mut runtime =
+        AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+            "",
+            vec![ToolCall::new(
+                "finish_task_id",
+                "task_finish",
+                BTreeMap::from([("message".to_string(), json!("ok"))]),
+            )],
+        )]));
+    runtime.hooks.push(Arc::new(TaskIdCaptureHook {
+        captured_task_ids: Arc::clone(&captured_task_ids),
+    }));
+    let client = client.with_runtime(runtime);
+
+    let run = client
+        .run_agent("researcher", "execute task")
+        .expect("run researcher");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    let captured = captured_task_ids.lock().expect("captured task ids");
+    assert_eq!(captured.len(), 1);
+    assert_python_style_task_id(&captured[0], "researcher");
+}
+
+fn assert_python_style_task_id(task_id: &str, prefix: &str) {
+    let Some(suffix) = task_id.strip_prefix(&format!("{prefix}_")) else {
+        panic!("task id {task_id:?} did not start with {prefix}_");
+    };
+    assert_eq!(suffix.len(), 8);
+    assert!(
+        suffix.chars().all(|ch| ch.is_ascii_hexdigit()),
+        "task id suffix {suffix:?} should be 8 hex chars"
+    );
+}
+
+struct TaskIdCaptureHook {
+    captured_task_ids: Arc<Mutex<Vec<String>>>,
+}
+
+impl RuntimeHook for TaskIdCaptureHook {
+    fn before_llm(&self, event: BeforeLlmEvent<'_>) -> Option<vv_agent::BeforeLlmPatch> {
+        self.captured_task_ids
+            .lock()
+            .expect("captured task ids")
+            .push(event.task.task_id.clone());
+        None
+    }
 }
 
 #[test]

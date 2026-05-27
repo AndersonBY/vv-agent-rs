@@ -27,6 +27,7 @@ pub type SessionListenerId = u64;
 #[derive(Clone, Default)]
 pub struct AgentSessionRunRequest {
     pub prompt: String,
+    pub task_name: Option<String>,
     pub workspace: Option<PathBuf>,
     pub initial_messages: Vec<crate::types::Message>,
     pub shared_state: Metadata,
@@ -42,6 +43,7 @@ impl AgentSessionRunRequest {
     pub fn new(prompt: impl Into<String>) -> Self {
         Self {
             prompt: prompt.into(),
+            task_name: None,
             workspace: None,
             initial_messages: Vec::new(),
             shared_state: Metadata::new(),
@@ -409,6 +411,7 @@ impl AgentSession {
         });
         let run = (self.execute_run)(AgentSessionRunRequest {
             prompt,
+            task_name: Some(self._agent_name.clone()),
             workspace: Some(self.workspace.clone()),
             initial_messages: self.messages.clone(),
             shared_state: self.shared_state.clone(),

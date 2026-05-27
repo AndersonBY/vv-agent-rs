@@ -532,10 +532,13 @@ The current Rust implementation includes:
   preparation and one-shot runs, matching Python's available-skills prompt
   behavior. Runtime limit fields are clamped during SDK task preparation so
   invalid `max_cycles`, memory compaction threshold, or memory threshold
-  percentage values fall back to Python-compatible safe ranges. SDK sessions
-  now use the same effective agent definition as one-shot runs, so startup
-  shell defaults, bash environment overrides, prompt templates, and discovered
-  skill directories also apply to session prompts.
+  percentage values fall back to Python-compatible safe ranges. SDK prepare,
+  one-shot run, and session flows now generate Python-style unique task ids
+  (`agentName_<8 hex>`), avoiding checkpoint and session-memory scope
+  collisions across repeated SDK runs. SDK sessions now use the same effective
+  agent definition as one-shot runs, so startup shell defaults, bash
+  environment overrides, prompt templates, and discovered skill directories
+  also apply to session prompts.
 - SDK clients can now create sessions from the configured default agent or the
   only registered profile through `create_default_session*` helpers, and can
   create sessions by profile name without manually passing the copied

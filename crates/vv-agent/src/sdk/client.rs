@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -19,6 +20,8 @@ use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 use super::resources::AgentResourceLoader;
 use super::session::{AgentSession, AgentSessionRunRequest};
 use super::types::{query_text_from_run, AgentDefinition, AgentRun, AgentSDKOptions, SdkLlmClient};
+
+static SDK_TASK_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 pub struct AgentSDKClient {
@@ -51,8 +54,12 @@ impl<C: LlmClient + Clone + 'static> RunAgent for AgentRuntime<C> {
     ) -> Result<AgentRun, String> {
         let controls = run_controls_from_request(&request);
         let workspace = request.workspace.clone();
-        let mut task =
-            task_from_definition_with_workspace(definition, request.prompt, workspace.as_deref());
+        let mut task = task_from_definition_with_task_name(
+            definition,
+            request.prompt,
+            workspace.as_deref(),
+            request.task_name.as_deref(),
+        );
         merge_request_metadata(&mut task, request.metadata);
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
@@ -86,8 +93,12 @@ impl RunAgent for ScriptedLlmClient {
         let runtime = AgentRuntime::new(self.clone());
         let controls = run_controls_from_request(&request);
         let workspace = request.workspace.clone();
-        let mut task =
-            task_from_definition_with_workspace(definition, request.prompt, workspace.as_deref());
+        let mut task = task_from_definition_with_task_name(
+            definition,
+            request.prompt,
+            workspace.as_deref(),
+            request.task_name.as_deref(),
+        );
         merge_request_metadata(&mut task, request.metadata);
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
@@ -134,10 +145,11 @@ fn run_controls_from_request(request: &AgentSessionRunRequest) -> RuntimeRunCont
     }
 }
 
-fn task_from_definition_with_workspace(
+fn task_from_definition_with_task_name(
     definition: &AgentDefinition,
     prompt: String,
     workspace: Option<&Path>,
+    task_name: Option<&str>,
 ) -> AgentTask {
     let (system_prompt, system_prompt_sections) =
         system_prompt_from_definition(definition, workspace);
@@ -198,7 +210,7 @@ fn task_from_definition_with_workspace(
             });
     }
     let mut task = AgentTask::new(
-        format!("{}-task", definition.model),
+        generate_task_id(task_name.unwrap_or("inline")),
         definition.model.clone(),
         system_prompt,
         prompt,
@@ -222,6 +234,17 @@ fn task_from_definition_with_workspace(
             .or_insert(Value::Array(system_prompt_sections));
     }
     task
+}
+
+fn generate_task_id(prefix: &str) -> String {
+    let normalized_prefix = prefix.trim();
+    let prefix = if normalized_prefix.is_empty() {
+        "inline"
+    } else {
+        normalized_prefix
+    };
+    let counter = SDK_TASK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+    format!("{prefix}_{:08x}", counter & 0xffff_ffff)
 }
 
 fn system_prompt_from_definition(
@@ -438,6 +461,9 @@ impl AgentSDKClient {
         if request.workspace.is_none() {
             request.workspace = Some(self.options.workspace.clone());
         }
+        if request.task_name.is_none() {
+            request.task_name = Some(agent_name.to_string());
+        }
         if request.stream_callback.is_none() {
             request.stream_callback = self.options.stream_callback.clone();
         }
@@ -490,8 +516,15 @@ impl AgentSDKClient {
         prompt: impl Into<String>,
         resolved_model_id: impl Into<String>,
     ) -> Result<AgentTask, String> {
-        let definition = self.get_agent(agent_name.as_ref().trim())?.clone();
-        Ok(self.prepare_task_with_agent(definition, prompt, resolved_model_id))
+        let agent_name = agent_name.as_ref().trim();
+        let definition = self.get_agent(agent_name)?.clone();
+        Ok(self.prepare_task_with_named_agent_in_workspace(
+            agent_name,
+            definition,
+            prompt,
+            resolved_model_id,
+            self.options.workspace.clone(),
+        ))
     }
 
     pub fn prepare_task_for_agent_in_workspace(
@@ -501,8 +534,10 @@ impl AgentSDKClient {
         resolved_model_id: impl Into<String>,
         workspace: impl Into<PathBuf>,
     ) -> Result<AgentTask, String> {
-        let definition = self.get_agent(agent_name.as_ref().trim())?.clone();
-        Ok(self.prepare_task_with_agent_in_workspace(
+        let agent_name = agent_name.as_ref().trim();
+        let definition = self.get_agent(agent_name)?.clone();
+        Ok(self.prepare_task_with_named_agent_in_workspace(
+            agent_name,
             definition,
             prompt,
             resolved_model_id,
@@ -531,11 +566,29 @@ impl AgentSDKClient {
         resolved_model_id: impl Into<String>,
         workspace: impl Into<PathBuf>,
     ) -> AgentTask {
+        self.prepare_task_with_named_agent_in_workspace(
+            "inline",
+            definition,
+            prompt,
+            resolved_model_id,
+            workspace,
+        )
+    }
+
+    fn prepare_task_with_named_agent_in_workspace(
+        &self,
+        agent_name: &str,
+        definition: AgentDefinition,
+        prompt: impl Into<String>,
+        resolved_model_id: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+    ) -> AgentTask {
         let workspace = workspace.into();
-        let mut task = task_from_definition_with_workspace(
+        let mut task = task_from_definition_with_task_name(
             &self.effective_definition(definition),
             prompt.into(),
             Some(workspace.as_path()),
+            Some(agent_name),
         );
         task.model = resolved_model_id.into();
         task
@@ -808,10 +861,11 @@ impl RunAgent for SettingsRunAgent {
             .workspace
             .clone()
             .unwrap_or_else(|| self.options.workspace.clone());
-        let mut task = task_from_definition_with_workspace(
+        let mut task = task_from_definition_with_task_name(
             definition,
             request.prompt,
             Some(effective_workspace.as_path()),
+            request.task_name.as_deref(),
         );
         task.model = resolved.model_id.clone();
         apply_resolved_model_limits(&mut task, &resolved);
