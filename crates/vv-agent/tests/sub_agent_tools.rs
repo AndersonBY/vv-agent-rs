@@ -282,6 +282,143 @@ fn create_sub_task_errors_when_runner_is_missing() {
 }
 
 #[test]
+fn create_sub_task_rejects_non_array_batch_payload_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.sub_task_runner = Some(Arc::new(|request| SubTaskOutcome {
+        task_id: "sub_never".to_string(),
+        agent_name: request.agent_name,
+        status: AgentStatus::Completed,
+        session_id: None,
+        final_answer: Some("should not run".to_string()),
+        wait_reason: None,
+        error: None,
+        cycles: 0,
+        todo_list: Vec::new(),
+        resolved: BTreeMap::new(),
+    }));
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_bad_tasks",
+                "create_sub_task",
+                BTreeMap::from([
+                    ("agent_id".to_string(), json!("research-sub")),
+                    ("tasks".to_string(), json!("not a list")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("create_sub_task");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tasks_payload"));
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["error_code"], "invalid_tasks_payload");
+}
+
+#[test]
+fn create_sub_task_batch_reports_invalid_items_and_errors_when_none_are_valid_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.sub_task_runner = Some(Arc::new(|request| SubTaskOutcome {
+        task_id: "sub_never".to_string(),
+        agent_name: request.agent_name,
+        status: AgentStatus::Completed,
+        session_id: None,
+        final_answer: Some("should not run".to_string()),
+        wait_reason: None,
+        error: None,
+        cycles: 0,
+        todo_list: Vec::new(),
+        resolved: BTreeMap::new(),
+    }));
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_all_invalid",
+                "create_sub_task",
+                BTreeMap::from([
+                    ("agent_id".to_string(), json!("research-sub")),
+                    (
+                        "tasks".to_string(),
+                        json!(["not an object", {"output_requirements": "missing task"}]),
+                    ),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("create_sub_task");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tasks_payload"));
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["details"]["summary"]["accepted"], 0);
+    assert_eq!(payload["details"]["summary"]["failed"], 2);
+    assert_eq!(
+        payload["details"]["results"][0]["error"],
+        "Task item must be an object"
+    );
+    assert_eq!(
+        payload["details"]["results"][1]["error"],
+        "`task_description` is required"
+    );
+}
+
+#[test]
+fn create_sub_task_batch_keeps_invalid_item_entries_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.sub_task_runner = Some(Arc::new(|request| SubTaskOutcome {
+        task_id: format!("sub_{}", request.task_description.replace(' ', "_")),
+        agent_name: request.agent_name,
+        status: AgentStatus::Completed,
+        session_id: None,
+        final_answer: Some(format!("done: {}", request.task_description)),
+        wait_reason: None,
+        error: None,
+        cycles: 1,
+        todo_list: Vec::new(),
+        resolved: BTreeMap::new(),
+    }));
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_mixed_invalid",
+                "create_sub_task",
+                BTreeMap::from([
+                    ("agent_id".to_string(), json!("research-sub")),
+                    (
+                        "tasks".to_string(),
+                        json!(["not an object", {"task_description": "Collect facts"}]),
+                    ),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("create_sub_task");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(
+        payload["summary"],
+        json!({"total": 2, "completed": 1, "failed": 1})
+    );
+    assert_eq!(payload["results"][0]["status"], "failed");
+    assert_eq!(
+        payload["results"][0]["error"],
+        "Task item must be an object"
+    );
+    assert_eq!(payload["results"][1]["final_answer"], "done: Collect facts");
+}
+
+#[test]
 fn create_sub_task_can_start_async_task_and_query_status() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

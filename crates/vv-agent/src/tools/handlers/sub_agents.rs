@@ -47,17 +47,24 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                 .unwrap_or_default()
                 .trim()
                 .to_string();
-            let raw_tasks = arguments.get("tasks").and_then(Value::as_array);
-            if !task_description.is_empty() && raw_tasks.is_some() {
+            let raw_tasks_value = arguments.get("tasks");
+            let raw_tasks = raw_tasks_value.and_then(Value::as_array);
+            if !task_description.is_empty() && raw_tasks_value.is_some() {
                 return tool_error_with_code(
                     "`task_description` and `tasks` are mutually exclusive",
                     "sub_task_payload_conflict",
                 );
             }
-            if task_description.is_empty() && raw_tasks.is_none() {
+            if task_description.is_empty() && raw_tasks_value.is_none() {
                 return tool_error_with_code(
                     "Provide either `task_description` or `tasks`",
                     "sub_task_payload_missing",
+                );
+            }
+            if task_description.is_empty() && raw_tasks.is_none() {
+                return tool_error_with_code(
+                    "`tasks` must be a non-empty array",
+                    "invalid_tasks_payload",
                 );
             }
 
@@ -160,33 +167,32 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                     "invalid_tasks_payload",
                 );
             }
-            if !wait_for_completion {
-                let Some(manager) = context.sub_task_manager.clone() else {
-                    return tool_error_with_code(
-                        "Sub-task manager is not available for async mode",
-                        "sub_task_manager_unavailable",
-                    );
+            let mut batch_requests = Vec::new();
+            for (index, item) in tasks.iter().enumerate() {
+                let Some(item) = item.as_object() else {
+                    batch_requests.push((
+                        index,
+                        None,
+                        Some("Task item must be an object".to_string()),
+                    ));
+                    continue;
                 };
-                let mut results = Vec::new();
-                let mut task_ids = Vec::new();
-                let mut started = 0usize;
-                let mut failed = 0usize;
-                for (index, item) in tasks.iter().enumerate() {
-                    let Some(task_description) = item
-                        .get("task_description")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                    else {
-                        failed += 1;
-                        results.push(json!({
-                            "index": index,
-                            "status": "failed",
-                            "error": "`task_description` is required",
-                        }));
-                        continue;
-                    };
-                    let mut request = SubTaskRequest {
+                let Some(task_description) = item
+                    .get("task_description")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    batch_requests.push((
+                        index,
+                        None,
+                        Some("`task_description` is required".to_string()),
+                    ));
+                    continue;
+                };
+                batch_requests.push((
+                    index,
+                    Some(SubTaskRequest {
                         agent_name: agent_name.clone(),
                         task_description: task_description.to_string(),
                         output_requirements: item
@@ -201,6 +207,65 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                             "batch_index".to_string(),
                             Value::Number((index as u64).into()),
                         )]),
+                    }),
+                    None,
+                ));
+            }
+            if !batch_requests
+                .iter()
+                .any(|(_, request, error)| request.is_some() && error.is_none())
+            {
+                let results = batch_requests
+                    .iter()
+                    .map(|(index, _, error)| {
+                        json!({
+                            "index": index,
+                            "status": "failed",
+                            "error": error.as_deref().unwrap_or("Invalid task item"),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                return tool_result(
+                    ToolResultStatus::Error,
+                    json!({
+                        "ok": false,
+                        "error": "No valid sub-tasks were provided",
+                        "error_code": "invalid_tasks_payload",
+                        "details": {
+                            "summary": {
+                                "total": tasks.len(),
+                                "accepted": 0,
+                                "failed": tasks.len(),
+                            },
+                            "results": results,
+                            "task_ids": [],
+                            "wait_for_completion": wait_for_completion,
+                        },
+                    }),
+                    Some("invalid_tasks_payload"),
+                    ToolDirective::Continue,
+                );
+            }
+            if !wait_for_completion {
+                let Some(manager) = context.sub_task_manager.clone() else {
+                    return tool_error_with_code(
+                        "Sub-task manager is not available for async mode",
+                        "sub_task_manager_unavailable",
+                    );
+                };
+                let mut results = Vec::new();
+                let mut task_ids = Vec::new();
+                let mut started = 0usize;
+                let mut failed = 0usize;
+                for (index, request, error) in batch_requests {
+                    let Some(mut request) = request else {
+                        failed += 1;
+                        results.push(json!({
+                            "index": index,
+                            "status": "failed",
+                            "error": error.unwrap_or_else(|| "Invalid task item".to_string()),
+                        }));
+                        continue;
                     };
                     let (task_id, session_id) =
                         crate::sub_task_manager::SubTaskManager::next_task_identity(
@@ -262,40 +327,19 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
             }
             let mut prepared_requests = Vec::new();
             let mut invalid_results = BTreeMap::new();
-            for (index, item) in tasks.iter().enumerate() {
-                let Some(task_description) = item
-                    .get("task_description")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                else {
+            for (index, request, error) in batch_requests {
+                if let Some(request) = request {
+                    prepared_requests.push((index, request));
+                } else {
                     invalid_results.insert(
                         index,
                         json!({
                             "index": index,
                             "status": "failed",
-                            "error": "`task_description` is required",
+                            "error": error.unwrap_or_else(|| "Invalid task item".to_string()),
                         }),
                     );
-                    continue;
-                };
-                let request = SubTaskRequest {
-                    agent_name: agent_name.clone(),
-                    task_description: task_description.to_string(),
-                    output_requirements: item
-                        .get("output_requirements")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string(),
-                    include_main_summary,
-                    exclude_files_pattern: exclude_files_pattern.clone(),
-                    metadata: BTreeMap::from([(
-                        "batch_index".to_string(),
-                        Value::Number((index as u64).into()),
-                    )]),
-                };
-                prepared_requests.push((index, request));
+                }
             }
 
             let outcomes = if let Some(backend) = context.execution_backend.clone() {
