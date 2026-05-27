@@ -594,8 +594,9 @@ The current Rust implementation includes:
   refreshes cached resources after on-disk changes. SDK clients can also inject
   a custom `AgentResourceLoader` to discover agents and prompt templates from
   non-default roots. Python hook files under `.vv-agent/hooks` are discovered
-  and reported through diagnostics; Rust hook execution uses
-  `AgentSDKOptions.runtime_hooks`.
+  on the Python-style `DiscoveredResources.hooks` field, with `hook_files`
+  retained as a Rust compatibility alias, and reported through diagnostics;
+  Rust hook execution uses `AgentSDKOptions.runtime_hooks`.
 - SDK client, tool registry, workspace backends, and shared protocol types.
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, schema parity, and workspace tools.

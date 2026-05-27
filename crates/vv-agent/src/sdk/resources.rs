@@ -12,6 +12,7 @@ pub struct DiscoveredResources {
     pub agents: BTreeMap<String, AgentDefinition>,
     pub prompts: BTreeMap<String, String>,
     pub skill_directories: Vec<String>,
+    pub hooks: Vec<String>,
     pub hook_files: Vec<String>,
     pub diagnostics: Vec<String>,
 }
@@ -234,6 +235,9 @@ impl AgentResourceLoader {
             let path = hook_file.to_string_lossy().to_string();
             if !discovered.hook_files.contains(&path) {
                 discovered.hook_files.push(path.clone());
+            }
+            if !discovered.hooks.contains(&path) {
+                discovered.hooks.push(path.clone());
             }
             discovered.diagnostics.push(format!(
                 "Python hook file discovered but Rust cannot load it automatically: {path}. Pass Rust RuntimeHook objects through AgentSDKOptions.runtime_hooks."

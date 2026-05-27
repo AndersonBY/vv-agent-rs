@@ -287,6 +287,7 @@ fn resource_loader_tracks_python_hook_files_with_rust_diagnostics() {
     let discovered = loader.discover();
 
     assert_eq!(discovered.hook_files.len(), 2);
+    assert_eq!(discovered.hooks, discovered.hook_files);
     assert!(discovered
         .hook_files
         .iter()
