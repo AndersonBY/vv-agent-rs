@@ -43,6 +43,8 @@ pub struct RuntimeRunControls {
     pub steering_queue: Option<Arc<Mutex<VecDeque<String>>>>,
     pub cancellation_token: Option<CancellationToken>,
     pub execution_context: Option<ExecutionContext>,
+    pub workspace: Option<PathBuf>,
+    pub workspace_backend: Option<Arc<dyn WorkspaceBackend>>,
 }
 
 impl RuntimeRunControls {
@@ -149,6 +151,14 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             .default_workspace
             .clone()
             .unwrap_or_else(|| PathBuf::from("./workspace"));
+        let workspace_path = controls.workspace.clone().unwrap_or(workspace_path);
+        let workspace_backend = controls.workspace_backend.clone().unwrap_or_else(|| {
+            if controls.workspace.is_some() {
+                Arc::new(LocalWorkspaceBackend::new(workspace_path.clone()))
+            } else {
+                self.workspace_backend.clone()
+            }
+        });
         let sub_task_manager = SubTaskManager::default();
         self.emit_log(
             &controls,
@@ -450,7 +460,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 let sub_task_runner = self.build_sub_task_runner(
                     &task,
                     workspace_path.clone(),
-                    self.workspace_backend.clone(),
+                    workspace_backend.clone(),
                     shared_state.clone(),
                     sub_task_manager.clone(),
                     effective_stream_callback.clone(),
@@ -467,7 +477,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     cycle_index,
                     task_id: task.task_id.clone(),
                     metadata: tool_metadata,
-                    workspace_backend: self.workspace_backend.clone(),
+                    workspace_backend: workspace_backend.clone(),
                     sub_task_runner,
                     sub_task_manager: Some(sub_task_manager.clone()),
                     execution_backend: Some(self.execution_backend.clone()),

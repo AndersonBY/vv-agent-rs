@@ -676,6 +676,57 @@ fn sdk_runtime_uses_options_workspace_for_tool_context_and_sessions() {
 }
 
 #[test]
+fn sdk_session_workspace_override_is_used_for_tool_context_and_state() {
+    let default_workspace = tempfile::tempdir().expect("default workspace");
+    let override_workspace = tempfile::tempdir().expect("override workspace");
+    let responses = vec![
+        LLMResponse {
+            content: "write marker".to_string(),
+            tool_calls: vec![ToolCall::new(
+                "write-1",
+                "write_file",
+                json_args(serde_json::json!({
+                    "path": "marker.txt",
+                    "content": "from override"
+                })),
+            )],
+            raw: BTreeMap::new(),
+            token_usage: TokenUsage::default(),
+        },
+        LLMResponse {
+            content: "finish".to_string(),
+            tool_calls: vec![ToolCall::new(
+                "finish-1",
+                "task_finish",
+                json_args(serde_json::json!({"message": "ok"})),
+            )],
+            raw: BTreeMap::new(),
+            token_usage: TokenUsage::default(),
+        },
+    ];
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: default_workspace.path().to_path_buf(),
+        ..AgentSDKOptions::default()
+    })
+    .with_runtime(AgentRuntime::new(ScriptedLlmClient::new(responses)));
+    let mut session = client.create_session_with_workspace(
+        "demo",
+        AgentDefinition::default_for_model("demo"),
+        override_workspace.path(),
+    );
+
+    let run = session.prompt("write marker").expect("prompt");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(session.state().workspace, override_workspace.path());
+    assert_eq!(
+        std::fs::read_to_string(override_workspace.path().join("marker.txt")).expect("marker"),
+        "from override"
+    );
+    assert!(!default_workspace.path().join("marker.txt").exists());
+}
+
+#[test]
 fn sdk_runtime_applies_startup_shell_defaults_to_tool_context_like_python() {
     let responses = vec![
         LLMResponse {

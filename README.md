@@ -401,6 +401,9 @@ The current Rust implementation includes:
   sessions now also carry a stable `session_id` into every task's metadata;
   callers can use `AgentSDKClient::create_session_with_id` or
   `create_agent_session_with_id` when they need a deterministic session id.
+  Session workspace overrides are supported through
+  `AgentSDKClient::create_session_with_workspace`; the override updates session
+  state, runtime workspace metadata, and the file-tool workspace backend.
 - `AgentSDKClient::query` mirrors Python client query semantics: it returns the
   final answer for completed runs and reports non-completed statuses with
   snake_case status values such as `status=wait_user`.

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -13,7 +14,7 @@ use crate::prompt::{
 };
 use crate::runtime::{AgentRuntime, ExecutionContext, RuntimeRunControls};
 use crate::types::{AgentTask, Metadata};
-use crate::workspace::LocalWorkspaceBackend;
+use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
 use super::resources::AgentResourceLoader;
 use super::session::{AgentSession, AgentSessionRunRequest};
@@ -48,23 +49,13 @@ impl<C: LlmClient + Clone + 'static> RunAgent for AgentRuntime<C> {
         definition: &AgentDefinition,
         request: AgentSessionRunRequest,
     ) -> Result<AgentRun, String> {
-        let execution_context = execution_context_from_request(&request);
+        let controls = run_controls_from_request(&request);
         let mut task = task_from_definition(definition, request.prompt);
         merge_request_metadata(&mut task, request.metadata);
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
         let result = self
-            .run_with_controls(
-                task,
-                RuntimeRunControls {
-                    log_handler: request.runtime_event_handler,
-                    before_cycle_messages: None,
-                    interruption_messages: None,
-                    steering_queue: request.steering_queue,
-                    cancellation_token: request.cancellation_token,
-                    execution_context,
-                },
-            )
+            .run_with_controls(task, controls)
             .map_err(|err| err.to_string())?;
         let resolved = ResolvedModelConfig::new(
             definition
@@ -91,23 +82,13 @@ impl RunAgent for ScriptedLlmClient {
         request: AgentSessionRunRequest,
     ) -> Result<AgentRun, String> {
         let runtime = AgentRuntime::new(self.clone());
-        let execution_context = execution_context_from_request(&request);
+        let controls = run_controls_from_request(&request);
         let mut task = task_from_definition(definition, request.prompt);
         merge_request_metadata(&mut task, request.metadata);
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
         runtime
-            .run_with_controls(
-                task,
-                RuntimeRunControls {
-                    log_handler: request.runtime_event_handler,
-                    before_cycle_messages: None,
-                    interruption_messages: None,
-                    steering_queue: request.steering_queue,
-                    cancellation_token: request.cancellation_token,
-                    execution_context,
-                },
-            )
+            .run_with_controls(task, controls)
             .map_err(|err| err.to_string())
             .map(|result| AgentRun {
                 agent_name: definition.model.clone(),
@@ -131,6 +112,21 @@ fn execution_context_from_request(request: &AgentSessionRunRequest) -> Option<Ex
         .stream_callback
         .clone()
         .map(|callback| ExecutionContext::default().with_stream_callback(callback))
+}
+
+fn run_controls_from_request(request: &AgentSessionRunRequest) -> RuntimeRunControls {
+    RuntimeRunControls {
+        log_handler: request.runtime_event_handler.clone(),
+        before_cycle_messages: None,
+        interruption_messages: None,
+        steering_queue: request.steering_queue.clone(),
+        cancellation_token: request.cancellation_token.clone(),
+        execution_context: execution_context_from_request(request),
+        workspace: request.workspace.clone(),
+        workspace_backend: request.workspace.as_ref().map(|workspace| {
+            Arc::new(LocalWorkspaceBackend::new(workspace.clone())) as Arc<dyn WorkspaceBackend>
+        }),
+    }
 }
 
 fn task_from_definition(definition: &AgentDefinition, prompt: String) -> AgentTask {
@@ -395,6 +391,27 @@ impl AgentSDKClient {
         create_agent_session_with_id(self, agent_name, definition, session_id)
     }
 
+    pub fn create_session_with_workspace(
+        &self,
+        agent_name: impl Into<String>,
+        definition: AgentDefinition,
+        workspace: impl Into<PathBuf>,
+    ) -> AgentSession {
+        create_agent_session_with_workspace(self, agent_name, definition, workspace)
+    }
+
+    pub fn create_session_with_id_and_workspace(
+        &self,
+        agent_name: impl Into<String>,
+        definition: AgentDefinition,
+        session_id: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+    ) -> AgentSession {
+        create_agent_session_with_id_and_workspace(
+            self, agent_name, definition, session_id, workspace,
+        )
+    }
+
     pub fn prepare_task_for_agent(
         &self,
         agent_name: impl AsRef<str>,
@@ -508,7 +525,7 @@ impl RunAgent for SettingsRunAgent {
         let mut runtime = AgentRuntime::new(llm);
         configure_runtime_from_options(&mut runtime, &self.options);
 
-        let execution_context = execution_context_from_request(&request);
+        let controls = run_controls_from_request(&request);
         let mut task = task_from_definition(definition, request.prompt);
         task.model = resolved.model_id.clone();
         apply_resolved_model_limits(&mut task, &resolved);
@@ -516,17 +533,7 @@ impl RunAgent for SettingsRunAgent {
         task.initial_messages = request.initial_messages;
         task.initial_shared_state = request.shared_state;
         let result = runtime
-            .run_with_controls(
-                task,
-                RuntimeRunControls {
-                    log_handler: request.runtime_event_handler,
-                    before_cycle_messages: None,
-                    interruption_messages: None,
-                    steering_queue: request.steering_queue,
-                    cancellation_token: request.cancellation_token,
-                    execution_context,
-                },
-            )
+            .run_with_controls(task, controls)
             .map_err(|err| err.to_string())?;
         Ok(AgentRun {
             agent_name: definition.model.clone(),
@@ -585,6 +592,20 @@ pub fn create_agent_session(
     agent_name: impl Into<String>,
     definition: AgentDefinition,
 ) -> AgentSession {
+    create_agent_session_with_workspace(
+        client,
+        agent_name,
+        definition,
+        client.options.workspace.clone(),
+    )
+}
+
+pub fn create_agent_session_with_workspace(
+    client: &AgentSDKClient,
+    agent_name: impl Into<String>,
+    definition: AgentDefinition,
+    workspace: impl Into<PathBuf>,
+) -> AgentSession {
     let runtime = client.runtime.clone();
     let definition_for_run = definition.clone();
     let stream_callback = client.options.stream_callback.clone();
@@ -594,12 +615,7 @@ pub fn create_agent_session(
         }
         runtime.run_with_session(&definition_for_run, request)
     });
-    AgentSession::new_with_context(
-        execute_run,
-        agent_name,
-        definition,
-        client.options.workspace.clone(),
-    )
+    AgentSession::new_with_context(execute_run, agent_name, definition, workspace)
 }
 
 pub fn create_agent_session_with_id(
@@ -607,6 +623,22 @@ pub fn create_agent_session_with_id(
     agent_name: impl Into<String>,
     definition: AgentDefinition,
     session_id: impl Into<String>,
+) -> AgentSession {
+    create_agent_session_with_id_and_workspace(
+        client,
+        agent_name,
+        definition,
+        session_id,
+        client.options.workspace.clone(),
+    )
+}
+
+pub fn create_agent_session_with_id_and_workspace(
+    client: &AgentSDKClient,
+    agent_name: impl Into<String>,
+    definition: AgentDefinition,
+    session_id: impl Into<String>,
+    workspace: impl Into<PathBuf>,
 ) -> AgentSession {
     let runtime = client.runtime.clone();
     let definition_for_run = definition.clone();
@@ -622,7 +654,7 @@ pub fn create_agent_session_with_id(
         session_id,
         agent_name,
         definition,
-        client.options.workspace.clone(),
+        workspace,
     )
 }
 

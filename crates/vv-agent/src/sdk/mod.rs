@@ -4,7 +4,8 @@ pub mod session;
 pub mod types;
 
 pub use client::{
-    create_agent_session, create_agent_session_with_id, query, run, AgentSDKClient, RunAgent,
+    create_agent_session, create_agent_session_with_id, create_agent_session_with_id_and_workspace,
+    create_agent_session_with_workspace, query, run, AgentSDKClient, RunAgent,
 };
 pub use resources::{AgentResourceLoader, DiscoveredResources};
 pub use session::{

@@ -408,6 +408,8 @@ impl RuntimeSubAgentSession {
                     steering_queue: Some(self.steering_queue.clone()),
                     cancellation_token: None,
                     execution_context,
+                    workspace: None,
+                    workspace_backend: None,
                 },
             )
             .map_err(|error| error.to_string())?;
