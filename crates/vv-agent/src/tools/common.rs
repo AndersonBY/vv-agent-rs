@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use regex::Regex;
 use serde_json::{json, Value};
@@ -86,31 +86,6 @@ pub(crate) fn parse_integer_arg(value: &Value) -> Result<i64, ()> {
         Value::String(text) => text.trim().parse::<i64>().map_err(|_| ()),
         _ => Err(()),
     }
-}
-
-pub(crate) fn collect_workspace_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {
-    let mut stack = vec![root.to_path_buf()];
-    let mut files = Vec::new();
-    while let Some(path) = stack.pop() {
-        if path.is_file() {
-            files.push(path);
-            continue;
-        }
-        if !path.is_dir() {
-            continue;
-        }
-        for entry in std::fs::read_dir(&path)? {
-            let entry = entry?;
-            let entry_path = entry.path();
-            if entry_path.is_dir() {
-                stack.push(entry_path);
-            } else if entry_path.is_file() {
-                files.push(entry_path);
-            }
-        }
-    }
-    files.sort();
-    Ok(files)
 }
 
 #[derive(Clone, Copy)]

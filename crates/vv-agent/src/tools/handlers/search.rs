@@ -6,12 +6,12 @@ use serde_json::{json, Value};
 
 use crate::tools::base::ToolSpec;
 use crate::tools::common::{
-    collect_workspace_files, grep_text, is_hidden_path, is_ignored_root, is_supported_file_type,
-    matches_file_type, parse_integer_arg, path_escapes_workspace_error,
-    supported_file_types_message, tool_error, workspace_relative_path_or_absolute, GrepTextOptions,
+    grep_text, is_hidden_path, is_ignored_root, is_supported_file_type, matches_file_type,
+    parse_integer_arg, path_escapes_workspace_error, supported_file_types_message, tool_error,
+    GrepTextOptions,
 };
 use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
-use crate::workspace::{glob_match, normalized_glob_pattern};
+use crate::workspace::normalized_glob_pattern;
 
 const MAX_STRUCTURED_ITEMS: usize = 200;
 const MAX_STRUCTURED_CHARS: usize = 20_000;
@@ -132,20 +132,28 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 }
             };
 
-            let target_path = match context.resolve_workspace_path(path) {
-                Ok(path) => path,
-                Err(error) => return path_escapes_workspace_error(error),
-            };
-            let mut candidate_files = Vec::new();
-            let explicit_file_target = target_path.is_file();
-            if explicit_file_target {
-                candidate_files.push(target_path.clone());
+            if let Err(error) = context.resolve_workspace_path(path) {
+                return path_escapes_workspace_error(error);
+            }
+            let backend = context.effective_workspace_backend();
+            let explicit_file_target = backend.is_file(path);
+            let candidate_files = if explicit_file_target {
+                let display_path = backend
+                    .file_info(path)
+                    .ok()
+                    .flatten()
+                    .map(|info| info.path)
+                    .unwrap_or_else(|| path.replace('\\', "/"));
+                vec![(path.to_string(), display_path)]
             } else {
-                match collect_workspace_files(&target_path) {
-                    Ok(files) => candidate_files = files,
+                match backend.list_files(path, &glob_pattern) {
+                    Ok(files) => files
+                        .into_iter()
+                        .map(|file_path| (file_path.clone(), file_path))
+                        .collect(),
                     Err(error) => return tool_error(error.to_string()),
                 }
-            }
+            };
 
             let mut searched_files = 0usize;
             let mut total_matches = 0usize;
@@ -153,9 +161,7 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
             let mut file_counts = BTreeMap::<String, usize>::new();
             let mut rows = Vec::<Value>::new();
 
-            for file_path in candidate_files {
-                let relative_path =
-                    workspace_relative_path_or_absolute(&context.workspace, &file_path);
+            for (read_path, relative_path) in candidate_files {
                 if !explicit_file_target && !include_hidden && is_hidden_path(&relative_path) {
                     continue;
                 }
@@ -166,19 +172,10 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 {
                     continue;
                 }
-                if !explicit_file_target {
-                    let glob_path = file_path
-                        .strip_prefix(&target_path)
-                        .map(|path| path.to_string_lossy().replace('\\', "/"))
-                        .unwrap_or_else(|_| relative_path.clone());
-                    if !glob_match(&glob_path, &glob_pattern) {
-                        continue;
-                    }
-                }
                 if !matches_file_type(&relative_path, file_type.as_deref()) {
                     continue;
                 }
-                let Ok(text) = std::fs::read_to_string(&file_path) else {
+                let Ok(text) = backend.read_text(&read_path) else {
                     continue;
                 };
                 searched_files += 1;

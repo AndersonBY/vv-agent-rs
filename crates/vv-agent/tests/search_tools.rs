@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde_json::json;
+use vv_agent::workspace::{MemoryWorkspaceBackend, WorkspaceBackend};
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
 #[test]
@@ -259,6 +261,42 @@ fn workspace_grep_applies_glob_relative_to_search_path_like_python() {
     let rows = result.metadata["matches"].as_array().expect("matches");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["path"], "src/main.rs");
+}
+
+#[test]
+fn workspace_grep_uses_configured_workspace_backend_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let backend = MemoryWorkspaceBackend::default();
+    backend.mkdir("src").expect("mkdir");
+    backend
+        .write_text("src/lib.rs", "token memory", false)
+        .expect("write");
+    backend
+        .write_text("src/readme.md", "token docs", false)
+        .expect("write");
+    let mut context = ToolContext::new(workspace.path());
+    context.workspace_backend = Arc::new(backend);
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "grep_memory_backend",
+                "workspace_grep",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("token")),
+                    ("path".to_string(), json!("src")),
+                    ("glob".to_string(), json!("*.rs")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep memory backend");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.metadata["summary"]["files_searched"], 1);
+    assert_eq!(result.metadata["summary"]["total_matches"], 1);
+    assert_eq!(result.metadata["matches"][0]["path"], "src/lib.rs");
 }
 
 #[test]
