@@ -425,6 +425,59 @@ fn sub_task_manager_rejects_duplicate_running_submit_like_python() {
 }
 
 #[test]
+fn sub_task_manager_get_and_wait_return_python_style_record_snapshot() {
+    let manager = SubTaskManager::default();
+    manager
+        .submit(
+            "sub-record",
+            "session-record",
+            "researcher",
+            "first run",
+            || {
+                thread::sleep(Duration::from_millis(50));
+                SubTaskOutcome {
+                    task_id: "sub-record".to_string(),
+                    agent_name: "researcher".to_string(),
+                    status: AgentStatus::Completed,
+                    session_id: Some("session-record".to_string()),
+                    final_answer: Some("record done".to_string()),
+                    wait_reason: None,
+                    error: None,
+                    cycles: 3,
+                    todo_list: Vec::new(),
+                    resolved: BTreeMap::from([("backend".to_string(), "deepseek".to_string())]),
+                }
+            },
+        )
+        .expect("submit record sub-task");
+
+    let running = manager.get("sub-record").expect("running record snapshot");
+    assert_eq!(running.task_id, "sub-record");
+    assert_eq!(running.session_id, "session-record");
+    assert_eq!(running.agent_name, "researcher");
+    assert_eq!(running.task_title, "first run");
+
+    let completed = manager
+        .wait_for_record("sub-record", Some(Duration::from_secs(5)))
+        .expect("completed record snapshot");
+    assert_eq!(completed.status, "completed");
+    assert_eq!(completed.current_cycle_index, Some(3));
+    assert_eq!(completed.recent_activity.as_deref(), Some("record done"));
+    assert_eq!(
+        completed
+            .outcome
+            .as_ref()
+            .and_then(|outcome| outcome.final_answer.as_deref()),
+        Some("record done")
+    );
+    assert_eq!(
+        completed.resolved.get("backend").map(String::as_str),
+        Some("deepseek")
+    );
+    assert!(!completed.running);
+}
+
+#[test]
 fn sub_task_status_reports_missing_and_invalid_task_ids() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

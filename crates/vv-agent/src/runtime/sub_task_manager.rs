@@ -31,6 +31,23 @@ pub struct SubTaskSessionAttachment {
     pub resolved: BTreeMap<String, String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ManagedSubTaskSnapshot {
+    pub task_id: String,
+    pub session_id: String,
+    pub agent_name: String,
+    pub task_title: String,
+    pub status: String,
+    pub running: bool,
+    pub outcome: Option<SubTaskOutcome>,
+    pub resolved: BTreeMap<String, String>,
+    pub current_cycle_index: Option<u32>,
+    pub recent_activity: Option<String>,
+    pub latest_cycle: Option<Value>,
+    pub latest_tool_call: Option<Value>,
+    pub updated_at: u128,
+}
+
 impl std::fmt::Debug for SubTaskManager {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -105,6 +122,9 @@ impl SubTaskManager {
             let outcome = runner();
             let mut tasks = tasks.lock().expect("sub-task manager poisoned");
             if let Some(record) = tasks.get_mut(&task_id_for_thread) {
+                if !outcome.resolved.is_empty() {
+                    record.resolved = outcome.resolved.clone();
+                }
                 record.update_from_outcome(&outcome);
                 record.outcome = Some(outcome);
                 record.updated_at = now_millis();
@@ -368,6 +388,15 @@ impl SubTaskManager {
             .collect()
     }
 
+    pub fn get(&self, task_id: &str) -> Option<ManagedSubTaskSnapshot> {
+        self.join_finished_tasks();
+        self.tasks
+            .lock()
+            .expect("sub-task manager poisoned")
+            .get(task_id)
+            .map(ManagedSubTask::snapshot)
+    }
+
     pub fn task_session_id(&self, task_id: &str) -> Option<String> {
         self.join_finished_tasks();
         self.tasks
@@ -422,6 +451,17 @@ impl SubTaskManager {
             }
             thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    pub fn wait_for_record(
+        &self,
+        task_id: &str,
+        timeout: Option<Duration>,
+    ) -> Option<ManagedSubTaskSnapshot> {
+        if !self.wait(task_id, timeout) {
+            return None;
+        }
+        self.get(task_id)
     }
 
     fn join_finished_tasks(&self) {
@@ -616,6 +656,24 @@ impl ManagedSubTask {
             }
         }
         entry
+    }
+
+    fn snapshot(&self) -> ManagedSubTaskSnapshot {
+        ManagedSubTaskSnapshot {
+            task_id: self.task_id.clone(),
+            session_id: self.session_id.clone(),
+            agent_name: self.agent_name.clone(),
+            task_title: self.task_title.clone(),
+            status: self.status_label().to_string(),
+            running: self.is_running(),
+            outcome: self.outcome.clone(),
+            resolved: self.resolved.clone(),
+            current_cycle_index: self.current_cycle_index,
+            recent_activity: self.recent_activity.clone(),
+            latest_cycle: self.latest_cycle.clone(),
+            latest_tool_call: self.latest_tool_call.clone(),
+            updated_at: self.updated_at,
+        }
     }
 
     fn status_label(&self) -> &'static str {

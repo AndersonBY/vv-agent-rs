@@ -482,7 +482,9 @@ The current Rust implementation includes:
   appended. Attached runtime-backed sub-agent sessions also retain Python's
   resolved backend/model payload across follow-up continuations, so
   `sub_task_status` keeps reporting the model used even when the continuation
-  outcome does not repeat that metadata.
+  outcome does not repeat that metadata. For embedders that need Python-style
+  direct manager inspection, `SubTaskManager::get` and `wait_for_record` return
+  a read-only `ManagedSubTaskSnapshot` instead of exposing thread handles.
 - Sub-agent model/backend resolution follows Python safety rules: a different
   sub-agent model requires a runtime `settings_file`, otherwise the sub-task
   fails explicitly instead of silently reusing the parent LLM client. When
