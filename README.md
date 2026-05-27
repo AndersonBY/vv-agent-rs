@@ -504,6 +504,11 @@ The current Rust implementation includes:
   now use the same effective agent definition as one-shot runs, so startup
   shell defaults, bash environment overrides, prompt templates, and discovered
   skill directories also apply to session prompts.
+- SDK clients can now create sessions from the configured default agent or the
+  only registered profile through `create_default_session*` helpers, and can
+  create sessions by profile name without manually passing the copied
+  `AgentDefinition`, matching Python's `client.create_session(...)` selection
+  behavior while using explicit Rust method names.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,

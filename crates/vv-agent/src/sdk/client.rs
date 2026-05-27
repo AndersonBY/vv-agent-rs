@@ -542,23 +542,11 @@ impl AgentSDKClient {
     }
 
     pub fn run(&self, prompt: impl Into<String>) -> Result<AgentRun, String> {
-        if let Some(agent) = self.default_agent.clone() {
-            return self.run_named_agent("default", agent, prompt);
-        }
-        if self.agents.len() == 1 {
-            let (name, definition) = self.agents.iter().next().expect("single agent");
-            return self.run_named_agent(name, definition.clone(), prompt);
-        }
-        if self.agents.is_empty() {
-            return Err(
-                "No agent configured. Call run_with_agent(...) or register named agents first."
-                    .to_string(),
-            );
-        }
-        let available = self.list_agents().join(", ");
-        Err(format!(
-            "Multiple agents configured. Call run_agent(name, ...) with one of: {available}"
-        ))
+        let (name, definition) = self.default_or_only_agent(
+            "No agent configured. Call run_with_agent(...) or register named agents first.",
+            "Multiple agents configured. Call run_agent(name, ...) with one of:",
+        )?;
+        self.run_named_agent(&name, definition, prompt)
     }
 
     pub fn run_in_workspace(
@@ -567,24 +555,104 @@ impl AgentSDKClient {
         workspace: impl Into<PathBuf>,
     ) -> Result<AgentRun, String> {
         let workspace = workspace.into();
-        if let Some(agent) = self.default_agent.clone() {
-            return self.run_named_agent_with_workspace("default", agent, prompt, Some(workspace));
-        }
-        if self.agents.len() == 1 {
-            let (name, definition) = self.agents.iter().next().expect("single agent");
-            return self.run_named_agent_with_workspace(
-                name,
-                definition.clone(),
-                prompt,
-                Some(workspace),
-            );
-        }
-        if self.agents.is_empty() {
-            return Err("No agent configured. Call run_with_agent_in_workspace(...) or register named agents first.".to_string());
-        }
-        let available = self.list_agents().join(", ");
-        Err(format!(
-            "Multiple agents configured. Call run_agent_in_workspace(name, ...) with one of: {available}"
+        let (name, definition) = self.default_or_only_agent(
+            "No agent configured. Call run_with_agent_in_workspace(...) or register named agents first.",
+            "Multiple agents configured. Call run_agent_in_workspace(name, ...) with one of:",
+        )?;
+        self.run_named_agent_with_workspace(&name, definition, prompt, Some(workspace))
+    }
+
+    pub fn create_default_session(&self) -> Result<AgentSession, String> {
+        let (name, definition) = self.default_or_only_agent(
+            "No agent configured. Call create_session_with_agent(...) or register named agents first.",
+            "Multiple agents configured. Call create_agent_session_by_name(name) with one of:",
+        )?;
+        Ok(create_agent_session(self, name, definition))
+    }
+
+    pub fn create_default_session_with_workspace(
+        &self,
+        workspace: impl Into<PathBuf>,
+    ) -> Result<AgentSession, String> {
+        let (name, definition) = self.default_or_only_agent(
+            "No agent configured. Call create_session_with_agent(...) or register named agents first.",
+            "Multiple agents configured. Call create_agent_session_by_name_in_workspace(name, workspace) with one of:",
+        )?;
+        Ok(create_agent_session_with_workspace(
+            self, name, definition, workspace,
+        ))
+    }
+
+    pub fn create_default_session_with_id(
+        &self,
+        session_id: impl Into<String>,
+    ) -> Result<AgentSession, String> {
+        let (name, definition) = self.default_or_only_agent(
+            "No agent configured. Call create_session_with_agent(...) or register named agents first.",
+            "Multiple agents configured. Call create_agent_session_by_name_with_id(name, session_id) with one of:",
+        )?;
+        Ok(create_agent_session_with_id(
+            self, name, definition, session_id,
+        ))
+    }
+
+    pub fn create_default_session_with_id_and_workspace(
+        &self,
+        session_id: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+    ) -> Result<AgentSession, String> {
+        let (name, definition) = self.default_or_only_agent(
+            "No agent configured. Call create_session_with_agent(...) or register named agents first.",
+            "Multiple agents configured. Call create_agent_session_by_name_with_id_and_workspace(name, session_id, workspace) with one of:",
+        )?;
+        Ok(create_agent_session_with_id_and_workspace(
+            self, name, definition, session_id, workspace,
+        ))
+    }
+
+    pub fn create_agent_session_by_name(
+        &self,
+        agent_name: impl AsRef<str>,
+    ) -> Result<AgentSession, String> {
+        let agent_name = agent_name.as_ref().trim();
+        let definition = self.get_agent(agent_name)?.clone();
+        Ok(create_agent_session(self, agent_name, definition))
+    }
+
+    pub fn create_agent_session_by_name_in_workspace(
+        &self,
+        agent_name: impl AsRef<str>,
+        workspace: impl Into<PathBuf>,
+    ) -> Result<AgentSession, String> {
+        let agent_name = agent_name.as_ref().trim();
+        let definition = self.get_agent(agent_name)?.clone();
+        Ok(create_agent_session_with_workspace(
+            self, agent_name, definition, workspace,
+        ))
+    }
+
+    pub fn create_agent_session_by_name_with_id(
+        &self,
+        agent_name: impl AsRef<str>,
+        session_id: impl Into<String>,
+    ) -> Result<AgentSession, String> {
+        let agent_name = agent_name.as_ref().trim();
+        let definition = self.get_agent(agent_name)?.clone();
+        Ok(create_agent_session_with_id(
+            self, agent_name, definition, session_id,
+        ))
+    }
+
+    pub fn create_agent_session_by_name_with_id_and_workspace(
+        &self,
+        agent_name: impl AsRef<str>,
+        session_id: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+    ) -> Result<AgentSession, String> {
+        let agent_name = agent_name.as_ref().trim();
+        let definition = self.get_agent(agent_name)?.clone();
+        Ok(create_agent_session_with_id_and_workspace(
+            self, agent_name, definition, session_id, workspace,
         ))
     }
 
@@ -665,6 +733,25 @@ impl AgentSDKClient {
             let available = self.list_agents().join(", ");
             format!("Unknown agent: {agent_name}. Available: {available}")
         })
+    }
+
+    fn default_or_only_agent(
+        &self,
+        empty_message: &str,
+        multiple_prefix: &str,
+    ) -> Result<(String, AgentDefinition), String> {
+        if let Some(agent) = self.default_agent.clone() {
+            return Ok(("default".to_string(), agent));
+        }
+        if self.agents.len() == 1 {
+            let (name, definition) = self.agents.iter().next().expect("single agent");
+            return Ok((name.clone(), definition.clone()));
+        }
+        if self.agents.is_empty() {
+            return Err(empty_message.to_string());
+        }
+        let available = self.list_agents().join(", ");
+        Err(format!("{multiple_prefix} {available}"))
     }
 
     fn effective_definition(&self, mut definition: AgentDefinition) -> AgentDefinition {
