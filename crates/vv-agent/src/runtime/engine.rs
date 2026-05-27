@@ -459,6 +459,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 };
 
                 let mut directive_result = None;
+                let mut image_notifications = Vec::new();
                 for (call_index, call) in response.tool_calls.iter().enumerate() {
                     if cancellation_token.is_some_and(CancellationToken::is_cancelled)
                         || controls_cancelled(&controls)
@@ -516,20 +517,10 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         directive_result = Some(result.clone());
                     }
                     messages.push(result.to_message());
-                    if task.native_multimodal {
-                        if let Some(image_url) = &result.image_url {
-                            let image_path =
-                                result.image_path.as_deref().unwrap_or("image").to_string();
-                            let mut image_message =
-                                crate::types::Message::user(format!("[Image loaded] {image_path}"));
-                            image_message.image_url = Some(image_url.clone());
-                            image_message.metadata = result.metadata.clone();
-                            messages.push(image_message);
-                        } else if let Some(image_path) = &result.image_path {
-                            messages.push(crate::types::Message::user(format!(
-                                "[Image loaded] {image_path}"
-                            )));
-                        }
+                    if let Some(image_notification) =
+                        image_notification_from_tool_result(&result, task.native_multimodal)
+                    {
+                        image_notifications.push(image_notification);
                     }
                     cycle.tool_results.push(result);
                     if steering_count > 0 {
@@ -617,6 +608,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         break;
                     }
                 }
+                messages.extend(image_notifications);
                 *shared_state = context.shared_state.clone();
 
                 cycles.push(cycle);
@@ -853,6 +845,30 @@ fn collect_interruption_messages(controls: &RuntimeRunControls) -> Vec<Message> 
         .as_ref()
         .map(|provider| provider())
         .unwrap_or_default()
+}
+
+fn image_notification_from_tool_result(
+    result: &ToolExecutionResult,
+    include_image: bool,
+) -> Option<Message> {
+    if !include_image {
+        return None;
+    }
+    if let Some(image_url) = &result.image_url {
+        let content = result
+            .image_path
+            .as_deref()
+            .map(|image_path| format!("[Image loaded] {image_path}"))
+            .unwrap_or_default();
+        let mut image_message = Message::user(content);
+        image_message.image_url = Some(image_url.clone());
+        image_message.metadata = result.metadata.clone();
+        return Some(image_message);
+    }
+    result
+        .image_path
+        .as_deref()
+        .map(|image_path| Message::user(format!("[Image loaded] {image_path}")))
 }
 
 fn controls_cancelled(controls: &RuntimeRunControls) -> bool {

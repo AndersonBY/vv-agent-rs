@@ -211,6 +211,73 @@ fn runtime_does_not_inject_image_message_for_text_only_task() {
 }
 
 #[test]
+fn runtime_keeps_tool_results_adjacent_before_image_notifications_like_python() {
+    let mut registry = vv_agent::tools::build_default_registry();
+    registry
+        .register_tool(
+            "_demo_image",
+            "demo image",
+            Arc::new(|_context, _arguments| {
+                let mut result = ToolExecutionResult::success("", r#"{"ok":true}"#);
+                result.image_url = Some("data:image/png;base64,AAAA".to_string());
+                result
+            }),
+        )
+        .expect("register image tool");
+
+    let todo_args = BTreeMap::from([(
+        "todos".to_string(),
+        json!([{"title": "done", "status": "completed", "priority": "medium"}]),
+    )]);
+    let finish_args = BTreeMap::from([("message".to_string(), json!("ok"))]);
+    let llm = MessageOrderInspectingLlmClient::new(
+        LLMResponse::with_tool_calls(
+            "run tools",
+            vec![
+                ToolCall::new("img1", "_demo_image", BTreeMap::new()),
+                ToolCall::new("todo1", "todo_write", todo_args),
+            ],
+        ),
+        LLMResponse::with_tool_calls(
+            "done",
+            vec![ToolCall::new("finish_order", "task_finish", finish_args)],
+        ),
+    );
+    let inspector = llm.clone();
+    let runtime = AgentRuntime::new(llm).with_tool_registry(registry);
+    let mut task = AgentTask::new("task_image_order", "demo", "system", "go");
+    task.max_cycles = 4;
+    task.native_multimodal = true;
+    task.extra_tool_names = vec!["_demo_image".to_string()];
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let second_request = inspector.second_request_messages();
+    let assistant_index = second_request
+        .iter()
+        .position(|message| {
+            message.role == vv_agent::MessageRole::Assistant && !message.tool_calls.is_empty()
+        })
+        .expect("assistant tool call message");
+    assert_eq!(
+        second_request[assistant_index + 1].tool_call_id.as_deref(),
+        Some("img1")
+    );
+    assert_eq!(
+        second_request[assistant_index + 2].tool_call_id.as_deref(),
+        Some("todo1")
+    );
+    let image_message = &second_request[assistant_index + 3];
+    assert_eq!(image_message.role, vv_agent::MessageRole::User);
+    assert_eq!(image_message.content, "");
+    assert_eq!(
+        image_message.image_url.as_deref(),
+        Some("data:image/png;base64,AAAA")
+    );
+}
+
+#[test]
 fn runtime_tool_context_uses_execution_context_metadata_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let outside = tempfile::tempdir().expect("outside");
@@ -1278,6 +1345,44 @@ impl LlmClient for InspectingImageLlmClient {
         self.responses
             .lock()
             .map_err(|_| LlmError::Request("inspector poisoned".to_string()))?
+            .pop_front()
+            .ok_or(LlmError::ScriptExhausted)
+    }
+}
+
+#[derive(Clone)]
+struct MessageOrderInspectingLlmClient {
+    responses: Arc<Mutex<VecDeque<LLMResponse>>>,
+    requests: Arc<Mutex<Vec<Vec<Message>>>>,
+}
+
+impl MessageOrderInspectingLlmClient {
+    fn new(first: LLMResponse, second: LLMResponse) -> Self {
+        Self {
+            responses: Arc::new(Mutex::new(VecDeque::from([first, second]))),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn second_request_messages(&self) -> Vec<Message> {
+        self.requests
+            .lock()
+            .expect("requests poisoned")
+            .get(1)
+            .cloned()
+            .expect("second request")
+    }
+}
+
+impl LlmClient for MessageOrderInspectingLlmClient {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        self.requests
+            .lock()
+            .map_err(|_| LlmError::Request("requests poisoned".to_string()))?
+            .push(request.messages);
+        self.responses
+            .lock()
+            .map_err(|_| LlmError::Request("responses poisoned".to_string()))?
             .pop_front()
             .ok_or(LlmError::ScriptExhausted)
     }
