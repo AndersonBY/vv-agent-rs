@@ -203,7 +203,9 @@ The current Rust implementation includes:
   structured summaries, and runtime autocompaction before large follow-up LLM
   cycles. Runtime memory decisions can reuse provider prompt token totals from
   the previous cycle and add recent tool-result token estimates, matching
-  Python `CycleRunner` / `MemoryManager` compaction heuristics.
+  Python `CycleRunner` / `MemoryManager` compaction heuristics. Optional
+  Python-style memory warnings can append localized user guidance before
+  compaction when usage crosses `memory_threshold_percentage`.
 - Large historical tool results can be persisted under `.memory/tool_results`
   and replaced with compact retrieval hints, matching Python `v-agent` artifact
   compaction behavior.

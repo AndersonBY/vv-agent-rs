@@ -13,6 +13,8 @@ use crate::memory::token_utils::{compute_compaction_threshold, count_messages_to
 use crate::types::{Message, MessageRole};
 
 const MEMORY_SUMMARY_NAME: &str = "memory_summary";
+const MEMORY_WARNING_EN: &str = "The current memory usage has exceeded {memory_threshold_percentage}%. It is recommended to immediately organize and record key information and materials from the conversation, and store them in the workspace to prevent data loss after memory compression.\n\n";
+const MEMORY_WARNING_ZH: &str = "当前记忆已使用容量超过 {memory_threshold_percentage}%,建议立即整理、记录对话中的关键信息、资料, 并储存至工作区, 避免记忆压缩后资料丢失。\n\n";
 
 #[derive(Debug, Clone)]
 pub struct MemoryManagerConfig {
@@ -22,6 +24,9 @@ pub struct MemoryManagerConfig {
     pub model_context_window: u64,
     pub reserved_output_tokens: u64,
     pub autocompact_buffer_tokens: u64,
+    pub language: String,
+    pub warning_threshold_percentage: u8,
+    pub include_memory_warning: bool,
     pub summary_event_limit: usize,
     pub tool_result_compact_threshold: usize,
     pub tool_result_keep_last: usize,
@@ -47,6 +52,9 @@ impl Default for MemoryManagerConfig {
             model_context_window: 200_000,
             reserved_output_tokens: 16_000,
             autocompact_buffer_tokens: 13_000,
+            language: "zh-CN".to_string(),
+            warning_threshold_percentage: 90,
+            include_memory_warning: false,
             summary_event_limit: 40,
             tool_result_compact_threshold: 2_000,
             tool_result_keep_last: 3,
@@ -124,6 +132,11 @@ impl MemoryManager {
         let message_length =
             self.calculate_effective_length(&sanitized, total_tokens, recent_tool_call_ids);
         if !force && message_length <= self.autocompact_threshold() {
+            let (warned, warning_inserted) =
+                self.maybe_append_memory_warning(&sanitized, message_length);
+            if warning_inserted {
+                return (warned, true);
+            }
             if self.should_preemptive_microcompact(message_length) {
                 let (microcompacted, cleared) = self.microcompact_messages(&sanitized, cycle_index);
                 if cleared > 0 {
@@ -172,6 +185,14 @@ impl MemoryManager {
         let used_tokens =
             self.calculate_effective_length(messages, total_tokens, recent_tool_call_ids);
         (used_tokens.saturating_mul(100)) / threshold
+    }
+
+    pub fn warning_threshold(&self) -> u64 {
+        let threshold = self.autocompact_threshold();
+        if threshold == 0 {
+            return 0;
+        }
+        (threshold * u64::from(self.config.warning_threshold_percentage)) / 100
     }
 
     pub fn microcompact_messages(
@@ -229,6 +250,40 @@ impl MemoryManager {
             .cloned()
             .collect::<Vec<_>>();
         count_messages_tokens(&tool_messages, &self.config.model)
+    }
+
+    fn maybe_append_memory_warning(
+        &self,
+        messages: &[Message],
+        message_length: u64,
+    ) -> (Vec<Message>, bool) {
+        if !self.config.include_memory_warning || self.autocompact_threshold() == 0 {
+            return (messages.to_vec(), false);
+        }
+        if message_length < self.warning_threshold() {
+            return (messages.to_vec(), false);
+        }
+        let warning_text = self.memory_warning_text();
+        if messages.iter().rev().take(10).any(|message| {
+            message.role == MessageRole::User && message.content.contains(&warning_text)
+        }) {
+            return (messages.to_vec(), false);
+        }
+        let mut warned = messages.to_vec();
+        warned.push(Message::user(warning_text));
+        (warned, true)
+    }
+
+    fn memory_warning_text(&self) -> String {
+        let template = if self.config.language == "zh-CN" {
+            MEMORY_WARNING_ZH
+        } else {
+            MEMORY_WARNING_EN
+        };
+        template.replace(
+            "{memory_threshold_percentage}",
+            &self.config.warning_threshold_percentage.to_string(),
+        )
     }
 
     pub fn emergency_compact(&self, messages: &[Message], drop_ratio: f64) -> Vec<Message> {

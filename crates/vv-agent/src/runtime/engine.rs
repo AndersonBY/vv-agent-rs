@@ -1005,6 +1005,9 @@ where
             "autocompact_buffer_tokens",
             13_000,
         ),
+        language: read_string_metadata(&task.metadata, "language", "zh-CN"),
+        warning_threshold_percentage: task.memory_threshold_percentage.clamp(1, 100),
+        include_memory_warning: read_bool_metadata(&task.metadata, "include_memory_warning", false),
         summary_event_limit: read_usize_metadata(&task.metadata, "summary_event_limit", 40),
         tool_result_compact_threshold: read_usize_metadata(
             &task.metadata,
@@ -1166,6 +1169,16 @@ fn read_bool_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: bo
         .get(key)
         .and_then(Value::as_bool)
         .unwrap_or(default)
+}
+
+fn read_string_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: &str) -> String {
+    metadata
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default)
+        .to_string()
 }
 
 fn read_string_set_metadata(
