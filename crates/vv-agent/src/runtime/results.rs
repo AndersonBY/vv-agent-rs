@@ -5,6 +5,12 @@ use crate::types::{LLMResponse, Message, ToolExecutionResult};
 pub(super) fn assistant_message_from_response(response: &LLMResponse) -> Message {
     let mut message = Message::assistant(response.content.clone());
     message.tool_calls = response.tool_calls.clone();
+    message.reasoning_content = response
+        .raw
+        .get("reasoning_content")
+        .and_then(Value::as_str)
+        .filter(|reasoning| !reasoning.is_empty())
+        .map(str::to_string);
     message
 }
 

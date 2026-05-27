@@ -55,8 +55,9 @@ pub use runtime::stores::sqlite::SqliteStateStore;
 pub use runtime::{
     AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BeforeCycleMessageProvider, BeforeLlmEvent,
     BeforeLlmPatch, BeforeMemoryCompactEvent, BeforeToolCallEvent, BeforeToolCallPatch,
-    CancellationToken, ExecutionContext, InterruptionMessageProvider, RuntimeEventHandler,
-    RuntimeHook, RuntimeHookManager, RuntimeRunControls, StreamCallback,
+    CancellationToken, CycleRunRequest, CycleRunner, ExecutionContext, InterruptionMessageProvider,
+    RuntimeEventHandler, RuntimeHook, RuntimeHookManager, RuntimeRunControls, StreamCallback,
+    ToolCallRunner, ToolRunOutcome, ToolRunRequest, MAX_PROMPT_TOO_LONG_RETRIES,
 };
 pub use sdk::{
     create_agent_session, create_agent_session_with_id, create_agent_session_with_id_and_workspace,

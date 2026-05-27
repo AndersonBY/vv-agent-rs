@@ -70,6 +70,29 @@ fn runtime_executes_tool_calls_until_task_finish() {
 }
 
 #[test]
+fn runtime_preserves_reasoning_content_on_assistant_messages_like_python() {
+    let mut response = LLMResponse::new("plain answer");
+    response
+        .raw
+        .insert("reasoning_content".to_string(), json!("private analysis"));
+    let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![response]));
+    let mut task = AgentTask::new("reasoning_task", "demo", "system", "prompt");
+    task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
+
+    let result = runtime.run(task).expect("run");
+
+    let assistant = result
+        .messages
+        .iter()
+        .find(|message| message.role == vv_agent::MessageRole::Assistant)
+        .expect("assistant message");
+    assert_eq!(
+        assistant.reasoning_content.as_deref(),
+        Some("private analysis")
+    );
+}
+
+#[test]
 fn runtime_preserves_shared_state_when_task_finishes() {
     let todo_args = BTreeMap::from([(
         "todos".to_string(),

@@ -2,7 +2,7 @@ pub mod backends;
 pub mod background_sessions;
 pub mod cancellation;
 pub mod context;
-mod cycle_runner;
+pub mod cycle_runner;
 pub mod engine;
 pub mod hooks;
 pub mod processes;
@@ -14,7 +14,7 @@ pub mod sub_agent_sessions;
 mod sub_agents;
 pub mod sub_task_manager;
 pub mod token_usage;
-mod tool_call_runner;
+pub mod tool_call_runner;
 mod tool_planner;
 
 pub use background_sessions::{
@@ -23,6 +23,9 @@ pub use background_sessions::{
 };
 pub use cancellation::CancellationToken;
 pub use context::{ExecutionContext, StreamCallback};
+pub use cycle_runner::{
+    is_prompt_too_long_error, CycleRunRequest, CycleRunner, MAX_PROMPT_TOO_LONG_RETRIES,
+};
 pub use engine::{
     AgentRuntime, BeforeCycleMessageProvider, InterruptionMessageProvider, RuntimeEventHandler,
     RuntimeLogCallback, RuntimeLogHandler, RuntimeRunControls,
@@ -43,4 +46,5 @@ pub use sub_agent_sessions::{
 };
 pub use sub_task_manager::SubTaskManager;
 pub use token_usage::{normalize_token_usage, summarize_task_token_usage};
+pub use tool_call_runner::{ToolCallRunner, ToolRunOutcome, ToolRunRequest};
 pub use tool_planner::{freeze_dynamic_tool_schema_hints, patch_dynamic_tool_schema_hints};

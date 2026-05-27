@@ -169,10 +169,16 @@ The current Rust implementation includes:
   tool-call running helpers, tool-result extraction, sub-agent execution,
   sub-agent session registry, sub-task manager, and Python-style
   `runtime/backends/` submodules for inline/thread/celery/celery_tasks paths so
-  deeper Python parity work can stay localized.
+  deeper Python parity work can stay localized. `CycleRunner` and
+  `ToolCallRunner` are now public runtime helpers as in Python, so embedders can
+  run one LLM planning cycle or one tool-call batch without going through the
+  full `AgentRuntime`.
 - Runtime hooks modeled after Python `RuntimeHookManager`: callers can patch
   messages before memory compaction, patch LLM request messages/schemas, patch
   LLM responses, patch or short-circuit tool calls, and patch tool results.
+- Runtime assistant messages preserve provider `raw.reasoning_content` in the
+  transcript, matching Python `CycleRunner` behavior for reasoning-chain and
+  resume flows.
 - Runtime lifecycle logging through `log_handler`, with Python-style events for
   run start, cycle start, LLM response, tool result, completion, wait-user, and
   max-cycle exits, including configurable assistant/content/final-answer
