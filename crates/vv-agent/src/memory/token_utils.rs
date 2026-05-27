@@ -1,7 +1,35 @@
 use serde::Serialize;
 use serde_json::Value;
+use std::path::Path;
 
 use crate::types::Message;
+
+pub fn resolve_model_token_limits(
+    settings: &Value,
+    backend: &str,
+    model: &str,
+) -> (Option<u64>, Option<u64>) {
+    let backend = backend.trim();
+    let model = model.trim();
+    if backend.is_empty() || model.is_empty() {
+        return (None, None);
+    }
+    let Ok(resolved) = crate::config::resolve_model_endpoint(settings, backend, model) else {
+        return (None, None);
+    };
+    (resolved.context_length, resolved.max_output_tokens)
+}
+
+pub fn resolve_model_token_limits_from_file(
+    path: impl AsRef<Path>,
+    backend: &str,
+    model: &str,
+) -> (Option<u64>, Option<u64>) {
+    let Ok(settings) = crate::config::load_llm_settings_from_file(path) else {
+        return (None, None);
+    };
+    resolve_model_token_limits(&settings, backend, model)
+}
 
 pub fn compute_compaction_threshold(
     configured_threshold: u64,

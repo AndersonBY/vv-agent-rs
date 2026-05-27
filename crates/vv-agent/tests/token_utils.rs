@@ -1,5 +1,7 @@
 use serde_json::json;
-use vv_agent::memory::token_utils::{count_tokens, estimate_tokens};
+use vv_agent::memory::token_utils::{
+    count_tokens, estimate_tokens, resolve_model_token_limits, resolve_model_token_limits_from_file,
+};
 
 #[test]
 fn count_tokens_prefers_vv_llm_counter_like_python() {
@@ -38,4 +40,67 @@ fn estimate_tokens_handles_cjk_and_ascii_mix_like_python() {
     assert_eq!(estimate_tokens("你好", "demo"), 3);
     assert_eq!(estimate_tokens("hello", "demo"), 1);
     assert_eq!(estimate_tokens("你好hello", "demo"), 4);
+}
+
+#[test]
+fn resolve_model_token_limits_reads_vv_llm_settings_model_config() {
+    let settings = json!({
+        "VERSION": "2",
+        "endpoints": [{"id": "openai-default", "api_base": "https://example.test", "api_key": "sk-test"}],
+        "backends": {
+            "openai": {
+                "models": {
+                    "gpt-demo": {
+                        "id": "provider-gpt-demo",
+                        "endpoints": ["openai-default"],
+                        "context_length": 64000,
+                        "max_output_tokens": 8000
+                    }
+                }
+            }
+        }
+    });
+
+    assert_eq!(
+        resolve_model_token_limits(&settings, "openai", "gpt-demo"),
+        (Some(64_000), Some(8_000))
+    );
+    assert_eq!(
+        resolve_model_token_limits(&settings, "openai", "provider-gpt-demo"),
+        (Some(64_000), Some(8_000))
+    );
+    assert_eq!(
+        resolve_model_token_limits(&settings, "openai", "missing"),
+        (None, None)
+    );
+}
+
+#[test]
+fn resolve_model_token_limits_from_file_accepts_json_settings_like_python_loader() {
+    let settings = tempfile::NamedTempFile::new().expect("settings file");
+    std::fs::write(
+        settings.path(),
+        r#"{
+          "VERSION": "2",
+          "endpoints": [{"id": "deepseek-default", "api_base": "https://example.test", "api_key": "sk-test"}],
+          "backends": {
+            "deepseek": {
+              "models": {
+                "deepseek-v4-pro": {
+                  "id": "deepseek-v4-pro",
+                  "endpoints": ["deepseek-default"],
+                  "context_length": 131072,
+                  "max_output_tokens": 8192
+                }
+              }
+            }
+          }
+        }"#,
+    )
+    .expect("write settings");
+
+    assert_eq!(
+        resolve_model_token_limits_from_file(settings.path(), "deepseek", "deepseek-v4-pro"),
+        (Some(131_072), Some(8_192))
+    );
 }

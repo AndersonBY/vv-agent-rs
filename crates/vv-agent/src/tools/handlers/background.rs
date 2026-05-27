@@ -36,7 +36,12 @@ pub(crate) fn check_background_command_tool() -> ToolSpec {
                     None,
                     ToolDirective::Continue,
                 ),
-                Some("completed") => ToolExecutionResult::success("", payload.to_string()),
+                Some("completed") => tool_result(
+                    ToolResultStatus::Success,
+                    payload,
+                    None,
+                    ToolDirective::Continue,
+                ),
                 _ => tool_result(
                     ToolResultStatus::Error,
                     payload,

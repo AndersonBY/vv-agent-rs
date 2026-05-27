@@ -4,10 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-use crate::config::{
-    load_llm_settings_from_file, load_memory_summary_defaults_from_file, resolve_model_endpoint,
-};
+use crate::config::load_memory_summary_defaults_from_file;
 use crate::llm::{LlmClient, LlmError, LlmRequest};
+use crate::memory::token_utils::resolve_model_token_limits_from_file;
 use crate::memory::{
     CompactionExhaustedError, MemoryManager, MemoryManagerConfig, SessionMemory,
     SessionMemoryConfig, SessionMemoryExtractionCallback, SummaryCallback,
@@ -1150,13 +1149,7 @@ fn resolve_runtime_model_token_limits(
     let (Some(settings_file), Some(default_backend)) = (settings_file, default_backend) else {
         return (None, None);
     };
-    let Ok(settings) = load_llm_settings_from_file(settings_file) else {
-        return (None, None);
-    };
-    let Ok(resolved) = resolve_model_endpoint(&settings, default_backend, model) else {
-        return (None, None);
-    };
-    (resolved.context_length, resolved.max_output_tokens)
+    resolve_model_token_limits_from_file(settings_file, default_backend, model)
 }
 
 fn build_session_memory<C>(

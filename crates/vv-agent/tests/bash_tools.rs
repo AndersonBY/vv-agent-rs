@@ -103,6 +103,8 @@ fn background_command_lifecycle_can_be_polled() {
             continue;
         }
         assert_eq!(probe.status, ToolResultStatus::Success);
+        assert_eq!(probe.metadata["status"], json!("completed"));
+        assert_eq!(probe.metadata["exit_code"], json!(0));
         final_payload = Some(payload);
         break;
     }

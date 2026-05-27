@@ -553,7 +553,10 @@ The current Rust implementation includes:
 - Memory token utilities now prefer `vv-llm::utilities::count_tokens` for
   supported tokenizers and fall back to the Python-style CJK-aware estimator for
   unsupported models. They also accept structured JSON payloads by serializing
-  them before estimation, matching Python's lenient token-count helper.
+  them before estimation, matching Python's lenient token-count helper, and
+  expose settings-backed `resolve_model_token_limits` /
+  `resolve_model_token_limits_from_file` helpers that read model context and
+  output budgets through the crates.io `vv-llm` settings model.
   `memory::COMPACTABLE_TOOLS` exposes the same default microcompact tool
   allowlist as Python.
 - SDK one-shot runs no longer require a prebuilt runtime: by default the client
