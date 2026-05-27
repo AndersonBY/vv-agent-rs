@@ -1026,6 +1026,7 @@ fn cancellation_token_propagates_to_children_and_runtime() {
 #[test]
 fn cancellation_token_callbacks_match_python_semantics() {
     let token = CancellationToken::default();
+    assert!(!token.cancelled());
     assert!(token.check().is_ok());
 
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -1041,6 +1042,7 @@ fn cancellation_token_callbacks_match_python_semantics() {
     token.cancel();
     token.cancel();
 
+    assert!(token.cancelled());
     assert_eq!(*calls.lock().expect("callback calls lock"), vec!["first"]);
     assert!(token.check().is_err());
 
@@ -1063,8 +1065,10 @@ fn cancellation_token_callbacks_match_python_semantics() {
     let child = parent.child();
     let grandchild = child.child();
     child.cancel();
+    assert!(child.cancelled());
     assert!(child.is_cancelled());
     assert!(grandchild.is_cancelled());
+    assert!(!parent.cancelled());
     assert!(!parent.is_cancelled());
 }
 

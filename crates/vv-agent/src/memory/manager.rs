@@ -246,6 +246,12 @@ impl MemoryManager {
         )
     }
 
+    pub fn effective_context_window(&self) -> u64 {
+        self.config
+            .model_context_window
+            .saturating_sub(self.config.reserved_output_tokens)
+    }
+
     pub fn compact(&mut self, messages: &[Message], force: bool) -> (Vec<Message>, bool) {
         self.compact_for_cycle_with_usage(messages, 0, force, None, None)
     }
@@ -376,7 +382,7 @@ impl MemoryManager {
         )
     }
 
-    fn microcompact_trigger_threshold(&self) -> u64 {
+    pub fn microcompact_trigger_threshold(&self) -> u64 {
         let ratio = self.config.microcompact_trigger_ratio.clamp(0.0, 1.0);
         (self.autocompact_threshold() as f64 * ratio).floor() as u64
     }

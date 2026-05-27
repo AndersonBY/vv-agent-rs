@@ -291,6 +291,10 @@ impl ToolExecutionResult {
     pub fn to_message(&self) -> Message {
         Message::tool(self.content.clone(), self.tool_call_id.clone())
     }
+
+    pub fn to_tool_message(&self) -> Message {
+        self.to_message()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

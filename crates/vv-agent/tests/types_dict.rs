@@ -182,6 +182,17 @@ fn message_to_openai_message_matches_python_multimodal_and_tool_shapes() {
 }
 
 #[test]
+fn tool_execution_result_to_tool_message_alias_matches_python() {
+    let result = ToolExecutionResult::success("call_1", "ok");
+
+    let message = result.to_tool_message();
+
+    assert_eq!(message.role, vv_agent::MessageRole::Tool);
+    assert_eq!(message.tool_call_id.as_deref(), Some("call_1"));
+    assert_eq!(message.content, "ok");
+}
+
+#[test]
 fn sub_task_protocol_helpers_match_python_defaults_and_dict_shape() {
     let request = SubTaskRequest::new("researcher", "collect sources");
     assert_eq!(request.agent_name, "researcher");

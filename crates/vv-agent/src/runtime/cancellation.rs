@@ -67,6 +67,10 @@ impl CancellationToken {
         self.inner.cancelled.load(Ordering::SeqCst)
     }
 
+    pub fn cancelled(&self) -> bool {
+        self.is_cancelled()
+    }
+
     pub fn check(&self) -> Result<(), String> {
         if self.is_cancelled() {
             Err("Operation was cancelled".to_string())

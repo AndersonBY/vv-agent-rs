@@ -295,6 +295,24 @@ fn memory_threshold_uses_configured_and_model_derived_ceiling() {
 }
 
 #[test]
+fn memory_manager_exposes_python_style_threshold_properties() {
+    let manager = MemoryManager::new(MemoryManagerConfig {
+        compact_threshold: 100_000,
+        model_context_window: 64_000,
+        reserved_output_tokens: 8_000,
+        autocompact_buffer_tokens: 6_000,
+        warning_threshold_percentage: 80,
+        microcompact_trigger_ratio: 0.5,
+        ..MemoryManagerConfig::default()
+    });
+
+    assert_eq!(manager.effective_context_window(), 56_000);
+    assert_eq!(manager.autocompact_threshold(), 50_000);
+    assert_eq!(manager.warning_threshold(), 40_000);
+    assert_eq!(manager.microcompact_trigger_threshold(), 25_000);
+}
+
+#[test]
 fn memory_manager_persists_large_tool_results_as_artifacts() {
     let workspace = tempfile::tempdir().expect("workspace");
     let large_tool_result = "x".repeat(240);
