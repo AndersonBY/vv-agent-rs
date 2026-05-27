@@ -14,7 +14,7 @@ use crate::tools::common::{
     path_escapes_workspace_error, supported_file_types_message,
     workspace_relative_path_or_absolute, GrepTextOptions,
 };
-use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
+use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 use crate::workspace::{normalized_glob_pattern, LocalWorkspaceBackend};
 
 const MAX_STRUCTURED_ITEMS: usize = 200;
@@ -426,6 +426,11 @@ fn rg_file_type_globs(file_type: &str) -> Vec<String> {
             }
         })
         .collect()
+}
+
+pub fn workspace_grep(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
+    let spec = workspace_grep_tool();
+    (spec.handler)(context, arguments)
 }
 
 pub(crate) fn workspace_grep_tool() -> ToolSpec {

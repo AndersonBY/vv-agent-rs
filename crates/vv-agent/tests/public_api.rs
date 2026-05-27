@@ -105,6 +105,51 @@ fn tools_builtins_module_matches_python_import_path() {
 }
 
 #[test]
+fn tools_handlers_module_reexports_python_handler_functions() {
+    fn assert_handler(
+        _: fn(
+            &mut vv_agent::ToolContext,
+            &vv_agent::types::ToolArguments,
+        ) -> vv_agent::ToolExecutionResult,
+    ) {
+    }
+
+    assert_handler(vv_agent::tools::handlers::activate_skill);
+    assert_handler(vv_agent::tools::handlers::ask_user);
+    assert_handler(vv_agent::tools::handlers::check_background_command);
+    assert_handler(vv_agent::tools::handlers::compress_memory);
+    assert_handler(vv_agent::tools::handlers::create_sub_task);
+    assert_handler(vv_agent::tools::handlers::file_info);
+    assert_handler(vv_agent::tools::handlers::file_str_replace);
+    assert_handler(vv_agent::tools::handlers::list_files);
+    assert_handler(vv_agent::tools::handlers::read_file);
+    assert_handler(vv_agent::tools::handlers::read_image);
+    assert_handler(vv_agent::tools::handlers::run_bash_command);
+    assert_handler(vv_agent::tools::handlers::sub_task_status);
+    assert_handler(vv_agent::tools::handlers::task_finish);
+    assert_handler(vv_agent::tools::handlers::todo_read);
+    assert_handler(vv_agent::tools::handlers::todo_write);
+    assert_handler(vv_agent::tools::handlers::workspace_grep);
+    assert_handler(vv_agent::tools::handlers::write_file);
+
+    assert_handler(vv_agent::tools::handlers::background::check_background_command);
+    assert_handler(vv_agent::tools::handlers::bash::run_bash_command);
+    assert_handler(vv_agent::tools::handlers::control::ask_user);
+    assert_handler(vv_agent::tools::handlers::control::task_finish);
+    assert_handler(vv_agent::tools::handlers::image::read_image);
+    assert_handler(vv_agent::tools::handlers::memory::compress_memory);
+    assert_handler(vv_agent::tools::handlers::search::workspace_grep);
+    assert_handler(vv_agent::tools::handlers::skills::activate_skill);
+    assert_handler(vv_agent::tools::handlers::sub_agents::create_sub_task);
+    assert_handler(vv_agent::tools::handlers::sub_task_status::sub_task_status);
+    assert_handler(vv_agent::tools::handlers::workspace_io::file_info);
+    assert_handler(vv_agent::tools::handlers::workspace_io::file_str_replace);
+    assert_handler(vv_agent::tools::handlers::workspace_io::list_files);
+    assert_handler(vv_agent::tools::handlers::workspace_io::read_file);
+    assert_handler(vv_agent::tools::handlers::workspace_io::write_file);
+}
+
+#[test]
 fn constants_module_exports_python_tool_names_and_workspace_tool_list() {
     use vv_agent::constants;
 

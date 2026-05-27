@@ -3,8 +3,13 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::tools::base::ToolSpec;
-use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
+use crate::tools::base::{ToolContext, ToolSpec};
+use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
+
+pub fn task_finish(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
+    let spec = task_finish_tool();
+    (spec.handler)(context, arguments)
+}
 
 pub(crate) fn task_finish_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
@@ -95,6 +100,11 @@ pub(crate) fn task_finish_tool() -> ToolSpec {
         spec.schema = schema;
     }
     spec
+}
+
+pub fn ask_user(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
+    let spec = ask_user_tool();
+    (spec.handler)(context, arguments)
 }
 
 pub(crate) fn ask_user_tool() -> ToolSpec {

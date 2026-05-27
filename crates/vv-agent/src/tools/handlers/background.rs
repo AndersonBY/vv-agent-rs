@@ -3,9 +3,17 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::background_sessions::background_session_manager;
-use crate::tools::base::ToolSpec;
+use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{tool_error_with_code, tool_result};
-use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
+use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
+
+pub fn check_background_command(
+    context: &mut ToolContext,
+    arguments: &ToolArguments,
+) -> ToolExecutionResult {
+    let spec = check_background_command_tool();
+    (spec.handler)(context, arguments)
+}
 
 pub(crate) fn check_background_command_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(

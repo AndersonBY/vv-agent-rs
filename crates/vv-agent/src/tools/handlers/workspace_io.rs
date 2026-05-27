@@ -11,6 +11,7 @@ use crate::tools::common::{
     is_hidden_path, is_ignored_root, parse_integer_arg, replace_n, tool_error,
     workspace_relative_path_or_absolute,
 };
+use crate::types::{ToolArguments, ToolExecutionResult};
 use crate::workspace::{glob_match, normalized_glob_pattern, LocalWorkspaceBackend};
 
 const READ_FILE_MAX_LINES: usize = 2_000;
@@ -161,6 +162,11 @@ fn local_ignored_root_names(base_path: &Path) -> Vec<String> {
         .collect::<Vec<_>>();
     roots.sort();
     roots
+}
+
+pub fn list_files(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
+    let spec = list_files_tool();
+    (spec.handler)(context, arguments)
 }
 
 pub(crate) fn list_files_tool() -> ToolSpec {
@@ -322,6 +328,11 @@ pub(crate) fn list_files_tool() -> ToolSpec {
     spec
 }
 
+pub fn file_info(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
+    let spec = file_info_tool();
+    (spec.handler)(context, arguments)
+}
+
 pub(crate) fn file_info_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
         "file_info",
@@ -358,6 +369,11 @@ pub(crate) fn file_info_tool() -> ToolSpec {
         spec.schema = schema;
     }
     spec
+}
+
+pub fn read_file(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
+    let spec = read_file_tool();
+    (spec.handler)(context, arguments)
 }
 
 pub(crate) fn read_file_tool() -> ToolSpec {
@@ -473,6 +489,11 @@ pub(crate) fn read_file_tool() -> ToolSpec {
     spec
 }
 
+pub fn write_file(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
+    let spec = write_file_tool();
+    (spec.handler)(context, arguments)
+}
+
 pub(crate) fn write_file_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
         "write_file",
@@ -527,6 +548,14 @@ pub(crate) fn write_file_tool() -> ToolSpec {
         spec.schema = schema;
     }
     spec
+}
+
+pub fn file_str_replace(
+    context: &mut ToolContext,
+    arguments: &ToolArguments,
+) -> ToolExecutionResult {
+    let spec = file_str_replace_tool();
+    (spec.handler)(context, arguments)
 }
 
 pub(crate) fn file_str_replace_tool() -> ToolSpec {

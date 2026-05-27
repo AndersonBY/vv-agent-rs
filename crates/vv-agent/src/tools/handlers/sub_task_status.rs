@@ -2,9 +2,17 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::tools::base::ToolSpec;
+use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{coerce_bool, tool_error_with_code, tool_result};
-use crate::types::{ToolDirective, ToolResultStatus};
+use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
+
+pub fn sub_task_status(
+    context: &mut ToolContext,
+    arguments: &ToolArguments,
+) -> ToolExecutionResult {
+    let spec = sub_task_status_tool();
+    (spec.handler)(context, arguments)
+}
 
 pub(crate) fn sub_task_status_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(

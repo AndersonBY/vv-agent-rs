@@ -2,9 +2,17 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::tools::base::ToolSpec;
+use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{tool_error_with_code, tool_result};
-use crate::types::{ToolDirective, ToolResultStatus};
+use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
+
+pub fn compress_memory(
+    context: &mut ToolContext,
+    arguments: &ToolArguments,
+) -> ToolExecutionResult {
+    let spec = compress_memory_tool();
+    (spec.handler)(context, arguments)
+}
 
 pub(crate) fn compress_memory_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(

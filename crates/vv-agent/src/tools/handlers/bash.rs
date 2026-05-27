@@ -9,12 +9,20 @@ use crate::processes::{
     read_captured_output, remove_captured_output, start_captured_process_with_env, wait_for_child,
 };
 use crate::runtime::shell::{normalize_windows_shell_priority, prepare_shell_execution};
-use crate::tools::base::ToolSpec;
+use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{
     parse_integer_arg, path_escapes_workspace_error, tool_error_with_code, tool_result,
     workspace_relative_path_or_absolute,
 };
-use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
+use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
+
+pub fn run_bash_command(
+    context: &mut ToolContext,
+    arguments: &ToolArguments,
+) -> ToolExecutionResult {
+    let spec = bash_tool();
+    (spec.handler)(context, arguments)
+}
 
 pub(crate) fn bash_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(

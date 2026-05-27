@@ -3,9 +3,20 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::tools::base::ToolSpec;
+use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{coerce_bool, tool_error_with_code, tool_result};
-use crate::types::{AgentStatus, SubTaskRequest, ToolDirective, ToolResultStatus};
+use crate::types::{
+    AgentStatus, SubTaskRequest, ToolArguments, ToolDirective, ToolExecutionResult,
+    ToolResultStatus,
+};
+
+pub fn create_sub_task(
+    context: &mut ToolContext,
+    arguments: &ToolArguments,
+) -> ToolExecutionResult {
+    let spec = create_sub_task_tool();
+    (spec.handler)(context, arguments)
+}
 
 pub(crate) fn create_sub_task_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
