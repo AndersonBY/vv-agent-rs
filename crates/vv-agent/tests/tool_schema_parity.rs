@@ -235,6 +235,7 @@ fn every_builtin_tool_schema_has_operational_guidance_not_just_labels() {
     assert!(
         property_description(&registry, "list_files", "scan_limit").contains("count_is_estimate")
     );
+    assert!(property_description(&registry, "list_files", "max_results").contains("numeric string"));
 
     let write_file = description(&registry, "write_file");
     assert!(write_file.contains("Prefer `file_str_replace`"));

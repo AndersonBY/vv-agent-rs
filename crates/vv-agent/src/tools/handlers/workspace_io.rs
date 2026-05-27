@@ -21,16 +21,24 @@ pub(crate) fn list_files_tool() -> ToolSpec {
                 .get("glob")
                 .and_then(Value::as_str)
                 .unwrap_or("**/*");
-            let max_results = arguments
-                .get("max_results")
-                .and_then(Value::as_u64)
-                .unwrap_or(500)
-                .clamp(1, 5_000) as usize;
-            let scan_limit = arguments
-                .get("scan_limit")
-                .and_then(Value::as_u64)
-                .unwrap_or(50_000)
-                .max(max_results as u64) as usize;
+            let max_results = match arguments.get("max_results") {
+                Some(value) => match parse_integer_arg(value) {
+                    Ok(limit) => limit.clamp(1, 5_000) as usize,
+                    Err(_) => {
+                        return tool_error("`max_results` and `scan_limit` must be integers");
+                    }
+                },
+                None => 500,
+            };
+            let scan_limit = match arguments.get("scan_limit") {
+                Some(value) => match parse_integer_arg(value) {
+                    Ok(limit) => limit.max(max_results as i64) as usize,
+                    Err(_) => {
+                        return tool_error("`max_results` and `scan_limit` must be integers");
+                    }
+                },
+                None => 50_000,
+            };
             let include_ignored = arguments
                 .get("include_ignored")
                 .and_then(Value::as_bool)

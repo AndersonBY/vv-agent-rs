@@ -54,8 +54,8 @@ pub(super) fn list_files_schema() -> Value {
                     "glob": {"type": "string", "description": "Optional glob pattern. Default **/*."},
                     "include_hidden": {"type": "boolean", "description": "Whether hidden files are included. Default false."},
                     "include_ignored": {"type": "boolean", "description": "When listing workspace root, include files under common dependency/cache directories. Default false."},
-                    "max_results": {"type": "integer", "description": "Maximum number of file paths returned in one call. Default 500; larger values are capped."},
-                    "scan_limit": {"type": "integer", "description": "Maximum files scanned before stopping early to keep listing fast. If reached, response includes `count_is_estimate=true`."}
+                    "max_results": {"type": "integer", "description": "Maximum number of file paths returned in one call. Default 500; larger values are capped. numeric string values are accepted for Python compatibility."},
+                    "scan_limit": {"type": "integer", "description": "Maximum files scanned before stopping early to keep listing fast. If reached, response includes `count_is_estimate=true`. numeric string values are accepted for Python compatibility."}
                 },
                 "required": []
             }

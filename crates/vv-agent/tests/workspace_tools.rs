@@ -156,6 +156,36 @@ fn list_files_reports_estimated_count_when_scan_limit_is_reached_like_python() {
 }
 
 #[test]
+fn list_files_accepts_string_limits_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    for index in 0..5 {
+        std::fs::write(workspace.path().join(format!("file_{index}.txt")), "x").expect("file");
+    }
+
+    let list = registry
+        .execute(
+            &ToolCall::new(
+                "list_string_limits",
+                "list_files",
+                BTreeMap::from([
+                    ("max_results".to_string(), json!("2")),
+                    ("scan_limit".to_string(), json!("3")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("list tool");
+    let payload: Value = serde_json::from_str(&list.content).expect("list payload");
+
+    assert_eq!(payload["returned_count"], 2);
+    assert_eq!(payload["max_results"], 2);
+    assert_eq!(payload["scan_limit"], 3);
+    assert_eq!(payload["count_is_estimate"], true);
+}
+
+#[test]
 fn file_info_reports_file_metadata() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
