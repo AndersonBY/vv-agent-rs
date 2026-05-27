@@ -1,5 +1,8 @@
 use std::collections::BTreeSet;
+use std::fmt;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::memory::artifacts::{
     compact_tool_results, render_persisted_artifacts_section, ToolResultArtifactConfig,
@@ -15,8 +18,90 @@ use crate::types::{Message, MessageRole};
 const MEMORY_SUMMARY_NAME: &str = "memory_summary";
 const MEMORY_WARNING_EN: &str = "The current memory usage has exceeded {memory_threshold_percentage}%. It is recommended to immediately organize and record key information and materials from the conversation, and store them in the workspace to prevent data loss after memory compression.\n\n";
 const MEMORY_WARNING_ZH: &str = "当前记忆已使用容量超过 {memory_threshold_percentage}%,建议立即整理、记录对话中的关键信息、资料, 并储存至工作区, 避免记忆压缩后资料丢失。\n\n";
+const COMPRESS_MEMORY_PROMPT_EN: &str = r#"You are summarizing a conversation between a user and an AI coding assistant.
+Provide your analysis in <analysis> tags first (this section will be stripped), then output a structured JSON summary.
 
-#[derive(Debug, Clone)]
+<analysis>
+Think step by step about what information is critical to preserve, especially the user's exact wording,
+the current work state, file operations, and any errors that were resolved.
+</analysis>
+
+<Conversation History>
+{messages}
+</Conversation History>
+
+Please compress the conversation into a structured JSON "Task Status Summary".
+This summary should allow the Agent to quickly resume the task
+while preserving user constraints, key decisions, file operations, and critical context.
+
+Requirements:
+- Output JSON only, no Markdown.
+- Keep fields concise and searchable; use short sentences.
+- If a field has no data, use [] or "" as appropriate.
+- The "original_user_messages" field is critical. Preserve user messages verbatim or near-verbatim.
+
+JSON Schema:
+{
+  "summary_version": "2.0",
+  "original_user_messages": ["..."],
+  "user_constraints": ["..."],
+  "decisions": ["..."],
+  "files_examined_or_modified": [
+    {"path": "...", "action": "read|created|modified|deleted", "summary": "..."}
+  ],
+  "errors_and_fixes": [
+    {"error": "...", "fix": "...", "file": "..."}
+  ],
+  "progress": ["Preserve up to {event_limit} critical events"],
+  "key_facts": ["..."],
+  "open_issues": ["..."],
+  "current_work_state": "...",
+  "next_steps": ["..."]
+}
+"#;
+const COMPRESS_MEMORY_PROMPT_ZH: &str = r#"你正在总结一段用户与 AI 编程助手的对话。
+请先在 <analysis> 标签中进行思考 (该部分后续会被剥离), 然后输出结构化 JSON 摘要。
+
+<analysis>
+请逐步思考: 哪些信息必须保留, 哪些用户原话不能丢, 哪些文件/错误/当前状态会影响后续继续执行。
+</analysis>
+
+<Conversation History>
+{messages}
+</Conversation History>
+
+请将以上对话压缩为结构化 JSON「Task Status Summary」, 让 Agent 能快速恢复任务, 并保留用户约束、关键决策、文件操作与当前工作状态。
+
+要求:
+- 只输出 JSON, 不要 Markdown。
+- 字段内容简洁、可检索, 短句表达。
+- 没有信息的字段使用 [] 或 ""。
+- `original_user_messages` 字段至关重要: 尽量保留用户原话, 不要做概括式改写。
+
+JSON Schema:
+{
+  "summary_version": "2.0",
+  "original_user_messages": ["..."],
+  "user_constraints": ["..."],
+  "decisions": ["..."],
+  "files_examined_or_modified": [
+    {"path": "...", "action": "read|created|modified|deleted", "summary": "..."}
+  ],
+  "errors_and_fixes": [
+    {"error": "...", "fix": "...", "file": "..."}
+  ],
+  "progress": ["最多保留 {event_limit} 条关键进展"],
+  "key_facts": ["..."],
+  "open_issues": ["..."],
+  "current_work_state": "...",
+  "next_steps": ["..."]
+}
+"#;
+
+pub type SummaryCallback =
+    Arc<dyn Fn(&str, Option<&str>, Option<&str>) -> Option<String> + Send + Sync + 'static>;
+
+#[derive(Clone)]
 pub struct MemoryManagerConfig {
     pub compact_threshold: u64,
     pub keep_recent_messages: usize,
@@ -28,6 +113,9 @@ pub struct MemoryManagerConfig {
     pub warning_threshold_percentage: u8,
     pub include_memory_warning: bool,
     pub summary_event_limit: usize,
+    pub summary_backend: Option<String>,
+    pub summary_model: Option<String>,
+    pub summary_callback: Option<SummaryCallback>,
     pub tool_result_compact_threshold: usize,
     pub tool_result_keep_last: usize,
     pub tool_result_excerpt_head: usize,
@@ -43,6 +131,64 @@ pub struct MemoryManagerConfig {
     pub session_memory: Option<SessionMemory>,
 }
 
+impl fmt::Debug for MemoryManagerConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MemoryManagerConfig")
+            .field("compact_threshold", &self.compact_threshold)
+            .field("keep_recent_messages", &self.keep_recent_messages)
+            .field("model", &self.model)
+            .field("model_context_window", &self.model_context_window)
+            .field("reserved_output_tokens", &self.reserved_output_tokens)
+            .field("autocompact_buffer_tokens", &self.autocompact_buffer_tokens)
+            .field("language", &self.language)
+            .field(
+                "warning_threshold_percentage",
+                &self.warning_threshold_percentage,
+            )
+            .field("include_memory_warning", &self.include_memory_warning)
+            .field("summary_event_limit", &self.summary_event_limit)
+            .field("summary_backend", &self.summary_backend)
+            .field("summary_model", &self.summary_model)
+            .field(
+                "summary_callback",
+                &self.summary_callback.as_ref().map(|_| "<callback>"),
+            )
+            .field(
+                "tool_result_compact_threshold",
+                &self.tool_result_compact_threshold,
+            )
+            .field("tool_result_keep_last", &self.tool_result_keep_last)
+            .field("tool_result_excerpt_head", &self.tool_result_excerpt_head)
+            .field("tool_result_excerpt_tail", &self.tool_result_excerpt_tail)
+            .field("tool_calls_keep_last", &self.tool_calls_keep_last)
+            .field(
+                "assistant_no_tool_keep_last",
+                &self.assistant_no_tool_keep_last,
+            )
+            .field("tool_result_artifact_dir", &self.tool_result_artifact_dir)
+            .field(
+                "microcompact_trigger_ratio",
+                &self.microcompact_trigger_ratio,
+            )
+            .field(
+                "microcompact_keep_recent_cycles",
+                &self.microcompact_keep_recent_cycles,
+            )
+            .field(
+                "microcompact_min_result_length",
+                &self.microcompact_min_result_length,
+            )
+            .field(
+                "microcompact_compactable_tools",
+                &self.microcompact_compactable_tools,
+            )
+            .field("workspace", &self.workspace)
+            .field("session_memory", &self.session_memory)
+            .finish()
+    }
+}
+
 impl Default for MemoryManagerConfig {
     fn default() -> Self {
         Self {
@@ -56,6 +202,9 @@ impl Default for MemoryManagerConfig {
             warning_threshold_percentage: 90,
             include_memory_warning: false,
             summary_event_limit: 40,
+            summary_backend: None,
+            summary_model: None,
+            summary_callback: None,
             tool_result_compact_threshold: 2_000,
             tool_result_keep_last: 3,
             tool_result_excerpt_head: 200,
@@ -423,9 +572,8 @@ impl MemoryManager {
             },
         );
         let original_request = extract_original_user_request(messages).unwrap_or_default();
-        let summary =
-            LocalSummary::from_messages(&messages_for_summary, self.config.summary_event_limit);
-        let mut compressed_memory = summary.to_json_string();
+        let summary_prompt = self.build_compress_memory_prompt(&messages_for_summary);
+        let mut compressed_memory = self.generate_summary(&summary_prompt, &messages_for_summary);
         if let Ok(summary_data) = serde_json::from_str(&compressed_memory) {
             let restored_context = restore_key_files(
                 &summary_data,
@@ -453,6 +601,46 @@ impl MemoryManager {
             "<Original User Request>\n{original_request}\n</Original User Request>\n\n<Compressed Agent Memory>\n{compressed_memory}\n</Compressed Agent Memory>"
         )));
         (compacted, true)
+    }
+
+    fn build_compress_memory_prompt(&self, messages: &[Message]) -> String {
+        let template = if self.config.language == "zh-CN" {
+            COMPRESS_MEMORY_PROMPT_ZH
+        } else {
+            COMPRESS_MEMORY_PROMPT_EN
+        };
+        let serialized_messages = messages
+            .iter()
+            .map(|message| message.to_openai_message(true))
+            .collect::<Vec<_>>();
+        template
+            .replace(
+                "{messages}",
+                &serde_json::to_string(&serialized_messages).unwrap_or_default(),
+            )
+            .replace(
+                "{event_limit}",
+                &self.config.summary_event_limit.max(1).to_string(),
+            )
+    }
+
+    fn generate_summary(&self, prompt: &str, messages: &[Message]) -> String {
+        if let Some(callback) = &self.config.summary_callback {
+            let callback_result = catch_unwind(AssertUnwindSafe(|| {
+                callback(
+                    prompt,
+                    self.config.summary_backend.as_deref(),
+                    self.config.summary_model.as_deref(),
+                )
+            }));
+            if let Ok(Some(summary)) = callback_result {
+                let normalized = normalize_summary_output(&summary);
+                if !normalized.trim().is_empty() {
+                    return normalized;
+                }
+            }
+        }
+        LocalSummary::from_messages(messages, self.config.summary_event_limit).to_json_string()
     }
 
     fn normalize_compaction_messages(&self, messages: &[Message]) -> (Vec<Message>, bool) {
@@ -536,6 +724,44 @@ impl MemoryManager {
 
 fn sanitize_empty_assistant_messages(messages: Vec<Message>) -> Vec<Message> {
     filter_empty_assistant_messages(&messages)
+}
+
+fn normalize_summary_output(text: &str) -> String {
+    let mut cleaned = strip_markdown_code_fence(text);
+    let analysis_pattern =
+        regex::Regex::new(r"(?is)<analysis>.*?</analysis>").expect("analysis regex");
+    cleaned = analysis_pattern
+        .replace_all(&cleaned, "")
+        .trim()
+        .to_string();
+    let summary_pattern =
+        regex::Regex::new(r"(?is)<summary>\s*(.*?)\s*</summary>").expect("summary regex");
+    if let Some(captures) = summary_pattern.captures(&cleaned) {
+        return captures
+            .get(1)
+            .map(|matched| matched.as_str().trim().to_string())
+            .unwrap_or_default();
+    }
+    cleaned
+}
+
+fn strip_markdown_code_fence(text: &str) -> String {
+    let cleaned = text.trim();
+    if !cleaned.starts_with("```") {
+        return cleaned.to_string();
+    }
+    let mut lines = cleaned.lines().collect::<Vec<_>>();
+    if lines.len() < 2 {
+        return cleaned.to_string();
+    }
+    lines.remove(0);
+    if lines
+        .last()
+        .is_some_and(|line| line.trim().starts_with("```"))
+    {
+        lines.pop();
+    }
+    lines.join("\n").trim().to_string()
 }
 
 fn normalize_orphan_tool_messages(messages: &[Message]) -> (Vec<Message>, bool) {

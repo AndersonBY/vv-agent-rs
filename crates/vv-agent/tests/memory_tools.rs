@@ -75,6 +75,43 @@ fn memory_manager_compacts_to_original_request_and_summary_block() {
 }
 
 #[test]
+fn memory_manager_uses_summary_callback_and_normalizes_output_like_python() {
+    let mut manager = MemoryManager::new(MemoryManagerConfig {
+        compact_threshold: 10,
+        model_context_window: 80,
+        reserved_output_tokens: 10,
+        autocompact_buffer_tokens: 0,
+        language: "en-US".to_string(),
+        summary_backend: Some("summary-backend".to_string()),
+        summary_model: Some("summary-model".to_string()),
+        summary_callback: Some(Arc::new(|prompt, backend, model| {
+            assert!(prompt.contains("<Conversation History>"));
+            assert_eq!(backend, Some("summary-backend"));
+            assert_eq!(model, Some("summary-model"));
+            Some(
+                r#"<analysis>private notes</analysis>
+<summary>{"summary_version":"2.0","original_user_messages":["from callback"],"current_work_state":"callback summary"}</summary>"#
+                    .to_string(),
+            )
+        })),
+        ..MemoryManagerConfig::default()
+    });
+    let messages = vec![
+        Message::system("system"),
+        Message::user("original request"),
+        Message::assistant("assistant progress"),
+    ];
+
+    let (compacted, changed) = manager.compact(&messages, true);
+
+    assert!(changed);
+    assert!(compacted[1].content.contains("\"from callback\""));
+    assert!(compacted[1].content.contains("callback summary"));
+    assert!(!compacted[1].content.contains("<analysis>"));
+    assert!(!compacted[1].content.contains("<summary>"));
+}
+
+#[test]
 fn memory_manager_does_not_compact_small_history() {
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         compact_threshold: 10_000,

@@ -40,7 +40,7 @@ pub use llm::{
 pub use memory::{
     sanitize_for_resume, CompactionExhaustedError, LocalSummary, MemoryManager,
     MemoryManagerConfig, SessionMemory, SessionMemoryConfig, SessionMemoryEntry,
-    SessionMemoryState,
+    SessionMemoryState, SummaryCallback,
 };
 pub use runtime::backends::{
     run_checkpointed_cycle, CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher,

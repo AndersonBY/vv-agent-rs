@@ -10,7 +10,7 @@ use crate::config::{
 use crate::llm::{LlmClient, LlmError, LlmRequest};
 use crate::memory::{
     CompactionExhaustedError, MemoryManager, MemoryManagerConfig, SessionMemory,
-    SessionMemoryConfig, SessionMemoryExtractionCallback,
+    SessionMemoryConfig, SessionMemoryExtractionCallback, SummaryCallback,
 };
 use crate::sub_task_manager::SubTaskManager;
 use crate::tools::{build_default_registry, ToolContext, ToolRegistry};
@@ -1038,6 +1038,17 @@ where
     )
     .or(local_summary_defaults.model)
     .unwrap_or_else(|| task.model.clone());
+    let summary_callback = if settings_file.is_some()
+        && summary_backend
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+    {
+        memory_summary_client
+            .clone()
+            .map(|client| build_memory_summary_callback(client, summary_model.clone()))
+    } else {
+        None
+    };
     let (resolved_context_window, resolved_max_output_tokens) =
         resolve_runtime_model_token_limits(settings_file, default_backend, &task.model);
     MemoryManager::new(MemoryManagerConfig {
@@ -1067,6 +1078,9 @@ where
         warning_threshold_percentage: task.memory_threshold_percentage.clamp(1, 100),
         include_memory_warning: read_bool_metadata(&task.metadata, "include_memory_warning", false),
         summary_event_limit: read_usize_metadata(&task.metadata, "summary_event_limit", 40),
+        summary_backend: summary_backend.clone(),
+        summary_model: Some(summary_model.clone()),
+        summary_callback,
         tool_result_compact_threshold: read_usize_metadata(
             &task.metadata,
             "tool_result_compact_threshold",
@@ -1206,6 +1220,21 @@ where
         task.metadata.get("session_memory_seed"),
     );
     Some(session_memory)
+}
+
+fn build_memory_summary_callback<C>(client: C, default_model: String) -> SummaryCallback
+where
+    C: LlmClient + Clone + 'static,
+{
+    Arc::new(move |prompt, _backend, model| {
+        let request_model = model.unwrap_or(&default_model).to_string();
+        let response = client
+            .clone()
+            .complete(LlmRequest::new(request_model, vec![Message::user(prompt)]))
+            .ok()?;
+        let content = response.content.trim().to_string();
+        (!content.is_empty()).then_some(content)
+    })
 }
 
 fn build_session_memory_extraction_callback<C>(client: C) -> SessionMemoryExtractionCallback

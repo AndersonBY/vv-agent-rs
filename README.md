@@ -241,7 +241,11 @@ The current Rust implementation includes:
   the previous cycle and add recent tool-result token estimates, matching
   Python `CycleRunner` / `MemoryManager` compaction heuristics. Optional
   Python-style memory warnings can append localized user guidance before
-  compaction when usage crosses `memory_threshold_percentage`.
+  compaction when usage crosses `memory_threshold_percentage`. Memory summaries
+  also support Python-style `summary_callback(prompt, backend, model)`; runtime
+  builds that callback from the configured `LlmClient`, so vv-llm backed clients
+  can generate remote summaries without custom provider adapters, while callback
+  failures fall back to local summaries.
 - Large historical tool results can be persisted under `.memory/tool_results`
   and replaced with compact retrieval hints, matching Python `v-agent` artifact
   compaction behavior. Memory compaction now tries this artifact-only reduction

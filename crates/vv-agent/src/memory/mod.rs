@@ -10,7 +10,7 @@ pub mod token_utils;
 
 pub use artifacts::{PersistedArtifact, ToolResultArtifactConfig, TOOL_RESULT_COMPACT_MARKER};
 pub use errors::CompactionExhaustedError;
-pub use manager::{MemoryManager, MemoryManagerConfig};
+pub use manager::{MemoryManager, MemoryManagerConfig, SummaryCallback};
 pub use message_sanitizer::{
     filter_empty_assistant_messages, filter_orphan_tool_results, filter_thinking_only_messages,
     filter_unresolved_tool_uses, sanitize_for_resume,
