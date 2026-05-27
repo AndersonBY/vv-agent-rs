@@ -160,7 +160,10 @@ The current Rust implementation includes:
 - `vv-llm = "0.1.0"` backed chat client construction through
   `build_vv_llm_from_local_settings`, settings-based endpoint resolution, and
   provider HTTP/protocol handling delegated to `vv-llm`, while keeping
-  `ScriptedLlmClient` for deterministic tests. Resolved model metadata keeps
+  `ScriptedLlmClient` for deterministic tests. The scripted client now mirrors
+  Python `ScriptedLLM` by accepting both fixed `LLMResponse` steps and callback
+  steps that inspect the live `LlmRequest`, and it reports exhausted scripts
+  explicitly with `LlmError::ScriptExhausted`. Resolved model metadata keeps
   Python-style ordered `endpoint_options` for all enabled endpoint bindings,
   the client builder constructs a vv-llm chat client for each enabled endpoint,
   uses Python-style randomized endpoint ordering by default (with an opt-out for
@@ -172,8 +175,8 @@ The current Rust implementation includes:
 - Split `llm/` modules matching Python's base/scripted/vv_llm_client layers,
   with the public `LlmClient` trait, scripted test client, and `vv-llm` backed
   production client kept behind stable top-level exports. Python-style public
-  aliases such as `LLMClient`, `ScriptedLLM`, and `VVLlmClient` are also
-  exported for callers porting code from `v-agent`.
+  aliases such as `LLMClient`, `ScriptedLLM`, `ScriptStep`, and `VVLlmClient`
+  are also exported for callers porting code from `v-agent`.
 - Split `memory/` submodules are public on the same import paths as Python,
   including `errors`, `manager`, `message_sanitizer`, `microcompact`,
   `post_compact_restore`, `session_memory`, and `token_utils`.

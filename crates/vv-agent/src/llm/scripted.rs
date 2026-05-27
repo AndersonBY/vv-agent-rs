@@ -5,21 +5,56 @@ use crate::types::LLMResponse;
 
 use super::{LlmClient, LlmError, LlmRequest};
 
+pub type ScriptStepCallback =
+    Arc<dyn Fn(&LlmRequest) -> Result<LLMResponse, LlmError> + Send + Sync + 'static>;
+
+#[derive(Clone)]
+pub enum ScriptStep {
+    Response(LLMResponse),
+    Callback(ScriptStepCallback),
+}
+
+impl ScriptStep {
+    pub fn response(response: LLMResponse) -> Self {
+        Self::Response(response)
+    }
+
+    pub fn callback(
+        callback: impl Fn(&LlmRequest) -> Result<LLMResponse, LlmError> + Send + Sync + 'static,
+    ) -> Self {
+        Self::Callback(Arc::new(callback))
+    }
+}
+
+impl From<LLMResponse> for ScriptStep {
+    fn from(response: LLMResponse) -> Self {
+        Self::Response(response)
+    }
+}
+
 #[derive(Clone)]
 pub struct ScriptedLlmClient {
-    responses: Arc<Mutex<VecDeque<LLMResponse>>>,
+    steps: Arc<Mutex<VecDeque<ScriptStep>>>,
 }
 
 impl ScriptedLlmClient {
     pub fn new(responses: Vec<LLMResponse>) -> Self {
+        Self::from_steps(responses.into_iter().map(ScriptStep::from).collect())
+    }
+
+    pub fn from_steps(steps: Vec<ScriptStep>) -> Self {
         Self {
-            responses: Arc::new(Mutex::new(VecDeque::from(responses))),
+            steps: Arc::new(Mutex::new(VecDeque::from(steps))),
         }
     }
 
     pub fn push_response(&self, response: LLMResponse) {
-        if let Ok(mut queue) = self.responses.lock() {
-            queue.push_back(response);
+        self.push_step(ScriptStep::Response(response));
+    }
+
+    pub fn push_step(&self, step: ScriptStep) {
+        if let Ok(mut queue) = self.steps.lock() {
+            queue.push_back(step);
         }
     }
 }
@@ -31,11 +66,18 @@ impl std::fmt::Debug for ScriptedLlmClient {
 }
 
 impl LlmClient for ScriptedLlmClient {
-    fn complete(&self, _request: LlmRequest) -> Result<LLMResponse, LlmError> {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
         let mut queue = self
-            .responses
+            .steps
             .lock()
             .map_err(|_| LlmError::Request("scripted response queue poisoned".to_string()))?;
-        Ok(queue.pop_front().unwrap_or_else(|| LLMResponse::new("")))
+        let Some(step) = queue.pop_front() else {
+            return Err(LlmError::ScriptExhausted);
+        };
+        drop(queue);
+        match step {
+            ScriptStep::Response(response) => Ok(response),
+            ScriptStep::Callback(callback) => callback(&request),
+        }
     }
 }

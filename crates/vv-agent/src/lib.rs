@@ -34,8 +34,8 @@ pub use config::{
     ConfigError, EndpointConfig, EndpointOption, MemorySummaryDefaults, ResolvedModelConfig,
 };
 pub use llm::{
-    EndpointTarget, LLMClient, LlmClient, LlmError, LlmRequest, LlmStreamCallback, ScriptedLLM,
-    ScriptedLlmClient, VVLlmClient, VvLlmClient,
+    EndpointTarget, LLMClient, LlmClient, LlmError, LlmRequest, LlmStreamCallback, ScriptStep,
+    ScriptStepCallback, ScriptedLLM, ScriptedLlmClient, VVLlmClient, VvLlmClient,
 };
 pub use memory::{
     sanitize_for_resume, CompactionExhaustedError, LocalSummary, MemoryManager,
