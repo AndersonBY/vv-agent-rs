@@ -28,6 +28,22 @@ fn preview_text_for_test(text: &str, log_preview_chars: Option<usize>) -> String
 }
 
 #[test]
+fn session_state_starts_with_python_style_todo_list() {
+    let execute_run = Arc::new(|prompt: String| Ok(fake_run(&prompt, AgentStatus::Completed)));
+    let session = AgentSession::new(
+        execute_run,
+        "demo",
+        AgentDefinition::default_for_model("demo"),
+        "./workspace",
+    );
+
+    assert_eq!(
+        session.state().shared_state["todo_list"],
+        Value::Array(vec![])
+    );
+}
+
+#[test]
 fn session_prompt_supports_follow_up_queue() {
     let calls = Arc::new(Mutex::new(Vec::<String>::new()));
     let execute_run = {

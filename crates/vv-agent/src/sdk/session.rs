@@ -184,13 +184,15 @@ impl AgentSession {
         definition: AgentDefinition,
         workspace: impl Into<PathBuf>,
     ) -> Self {
+        let mut shared_state = Metadata::new();
+        shared_state.insert("todo_list".to_string(), Value::Array(Vec::new()));
         Self {
             execute_run,
             session_id: normalize_session_id(session_id),
             _agent_name: agent_name.into(),
             _definition: definition,
             workspace: workspace.into(),
-            shared_state: Metadata::new(),
+            shared_state,
             messages: Vec::new(),
             latest_run: None,
             running: false,
