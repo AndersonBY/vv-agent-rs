@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 use vv_agent::background_sessions::background_session_manager;
+use vv_agent::processes::read_captured_output;
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
 #[test]
@@ -280,6 +281,17 @@ fn bash_tool_passes_stdin_to_command() {
     let payload: Value = serde_json::from_str(&result.content).expect("stdin payload");
     assert_eq!(payload["exit_code"], 0);
     assert_eq!(payload["output"], "hello from stdin\n");
+}
+
+#[test]
+fn captured_process_output_uses_replacement_decoding_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let output_path = workspace.path().join("invalid-output.log");
+    std::fs::write(&output_path, b"ok\xffdone").expect("invalid utf8 output");
+
+    let output = read_captured_output(&output_path, 20);
+
+    assert_eq!(output, "ok\u{fffd}done");
 }
 
 #[test]

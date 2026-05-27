@@ -288,10 +288,10 @@ The current Rust implementation includes:
   `read_file`, `write_file`, `file_str_replace`, `workspace_grep`,
   `read_image`, with image-message injection limited to `native_multimodal`
   tasks); memory notes through `compress_memory`; and `bash` /
-  `check_background_command` command tools with captured output, stdin,
-  metadata-controlled shell selection via `bash_shell`, foreground timeout
-  handoff, background polling, and automatic terminal background-session
-  listener notifications.
+  `check_background_command` command tools with captured output, Python-style
+  replacement decoding, stdin, metadata-controlled shell selection via
+  `bash_shell`, foreground timeout handoff, background polling, and automatic
+  terminal background-session listener notifications.
 - Python-compatible workspace path safety: `LocalWorkspaceBackend` rejects
   paths outside the workspace by default, and file/image/grep/bash tools keep
   metadata-controlled outside-path access for trusted tasks. Tool contexts

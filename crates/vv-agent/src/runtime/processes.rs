@@ -92,11 +92,14 @@ pub fn read_captured_output(path: &Path, limit_chars: usize) -> String {
     let Ok(mut file) = File::open(path) else {
         return String::new();
     };
-    let mut output = String::new();
-    if file.read_to_string(&mut output).is_err() {
+    let mut output = Vec::new();
+    if file.read_to_end(&mut output).is_err() {
         return String::new();
     }
-    output.chars().take(limit_chars).collect()
+    String::from_utf8_lossy(&output)
+        .chars()
+        .take(limit_chars)
+        .collect()
 }
 
 pub fn remove_captured_output(path: &Path) {
