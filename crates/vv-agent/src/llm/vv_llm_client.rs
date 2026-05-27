@@ -21,6 +21,16 @@ const STREAM_MODEL_EXACT: &[&str] = &[
     "deepseek-v4-flash",
     "deepseek-v4-pro",
 ];
+const CLAUDE_THINKING_MODELS: &[&str] = &[
+    "claude-3-7-sonnet-thinking",
+    "claude-opus-4-20250514-thinking",
+    "claude-opus-4-1-20250805-thinking",
+    "claude-sonnet-4-20250514-thinking",
+    "claude-sonnet-4-5-20250929-thinking",
+    "claude-opus-4-5-20251101-thinking",
+    "claude-opus-4-6-thinking",
+    "claude-sonnet-4-6-thinking",
+];
 
 #[derive(Clone)]
 pub struct VvLlmClient {
@@ -152,6 +162,8 @@ impl VvLlmClient {
         stream_callback: Option<LlmStreamCallback>,
     ) -> Result<LLMResponse, LlmError> {
         let effective_model = self.effective_model_for_endpoint(&request.model, endpoint);
+        let request_options = resolve_request_options(&effective_model);
+        let request_model = request_options.model.clone();
         let should_stream = stream_callback.is_some()
             || request
                 .metadata
@@ -159,15 +171,22 @@ impl VvLlmClient {
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
             || should_use_stream(&effective_model);
-        let estimated_prompt_tokens = count_messages_tokens(&request.messages, &effective_model);
+        let estimated_prompt_tokens = count_messages_tokens(&request.messages, &request_model);
         let mut chat_request = vv_llm::ChatRequest {
-            model: effective_model.clone(),
-            messages: request
-                .messages
-                .into_iter()
-                .map(to_vv_llm_message)
-                .collect(),
-            options: vv_llm::ChatRequestOptions::default(),
+            model: request_model.clone(),
+            messages: prepare_messages_for_model(
+                request
+                    .messages
+                    .into_iter()
+                    .map(to_vv_llm_message)
+                    .collect(),
+                &request_model,
+            ),
+            options: vv_llm::ChatRequestOptions {
+                temperature: request_options.temperature,
+                max_tokens: request_options.max_tokens,
+                stream: None,
+            },
             tools: request.tools.into_iter().map(to_vv_llm_tool).collect(),
             tool_choice: request
                 .metadata
@@ -188,11 +207,11 @@ impl VvLlmClient {
                 chat_request,
                 stream_callback,
                 Some(UsageEstimateContext {
-                    model: effective_model.clone(),
+                    model: request_model.clone(),
                     prompt_tokens: estimated_prompt_tokens,
                 }),
             ))?;
-            annotate_endpoint_response(&mut response, endpoint, &effective_model, should_stream);
+            annotate_endpoint_response(&mut response, endpoint, &request_model, should_stream);
             return Ok(response);
         }
 
@@ -203,11 +222,11 @@ impl VvLlmClient {
         let mut response = from_vv_llm_response(
             response,
             Some(UsageEstimateContext {
-                model: effective_model.clone(),
+                model: request_model.clone(),
                 prompt_tokens: estimated_prompt_tokens,
             }),
         );
-        annotate_endpoint_response(&mut response, endpoint, &effective_model, should_stream);
+        annotate_endpoint_response(&mut response, endpoint, &request_model, should_stream);
         Ok(response)
     }
 
@@ -225,6 +244,56 @@ impl VvLlmClient {
         } else {
             requested_model.to_string()
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ResolvedRequestOptions {
+    model: String,
+    temperature: Option<f32>,
+    max_tokens: Option<u32>,
+}
+
+fn resolve_request_options(model: &str) -> ResolvedRequestOptions {
+    let mut resolved_model = model.to_string();
+    let mut normalized_model = resolved_model.to_ascii_lowercase();
+    let mut temperature = None;
+    let mut max_tokens = None;
+
+    if STREAM_MODEL_EXACT
+        .iter()
+        .any(|candidate| normalized_model == *candidate)
+    {
+        temperature = Some(0.6);
+    } else if CLAUDE_THINKING_MODELS
+        .iter()
+        .any(|candidate| normalized_model == *candidate)
+    {
+        resolved_model = remove_suffix_case_insensitive(&resolved_model, "-thinking");
+        normalized_model = resolved_model.to_ascii_lowercase();
+        temperature = Some(1.0);
+        max_tokens = Some(20_000);
+    }
+
+    if normalized_model.starts_with("gemini-3") {
+        temperature.get_or_insert(1.0);
+        if normalized_model == "gemini-3-pro" || normalized_model == "gemini-3-flash" {
+            resolved_model = format!("{resolved_model}-preview");
+        }
+    }
+
+    ResolvedRequestOptions {
+        model: resolved_model,
+        temperature,
+        max_tokens,
+    }
+}
+
+fn remove_suffix_case_insensitive(value: &str, suffix: &str) -> String {
+    if value.to_ascii_lowercase().ends_with(suffix) {
+        value[..value.len().saturating_sub(suffix.len())].to_string()
+    } else {
+        value.to_string()
     }
 }
 
@@ -305,6 +374,45 @@ fn to_vv_llm_tool_call(tool_call: ToolCall) -> vv_llm::ToolCall {
         tool_call.name,
         Value::Object(tool_call.arguments.into_iter().collect()).to_string(),
     )
+}
+
+fn prepare_messages_for_model(messages: Vec<vv_llm::Message>, model: &str) -> Vec<vv_llm::Message> {
+    if !model.to_ascii_lowercase().starts_with("minimax") {
+        return messages;
+    }
+
+    let mut seen_system = false;
+    messages
+        .into_iter()
+        .map(|mut message| {
+            if message.role != vv_llm::MessageRole::System {
+                return message;
+            }
+            if !seen_system {
+                seen_system = true;
+                return message;
+            }
+
+            let prefix = if message.name.as_deref() == Some("memory_summary") {
+                "[memory_summary]\n"
+            } else {
+                ""
+            };
+            let content = format!("{prefix}{}", message.text_content().unwrap_or_default())
+                .trim()
+                .to_string();
+            message.role = vv_llm::MessageRole::User;
+            message.content = if content.is_empty() {
+                Vec::new()
+            } else {
+                vec![vv_llm::MessageContent::Text { text: content }]
+            };
+            message.name = None;
+            message.tool_call_id = None;
+            message.tool_calls.clear();
+            message
+        })
+        .collect()
 }
 
 fn to_vv_llm_tool(tool: Value) -> vv_llm::ChatTool {

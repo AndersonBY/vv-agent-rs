@@ -314,6 +314,196 @@ fn vv_llm_client_uses_endpoint_model_for_selected_alias_like_python() {
     assert_eq!(response.raw["used_model_id"], json!("gpt-provider-model"));
 }
 
+#[test]
+fn vv_llm_client_converts_extra_minimax_system_messages_like_python() {
+    let chat_client = RecordingMessagesChatClient::default();
+    let probe = chat_client.clone();
+    let llm = VvLlmClient::new(
+        "minimax",
+        "MiniMax-M2.5",
+        "MiniMax-M2.5",
+        Box::new(chat_client),
+        90.0,
+    );
+    let mut memory_summary = Message::system("summary");
+    memory_summary.name = Some("memory_summary".to_string());
+
+    let _ = llm
+        .complete(LlmRequest::new(
+            "MiniMax-M2.5",
+            vec![
+                Message::system("base system"),
+                memory_summary,
+                Message::assistant("next"),
+            ],
+        ))
+        .expect("minimax request");
+
+    let messages = probe.messages();
+    assert_eq!(messages[0].role, vv_llm::MessageRole::System);
+    assert_eq!(messages[0].text_content().as_deref(), Some("base system"));
+    assert_eq!(messages[1].role, vv_llm::MessageRole::User);
+    assert_eq!(
+        messages[1].text_content().as_deref(),
+        Some("[memory_summary]\nsummary")
+    );
+    assert_eq!(messages[2].role, vv_llm::MessageRole::Assistant);
+}
+
+#[test]
+fn vv_llm_client_applies_deepseek_reasoning_temperature_like_python() {
+    let chat_client = RecordingMessagesChatClient::default();
+    let probe = chat_client.clone();
+    let llm = VvLlmClient::new(
+        "deepseek",
+        "deepseek-v4-pro",
+        "deepseek-v4-pro",
+        Box::new(chat_client),
+        90.0,
+    );
+
+    let _ = llm
+        .complete(LlmRequest::new(
+            "deepseek-v4-pro",
+            vec![Message::user("use reasoning temp")],
+        ))
+        .expect("deepseek request");
+
+    let request = probe.last_request().expect("recorded request");
+    assert_eq!(request.options.temperature, Some(0.6));
+}
+
+#[test]
+fn vv_llm_client_normalizes_supported_thinking_model_options_like_python() {
+    let claude_client = RecordingMessagesChatClient::default();
+    let claude_probe = claude_client.clone();
+    let claude = VvLlmClient::new(
+        "anthropic",
+        "claude-opus-4-6-thinking",
+        "claude-opus-4-6-thinking",
+        Box::new(claude_client),
+        90.0,
+    );
+    let _ = claude
+        .complete(LlmRequest::new(
+            "claude-opus-4-6-thinking",
+            vec![Message::user("think")],
+        ))
+        .expect("claude thinking request");
+
+    let claude_request = claude_probe.last_request().expect("claude request");
+    assert_eq!(claude_request.model, "claude-opus-4-6");
+    assert_eq!(claude_request.options.temperature, Some(1.0));
+    assert_eq!(claude_request.options.max_tokens, Some(20_000));
+
+    let gemini_client = RecordingMessagesChatClient::default();
+    let gemini_probe = gemini_client.clone();
+    let gemini = VvLlmClient::new(
+        "gemini",
+        "gemini-3-pro",
+        "gemini-3-pro",
+        Box::new(gemini_client),
+        90.0,
+    );
+    let _ = gemini
+        .complete(LlmRequest::new(
+            "gemini-3-pro",
+            vec![Message::user("think")],
+        ))
+        .expect("gemini thinking request");
+
+    let gemini_request = gemini_probe.last_request().expect("gemini request");
+    assert_eq!(gemini_request.model, "gemini-3-pro-preview");
+    assert_eq!(gemini_request.options.temperature, Some(1.0));
+}
+
+#[derive(Clone, Default)]
+struct RecordingMessagesChatClient {
+    requests: Arc<Mutex<Vec<vv_llm::ChatRequest>>>,
+}
+
+impl RecordingMessagesChatClient {
+    fn messages(&self) -> Vec<vv_llm::Message> {
+        self.last_request()
+            .map(|request| request.messages)
+            .unwrap_or_default()
+    }
+
+    fn last_request(&self) -> Option<vv_llm::ChatRequest> {
+        self.requests
+            .lock()
+            .expect("recorded requests lock")
+            .last()
+            .cloned()
+    }
+}
+
+impl vv_llm::ChatClient for RecordingMessagesChatClient {
+    fn provider_name(&self) -> &'static str {
+        "recording"
+    }
+
+    fn create_completion<'life0, 'async_trait>(
+        &'life0 self,
+        request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatResponse, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        let requests = Arc::clone(&self.requests);
+        Box::pin(async move {
+            requests
+                .lock()
+                .expect("recorded requests lock")
+                .push(request.clone());
+            Ok(vv_llm::ChatResponse {
+                id: "recording-response".to_string(),
+                model: request.model,
+                content: "recorded".to_string(),
+                tool_calls: Vec::new(),
+                usage: None,
+            })
+        })
+    }
+
+    fn create_stream<'life0, 'async_trait>(
+        &'life0 self,
+        request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatStream, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        let requests = Arc::clone(&self.requests);
+        Box::pin(async move {
+            requests
+                .lock()
+                .expect("recorded requests lock")
+                .push(request);
+            let chat_stream: vv_llm::ChatStream =
+                Box::pin(stream::iter([Ok(vv_llm::ChatStreamDelta {
+                    content: "recorded".to_string(),
+                    done: true,
+                    ..vv_llm::ChatStreamDelta::default()
+                })]));
+            Ok(chat_stream)
+        })
+    }
+}
+
 #[derive(Clone, Default)]
 struct FailingChatClient;
 

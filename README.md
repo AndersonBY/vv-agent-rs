@@ -187,7 +187,10 @@ The current Rust implementation includes:
   response omits usage, preserving Python's fallback behavior for runtime
   accounting and memory-compaction heuristics. It also auto-enables vv-llm
   streaming for Python-matched reasoning/tool-call model families such as
-  DeepSeek v4, Claude, Gemini, Kimi, Qwen3, GLM, GPT-5, and MiniMax.
+  DeepSeek v4, Claude, Gemini, Kimi, Qwen3, GLM, GPT-5, and MiniMax. The same
+  client now applies vv-llm-supported Python request options for DeepSeek
+  reasoning temperature, Claude thinking model normalization and token budget,
+  Gemini 3 preview routing, and MiniMax multi-system message preparation.
 - Core runtime types expose Python-style `to_dict` / `from_dict` helpers for
   task, result, message, cycle, tool-call, and tool-result payloads, including
   legacy tool `status` plus `status_code` for worker interoperability.
