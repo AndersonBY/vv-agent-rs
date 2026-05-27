@@ -66,6 +66,7 @@ vv-agent-rs/
       processes.rs
       tools/
         base.rs
+        builtins.rs
         common.rs
         dispatcher.rs
         mod.rs
@@ -297,11 +298,12 @@ The current Rust implementation includes:
 - Split `prompt/` modules modeled after Python `vv_agent.prompt`: system prompt
   builder sections, stable prompt hashes, raw section metadata, localized tool
   templates, available skills rendering, and prompt-cache break tracking.
-- Split `tools/` modules modeled after Python `v-agent`: `base`, `registry`,
-  dispatcher, canonical `schemas/` domain modules, shared `common` helpers, and
-  focused handler modules. `ToolRegistry` supports Python-style custom tool
-  registration with default empty parameters or explicit JSON Schema
-  parameters.
+- Split `tools/` modules modeled after Python `v-agent`: `base`, `builtins`,
+  `registry`, dispatcher, canonical `schemas/` domain modules, shared `common`
+  helpers, and focused handler modules. `tools::builtins` exposes the
+  Python-matched `build_default_registry` import path, while `ToolRegistry`
+  supports Python-style custom tool registration with default empty parameters
+  or explicit JSON Schema parameters.
 - Python-style tool dispatch normalizes raw LLM tool arguments into structured
   error tool results, fills missing / pending tool call ids, maps wait-user
   directives to `WAIT_RESPONSE`, and returns `tool_not_found` without dropping

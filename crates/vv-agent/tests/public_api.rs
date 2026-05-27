@@ -99,6 +99,12 @@ fn python_style_public_aliases_are_available() {
 }
 
 #[test]
+fn tools_builtins_module_matches_python_import_path() {
+    let registry = vv_agent::tools::builtins::build_default_registry();
+    assert!(registry.has_tool(vv_agent::constants::TASK_FINISH_TOOL_NAME));
+}
+
+#[test]
 fn constants_module_exports_python_tool_names_and_workspace_tool_list() {
     use vv_agent::constants;
 

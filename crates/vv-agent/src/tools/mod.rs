@@ -1,4 +1,5 @@
 pub mod base;
+pub mod builtins;
 pub(crate) mod common;
 pub mod dispatcher;
 pub mod handlers;
