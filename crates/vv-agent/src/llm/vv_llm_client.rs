@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use futures_util::StreamExt;
 use serde_json::Value;
@@ -40,6 +41,8 @@ pub struct VvLlmClient {
     pub model_id: String,
     pub timeout_seconds: f64,
     pub debug_dump_dir: Option<PathBuf>,
+    pub max_retries_per_endpoint: usize,
+    pub backoff_seconds: f64,
     request_counter: Arc<Mutex<u64>>,
     preferred_endpoint_id: Arc<Mutex<Option<String>>>,
     endpoint_clients: Vec<EndpointChatClient>,
@@ -102,6 +105,8 @@ impl VvLlmClient {
             model_id: model_id.into(),
             timeout_seconds,
             debug_dump_dir: None,
+            max_retries_per_endpoint: 3,
+            backoff_seconds: 2.0,
             request_counter: Arc::new(Mutex::new(0)),
             preferred_endpoint_id: Arc::new(Mutex::new(None)),
             endpoint_clients: endpoint_clients
@@ -134,6 +139,16 @@ impl VvLlmClient {
         self.debug_dump_dir = Some(debug_dump_dir.as_ref().to_path_buf());
         self
     }
+
+    pub fn with_retry_policy(
+        mut self,
+        max_retries_per_endpoint: usize,
+        backoff_seconds: f64,
+    ) -> Self {
+        self.max_retries_per_endpoint = max_retries_per_endpoint.max(1);
+        self.backoff_seconds = backoff_seconds.max(0.0);
+        self
+    }
 }
 
 impl LlmClient for VvLlmClient {
@@ -154,12 +169,26 @@ impl LlmClient for VvLlmClient {
 
         let mut errors = Vec::new();
         for endpoint in self.ordered_endpoint_clients() {
-            match self.complete_with_endpoint(&endpoint, request.clone(), stream_callback.clone()) {
-                Ok(response) => {
-                    self.remember_preferred_endpoint(&endpoint.endpoint_id);
-                    return Ok(response);
+            for attempt in 1..=self.max_retries_per_endpoint.max(1) {
+                match self.complete_with_endpoint(
+                    &endpoint,
+                    request.clone(),
+                    stream_callback.clone(),
+                ) {
+                    Ok(response) => {
+                        self.remember_preferred_endpoint(&endpoint.endpoint_id);
+                        return Ok(response);
+                    }
+                    Err(error) => {
+                        errors.push(format!(
+                            "{}: {error} (attempt {attempt})",
+                            endpoint.endpoint_id
+                        ));
+                        if attempt < self.max_retries_per_endpoint {
+                            self.sleep_backoff(attempt);
+                        }
+                    }
                 }
-                Err(error) => errors.push(format!("{}: {error}", endpoint.endpoint_id)),
             }
         }
         Err(LlmError::Request(format!(
@@ -377,6 +406,8 @@ impl std::fmt::Debug for VvLlmClient {
             .field("provider_name", &self.provider_name())
             .field("timeout_seconds", &self.timeout_seconds)
             .field("debug_dump_dir", &self.debug_dump_dir)
+            .field("max_retries_per_endpoint", &self.max_retries_per_endpoint)
+            .field("backoff_seconds", &self.backoff_seconds)
             .finish()
     }
 }
@@ -406,6 +437,15 @@ impl VvLlmClient {
         if let Ok(content) = serde_json::to_string_pretty(&payload) {
             let _ = std::fs::write(dump_dir.join(filename), content);
         }
+    }
+
+    fn sleep_backoff(&self, attempt: usize) {
+        if self.backoff_seconds <= 0.0 {
+            return;
+        }
+        std::thread::sleep(Duration::from_secs_f64(
+            self.backoff_seconds * attempt as f64,
+        ));
     }
 }
 

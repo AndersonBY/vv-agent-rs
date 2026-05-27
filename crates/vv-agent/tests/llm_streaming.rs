@@ -275,7 +275,8 @@ fn vv_llm_client_fails_over_to_next_endpoint_client_like_python() {
             ),
         ],
         90.0,
-    );
+    )
+    .with_retry_policy(1, 0.0);
 
     let response = llm
         .complete(LlmRequest::new(
@@ -311,7 +312,8 @@ fn vv_llm_client_prefers_last_successful_endpoint_like_python() {
             ),
         ],
         90.0,
-    );
+    )
+    .with_retry_policy(1, 0.0);
 
     let first = llm
         .complete(LlmRequest::new("gpt-4o-mini", vec![Message::user("first")]))
@@ -326,6 +328,30 @@ fn vv_llm_client_prefers_last_successful_endpoint_like_python() {
     assert_eq!(first.raw["used_endpoint_id"], json!("backup-endpoint"));
     assert_eq!(second.raw["used_endpoint_id"], json!("backup-endpoint"));
     assert_eq!(primary_probe.calls(), 1);
+}
+
+#[test]
+fn vv_llm_client_retries_endpoint_before_failover_like_python() {
+    let flaky = FlakyChatClient::new(1);
+    let flaky_probe = flaky.clone();
+    let llm = VvLlmClient::new(
+        "openai",
+        "gpt-4o-mini",
+        "gpt-4o-mini",
+        Box::new(flaky),
+        90.0,
+    )
+    .with_retry_policy(2, 0.0);
+
+    let response = llm
+        .complete(LlmRequest::new(
+            "gpt-4o-mini",
+            vec![Message::user("retry once")],
+        ))
+        .expect("retry succeeds");
+
+    assert_eq!(response.content, "flaky success");
+    assert_eq!(flaky_probe.calls(), 2);
 }
 
 #[test]
@@ -568,6 +594,86 @@ impl vv_llm::ChatClient for CountingFailingChatClient {
         Box::pin(async move {
             *calls.lock().expect("counting calls lock") += 1;
             Err(vv_llm::VvLlmError::Provider("primary down".to_string()))
+        })
+    }
+}
+
+#[derive(Clone)]
+struct FlakyChatClient {
+    failures_remaining: Arc<Mutex<u32>>,
+    calls: Arc<Mutex<u32>>,
+}
+
+impl FlakyChatClient {
+    fn new(failures_remaining: u32) -> Self {
+        Self {
+            failures_remaining: Arc::new(Mutex::new(failures_remaining)),
+            calls: Arc::new(Mutex::new(0)),
+        }
+    }
+
+    fn calls(&self) -> u32 {
+        *self.calls.lock().expect("flaky calls lock")
+    }
+}
+
+impl vv_llm::ChatClient for FlakyChatClient {
+    fn provider_name(&self) -> &'static str {
+        "flaky"
+    }
+
+    fn create_completion<'life0, 'async_trait>(
+        &'life0 self,
+        request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatResponse, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        let failures_remaining = Arc::clone(&self.failures_remaining);
+        let calls = Arc::clone(&self.calls);
+        Box::pin(async move {
+            *calls.lock().expect("flaky calls lock") += 1;
+            let mut failures = failures_remaining.lock().expect("flaky failures lock");
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(vv_llm::VvLlmError::Provider(
+                    "transient endpoint error".to_string(),
+                ));
+            }
+            Ok(vv_llm::ChatResponse {
+                id: "flaky-response".to_string(),
+                model: request.model,
+                content: "flaky success".to_string(),
+                tool_calls: Vec::new(),
+                usage: None,
+            })
+        })
+    }
+
+    fn create_stream<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatStream, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let chat_stream: vv_llm::ChatStream = Box::pin(stream::empty());
+            Ok(chat_stream)
         })
     }
 }
