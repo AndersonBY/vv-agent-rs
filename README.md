@@ -16,6 +16,7 @@ vv-agent-rs/
       constants.rs
       integrations.rs
       llm/
+        anthropic_prompt_cache.rs
         base.rs
         mod.rs
         scripted.rs
@@ -163,6 +164,13 @@ The current Rust implementation includes:
   production client kept behind stable top-level exports. Python-style public
   aliases such as `LLMClient`, `ScriptedLLM`, and `VVLlmClient` are also
   exported for callers porting code from `v-agent`.
+- `llm::apply_claude_prompt_cache` mirrors Python's Anthropic prompt-cache
+  planning helper for Claude direct and Vertex requests, including stable
+  system sections, tool-schema breakpoints, history breakpoints, thinking-block
+  skipping, and the `anthropic_prompt_cache_enabled` opt-out metadata. Actual
+  provider request serialization remains delegated to `vv-llm`; the helper is
+  exposed for callers and future typed `vv-llm` cache-control support instead
+  of reintroducing hand-written provider HTTP conversion here.
 - LLM settings normalization keeps Python compatibility for `providers` /
   `backends`, default `VERSION`, endpoint API-key suffix extraction, and
   opt-in base64 key decoding before constructing `vv-llm` clients.
@@ -561,6 +569,7 @@ The current Rust implementation includes:
   integration, runtime tool cycles, schema parity, and workspace tools.
 
 Deeper parity work against the Python implementation is still pending for
-production distributed-worker integrations and provider-specific edge cases such
-as prompt-cache metadata. The migration target is to copy Python `v-agent`
-behavior as completely as possible, not merely provide a minimal Rust wrapper.
+production distributed-worker integrations and provider-specific request
+serialization edge cases. The migration target is to copy Python `v-agent`
+capabilities, implementation shape, and behavior as completely as possible, not
+merely provide a minimal Rust wrapper.
