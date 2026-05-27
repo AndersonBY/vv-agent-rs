@@ -1,6 +1,10 @@
 use serde_json::json;
-use vv_agent::memory::token_utils::{
-    count_tokens, estimate_tokens, resolve_model_token_limits, resolve_model_token_limits_from_file,
+use vv_agent::{
+    memory::token_utils::{
+        count_messages_tokens, count_tokens, estimate_tokens, resolve_model_token_limits,
+        resolve_model_token_limits_from_file,
+    },
+    Message,
 };
 
 #[test]
@@ -32,6 +36,19 @@ fn count_tokens_accepts_json_payload_like_python() {
     assert_eq!(
         count_tokens(&payload, "demo"),
         estimate_tokens(&expected_payload, "demo")
+    );
+}
+
+#[test]
+fn count_messages_tokens_fallback_uses_openai_message_payload_like_python() {
+    let mut message = Message::user("look");
+    message.image_url = Some("https://example.test/image.png".to_string());
+    let payload = vec![message.to_openai_message(true)];
+    let expected_payload = serde_json::to_string(&payload).expect("message payload");
+
+    assert_eq!(
+        count_messages_tokens(&[message], "unknown-provider-model"),
+        estimate_tokens(&expected_payload, "unknown-provider-model")
     );
 }
 

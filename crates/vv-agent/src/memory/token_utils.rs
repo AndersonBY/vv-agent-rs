@@ -1,4 +1,3 @@
-use serde::Serialize;
 use serde_json::Value;
 use std::path::Path;
 
@@ -57,7 +56,7 @@ pub fn count_messages_tokens(messages: &[Message], model: &str) -> u64 {
     }
     let payload = messages
         .iter()
-        .map(message_to_openai_value)
+        .map(|message| message.to_openai_message(true))
         .collect::<Vec<_>>();
     count_tokens(&serde_json::to_string(&payload).unwrap_or_default(), model)
 }
@@ -129,35 +128,4 @@ fn is_cjk(ch: char) -> bool {
         ch as u32,
         0x4E00..=0x9FFF | 0x3000..=0x303F | 0xFF00..=0xFFEF
     )
-}
-
-fn message_to_openai_value(message: &Message) -> Value {
-    #[derive(Serialize)]
-    struct OpenAiMessage<'a> {
-        role: &'static str,
-        content: &'a str,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        name: Option<&'a str>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        tool_call_id: Option<&'a str>,
-        #[serde(skip_serializing_if = "Vec::is_empty")]
-        tool_calls: &'a Vec<crate::types::ToolCall>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        image_url: Option<&'a str>,
-    }
-    let role = match message.role {
-        crate::types::MessageRole::System => "system",
-        crate::types::MessageRole::User => "user",
-        crate::types::MessageRole::Assistant => "assistant",
-        crate::types::MessageRole::Tool => "tool",
-    };
-    serde_json::to_value(OpenAiMessage {
-        role,
-        content: &message.content,
-        name: message.name.as_deref(),
-        tool_call_id: message.tool_call_id.as_deref(),
-        tool_calls: &message.tool_calls,
-        image_url: message.image_url.as_deref(),
-    })
-    .unwrap_or(Value::Null)
 }
