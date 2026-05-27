@@ -125,6 +125,15 @@ fn message_to_openai_message_matches_python_multimodal_and_tool_shapes() {
         .get("reasoning_content")
         .is_none());
 
+    assistant.tool_calls[0].extra_content = Some(json!({
+        "google": {"thought_signature": "sig_123"}
+    }));
+    let assistant_payload = assistant.to_openai_message(true);
+    assert_eq!(
+        assistant_payload["tool_calls"][0]["extra_content"]["google"]["thought_signature"],
+        json!("sig_123")
+    );
+
     let mut image = Message::user("inspect");
     image.image_url = Some("data:image/png;base64,abc".to_string());
     let image_payload = image.to_openai_message(true);

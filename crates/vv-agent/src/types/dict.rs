@@ -91,14 +91,18 @@ impl Message {
 }
 
 fn tool_call_to_openai(tool_call: &ToolCall) -> Value {
-    serde_json::json!({
+    let mut payload = serde_json::json!({
         "id": tool_call.id,
         "type": "function",
         "function": {
             "name": tool_call.name,
             "arguments": Value::Object(tool_call.arguments.clone().into_iter().collect()).to_string(),
         },
-    })
+    });
+    if let Some(extra_content) = &tool_call.extra_content {
+        payload["extra_content"] = extra_content.clone();
+    }
+    payload
 }
 
 impl ToolCall {

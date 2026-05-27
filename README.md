@@ -181,7 +181,7 @@ The current Rust implementation includes:
   legacy tool `status` plus `status_code` for worker interoperability.
   `Message::to_openai_message` also mirrors Python multimodal/tool-call payload
   shaping, including assistant tool calls with `content: null`, optional
-  reasoning content, and user image blocks.
+  reasoning content, provider `extra_content`, and user image blocks.
 - `CeleryBackend` now supports a Python-style distributed execution path through
   a pluggable `CycleTaskDispatcher` and shared `StateStore`: it writes the
   initial checkpoint, dispatches one cycle at a time, returns worker terminal
