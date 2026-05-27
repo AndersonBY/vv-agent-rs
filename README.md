@@ -332,9 +332,13 @@ The current Rust implementation includes:
   and workspace path resolution. `tools::builtins` exposes the Python-matched
   `build_default_registry` import path, while `ToolRegistry` supports
   Python-style custom tool registration with default empty parameters or
-  explicit JSON Schema parameters. `tools::handlers` now re-exports the same
-  direct handler function names as Python `vv_agent.tools.handlers.__all__`,
-  and each focused handler module exposes its Python-matched entrypoint.
+  explicit JSON Schema parameters. It also preserves the Python registration
+  order where callers can `register_schema()` before `register(ToolSpec)` and
+  keep the richer schema for later planning; default `list_openai_schemas()`
+  output follows registered handler order and does not leak schema-only entries.
+  `tools::handlers` now re-exports the same direct handler function names as Python
+  `vv_agent.tools.handlers.__all__`, and each focused handler module exposes
+  its Python-matched entrypoint.
 - Python-style tool dispatch normalizes raw LLM tool arguments into structured
   error tool results, fills missing / pending tool call ids, maps wait-user
   directives to `WAIT_RESPONSE`, and returns `tool_not_found` without dropping

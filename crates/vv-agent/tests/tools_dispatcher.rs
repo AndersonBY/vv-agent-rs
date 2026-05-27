@@ -118,6 +118,103 @@ fn register_tool_with_parameters_creates_schema_and_handler_like_python() {
 }
 
 #[test]
+fn register_preserves_explicit_schema_registered_before_handler_like_python() {
+    let mut registry = ToolRegistry::new();
+    registry.register_schema(
+        "_workflow_custom_run",
+        json!({
+            "type": "function",
+            "function": {
+                "name": "_workflow_custom_run",
+                "description": "Run workflow via custom integration layer.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"workflow": {"type": "string"}},
+                    "required": ["workflow"],
+                },
+            },
+        }),
+    );
+
+    registry
+        .register(ToolSpec::new(
+            "_workflow_custom_run",
+            "fallback description",
+            Arc::new(|_context, arguments| {
+                ToolExecutionResult::success("", json!({"received": arguments}).to_string())
+            }),
+        ))
+        .expect("register handler");
+
+    assert!(registry.has_tool("_workflow_custom_run"));
+    assert!(registry.has_schema("_workflow_custom_run"));
+    let schema = registry
+        .get_schema("_workflow_custom_run")
+        .expect("registered schema");
+    assert_eq!(
+        schema["function"]["description"],
+        "Run workflow via custom integration layer."
+    );
+    assert_eq!(
+        schema["function"]["parameters"]["required"],
+        json!(["workflow"])
+    );
+
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut context = ToolContext::new(workspace.path());
+    let result = registry
+        .execute(
+            &ToolCall::from_raw_arguments(
+                "_call",
+                "_workflow_custom_run",
+                json!({"workflow": "wf_translate"}),
+            ),
+            &mut context,
+        )
+        .expect("execute");
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert!(result.content.contains("wf_translate"));
+}
+
+#[test]
+fn list_openai_schemas_defaults_to_registered_tools_order_like_python() {
+    let mut registry = ToolRegistry::new();
+    registry.register_schema(
+        "_schema_only",
+        json!({
+            "type": "function",
+            "function": {
+                "name": "_schema_only",
+                "description": "Schema without a handler.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        }),
+    );
+    registry
+        .register_tool(
+            "_b_second",
+            "Second registered tool.",
+            Arc::new(|_context, _arguments| ToolExecutionResult::success("", "{}")),
+        )
+        .expect("register second");
+    registry
+        .register_tool(
+            "_a_first",
+            "First registered tool despite lexical order.",
+            Arc::new(|_context, _arguments| ToolExecutionResult::success("", "{}")),
+        )
+        .expect("register first");
+
+    let names = registry
+        .list_openai_schemas(None)
+        .iter()
+        .filter_map(|schema| schema["function"]["name"].as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+
+    assert_eq!(names, vec!["_b_second", "_a_first"]);
+}
+
+#[test]
 fn register_tool_keeps_python_default_empty_object_schema() {
     let mut registry = ToolRegistry::new();
     registry

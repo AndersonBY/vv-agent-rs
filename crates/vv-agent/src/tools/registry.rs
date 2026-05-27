@@ -24,6 +24,7 @@ use crate::types::{AgentTask, ToolCall, ToolExecutionResult};
 pub struct ToolRegistry {
     tools: BTreeMap<String, ToolSpec>,
     schemas: BTreeMap<String, Value>,
+    tool_order: Vec<String>,
 }
 
 impl ToolRegistry {
@@ -38,7 +39,10 @@ impl ToolRegistry {
         if let Some(schema) = super::schemas::schema_for(&spec.name) {
             spec.schema = schema;
         }
-        self.schemas.insert(spec.name.clone(), spec.schema.clone());
+        self.schemas
+            .entry(spec.name.clone())
+            .or_insert_with(|| spec.schema.clone());
+        self.tool_order.push(spec.name.clone());
         self.tools.insert(spec.name.clone(), spec);
         Ok(())
     }
@@ -84,7 +88,11 @@ impl ToolRegistry {
                 .iter()
                 .filter_map(|name| self.get_schema(name))
                 .collect(),
-            None => self.schemas.values().cloned().collect(),
+            None => self
+                .tool_order
+                .iter()
+                .filter_map(|name| self.get_schema(name))
+                .collect(),
         }
     }
 
