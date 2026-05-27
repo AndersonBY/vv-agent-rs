@@ -95,16 +95,16 @@ pub(super) fn workspace_grep_schema() -> Value {
                     "include_hidden": {"type": "boolean", "description": "Whether hidden files are included. Default false."},
                     "include_ignored": {"type": "boolean", "description": "When searching workspace root, include files under common dependency/cache directories. Default false."},
                     "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"], "description": "Search output mode. Default is 'content'."},
-                    "b": {"type": "integer", "description": "Lines before each match. Only used in content mode."},
-                    "a": {"type": "integer", "description": "Lines after each match. Only used in content mode."},
-                    "c": {"type": "integer", "description": "Context lines before and after each match. Overrides b/a."},
+                    "b": {"type": "integer", "description": "Lines before each match. Only used in content mode. numeric string values are accepted for Python compatibility."},
+                    "a": {"type": "integer", "description": "Lines after each match. Only used in content mode. numeric string values are accepted for Python compatibility."},
+                    "c": {"type": "integer", "description": "Context lines before and after each match. Overrides b/a. numeric string values are accepted for Python compatibility."},
                     "n": {"type": "boolean", "description": "Whether to include line numbers in content output. Default true."},
                     "i": {"type": "boolean", "description": "Force case-insensitive search."},
                     "type": {"type": "string", "description": "File type shortcut (e.g. py/js/ts/md/json)."},
-                    "head_limit": {"type": "integer", "minimum": 1, "description": "Limit to first N output rows/entries."},
+                    "head_limit": {"type": "integer", "minimum": 1, "description": "Limit to first N output rows/entries. numeric string values are accepted for Python compatibility."},
                     "multiline": {"type": "boolean", "description": "Enable multiline regex mode."},
                     "case_sensitive": {"type": "boolean", "description": "Explicitly override smart-case behavior and `i`."},
-                    "max_results": {"type": "integer", "minimum": 1, "description": "Compatibility alias for `head_limit`."}
+                    "max_results": {"type": "integer", "minimum": 1, "description": "Compatibility alias for `head_limit`. numeric string values are accepted for Python compatibility."}
                 },
                 "required": ["pattern"]
             }

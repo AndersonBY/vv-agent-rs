@@ -20,6 +20,9 @@ fn default_tool_schemas_include_reference_quality_descriptions() {
         property_description(&registry, "workspace_grep", "output_mode")
             .contains("Default is 'content'")
     );
+    assert!(
+        property_description(&registry, "workspace_grep", "head_limit").contains("numeric string")
+    );
     assert!(property_description(&registry, "workspace_grep", "path")
         .contains("single file path searches that file directly"));
 

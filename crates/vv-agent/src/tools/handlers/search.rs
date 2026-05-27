@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use crate::tools::base::ToolSpec;
 use crate::tools::common::{
     collect_workspace_files, grep_text, is_hidden_path, is_ignored_root, is_supported_file_type,
-    matches_file_type, path_escapes_workspace_error, tool_error,
+    matches_file_type, parse_integer_arg, path_escapes_workspace_error, tool_error,
     workspace_relative_path_or_absolute, GrepTextOptions,
 };
 use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
@@ -62,31 +62,43 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             let show_line_numbers = arguments.get("n").and_then(Value::as_bool).unwrap_or(true);
-            let context_lines = arguments
-                .get("c")
-                .and_then(Value::as_u64)
-                .map(|value| value as usize);
-            let before_context = context_lines
-                .or_else(|| {
-                    arguments
-                        .get("b")
-                        .and_then(Value::as_u64)
-                        .map(|v| v as usize)
-                })
-                .unwrap_or(0);
-            let after_context = context_lines
-                .or_else(|| {
-                    arguments
-                        .get("a")
-                        .and_then(Value::as_u64)
-                        .map(|v| v as usize)
-                })
-                .unwrap_or(0);
-            let head_limit = arguments
+            let parse_optional_usize =
+                |name: &str, min_value: i64| -> Result<Option<usize>, String> {
+                    match arguments.get(name) {
+                        Some(value) => parse_integer_arg(value)
+                            .map(|parsed| Some(parsed.max(min_value) as usize))
+                            .map_err(|_| format!("`{name}` must be an integer")),
+                        None => Ok(None),
+                    }
+                };
+            let context_lines = match parse_optional_usize("c", 0) {
+                Ok(value) => value,
+                Err(error) => return tool_error(error),
+            };
+            let before_context = match context_lines {
+                Some(value) => value,
+                None => match parse_optional_usize("b", 0) {
+                    Ok(value) => value.unwrap_or(0),
+                    Err(error) => return tool_error(error),
+                },
+            };
+            let after_context = match context_lines {
+                Some(value) => value,
+                None => match parse_optional_usize("a", 0) {
+                    Ok(value) => value.unwrap_or(0),
+                    Err(error) => return tool_error(error),
+                },
+            };
+            let head_limit_raw = arguments
                 .get("head_limit")
-                .or_else(|| arguments.get("max_results"))
-                .and_then(Value::as_u64)
-                .map(|value| value.max(1) as usize);
+                .or_else(|| arguments.get("max_results"));
+            let head_limit = match head_limit_raw {
+                Some(value) => match parse_integer_arg(value) {
+                    Ok(parsed) => Some(parsed.max(1) as usize),
+                    Err(_) => return tool_error("`head_limit` must be an integer"),
+                },
+                None => None,
+            };
             let case_insensitive = if let Some(case_sensitive) =
                 arguments.get("case_sensitive").and_then(Value::as_bool)
             {

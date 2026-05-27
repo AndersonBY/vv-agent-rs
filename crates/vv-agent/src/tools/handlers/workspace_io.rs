@@ -5,7 +5,8 @@ use serde_json::{json, Value};
 use crate::tools::base::ToolSpec;
 use crate::tools::common::path_escapes_workspace_error;
 use crate::tools::common::{
-    collect_ignored_roots, is_hidden_path, is_ignored_root, replace_n, tool_error,
+    collect_ignored_roots, is_hidden_path, is_ignored_root, parse_integer_arg, replace_n,
+    tool_error,
 };
 
 const READ_FILE_MAX_LINES: usize = 2_000;
@@ -267,14 +268,6 @@ pub(crate) fn read_file_tool() -> ToolSpec {
         spec.schema = schema;
     }
     spec
-}
-
-fn parse_integer_arg(value: &Value) -> Result<i64, ()> {
-    match value {
-        Value::Number(number) => number.as_i64().ok_or(()),
-        Value::String(text) => text.trim().parse::<i64>().map_err(|_| ()),
-        _ => Err(()),
-    }
 }
 
 pub(crate) fn write_file_tool() -> ToolSpec {

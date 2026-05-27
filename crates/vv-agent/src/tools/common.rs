@@ -80,6 +80,14 @@ pub(crate) fn coerce_bool(value: Option<&Value>, default: bool) -> bool {
     }
 }
 
+pub(crate) fn parse_integer_arg(value: &Value) -> Result<i64, ()> {
+    match value {
+        Value::Number(number) => number.as_i64().ok_or(()),
+        Value::String(text) => text.trim().parse::<i64>().map_err(|_| ()),
+        _ => Err(()),
+    }
+}
+
 pub(crate) fn collect_workspace_files(root: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut stack = vec![root.to_path_buf()];
     let mut files = Vec::new();

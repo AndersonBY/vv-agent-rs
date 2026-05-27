@@ -272,6 +272,40 @@ fn workspace_grep_supports_context_lines_and_file_targets() {
 }
 
 #[test]
+fn workspace_grep_accepts_string_limits_and_context_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(
+        workspace.path().join("ctx.txt"),
+        "before\nhit\nhit again\nafter",
+    )
+    .expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "grep_string_limits",
+                "workspace_grep",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("hit")),
+                    ("c".to_string(), json!("1")),
+                    ("head_limit".to_string(), json!("2")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep string limits");
+
+    assert_eq!(result.metadata["head_limit"], 2);
+    assert_eq!(result.metadata["head_limited"], true);
+    let rows = result.metadata["matches"].as_array().expect("matches");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["line"], 1);
+    assert_eq!(rows[1]["line"], 2);
+}
+
+#[test]
 fn workspace_grep_rejects_paths_outside_workspace_by_default() {
     let workspace = tempfile::tempdir().expect("workspace");
     let outside = tempfile::tempdir().expect("outside");
