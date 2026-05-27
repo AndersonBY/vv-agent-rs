@@ -295,7 +295,8 @@ The current Rust implementation includes:
   `workspace_grep` regex search, numeric-string limits/context parsing, text
   content with structured matches kept in metadata, Python-style glob filtering,
   Python-style scalar text coercion, configured workspace backend support,
-  Python-style text truncation, and Python-style structured payload limits, plus
+  local ripgrep JSON fast path with fallback, Python-style text truncation, and
+  Python-style structured payload limits, plus
   single-file grep targets that bypass hidden/ignored directory filtering like
   Python);
   memory notes through `compress_memory`; and `bash` /
