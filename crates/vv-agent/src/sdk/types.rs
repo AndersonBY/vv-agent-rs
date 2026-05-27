@@ -20,6 +20,8 @@ pub type LlmBuilder = Arc<
         + Sync
         + 'static,
 >;
+pub use crate::runtime::RuntimeEventHandler as RuntimeLogHandler;
+pub use LlmBuilder as LLMBuilder;
 pub type ToolRegistryFactory = Arc<dyn Fn() -> ToolRegistry + Send + Sync + 'static>;
 
 #[derive(Debug, Clone, PartialEq)]

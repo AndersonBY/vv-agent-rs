@@ -17,5 +17,6 @@ pub use session::{
     SessionEventHandler, SessionListenerId, SessionSteeringHandle,
 };
 pub use types::{
-    AgentDefinition, AgentRun, AgentSDKOptions, LlmBuilder, SdkLlmClient, ToolRegistryFactory,
+    AgentDefinition, AgentRun, AgentSDKOptions, LLMBuilder, LlmBuilder, RuntimeLogHandler,
+    SdkLlmClient, ToolRegistryFactory,
 };

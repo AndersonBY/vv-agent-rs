@@ -96,6 +96,8 @@ fn python_style_public_aliases_are_available() {
     let _before_event: Option<BeforeLLMEvent<'_>> = None;
     let _after_event: Option<AfterLLMEvent<'_>> = None;
     let _hook: Option<&dyn BaseRuntimeHook> = None;
+    let _sdk_llm_builder: Option<vv_agent::sdk::LLMBuilder> = None;
+    let _sdk_runtime_log_handler: Option<vv_agent::sdk::RuntimeLogHandler> = None;
 }
 
 #[test]

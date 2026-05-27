@@ -327,6 +327,8 @@ The current Rust implementation includes:
   progressive budget degradation used by `v-agent`.
 - Split `sdk/` modules matching Python's `types`, `resources`, `session`, and
   `client` layers while keeping the crate-level SDK exports stable.
+  `sdk::LLMBuilder` and `sdk::RuntimeLogHandler` are exposed as
+  Python-matched aliases for ported callers.
 - `activate_skill` now reuses the public skill parser / normalization layer and
   keeps handler-local state helpers for activation tracking.
 - Default tool schemas now use reference-quality descriptions derived from
