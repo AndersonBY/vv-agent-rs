@@ -157,6 +157,16 @@ impl MemoryManager {
                 session_memory.extract(&sanitized, 0, message_length);
             }
         }
+        if !force {
+            let (artifact_compacted, artifact_changed) =
+                self.compact_large_tool_results(&sanitized);
+            if artifact_changed
+                && count_messages_tokens(&artifact_compacted, &self.config.model)
+                    <= self.autocompact_threshold()
+            {
+                return (artifact_compacted, true);
+            }
+        }
         let (compacted, changed) = self.compress_memory(&sanitized);
         if changed {
             if let Some(session_memory) = self.session_memory.as_mut() {
@@ -284,6 +294,21 @@ impl MemoryManager {
             "{memory_threshold_percentage}",
             &self.config.warning_threshold_percentage.to_string(),
         )
+    }
+
+    fn compact_large_tool_results(&self, messages: &[Message]) -> (Vec<Message>, bool) {
+        let (compacted, _artifacts, changed) = compact_tool_results(
+            messages,
+            &ToolResultArtifactConfig {
+                workspace: self.config.workspace.clone(),
+                artifact_dir: self.config.tool_result_artifact_dir.clone(),
+                compact_threshold: self.config.tool_result_compact_threshold,
+                keep_last: self.config.tool_result_keep_last,
+                excerpt_head: self.config.tool_result_excerpt_head,
+                excerpt_tail: self.config.tool_result_excerpt_tail,
+            },
+        );
+        (compacted, changed)
     }
 
     pub fn emergency_compact(&self, messages: &[Message], drop_ratio: f64) -> Vec<Message> {

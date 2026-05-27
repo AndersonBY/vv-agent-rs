@@ -209,7 +209,9 @@ The current Rust implementation includes:
   compaction when usage crosses `memory_threshold_percentage`.
 - Large historical tool results can be persisted under `.memory/tool_results`
   and replaced with compact retrieval hints, matching Python `v-agent` artifact
-  compaction behavior.
+  compaction behavior. Memory compaction now tries this artifact-only reduction
+  before full summary and recomputes the prompt length without stale provider
+  totals.
 - Persistent session memory modeled after Python `SessionMemory`: durable
   entries are normalized, deduplicated, budget-pruned, optionally persisted
   under `.memory/session`, and injected back into runtime LLM requests as a

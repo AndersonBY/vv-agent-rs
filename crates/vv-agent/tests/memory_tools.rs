@@ -167,6 +167,49 @@ fn memory_manager_appends_python_style_warning_before_compaction() {
 }
 
 #[test]
+fn memory_manager_recomputes_length_after_tool_artifact_compaction_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut manager = MemoryManager::new(MemoryManagerConfig {
+        model_context_window: 160,
+        reserved_output_tokens: 10,
+        autocompact_buffer_tokens: 10,
+        tool_result_compact_threshold: 20,
+        tool_result_keep_last: 0,
+        tool_result_excerpt_head: 1,
+        tool_result_excerpt_tail: 1,
+        workspace: Some(workspace.path().to_path_buf()),
+        ..MemoryManagerConfig::default()
+    });
+    let mut assistant_call = Message::assistant("");
+    assistant_call
+        .tool_calls
+        .push(ToolCall::new("call_1", "read_file", BTreeMap::new()));
+    let messages = vec![
+        Message::system("sys"),
+        Message::user("read file"),
+        assistant_call,
+        Message::tool("x".repeat(400), "call_1"),
+        Message::assistant("continue"),
+    ];
+
+    let (compacted, changed) =
+        manager.compact_for_cycle_with_usage(&messages, 2, false, Some(500), None);
+
+    assert!(changed);
+    assert!(compacted.len() > 2);
+    assert!(compacted
+        .iter()
+        .all(|message| !message.content.contains("<Compressed Agent Memory>")));
+    assert!(compacted
+        .iter()
+        .any(|message| message.content.contains("<Tool Result Compact>")));
+    assert!(workspace
+        .path()
+        .join(".memory/tool_results/call_1.txt")
+        .exists());
+}
+
+#[test]
 fn memory_threshold_uses_configured_and_model_derived_ceiling() {
     assert_eq!(
         compute_compaction_threshold(128_000, 200_000, 16_000, 13_000),
