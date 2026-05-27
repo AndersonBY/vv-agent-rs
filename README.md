@@ -253,9 +253,12 @@ The current Rust implementation includes:
   task, result, message, cycle, tool-call, and tool-result payloads, including
   legacy tool `status` plus `status_code` for worker interoperability. Agent
   result payloads round-trip aggregate and per-cycle token usage as structured
-  data. `Message::to_openai_message` also mirrors Python multimodal/tool-call payload
-  shaping, including assistant tool calls with `content: null`, optional
-  reasoning content, provider `extra_content`, and user image blocks.
+  data. Message dict payloads now use Python/OpenAI-style assistant tool-call
+  shapes and can restore those payloads from Python checkpoints while
+  preserving provider `extra_content`. `Message::to_openai_message` also
+  mirrors Python multimodal/tool-call payload shaping, including assistant tool
+  calls with `content: null`, optional reasoning content, provider
+  `extra_content`, and user image blocks.
 - `CeleryBackend` now supports a Python-style distributed execution path through
   a pluggable `CycleTaskDispatcher` and shared `StateStore`: it writes the
   initial checkpoint, dispatches one cycle at a time, returns worker terminal

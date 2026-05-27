@@ -58,7 +58,7 @@ impl Message {
         if !self.tool_calls.is_empty() {
             payload.insert(
                 "tool_calls".to_string(),
-                Value::Array(self.tool_calls.iter().map(ToolCall::to_dict).collect()),
+                Value::Array(self.tool_calls.iter().map(tool_call_to_openai).collect()),
             );
         }
         insert_optional_string(&mut payload, "reasoning_content", &self.reasoning_content);
@@ -123,6 +123,20 @@ impl ToolCall {
 
     pub fn from_dict(data: &Value) -> Result<Self, String> {
         let object = expect_object(data, "ToolCall")?;
+        if let Some(function) = object.get("function").and_then(Value::as_object) {
+            let id = read_required_string(object, "id")?.to_string();
+            let name = read_required_string(function, "name")?.to_string();
+            let raw_arguments = function
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| Value::String("{}".to_string()));
+            let mut tool_call = ToolCall::from_raw_arguments(id, name, raw_arguments);
+            tool_call.extra_content = object
+                .get("extra_content")
+                .filter(|value| value.is_object())
+                .cloned();
+            return Ok(tool_call);
+        }
         Ok(Self {
             id: read_required_string(object, "id")?.to_string(),
             name: read_required_string(object, "name")?.to_string(),

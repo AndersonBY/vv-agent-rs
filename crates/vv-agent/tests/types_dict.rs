@@ -182,6 +182,54 @@ fn message_to_openai_message_matches_python_multimodal_and_tool_shapes() {
 }
 
 #[test]
+fn message_dict_round_trips_python_openai_style_tool_calls() {
+    let payload = json!({
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "default_api:list_files",
+                    "arguments": "{\"path\":\".\"}"
+                },
+                "extra_content": {
+                    "google": {"thought_signature": "sig_123"}
+                }
+            }
+        ],
+    });
+
+    let message = Message::from_dict(&payload).expect("message from python dict");
+
+    assert_eq!(message.tool_calls[0].id, "call_1");
+    assert_eq!(message.tool_calls[0].name, "default_api:list_files");
+    assert_eq!(message.tool_calls[0].arguments["path"], json!("."));
+    assert_eq!(
+        message.tool_calls[0]
+            .extra_content
+            .as_ref()
+            .expect("extra content")["google"]["thought_signature"],
+        json!("sig_123")
+    );
+
+    let serialized = message.to_dict();
+    assert_eq!(
+        serialized["tool_calls"][0]["function"]["name"],
+        json!("default_api:list_files")
+    );
+    assert_eq!(
+        serialized["tool_calls"][0]["function"]["arguments"],
+        json!("{\"path\":\".\"}")
+    );
+    assert_eq!(
+        serialized["tool_calls"][0]["extra_content"]["google"]["thought_signature"],
+        json!("sig_123")
+    );
+}
+
+#[test]
 fn tool_execution_result_to_tool_message_alias_matches_python() {
     let result = ToolExecutionResult::success("call_1", "ok");
 
