@@ -225,6 +225,24 @@ fn constants_module_exports_python_tool_names_and_workspace_tool_list() {
         constants::workspace::task_finish_tool_schema()["function"]["name"],
         constants::TASK_FINISH_TOOL_NAME
     );
+    assert_eq!(
+        constants::workspace::TASK_FINISH_TOOL_SCHEMA()["function"]["name"],
+        constants::TASK_FINISH_TOOL_NAME
+    );
+    assert_eq!(
+        constants::workspace::ASK_USER_TOOL_SCHEMA()["function"]["name"],
+        constants::ASK_USER_TOOL_NAME
+    );
+    assert_eq!(
+        constants::workspace::ACTIVATE_SKILL_TOOL_SCHEMA()["function"]["name"],
+        constants::ACTIVATE_SKILL_TOOL_NAME
+    );
+    assert!(constants::workspace::WORKSPACE_TOOLS_SCHEMAS()
+        .contains_key(constants::READ_FILE_TOOL_NAME));
+    assert!(
+        constants::TASK_FINISH_TOOL_SCHEMA()["function"]["name"]
+            == constants::TASK_FINISH_TOOL_NAME
+    );
 }
 
 #[test]

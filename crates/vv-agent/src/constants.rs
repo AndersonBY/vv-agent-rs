@@ -44,16 +44,36 @@ pub fn workspace_tools_schemas() -> BTreeMap<String, Value> {
     schemas
 }
 
+#[allow(non_snake_case)]
+pub fn WORKSPACE_TOOLS_SCHEMAS() -> BTreeMap<String, Value> {
+    workspace_tools_schemas()
+}
+
 pub fn task_finish_tool_schema() -> Value {
     schema_or_null(TASK_FINISH_TOOL_NAME)
+}
+
+#[allow(non_snake_case)]
+pub fn TASK_FINISH_TOOL_SCHEMA() -> Value {
+    task_finish_tool_schema()
 }
 
 pub fn ask_user_tool_schema() -> Value {
     schema_or_null(ASK_USER_TOOL_NAME)
 }
 
+#[allow(non_snake_case)]
+pub fn ASK_USER_TOOL_SCHEMA() -> Value {
+    ask_user_tool_schema()
+}
+
 pub fn activate_skill_tool_schema() -> Value {
     schema_or_null(ACTIVATE_SKILL_TOOL_NAME)
+}
+
+#[allow(non_snake_case)]
+pub fn ACTIVATE_SKILL_TOOL_SCHEMA() -> Value {
+    activate_skill_tool_schema()
 }
 
 fn schema_or_null(name: &str) -> Value {
@@ -72,7 +92,10 @@ pub mod tool_names {
 }
 
 pub mod workspace {
-    pub use super::{get_default_tool_schemas, workspace_tools_schemas, WORKSPACE_TOOLS};
+    pub use super::{
+        get_default_tool_schemas, workspace_tools_schemas, ACTIVATE_SKILL_TOOL_SCHEMA,
+        ASK_USER_TOOL_SCHEMA, TASK_FINISH_TOOL_SCHEMA, WORKSPACE_TOOLS, WORKSPACE_TOOLS_SCHEMAS,
+    };
 
     pub fn task_finish_tool_schema() -> serde_json::Value {
         super::task_finish_tool_schema()
