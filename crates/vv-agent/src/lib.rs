@@ -47,7 +47,8 @@ pub use runtime::backends::{
     InlineBackend, RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
 };
 pub use runtime::shell::{
-    prepare_shell_execution, resolve_shell_invocation, PreparedShellCommand, ShellInvocation,
+    build_shell_invocation, prepare_shell_execution, resolve_shell_invocation,
+    PreparedShellCommand, ShellInvocation,
 };
 pub use runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 pub use runtime::stores::redis::RedisStateStore;

@@ -1,4 +1,6 @@
-use vv_agent::runtime::shell::{prepare_shell_execution, resolve_shell_invocation};
+use vv_agent::runtime::shell::{
+    build_shell_invocation, prepare_shell_execution, resolve_shell_invocation,
+};
 
 #[test]
 fn runtime_shell_resolution_matches_python_posix_defaults() {
@@ -38,4 +40,12 @@ fn runtime_shell_prepares_auto_confirm_like_python() {
         .as_deref()
         .expect("auto confirm stdin")
         .ends_with("after"));
+}
+
+#[test]
+fn runtime_shell_builds_invocation_helper_like_python() {
+    let invocation =
+        build_shell_invocation("echo hello", Some("bash"), None).expect("shell invocation");
+
+    assert_eq!(invocation, vec!["bash", "-lc", "echo hello"]);
 }

@@ -363,9 +363,12 @@ The current Rust implementation includes:
   `extra_tool_names` in the planned name list and includes `todo_write` in the
   default workspace tool set before schema filtering.
 - Shell resolution now lives in `runtime::shell`, matching Python's
-  `runtime/shell.py` split. Bash execution and tool-planner runtime hints share
-  the same resolver, so configured shells, `bash_env` environment overrides,
-  and auto-confirm behavior do not diverge.
+  `runtime/shell.py` split, including the public `build_shell_invocation`
+  helper. Bash execution and tool-planner runtime hints share the same
+  resolver, so configured shells, `bash_env` environment overrides, and
+  auto-confirm behavior do not diverge. Bash process environment construction
+  also mirrors Python's Windows defaults for `PYTHONUTF8` and
+  `PYTHONIOENCODING` while preserving explicit overrides.
 - Built-in control tools (`task_finish`, `ask_user`, `todo_write`), with
   Python-style TODO validation, generated ids, status/priority defaults, and
   timestamp preservation; core workspace tools (`list_files`, `file_info`,

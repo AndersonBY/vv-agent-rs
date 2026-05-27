@@ -25,6 +25,17 @@ pub fn resolve_shell_invocation(
     Ok(resolve_posix_shell(shell))
 }
 
+pub fn build_shell_invocation(
+    command: &str,
+    shell: Option<&str>,
+    windows_shell_priority: Option<&[String]>,
+) -> Result<Vec<String>, String> {
+    let resolved = resolve_shell_invocation(shell, windows_shell_priority)?;
+    let mut invocation = resolved.prefix;
+    invocation.push(command.to_string());
+    Ok(invocation)
+}
+
 pub fn prepare_shell_execution(
     command: &str,
     auto_confirm: bool,
