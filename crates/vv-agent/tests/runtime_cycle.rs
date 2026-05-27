@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use vv_agent::{
     memory::CLEARED_MARKER, AgentRuntime, AgentStatus, AgentTask, BeforeLlmPatch,
-    BeforeToolCallPatch, CancellationToken, LLMResponse, LlmClient, LlmError, LlmRequest, Message,
-    RuntimeHook, RuntimeRunControls, ScriptedLlmClient, SubAgentConfig, ToolCall, ToolDirective,
-    ToolExecutionResult,
+    BeforeToolCallPatch, CancellationToken, ExecutionContext, LLMResponse, LlmClient, LlmError,
+    LlmRequest, Message, RuntimeHook, RuntimeRunControls, ScriptedLlmClient, SubAgentConfig,
+    ToolCall, ToolDirective, ToolExecutionResult,
 };
 
 const PNG_1X1: &[u8] = &[
@@ -208,6 +208,55 @@ fn runtime_does_not_inject_image_message_for_text_only_task() {
 
     assert_eq!(result.status, AgentStatus::Completed);
     assert!(!inspector.saw_image_message());
+}
+
+#[test]
+fn runtime_tool_context_uses_execution_context_metadata_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let outside = tempfile::tempdir().expect("outside");
+    let outside_file = outside.path().join("outside.txt");
+    std::fs::write(&outside_file, "outside context metadata").expect("outside file");
+
+    let read_args = BTreeMap::from([("path".to_string(), json!(outside_file))]);
+    let finish_args = BTreeMap::from([("message".to_string(), json!("done"))]);
+    let llm = ScriptedLlmClient::new(vec![
+        LLMResponse::with_tool_calls(
+            "read outside file",
+            vec![ToolCall::new("read_outside", "read_file", read_args)],
+        ),
+        LLMResponse::with_tool_calls(
+            "finish",
+            vec![ToolCall::new("finish", "task_finish", finish_args)],
+        ),
+    ]);
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.default_workspace = Some(workspace.path().to_path_buf());
+    runtime.workspace_backend = std::sync::Arc::new(
+        vv_agent::workspace::LocalWorkspaceBackend::new(workspace.path()),
+    );
+    let controls = RuntimeRunControls {
+        execution_context: Some(ExecutionContext::default().with_metadata(BTreeMap::from([(
+            "allow_outside_workspace_paths".to_string(),
+            json!(true),
+        )]))),
+        ..RuntimeRunControls::default()
+    };
+
+    let result = runtime
+        .run_with_controls(
+            AgentTask::new("task_ctx_metadata", "demo", "system", "read"),
+            controls,
+        )
+        .expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(
+        result.cycles[0].tool_results[0].status,
+        vv_agent::ToolResultStatus::Success
+    );
+    assert!(result.cycles[0].tool_results[0]
+        .content
+        .contains("outside context metadata"));
 }
 
 #[test]

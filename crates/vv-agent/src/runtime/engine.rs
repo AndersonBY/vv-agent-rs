@@ -438,12 +438,18 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     shared_state.clone(),
                     sub_task_manager.clone(),
                 );
+                let mut tool_metadata = controls
+                    .execution_context
+                    .as_ref()
+                    .map(|context| context.metadata.clone())
+                    .unwrap_or_default();
+                tool_metadata.extend(task.metadata.clone());
                 let mut context = ToolContext {
                     workspace: workspace_path.clone(),
                     shared_state: shared_state.clone(),
                     cycle_index,
                     task_id: task.task_id.clone(),
-                    metadata: task.metadata.clone(),
+                    metadata: tool_metadata,
                     workspace_backend: self.workspace_backend.clone(),
                     sub_task_runner,
                     sub_task_manager: Some(sub_task_manager.clone()),

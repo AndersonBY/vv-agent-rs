@@ -271,7 +271,9 @@ The current Rust implementation includes:
   listener notifications.
 - Python-compatible workspace path safety: `LocalWorkspaceBackend` rejects
   paths outside the workspace by default, and file/image/grep/bash tools keep
-  metadata-controlled outside-path access for trusted tasks.
+  metadata-controlled outside-path access for trusted tasks. Tool contexts
+  merge `ExecutionContext.metadata` with task metadata, with task metadata
+  taking precedence, matching Python runtime integration behavior.
 - Split `workspace/` modules matching Python's base/local/memory/s3 layers while
   keeping `FileInfo`, `WorkspaceBackend`, and concrete backends exported from
   the crate root.
@@ -300,8 +302,9 @@ The current Rust implementation includes:
 - Python-style `ExecutionContext` is available for runtime integrations, with
   cancellation token, stream callback, state store, and metadata fields. Runtime
   cancellation checks now honor tokens supplied through the context as well as
-  direct `RuntimeRunControls`; stream callbacks are forwarded into `vv-llm`
-  streaming completions and can also be configured through `AgentSDKOptions`.
+  direct `RuntimeRunControls`; context metadata is passed into tool execution;
+  stream callbacks are forwarded into `vv-llm` streaming completions and can
+  also be configured through `AgentSDKOptions`.
 - Python-inspired runtime backend helpers: `InlineBackend`, `ThreadBackend`,
   `CeleryBackend`, and serializable `RuntimeRecipe` mirror the Python backend
   API surface for ordered `parallel_map`, thread `submit`, inline Celery
