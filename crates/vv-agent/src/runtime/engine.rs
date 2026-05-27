@@ -31,11 +31,13 @@ pub type RuntimeLogHandler = Arc<Mutex<Box<RuntimeLogCallback>>>;
 pub type RuntimeEventHandler = Arc<dyn Fn(&str, &BTreeMap<String, Value>) + Send + Sync + 'static>;
 pub type BeforeCycleMessageProvider =
     Arc<dyn Fn(u32, &[Message], &BTreeMap<String, Value>) -> Vec<Message> + Send + Sync + 'static>;
+pub type InterruptionMessageProvider = Arc<dyn Fn() -> Vec<Message> + Send + Sync + 'static>;
 
 #[derive(Clone, Default)]
 pub struct RuntimeRunControls {
     pub log_handler: Option<RuntimeEventHandler>,
     pub before_cycle_messages: Option<BeforeCycleMessageProvider>,
+    pub interruption_messages: Option<InterruptionMessageProvider>,
     pub steering_queue: Option<Arc<Mutex<VecDeque<String>>>>,
     pub cancellation_token: Option<CancellationToken>,
     pub execution_context: Option<ExecutionContext>,
@@ -301,12 +303,11 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         Err(error) if is_prompt_too_long_error(&error) => {
                             prompt_too_long_retries += 1;
                             if prompt_too_long_retries > MAX_PROMPT_TOO_LONG_RETRIES {
-                                let error = LlmError::CompactionExhausted(
-                                    CompactionExhaustedError::new(
+                                let error =
+                                    LlmError::CompactionExhausted(CompactionExhaustedError::new(
                                         prompt_too_long_retries,
                                         Some(error.to_string()),
-                                    ),
-                                );
+                                    ));
                                 let message = error.to_string();
                                 pending_error = Some(error);
                                 return Some(failed_agent_result(
@@ -333,8 +334,8 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             let retry_tool_schemas = self.planned_tool_schemas(&task);
                             let llm_messages =
                                 memory_manager.apply_session_memory_context(&retry_messages);
-                            (request_messages, request_tool_schemas) =
-                                hook_manager.apply_before_llm(
+                            (request_messages, request_tool_schemas) = hook_manager
+                                .apply_before_llm(
                                     &task,
                                     cycle_index,
                                     llm_messages,
@@ -489,7 +490,9 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     );
                     let mut result = match short_circuit_result {
                         Some(result) => result,
-                        None => execute_tool_result(&self.tool_registry, &patched_call, &mut context),
+                        None => {
+                            execute_tool_result(&self.tool_registry, &patched_call, &mut context)
+                        }
                     };
                     if needs_tool_call_id(&result.tool_call_id) {
                         result.tool_call_id = patched_call.id.clone();
@@ -506,8 +509,10 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     }
                     self.emit_tool_result(&controls, cycle_index, &patched_call, &result);
 
+                    let interruption_messages = collect_interruption_messages(&controls);
                     let steering_prompts = drain_steering_queue(&controls);
-                    if steering_prompts.is_empty() && result.directive != ToolDirective::Continue {
+                    let steering_count = interruption_messages.len() + steering_prompts.len();
+                    if steering_count == 0 && result.directive != ToolDirective::Continue {
                         directive_result = Some(result.clone());
                     }
                     messages.push(result.to_message());
@@ -527,7 +532,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         }
                     }
                     cycle.tool_results.push(result);
-                    if !steering_prompts.is_empty() {
+                    if steering_count > 0 {
                         for prompt in &steering_prompts {
                             self.emit_log(
                                 &controls,
@@ -550,7 +555,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             let skipped = skipped_tool_result(
                                 skipped_call,
                                 "skipped_due_to_steering",
-                                "Tool skipped because session steering was queued after a previous tool call.",
+                                "Tool skipped due to queued steering message.",
                             );
                             self.emit_tool_result(&controls, cycle_index, skipped_call, &skipped);
                             messages.push(skipped.to_message());
@@ -559,6 +564,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         for prompt in &steering_prompts {
                             messages.push(crate::types::Message::user(prompt.clone()));
                         }
+                        messages.extend(interruption_messages);
                         self.emit_log(
                             &controls,
                             "run_steered",
@@ -574,7 +580,11 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 ),
                                 (
                                     "prompt_count".to_string(),
-                                    Value::from(steering_prompts.len() as u64),
+                                    Value::from(steering_count as u64),
+                                ),
+                                (
+                                    "steering_count".to_string(),
+                                    Value::from(steering_count as u64),
                                 ),
                             ]),
                         );
@@ -594,7 +604,9 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 "skipped_due_to_finish",
                                 "Tool skipped because a previous tool finished the task.",
                             ),
-                            ToolDirective::Continue => ("skipped_due_to_directive", "Tool skipped."),
+                            ToolDirective::Continue => {
+                                ("skipped_due_to_directive", "Tool skipped.")
+                            }
                         };
                         for skipped_call in response.tool_calls.iter().skip(call_index + 1) {
                             let skipped = skipped_tool_result(skipped_call, error_code, message);
@@ -833,6 +845,14 @@ fn drain_steering_queue(controls: &RuntimeRunControls) -> Vec<String> {
         return Vec::new();
     };
     queue.drain(..).collect()
+}
+
+fn collect_interruption_messages(controls: &RuntimeRunControls) -> Vec<Message> {
+    controls
+        .interruption_messages
+        .as_ref()
+        .map(|provider| provider())
+        .unwrap_or_default()
 }
 
 fn controls_cancelled(controls: &RuntimeRunControls) -> bool {

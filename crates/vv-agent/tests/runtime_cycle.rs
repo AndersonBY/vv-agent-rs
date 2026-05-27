@@ -791,6 +791,85 @@ fn runtime_controls_can_inject_messages_before_each_cycle() {
 }
 
 #[test]
+fn runtime_interruption_provider_skips_remaining_tools_like_python() {
+    let mut registry = vv_agent::tools::build_default_registry();
+    registry
+        .register_tool(
+            "_demo_noop",
+            "noop",
+            Arc::new(|_context, _arguments| ToolExecutionResult::success("", "{}")),
+        )
+        .expect("register noop");
+
+    let mut finish_args = BTreeMap::new();
+    finish_args.insert("message".to_string(), json!("done"));
+    let llm = ScriptedLlmClient::new(vec![
+        LLMResponse::with_tool_calls(
+            "two tools",
+            vec![
+                ToolCall::new("t1", "_demo_noop", BTreeMap::new()),
+                ToolCall::new("t2", "_demo_noop", BTreeMap::new()),
+            ],
+        ),
+        LLMResponse::with_tool_calls(
+            "finish",
+            vec![ToolCall::new(
+                "finish_after_steer",
+                "task_finish",
+                finish_args,
+            )],
+        ),
+    ]);
+    let runtime = AgentRuntime::new(llm).with_tool_registry(registry);
+    let used = Arc::new(Mutex::new(false));
+    let provider_used = used.clone();
+    let events = Arc::new(Mutex::new(Vec::<(
+        String,
+        BTreeMap<String, serde_json::Value>,
+    )>::new()));
+    let sink = events.clone();
+
+    let mut task = AgentTask::new("steer_skip", "demo", "system", "go");
+    task.max_cycles = 4;
+    task.extra_tool_names = vec!["_demo_noop".to_string()];
+
+    let result = runtime
+        .run_with_controls(
+            task,
+            RuntimeRunControls {
+                interruption_messages: Some(Arc::new(move || {
+                    let mut used = provider_used.lock().expect("provider flag");
+                    if *used {
+                        Vec::new()
+                    } else {
+                        *used = true;
+                        vec![Message::user("STEER_NOW")]
+                    }
+                })),
+                log_handler: Some(Arc::new(move |event, payload| {
+                    sink.lock()
+                        .expect("events")
+                        .push((event.to_string(), payload.clone()));
+                })),
+                ..RuntimeRunControls::default()
+            },
+        )
+        .expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(
+        result.cycles[0].tool_results[1].error_code.as_deref(),
+        Some("skipped_due_to_steering")
+    );
+    assert!(result
+        .messages
+        .iter()
+        .any(|message| message.content == "STEER_NOW"));
+    let events = events.lock().expect("events").clone();
+    assert!(events.iter().any(|(event, _)| event == "run_steered"));
+}
+
+#[test]
 fn cancellation_token_propagates_to_children_and_runtime() {
     let parent = CancellationToken::default();
     let child = parent.child();

@@ -56,6 +56,7 @@ impl<C: LlmClient + Clone + 'static> RunAgent for AgentRuntime<C> {
                 RuntimeRunControls {
                     log_handler: request.runtime_event_handler,
                     before_cycle_messages: None,
+                    interruption_messages: None,
                     steering_queue: request.steering_queue,
                     cancellation_token: request.cancellation_token,
                     execution_context,
@@ -97,6 +98,7 @@ impl RunAgent for ScriptedLlmClient {
                 RuntimeRunControls {
                     log_handler: request.runtime_event_handler,
                     before_cycle_messages: None,
+                    interruption_messages: None,
                     steering_queue: request.steering_queue,
                     cancellation_token: request.cancellation_token,
                     execution_context,
@@ -496,6 +498,7 @@ impl RunAgent for SettingsRunAgent {
                 RuntimeRunControls {
                     log_handler: request.runtime_event_handler,
                     before_cycle_messages: None,
+                    interruption_messages: None,
                     steering_queue: request.steering_queue,
                     cancellation_token: request.cancellation_token,
                     execution_context,

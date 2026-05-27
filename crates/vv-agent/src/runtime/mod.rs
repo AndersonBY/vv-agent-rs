@@ -24,8 +24,8 @@ pub use background_sessions::{
 pub use cancellation::CancellationToken;
 pub use context::{ExecutionContext, StreamCallback};
 pub use engine::{
-    AgentRuntime, BeforeCycleMessageProvider, RuntimeEventHandler, RuntimeLogCallback,
-    RuntimeLogHandler, RuntimeRunControls,
+    AgentRuntime, BeforeCycleMessageProvider, InterruptionMessageProvider, RuntimeEventHandler,
+    RuntimeLogCallback, RuntimeLogHandler, RuntimeRunControls,
 };
 pub use hooks::{
     AfterLlmEvent, AfterToolCallEvent, BeforeLlmEvent, BeforeLlmPatch, BeforeMemoryCompactEvent,

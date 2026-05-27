@@ -297,8 +297,11 @@ The current Rust implementation includes:
   propagation, and `RuntimeRunControls` cancellation checks before cycles and
   between tool calls, returning a failed result with a `run_cancelled` event.
 - `RuntimeRunControls` also supports Python-style before-cycle message
-  providers, allowing callers to inject messages at the start of each cycle
-  before compaction and LLM planning.
+  providers and interruption message providers. Callers can inject messages at
+  the start of each cycle before compaction / LLM planning, or interrupt a
+  tool-call batch after a completed tool so later calls are marked
+  `skipped_due_to_steering` and the queued message is carried into the next
+  cycle.
 - Python-style `ExecutionContext` is available for runtime integrations, with
   cancellation token, stream callback, state store, and metadata fields. Runtime
   cancellation checks now honor tokens supplied through the context as well as
