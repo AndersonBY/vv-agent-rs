@@ -290,8 +290,8 @@ The current Rust implementation includes:
   tasks, Python-style `read_file` numeric-string line range parsing,
   `list_files` numeric-string limits, Python-style scalar text coercion for
   `write_file`/`file_str_replace`, `file_str_replace` numeric-string
-  replacement limits, hidden-file filtering, and scan-limit estimate payloads,
-  and
+  replacement limits, hidden-file filtering, Python-style local ripgrep fast
+  path, and scan-limit estimate payloads, and
   `workspace_grep` regex search, numeric-string limits/context parsing, text
   content with structured matches kept in metadata, Python-style glob filtering,
   Python-style scalar text coercion, configured workspace backend support,
