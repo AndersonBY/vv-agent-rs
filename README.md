@@ -260,7 +260,9 @@ The current Rust implementation includes:
   Main tasks enable session memory by default like Python, while generated
   sub-tasks explicitly opt out unless overridden. Memory-summary backend/model
   selection follows Python priority: task metadata, local settings defaults,
-  then runtime fallback backend and task model.
+  then runtime fallback backend and task model. Extraction callback failures are
+  contained like Python, so a failed memory extraction leaves state unchanged
+  instead of aborting the run.
 - Python-style microcompact support clears old, large, compactable tool results
   before full summary compaction, preserving recent tool context while reducing
   prompt pressure during long runs. Task metadata can override the compactable
@@ -341,7 +343,9 @@ The current Rust implementation includes:
   replacement decoding, stdin, numeric-string timeout parsing,
   metadata-controlled shell selection via `bash_shell`, foreground timeout
   handoff, background polling, and automatic terminal background-session
-  listener notifications.
+  listener notifications. Background listener failures are isolated so one
+  listener cannot prevent the remaining subscribers from receiving terminal
+  events.
 - Python-compatible workspace path safety: `LocalWorkspaceBackend` rejects
   paths outside the workspace by default, expands `~/...` paths before applying
   the same safety checks, and file/image/grep/bash tools keep

@@ -1,3 +1,4 @@
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -204,11 +205,14 @@ impl SessionMemory {
         }
 
         let prompt = self.build_extraction_prompt(&new_messages);
-        let Some(raw_result) = callback(
-            &prompt,
-            self.config.extraction_backend.as_deref(),
-            self.config.extraction_model.as_deref(),
-        ) else {
+        let raw_result = catch_unwind(AssertUnwindSafe(|| {
+            callback(
+                &prompt,
+                self.config.extraction_backend.as_deref(),
+                self.config.extraction_model.as_deref(),
+            )
+        }));
+        let Some(raw_result) = raw_result.ok().flatten() else {
             return 0;
         };
 

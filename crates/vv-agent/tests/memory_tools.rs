@@ -577,6 +577,22 @@ fn session_memory_extracts_new_messages_and_renders_grouped_context() {
 }
 
 #[test]
+fn session_memory_extract_handles_callback_panic_like_python() {
+    let mut memory = SessionMemory::new(SessionMemoryConfig {
+        min_tokens_before_extraction: 50,
+        min_text_messages: 1,
+        extraction_callback: Some(Arc::new(|_, _, _| panic!("boom"))),
+        ..SessionMemoryConfig::default()
+    });
+
+    let merged = memory.extract(&[Message::system("sys"), Message::user("alpha")], 1, 80);
+
+    assert_eq!(merged, 0);
+    assert!(memory.state.entries.is_empty());
+    assert!(!memory.state.initialized);
+}
+
+#[test]
 fn session_memory_persists_scoped_state_and_rejects_path_traversal() {
     let workspace = tempfile::tempdir().expect("workspace");
     let mut memory = SessionMemory::with_workspace(
