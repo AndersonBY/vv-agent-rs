@@ -28,9 +28,9 @@ pub use background_sessions::{
     BackgroundSessionSubscription,
 };
 pub use config::{
-    build_openai_llm_from_local_settings, build_vv_llm_from_local_settings, decode_api_key,
-    load_llm_settings_from_file, resolve_model_endpoint, ConfigError, EndpointConfig,
-    EndpointOption, ResolvedModelConfig,
+    build_openai_llm_from_local_settings, build_vv_llm_from_local_settings, build_vv_llm_settings,
+    decode_api_key, load_llm_settings_from_file, resolve_model_endpoint, ConfigError,
+    EndpointConfig, EndpointOption, ResolvedModelConfig,
 };
 pub use llm::{
     EndpointTarget, LlmClient, LlmError, LlmRequest, LlmStreamCallback, ScriptedLlmClient,

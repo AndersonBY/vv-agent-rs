@@ -1,8 +1,8 @@
 use std::io::Write;
 
 use vv_agent::{
-    build_openai_llm_from_local_settings, build_vv_llm_from_local_settings, decode_api_key,
-    load_llm_settings_from_file, resolve_model_endpoint,
+    build_openai_llm_from_local_settings, build_vv_llm_from_local_settings, build_vv_llm_settings,
+    decode_api_key, load_llm_settings_from_file, resolve_model_endpoint,
 };
 
 #[test]
@@ -189,6 +189,81 @@ fn settings_resolution_collects_all_endpoint_options_like_python() {
             ("deepseek-default", "sk-default", "deepseek-v4-pro"),
             ("deepseek-backup", "sk-backup", "deepseek-chat"),
         ]
+    );
+}
+
+#[test]
+fn build_vv_llm_settings_normalizes_provider_aliases_keys_and_endpoint_options_like_python() {
+    let raw = serde_json::json!({
+        "endpoints": [
+            {
+                "id": "deepseek-default",
+                "api_base": "https://api.deepseek.com",
+                "api_key": "env:sk-default-key"
+            },
+            {
+                "id": "deepseek-backup",
+                "api_base": "https://backup.deepseek.com",
+                "api_key": "env:sk-backup-key"
+            }
+        ],
+        "providers": {
+            "deepseek": {
+                "models": {
+                    "deepseek-v4-pro": {
+                        "id": "deepseek-v4-pro",
+                        "endpoints": [
+                            {"endpoint_id": "deepseek-default", "model_id": "deepseek-v4-pro"},
+                            {"endpoint_id": "deepseek-backup", "model_id": "deepseek-chat"}
+                        ]
+                    }
+                }
+            }
+        },
+        "embedding_backends": {},
+        "rerank_backends": {}
+    });
+    let resolved =
+        resolve_model_endpoint(&raw, "deepseek", "deepseek-v4-pro").expect("resolve model");
+
+    let vv_settings =
+        build_vv_llm_settings(&raw, "deepseek", &resolved).expect("build vv settings");
+
+    assert_eq!(vv_settings.version.as_deref(), Some("2"));
+    assert!(vv_settings.backends.contains_key("deepseek"));
+    let backend = vv_settings.backends.get("deepseek").expect("backend");
+    assert_eq!(backend.extra["default_endpoint"], "deepseek-default");
+    let model = backend
+        .models
+        .get("deepseek-v4-pro")
+        .expect("model setting");
+    let endpoint_pairs = model
+        .endpoints
+        .iter()
+        .map(|binding| {
+            (
+                binding.endpoint_id().to_string(),
+                binding.model_id(&model.id).to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        endpoint_pairs,
+        vec![
+            (
+                "deepseek-default".to_string(),
+                "deepseek-v4-pro".to_string()
+            ),
+            ("deepseek-backup".to_string(), "deepseek-chat".to_string()),
+        ]
+    );
+    assert_eq!(
+        vv_settings
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.id == "deepseek-default")
+            .and_then(|endpoint| endpoint.api_key.as_deref()),
+        Some("sk-default-key")
     );
 }
 
