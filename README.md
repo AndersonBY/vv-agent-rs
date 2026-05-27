@@ -287,8 +287,9 @@ The current Rust implementation includes:
   timestamp preservation; core workspace tools (`list_files`, `file_info`,
   `read_file`, `write_file`, `file_str_replace`, `workspace_grep`,
   `read_image`, with image-message injection limited to `native_multimodal`
-  tasks, and Python-style `list_files` scan-limit estimate payloads); memory
-  notes through `compress_memory`; and `bash` /
+  tasks, Python-style `list_files` scan-limit estimate payloads, and
+  `workspace_grep` text content with structured matches kept in metadata);
+  memory notes through `compress_memory`; and `bash` /
   `check_background_command` command tools with captured output, Python-style
   replacement decoding, stdin, metadata-controlled shell selection via
   `bash_shell`, foreground timeout handoff, background polling, and automatic

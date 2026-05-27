@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde_json::{json, Value};
+use serde_json::json;
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
 #[test]
@@ -22,10 +22,33 @@ fn workspace_grep_finds_content_with_smart_case() {
         .expect("workspace_grep");
 
     assert_eq!(result.status, ToolResultStatus::Success);
-    let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["summary"]["total_matches"], 2);
-    assert_eq!(payload["matches"][0]["text"], "update lower");
-    assert_eq!(payload["matches"][1]["text"], "Update upper");
+    assert_eq!(result.metadata["summary"]["total_matches"], 2);
+    assert_eq!(result.metadata["matches"][0]["text"], "update lower");
+    assert_eq!(result.metadata["matches"][1]["text"], "Update upper");
+}
+
+#[test]
+fn workspace_grep_returns_python_style_text_content_and_structured_metadata() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("match.txt"), "Agent line").expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "grep_text_content",
+                "workspace_grep",
+                BTreeMap::from([("pattern".to_string(), json!("Agent"))]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep");
+
+    assert!(result.content.contains("Found 1 matches in 1 files"));
+    assert!(!result.content.contains("\"matches\""));
+    assert_eq!(result.metadata["summary"]["total_matches"], 1);
+    assert_eq!(result.metadata["matches"][0]["path"], "match.txt");
 }
 
 #[test]
@@ -51,9 +74,8 @@ fn workspace_grep_supports_files_and_count_modes_with_type_filter() {
             &mut context,
         )
         .expect("workspace_grep files");
-    let files_payload: Value = serde_json::from_str(&files.content).expect("files payload");
-    assert_eq!(files_payload["files"], json!(["a.py", "b.py"]));
-    assert_eq!(files_payload["summary"]["total_matches"], 2);
+    assert_eq!(files.metadata["files"], json!(["a.py", "b.py"]));
+    assert_eq!(files.metadata["summary"]["total_matches"], 2);
 
     let count = registry
         .execute(
@@ -69,9 +91,8 @@ fn workspace_grep_supports_files_and_count_modes_with_type_filter() {
             &mut context,
         )
         .expect("workspace_grep count");
-    let count_payload: Value = serde_json::from_str(&count.content).expect("count payload");
-    assert_eq!(count_payload["file_counts"]["a.py"], 1);
-    assert_eq!(count_payload["file_counts"]["b.py"], 1);
+    assert_eq!(count.metadata["file_counts"]["a.py"], 1);
+    assert_eq!(count.metadata["file_counts"]["b.py"], 1);
 }
 
 #[test]
@@ -97,8 +118,7 @@ fn workspace_grep_respects_hidden_and_ignored_defaults() {
             &mut context,
         )
         .expect("workspace_grep default");
-    let default_payload: Value = serde_json::from_str(&default.content).expect("default payload");
-    assert_eq!(default_payload["summary"]["total_matches"], 0);
+    assert_eq!(default.metadata["summary"]["total_matches"], 0);
 
     let included = registry
         .execute(
@@ -114,9 +134,7 @@ fn workspace_grep_respects_hidden_and_ignored_defaults() {
             &mut context,
         )
         .expect("workspace_grep included");
-    let included_payload: Value =
-        serde_json::from_str(&included.content).expect("included payload");
-    assert_eq!(included_payload["summary"]["total_matches"], 2);
+    assert_eq!(included.metadata["summary"]["total_matches"], 2);
 }
 
 #[test]
@@ -146,10 +164,9 @@ fn workspace_grep_supports_context_lines_and_file_targets() {
         )
         .expect("workspace_grep context");
 
-    let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["summary"]["files_searched"], 1);
-    assert_eq!(payload["summary"]["total_matches"], 1);
-    let lines = payload["matches"].as_array().expect("matches");
+    assert_eq!(result.metadata["summary"]["files_searched"], 1);
+    assert_eq!(result.metadata["summary"]["total_matches"], 1);
+    let lines = result.metadata["matches"].as_array().expect("matches");
     assert_eq!(lines.len(), 3);
     assert_eq!(lines[0]["is_match"], false);
     assert_eq!(lines[1]["is_match"], true);

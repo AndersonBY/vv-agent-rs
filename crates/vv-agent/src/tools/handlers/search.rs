@@ -6,10 +6,10 @@ use serde_json::{json, Value};
 use crate::tools::base::ToolSpec;
 use crate::tools::common::{
     collect_workspace_files, grep_text, is_hidden_path, is_ignored_root, is_supported_file_type,
-    matches_file_type, path_escapes_workspace_error, tool_error, tool_result,
+    matches_file_type, path_escapes_workspace_error, tool_error,
     workspace_relative_path_or_absolute, GrepTextOptions,
 };
-use crate::types::{ToolDirective, ToolResultStatus};
+use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 pub(crate) fn workspace_grep_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
@@ -207,16 +207,123 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 "count" => payload["file_counts"] = json!(file_counts),
                 _ => payload["matches"] = Value::Array(rows),
             }
-            tool_result(
-                ToolResultStatus::Success,
-                payload,
-                None,
-                ToolDirective::Continue,
-            )
+            let content = render_grep_content(
+                output_mode,
+                &pattern,
+                &payload,
+                show_line_numbers,
+                head_limited,
+            );
+            let metadata = payload
+                .as_object()
+                .map(|object| {
+                    object
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            ToolExecutionResult {
+                tool_call_id: String::new(),
+                content,
+                status: ToolResultStatus::Success,
+                directive: ToolDirective::Continue,
+                error_code: None,
+                metadata,
+                image_url: None,
+                image_path: None,
+            }
         }),
     );
     if let Some(schema) = super::super::schemas::schema_for("workspace_grep") {
         spec.schema = schema;
     }
     spec
+}
+
+fn render_grep_content(
+    output_mode: &str,
+    pattern: &str,
+    payload: &Value,
+    show_line_numbers: bool,
+    head_limited: bool,
+) -> String {
+    let summary = &payload["summary"];
+    let total_matches = summary["total_matches"].as_u64().unwrap_or_default();
+    let files_with_matches = summary["files_with_matches"].as_u64().unwrap_or_default();
+    match output_mode {
+        "files_with_matches" => {
+            let files = payload["files"].as_array().cloned().unwrap_or_default();
+            let mut lines = vec![format!(
+                "Found {files_with_matches} files matching pattern {pattern:?}"
+            )];
+            if files.is_empty() {
+                lines.push("No matches found.".to_string());
+            } else {
+                if head_limited {
+                    lines.push(format!("Showing first {} files.", files.len()));
+                }
+                lines.extend(
+                    files
+                        .into_iter()
+                        .filter_map(|file| file.as_str().map(str::to_string)),
+                );
+            }
+            lines.join("\n")
+        }
+        "count" => {
+            let mut lines = vec![format!("Match counts for pattern {pattern:?}")];
+            if head_limited {
+                lines.push(format!(
+                    "Showing first {} files.",
+                    payload["file_counts"]
+                        .as_object()
+                        .map_or(0, |items| items.len())
+                ));
+            }
+            if let Some(counts) = payload["file_counts"].as_object() {
+                for (file, count) in counts {
+                    lines.push(format!("{}: {}", file, count.as_u64().unwrap_or_default()));
+                }
+            }
+            lines.push(format!(
+                "Total: {total_matches} matches in {files_with_matches} files"
+            ));
+            lines.join("\n")
+        }
+        _ => {
+            let mut lines = vec![format!(
+                "Found {total_matches} matches in {files_with_matches} files for pattern {pattern:?}"
+            )];
+            let rows = payload["matches"].as_array().cloned().unwrap_or_default();
+            if rows.is_empty() {
+                lines.push("No matches found.".to_string());
+                return lines.join("\n");
+            }
+            if head_limited {
+                lines.push(format!("Showing first {} rows.", rows.len()));
+            }
+            let mut current_file = String::new();
+            for row in rows {
+                let row_path = row["path"].as_str().unwrap_or_default();
+                if current_file != row_path {
+                    lines.push(format!("File: {row_path}"));
+                    current_file = row_path.to_string();
+                }
+                let marker = if row["is_match"].as_bool().unwrap_or(false) {
+                    ""
+                } else {
+                    "-"
+                };
+                let text = row["text"].as_str().unwrap_or_default();
+                if show_line_numbers {
+                    let line = row["line"].as_u64().unwrap_or_default();
+                    lines.push(format!("  {marker}{line}: {text}"));
+                } else {
+                    lines.push(format!("  {marker}{text}"));
+                }
+            }
+            lines.join("\n")
+        }
+    }
 }
