@@ -415,6 +415,9 @@ fn tools_module_is_split_into_handler_files() {
         "workspace/local.rs",
         "workspace/memory.rs",
         "workspace/s3.rs",
+        "constants/mod.rs",
+        "constants/tool_names.rs",
+        "constants/workspace.rs",
         "sdk/mod.rs",
         "sdk/types.rs",
         "sdk/resources.rs",
@@ -477,6 +480,10 @@ fn tools_module_is_split_into_handler_files() {
         (
             "skills.rs",
             "skills.rs should be split into src/skills/ modules",
+        ),
+        (
+            "constants.rs",
+            "constants.rs should be split into src/constants/ modules like Python constants/",
         ),
     ] {
         assert!(!root.join(relative).exists(), "{message}");

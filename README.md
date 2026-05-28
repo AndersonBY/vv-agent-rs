@@ -13,7 +13,10 @@ vv-agent-rs/
     src/
       background_sessions.rs
       config.rs
-      constants.rs
+      constants/
+        mod.rs
+        tool_names.rs
+        workspace.rs
       integrations.rs
       llm/
         anthropic_prompt_cache.rs
