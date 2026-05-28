@@ -414,6 +414,14 @@ impl AgentSDKClient {
         self.run_named_agent_with_request("inline", definition, request)
     }
 
+    pub fn run_with_request(&self, request: AgentSessionRunRequest) -> Result<AgentRun, String> {
+        let (name, definition) = self.default_or_only_agent(
+            "No agent configured. Call run_with_agent_request(...) or register named agents first.",
+            "Multiple agents configured. Call run_agent_with_request(name, ...) with one of:",
+        )?;
+        self.run_named_agent_with_request(&name, definition, request)
+    }
+
     pub fn run_agent(
         &self,
         agent_name: impl AsRef<str>,
@@ -814,6 +822,25 @@ impl AgentSDKClient {
         query_text_from_run(run, require_completed, "Agent query failed")
     }
 
+    pub fn query_with_request(
+        &self,
+        request: AgentSessionRunRequest,
+        require_completed: bool,
+    ) -> Result<String, String> {
+        let run = self.run_with_request(request)?;
+        query_text_from_run(run, require_completed, "Agent query failed")
+    }
+
+    pub fn query_with_agent_request(
+        &self,
+        definition: AgentDefinition,
+        request: AgentSessionRunRequest,
+        require_completed: bool,
+    ) -> Result<String, String> {
+        let run = self.run_with_agent_request(definition, request)?;
+        query_text_from_run(run, require_completed, "Agent query failed")
+    }
+
     pub fn query_agent(
         &self,
         agent_name: impl AsRef<str>,
@@ -829,6 +856,16 @@ impl AgentSDKClient {
         require_completed: bool,
     ) -> Result<String, String> {
         let run = self.run_agent(agent_name, prompt)?;
+        query_text_from_run(run, require_completed, "Agent query failed")
+    }
+
+    pub fn query_agent_with_request(
+        &self,
+        agent_name: impl AsRef<str>,
+        request: AgentSessionRunRequest,
+        require_completed: bool,
+    ) -> Result<String, String> {
+        let run = self.run_agent_with_request(agent_name, request)?;
         query_text_from_run(run, require_completed, "Agent query failed")
     }
 
@@ -1204,6 +1241,14 @@ pub fn run_with_options_and_agent_in_workspace(
     AgentSDKClient::new(options).run_with_agent_in_workspace(definition, prompt, workspace)
 }
 
+pub fn run_with_options_and_agent_request(
+    options: AgentSDKOptions,
+    definition: AgentDefinition,
+    request: AgentSessionRunRequest,
+) -> Result<AgentRun, String> {
+    AgentSDKClient::new(options).run_with_agent_request(definition, request)
+}
+
 pub fn query(client: &AgentSDKClient, prompt: impl Into<String>) -> Result<String, String> {
     client.query(prompt)
 }
@@ -1223,6 +1268,24 @@ pub fn query_with_options_and_agent_with_require_completed(
     require_completed: bool,
 ) -> Result<String, String> {
     let run = AgentSDKClient::new(options).run_with_agent(definition, prompt)?;
+    query_text_from_run(run, require_completed, "Agent query failed")
+}
+
+pub fn query_with_options_and_agent_request(
+    options: AgentSDKOptions,
+    definition: AgentDefinition,
+    request: AgentSessionRunRequest,
+) -> Result<String, String> {
+    query_with_options_and_agent_request_with_require_completed(options, definition, request, true)
+}
+
+pub fn query_with_options_and_agent_request_with_require_completed(
+    options: AgentSDKOptions,
+    definition: AgentDefinition,
+    request: AgentSessionRunRequest,
+    require_completed: bool,
+) -> Result<String, String> {
+    let run = AgentSDKClient::new(options).run_with_agent_request(definition, request)?;
     query_text_from_run(run, require_completed, "Agent query failed")
 }
 

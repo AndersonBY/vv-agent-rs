@@ -98,6 +98,10 @@ fn python_style_public_aliases_are_available() {
     let _hook: Option<&dyn BaseRuntimeHook> = None;
     let _sdk_llm_builder: Option<vv_agent::sdk::LLMBuilder> = None;
     let _sdk_runtime_log_handler: Option<vv_agent::sdk::RuntimeLogHandler> = None;
+    let _run_request_helper = vv_agent::run_with_options_and_agent_request;
+    let _query_request_helper = vv_agent::query_with_options_and_agent_request;
+    let _query_request_strict_helper =
+        vv_agent::query_with_options_and_agent_request_with_require_completed;
 }
 
 #[test]

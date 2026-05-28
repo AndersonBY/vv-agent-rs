@@ -598,12 +598,15 @@ The current Rust implementation includes:
   runtimes apply resolved vv-llm token limits as `model_context_window` and
   `reserved_output_tokens` metadata unless the caller already supplied those
   keys. Module-level
-  one-shot helpers `run_with_options_and_agent` and
-  `query_with_options_and_agent` mirror Python `sdk.run(...)` / `sdk.query(...)`
-  while keeping Rust signatures explicit. `AgentSDKClient::run_agent_with_request`
-  and `run_with_agent_request` expose the same one-shot request path used by
-  sessions, so callers can pass shared state, initial messages, cancellation,
-  steering, before-cycle message providers, interruption message providers, and
+  one-shot helpers `run_with_options_and_agent`,
+  `run_with_options_and_agent_request`, `query_with_options_and_agent`, and
+  `query_with_options_and_agent_request` mirror Python `sdk.run(...)` /
+  `sdk.query(...)` while keeping Rust signatures explicit.
+  `AgentSDKClient::run_with_request`, `run_agent_with_request`,
+  `run_with_agent_request`, and the matching query request helpers expose the
+  same one-shot request path used by sessions, so callers can pass shared state,
+  initial messages, cancellation, steering, before-cycle message providers,
+  interruption message providers, runtime event handlers, stream callbacks, and
   per-run metadata without constructing a long-lived session.
 - SDK task preparation now builds Python-style prompt bundles from
   `AgentDefinition.description` when no raw `system_prompt` is provided,
@@ -645,7 +648,9 @@ The current Rust implementation includes:
   integration, runtime tool cycles, schema parity, and workspace tools.
 
 Deeper parity work against the Python implementation is still pending for
-production distributed-worker integrations and provider-specific request
-serialization edge cases. The migration target is to copy Python `v-agent`
-capabilities, implementation shape, and behavior as completely as possible, not
-merely provide a minimal Rust wrapper.
+production distributed-worker integrations. Provider request serialization is
+intentionally delegated to the crates.io `vv-llm` crate; request-side provider
+details that are not yet represented by `vv-llm` typed APIs should be added
+there instead of reimplemented in this repository. The migration target is to
+copy Python `v-agent` capabilities, implementation shape, and behavior as
+completely as possible, not merely provide a minimal Rust wrapper.

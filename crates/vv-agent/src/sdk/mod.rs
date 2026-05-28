@@ -9,8 +9,11 @@ pub use client::{
     create_agent_session_with_shared_state, create_agent_session_with_workspace, query,
     query_with_options_and_agent, query_with_options_and_agent_in_workspace,
     query_with_options_and_agent_in_workspace_with_require_completed,
+    query_with_options_and_agent_request,
+    query_with_options_and_agent_request_with_require_completed,
     query_with_options_and_agent_with_require_completed, run, run_with_options_and_agent,
-    run_with_options_and_agent_in_workspace, AgentSDKClient, RunAgent,
+    run_with_options_and_agent_in_workspace, run_with_options_and_agent_request, AgentSDKClient,
+    RunAgent,
 };
 pub use resources::{AgentResourceLoader, DiscoveredResources};
 pub use session::{

@@ -68,11 +68,13 @@ pub use sdk::{
     create_agent_session_with_shared_state, create_agent_session_with_workspace, query,
     query_with_options_and_agent, query_with_options_and_agent_in_workspace,
     query_with_options_and_agent_in_workspace_with_require_completed,
+    query_with_options_and_agent_request,
+    query_with_options_and_agent_request_with_require_completed,
     query_with_options_and_agent_with_require_completed, run, run_with_options_and_agent,
-    run_with_options_and_agent_in_workspace, AgentDefinition, AgentResourceLoader, AgentRun,
-    AgentSDKClient, AgentSDKOptions, AgentSession, AgentSessionRunRequest, AgentSessionState,
-    LlmBuilder, SdkLlmClient, SessionCancellationHandle, SessionEventHandler, SessionListenerId,
-    SessionSteeringHandle, ToolRegistryFactory,
+    run_with_options_and_agent_in_workspace, run_with_options_and_agent_request, AgentDefinition,
+    AgentResourceLoader, AgentRun, AgentSDKClient, AgentSDKOptions, AgentSession,
+    AgentSessionRunRequest, AgentSessionState, LlmBuilder, SdkLlmClient, SessionCancellationHandle,
+    SessionEventHandler, SessionListenerId, SessionSteeringHandle, ToolRegistryFactory,
 };
 pub use sub_agent_sessions::{
     _register_sub_agent_session, _unregister_sub_agent_session, continue_sub_agent_session,

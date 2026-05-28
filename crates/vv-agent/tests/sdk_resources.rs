@@ -3,11 +3,12 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use vv_agent::{
-    build_default_registry, AfterLlmEvent, AgentDefinition, AgentResourceLoader, AgentRuntime,
-    AgentSDKClient, AgentSDKOptions, AgentSessionRunRequest, AgentStatus, BeforeLlmEvent,
-    LLMResponse, LlmBuilder, LlmClient, LlmError, LlmRequest, Message, MessageRole, NoToolPolicy,
-    ResolvedModelConfig, RuntimeExecutionBackend, RuntimeHook, ScriptedLlmClient, ThreadBackend,
-    ToolCall, ToolDirective, ToolExecutionResult, ToolRegistryFactory, ToolResultStatus,
+    build_default_registry, run_with_options_and_agent_request, AfterLlmEvent, AgentDefinition,
+    AgentResourceLoader, AgentRuntime, AgentSDKClient, AgentSDKOptions, AgentSessionRunRequest,
+    AgentStatus, BeforeLlmEvent, LLMResponse, LlmBuilder, LlmClient, LlmError, LlmRequest, Message,
+    MessageRole, NoToolPolicy, ResolvedModelConfig, RuntimeExecutionBackend, RuntimeHook,
+    ScriptedLlmClient, ThreadBackend, ToolCall, ToolDirective, ToolExecutionResult,
+    ToolRegistryFactory, ToolResultStatus,
 };
 
 #[test]
@@ -1042,6 +1043,192 @@ fn sdk_client_run_agent_with_request_passes_shared_state_like_python() {
 
     assert_eq!(run.result.final_answer.as_deref(), Some("done"));
     assert_eq!(run.result.shared_state["seen_seed"], json!("from-request"));
+}
+
+#[test]
+fn sdk_default_run_request_passes_python_one_shot_runtime_controls() {
+    let captured_messages = Arc::new(Mutex::new(Vec::<Vec<Message>>::new()));
+    let captured_events = Arc::new(Mutex::new(Vec::<String>::new()));
+    let builder: LlmBuilder = {
+        let captured_messages = Arc::clone(&captured_messages);
+        Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
+            let llm: Arc<dyn LlmClient> = Arc::new(CapturingLlmClient {
+                captured_messages: Arc::clone(&captured_messages),
+            });
+            Ok((
+                llm,
+                ResolvedModelConfig::new(
+                    backend.to_string(),
+                    model.to_string(),
+                    model.to_string(),
+                    model.to_string(),
+                    Vec::new(),
+                ),
+            ))
+        })
+    };
+    let client = AgentSDKClient::new_with_agent(
+        AgentSDKOptions {
+            auto_discover_resources: false,
+            llm_builder: Some(builder),
+            ..AgentSDKOptions::default()
+        },
+        {
+            let mut agent = AgentDefinition::default_for_model("demo-model");
+            agent.no_tool_policy = NoToolPolicy::Finish;
+            agent
+        },
+    );
+    let mut request = AgentSessionRunRequest::new("default request");
+    request.initial_messages = vec![Message::assistant("previous assistant context")];
+    request
+        .shared_state
+        .insert("seed".to_string(), json!("from-default-request"));
+    let event_sink = Arc::clone(&captured_events);
+    request.runtime_event_handler = Some(Arc::new(move |event, _payload| {
+        event_sink
+            .lock()
+            .expect("event sink")
+            .push(event.to_string());
+    }));
+
+    let run = client
+        .run_with_request(request)
+        .expect("run default agent with rich request");
+
+    assert_eq!(run.agent_name, "default");
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(
+        run.result.shared_state["seed"],
+        json!("from-default-request")
+    );
+    let captured = captured_messages.lock().expect("captured messages");
+    assert!(captured[0]
+        .iter()
+        .any(|message| message.content == "previous assistant context"));
+    assert!(captured_events
+        .lock()
+        .expect("captured events")
+        .iter()
+        .any(|event| event == "run_started"));
+}
+
+#[test]
+fn sdk_default_query_request_can_return_non_completed_wait_reason_like_python() {
+    let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
+        let llm: Arc<dyn LlmClient> =
+            Arc::new(ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+                "need input",
+                vec![ToolCall::new(
+                    "ask",
+                    "ask_user",
+                    BTreeMap::from([("question".to_string(), json!("pick one"))]),
+                )],
+            )]));
+        Ok((
+            llm,
+            ResolvedModelConfig::new(
+                backend.to_string(),
+                model.to_string(),
+                model.to_string(),
+                model.to_string(),
+                Vec::new(),
+            ),
+        ))
+    });
+    let client = AgentSDKClient::new_with_agent(
+        AgentSDKOptions {
+            auto_discover_resources: false,
+            llm_builder: Some(builder),
+            ..AgentSDKOptions::default()
+        },
+        AgentDefinition::default_for_model("demo-model"),
+    );
+    let mut request = AgentSessionRunRequest::new("ask for input");
+    request
+        .shared_state
+        .insert("seed".to_string(), json!("from-query-request"));
+
+    let text = client
+        .query_with_request(request, false)
+        .expect("non-strict query request");
+
+    assert!(text.contains("pick one"));
+}
+
+#[test]
+fn sdk_module_level_run_request_helper_passes_shared_state_like_python() {
+    let custom_tool = "_module_inspect_shared_state";
+    let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
+        let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![
+            LLMResponse::with_tool_calls(
+                "inspect shared state",
+                vec![ToolCall::new(custom_tool, custom_tool, BTreeMap::new())],
+            ),
+            LLMResponse::with_tool_calls(
+                "finish",
+                vec![ToolCall::new(
+                    "finish",
+                    "task_finish",
+                    BTreeMap::from([("message".to_string(), json!("module-request"))]),
+                )],
+            ),
+        ]));
+        Ok((
+            llm,
+            ResolvedModelConfig::new(
+                backend.to_string(),
+                model.to_string(),
+                model.to_string(),
+                model.to_string(),
+                Vec::new(),
+            ),
+        ))
+    });
+    let factory: ToolRegistryFactory = Arc::new(move || {
+        let mut registry = build_default_registry();
+        registry
+            .register_tool(
+                custom_tool,
+                "Inspect module-level request shared state.",
+                Arc::new(|context, _arguments| {
+                    let seed = context
+                        .shared_state
+                        .get("seed")
+                        .cloned()
+                        .unwrap_or(json!(null));
+                    context.shared_state.insert("seen_seed".to_string(), seed);
+                    ToolExecutionResult::success("", json!({"ok": true}).to_string())
+                }),
+            )
+            .expect("register custom tool");
+        registry
+    });
+    let mut agent = AgentDefinition::default_for_model("demo-model");
+    agent.extra_tool_names.push(custom_tool.to_string());
+    let mut request = AgentSessionRunRequest::new("inspect shared state");
+    request
+        .shared_state
+        .insert("seed".to_string(), json!("from-module-helper"));
+
+    let run = run_with_options_and_agent_request(
+        AgentSDKOptions {
+            auto_discover_resources: false,
+            llm_builder: Some(builder),
+            tool_registry_factory: Some(factory),
+            ..AgentSDKOptions::default()
+        },
+        agent,
+        request,
+    )
+    .expect("module-level request helper");
+
+    assert_eq!(run.agent_name, "inline");
+    assert_eq!(run.result.final_answer.as_deref(), Some("module-request"));
+    assert_eq!(
+        run.result.shared_state["seen_seed"],
+        json!("from-module-helper")
+    );
 }
 
 #[test]
