@@ -554,6 +554,38 @@ fn vv_llm_client_converts_extra_minimax_system_messages_like_python() {
 }
 
 #[test]
+fn vv_llm_client_omits_empty_optional_request_fields_like_python() {
+    let chat_client = RecordingMessagesChatClient::default();
+    let probe = chat_client.clone();
+    let llm = VvLlmClient::new(
+        "openai",
+        "demo-model",
+        "demo-model",
+        Box::new(chat_client),
+        90.0,
+    );
+    let mut user = Message::user("inspect");
+    user.name = Some(String::new());
+    user.tool_call_id = Some(String::new());
+    user.image_url = Some(String::new());
+
+    let _ = llm
+        .complete(LlmRequest::new("demo-model", vec![user]))
+        .expect("request with empty optional fields");
+
+    let messages = probe.messages();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].name, None);
+    assert_eq!(messages[0].tool_call_id, None);
+    assert_eq!(
+        messages[0].content,
+        vec![vv_llm::MessageContent::Text {
+            text: "inspect".to_string(),
+        }]
+    );
+}
+
+#[test]
 fn vv_llm_client_applies_deepseek_reasoning_temperature_like_python() {
     let chat_client = RecordingMessagesChatClient::default();
     let probe = chat_client.clone();

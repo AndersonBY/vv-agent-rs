@@ -578,14 +578,16 @@ fn to_vv_llm_message(message: Message) -> vv_llm::Message {
             text: message.content,
         });
     }
-    if let Some(image_url) = message.image_url {
+    if let Some(image_url) = message.image_url.filter(|image_url| !image_url.is_empty()) {
         content.push(vv_llm::MessageContent::ImageUrl { url: image_url });
     }
     vv_llm::Message {
         role,
         content,
-        name: message.name,
-        tool_call_id: message.tool_call_id,
+        name: message.name.filter(|name| !name.is_empty()),
+        tool_call_id: message
+            .tool_call_id
+            .filter(|tool_call_id| !tool_call_id.is_empty()),
         tool_calls: message
             .tool_calls
             .into_iter()
