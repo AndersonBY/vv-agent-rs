@@ -72,7 +72,7 @@ fn default_tool_schemas_include_reference_quality_descriptions() {
     let todo_schema = registry.get_schema("todo_write").expect("todo schema");
     assert_eq!(
         todo_schema["function"]["parameters"]["properties"]["todos"]["items"]["required"],
-        json!(["title"])
+        json!(["title", "status", "priority"])
     );
 
     let activate_skill = description(&registry, "activate_skill");
@@ -304,6 +304,231 @@ fn python_reference_tool_schema_wording_is_preserved() {
 }
 
 #[test]
+fn builtin_tool_required_fields_match_python_reference_schema() {
+    let registry = build_default_registry();
+
+    for (tool_name, expected_required) in [
+        ("activate_skill", json!(["skill_name"])),
+        ("ask_user", json!(["question"])),
+        ("bash", json!(["command"])),
+        ("check_background_command", json!(["session_id"])),
+        ("compress_memory", json!(["core_information"])),
+        ("create_sub_task", json!(["agent_id"])),
+        ("file_info", json!(["path"])),
+        ("file_str_replace", json!(["path", "old_str", "new_str"])),
+        ("list_files", json!([])),
+        ("read_file", json!(["path"])),
+        ("read_image", json!(["path"])),
+        ("sub_task_status", json!(["task_ids"])),
+        ("task_finish", json!([])),
+        ("todo_write", json!(["todos"])),
+        ("workspace_grep", json!(["pattern"])),
+        ("write_file", json!(["path", "content"])),
+    ] {
+        let schema = registry.get_schema(tool_name).expect("schema");
+        assert_eq!(
+            schema["function"]["parameters"]["required"], expected_required,
+            "{tool_name} top-level required fields should match Python v-agent schema"
+        );
+    }
+
+    let create_sub_task = registry.get_schema("create_sub_task").expect("schema");
+    assert_eq!(
+        create_sub_task["function"]["parameters"]["properties"]["tasks"]["items"]["required"],
+        json!(["task_description"]),
+        "create_sub_task.tasks item required fields should match Python v-agent schema"
+    );
+
+    let todo_write = registry.get_schema("todo_write").expect("schema");
+    assert_eq!(
+        todo_write["function"]["parameters"]["properties"]["todos"]["items"]["required"],
+        json!(["title", "status", "priority"]),
+        "todo_write.todos item required fields should match Python v-agent schema"
+    );
+    assert!(
+        description(&registry, "todo_write")
+            .contains("Each item must include `title`, `status`, and `priority`"),
+        "todo_write should guide the model to emit the Python-required fields explicitly"
+    );
+}
+
+#[test]
+fn builtin_tool_properties_and_enums_match_python_reference_schema() {
+    let registry = build_default_registry();
+
+    for (tool_name, expected_properties) in [
+        ("activate_skill", vec!["skill_name", "reason"]),
+        (
+            "ask_user",
+            vec![
+                "question",
+                "options",
+                "selection_type",
+                "allow_custom_options",
+            ],
+        ),
+        (
+            "bash",
+            vec![
+                "command",
+                "exec_dir",
+                "timeout",
+                "stdin",
+                "auto_confirm",
+                "run_in_background",
+            ],
+        ),
+        ("check_background_command", vec!["session_id"]),
+        ("compress_memory", vec!["core_information"]),
+        (
+            "create_sub_task",
+            vec![
+                "agent_id",
+                "task_description",
+                "output_requirements",
+                "tasks",
+                "include_main_summary",
+                "exclude_files_pattern",
+                "wait_for_completion",
+            ],
+        ),
+        ("file_info", vec!["path"]),
+        (
+            "file_str_replace",
+            vec![
+                "path",
+                "old_str",
+                "new_str",
+                "replace_all",
+                "max_replacements",
+            ],
+        ),
+        (
+            "list_files",
+            vec![
+                "path",
+                "glob",
+                "include_hidden",
+                "include_ignored",
+                "max_results",
+                "scan_limit",
+            ],
+        ),
+        (
+            "read_file",
+            vec!["path", "start_line", "end_line", "show_line_numbers"],
+        ),
+        ("read_image", vec!["path"]),
+        (
+            "sub_task_status",
+            vec![
+                "task_ids",
+                "message",
+                "detail_level",
+                "workspace_file_limit",
+                "wait_for_response",
+            ],
+        ),
+        ("task_finish", vec!["message", "exposed_files"]),
+        ("todo_write", vec!["todos"]),
+        (
+            "workspace_grep",
+            vec![
+                "pattern",
+                "path",
+                "glob",
+                "include_hidden",
+                "include_ignored",
+                "output_mode",
+                "b",
+                "a",
+                "c",
+                "n",
+                "i",
+                "type",
+                "head_limit",
+                "multiline",
+                "case_sensitive",
+                "max_results",
+            ],
+        ),
+        (
+            "write_file",
+            vec![
+                "path",
+                "content",
+                "append",
+                "leading_newline",
+                "trailing_newline",
+            ],
+        ),
+    ] {
+        let mut expected_properties = expected_properties;
+        expected_properties.sort_unstable();
+        assert_eq!(
+            property_names(
+                &registry,
+                tool_name,
+                &["function", "parameters", "properties"]
+            ),
+            expected_properties,
+            "{tool_name} properties should match Python v-agent schema"
+        );
+    }
+
+    assert_eq!(
+        enum_values(&registry, "ask_user", &["selection_type"]),
+        vec!["single", "multi"]
+    );
+    assert_eq!(
+        enum_values(&registry, "sub_task_status", &["detail_level"]),
+        vec!["basic", "snapshot"]
+    );
+    assert_eq!(
+        enum_values(&registry, "workspace_grep", &["output_mode"]),
+        vec!["content", "files_with_matches", "count"]
+    );
+    assert_eq!(
+        property_names(
+            &registry,
+            "create_sub_task",
+            &[
+                "function",
+                "parameters",
+                "properties",
+                "tasks",
+                "items",
+                "properties",
+            ],
+        ),
+        sorted(vec!["task_description", "output_requirements"])
+    );
+    assert_eq!(
+        property_names(
+            &registry,
+            "todo_write",
+            &[
+                "function",
+                "parameters",
+                "properties",
+                "todos",
+                "items",
+                "properties",
+            ],
+        ),
+        sorted(vec!["id", "title", "status", "priority"])
+    );
+    assert_eq!(
+        enum_values(&registry, "todo_write", &["todos", "items", "status"]),
+        vec!["pending", "in_progress", "completed"]
+    );
+    assert_eq!(
+        enum_values(&registry, "todo_write", &["todos", "items", "priority"]),
+        vec!["low", "medium", "high"]
+    );
+}
+
+#[test]
 fn control_tool_parameter_descriptions_steer_high_quality_agent_decisions() {
     let registry = build_default_registry();
 
@@ -497,10 +722,7 @@ fn critical_tool_schemas_include_actionable_agent_guidance() {
     let task_finish = description(&registry, "task_finish");
     assert!(task_finish.contains("Only call this when"));
     assert!(task_finish.contains("unfinished TODO"));
-    assert!(
-        property_description(&registry, "task_finish", "require_all_todos_completed")
-            .contains("Keep true")
-    );
+    assert!(task_finish.contains("runtime rejects premature finish by default"));
 
     let file_str_replace = description(&registry, "file_str_replace");
     assert!(file_str_replace.contains("exact `old_str`"));
@@ -662,6 +884,51 @@ fn property_description(
                 .map(str::to_string)
         })
         .unwrap_or_default()
+}
+
+fn property_names(
+    registry: &vv_agent::ToolRegistry,
+    tool_name: &str,
+    path: &[&str],
+) -> Vec<String> {
+    let schema = registry.get_schema(tool_name).expect("schema");
+    let mut cursor = &schema;
+    for segment in path {
+        cursor = &cursor[*segment];
+    }
+    cursor
+        .as_object()
+        .expect("properties object")
+        .keys()
+        .cloned()
+        .collect()
+}
+
+fn enum_values(
+    registry: &vv_agent::ToolRegistry,
+    tool_name: &str,
+    property_path: &[&str],
+) -> Vec<String> {
+    let mut cursor =
+        &registry.get_schema(tool_name).expect("schema")["function"]["parameters"]["properties"];
+    for (index, segment) in property_path.iter().enumerate() {
+        if index > 0 && *segment != "items" {
+            cursor = &cursor["properties"];
+        }
+        cursor = &cursor[*segment];
+    }
+    cursor["enum"]
+        .as_array()
+        .expect("enum array")
+        .iter()
+        .map(|value| value.as_str().expect("enum string").to_string())
+        .collect()
+}
+
+fn sorted(values: Vec<&str>) -> Vec<&str> {
+    let mut sorted = values;
+    sorted.sort_unstable();
+    sorted
 }
 
 fn assert_description_contains(

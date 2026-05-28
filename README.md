@@ -389,8 +389,9 @@ The current Rust implementation includes:
   images, and sub-agents. Workspace schemas are split below
   `tools/schemas/workspace/` into file I/O, listing, search, and edit modules,
   and schema parity tests now require operational sections and control-tool
-  parameter guidance so future edits do not collapse them back into short
-  labels.
+  parameter guidance, plus Python-matched required fields, property sets, and
+  enum values, so future edits do not collapse them back into short labels or
+  drift from the model-visible Python interface.
 - Planned tool schemas include Python-style dynamic runtime hints for shell
   execution, so `bash` advertises the actual shell prefix or invalid shell
   configuration in the LLM-visible description. Runtime runs freeze that hint
