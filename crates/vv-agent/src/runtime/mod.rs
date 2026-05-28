@@ -11,7 +11,7 @@ mod results;
 pub mod shell;
 pub mod state;
 pub mod stores;
-pub mod sub_agent_sessions;
+mod sub_agent_sessions;
 mod sub_agents;
 pub mod sub_task_manager;
 pub mod token_usage;

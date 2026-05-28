@@ -819,7 +819,6 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/processes.rs",
         "runtime/results.rs",
         "runtime/shell.rs",
-        "runtime/sub_agent_sessions.rs",
         "runtime/sub_agents.rs",
         "runtime/sub_task_manager.rs",
         "runtime/token_usage.rs",
@@ -882,7 +881,7 @@ fn tools_module_is_split_into_handler_files() {
         ),
         (
             "sub_agent_sessions.rs",
-            "sub-agent session registry should live under src/runtime/ like Python runtime/sub_agent_sessions.py",
+            "sub-agent session registry helpers should be exposed through runtime::engine and runtime, not flattened at crate root",
         ),
         (
             "sub_task_manager.rs",

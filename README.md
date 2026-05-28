@@ -55,7 +55,6 @@ vv-agent-rs/
         processes.rs
         results.rs
         sub_agents.rs
-        sub_agent_sessions.rs
         sub_task_manager.rs
         token_usage.rs
       sdk/

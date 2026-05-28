@@ -336,3 +336,20 @@ fn runtime_modules_are_not_flattened_at_crate_root() {
         );
     }
 }
+
+#[test]
+fn sub_agent_session_registry_uses_python_public_import_paths() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let runtime_mod =
+        std::fs::read_to_string(root.join("runtime").join("mod.rs")).expect("runtime/mod.rs");
+
+    assert!(
+        !runtime_mod.contains("pub mod sub_agent_sessions;"),
+        "Python exposes sub-agent session helpers through vv_agent.runtime.engine and vv_agent.runtime, not a public runtime.sub_agent_sessions module"
+    );
+
+    let _get_session = vv_agent::runtime::engine::get_sub_agent_session;
+    let _subscribe_session = vv_agent::runtime::engine::subscribe_sub_agent_session;
+    let _runtime_get_session = vv_agent::runtime::get_sub_agent_session;
+    let _runtime_subscribe_session = vv_agent::runtime::subscribe_sub_agent_session;
+}
