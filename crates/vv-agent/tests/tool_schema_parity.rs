@@ -1089,6 +1089,7 @@ fn every_builtin_tool_schema_has_operational_guidance_not_just_labels() {
     assert!(read_image.contains("Supported formats"));
     assert!(read_image.contains("5 MiB"));
     assert!(read_image.contains("HTTP URLs are passed through"));
+    assert!(property_description(&registry, "read_image", "path").contains("Non-string scalar"));
 }
 
 fn description(registry: &vv_agent::ToolRegistry, tool_name: &str) -> String {

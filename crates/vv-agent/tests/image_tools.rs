@@ -66,6 +66,29 @@ fn read_image_from_url_attaches_original_url() {
 }
 
 #[test]
+fn read_image_coerces_scalar_path_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "img_scalar_path",
+                "read_image",
+                BTreeMap::from([("path".to_string(), json!(123))]),
+            ),
+            &mut context,
+        )
+        .expect("read_image");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("image_not_found"));
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["error"], "image file not found: 123");
+}
+
+#[test]
 fn read_image_rejects_unsupported_extension() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

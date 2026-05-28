@@ -28,7 +28,7 @@ pub(super) fn read_image_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Image path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled) or http(s) image URL."}
+                    "path": {"type": "string", "description": "Image path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled) or http(s) image URL. Non-string scalar values are coerced to text for Python compatibility."}
                 },
                 "required": ["path"]
             }
