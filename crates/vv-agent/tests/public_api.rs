@@ -125,6 +125,7 @@ fn public_doc_forbidden_terms() -> Vec<String> {
         forbidden_phrase(&[b"runtime ", PARITY]),
         forbidden_phrase(&[PARITY]),
         "implementation-history".to_string(),
+        "implementation history".to_string(),
         forbidden_phrase(&[MIGRATION, b"-history"]),
         forbidden_phrase(&[MIGRATION]),
         forbidden_phrase(&[LANG, b" project"]),

@@ -106,7 +106,7 @@ pub fn validate_metadata_with_diagnostics(
     }
 
     if let Some(compatibility) = metadata.get("compatibility") {
-        validate_compatibility(compatibility, mode, &mut diagnostics);
+        validate_compatibility(compatibility, &mut diagnostics);
     }
     Ok(diagnostics)
 }
@@ -271,29 +271,15 @@ fn validate_description(description: &str, diagnostics: &mut ValidationDiagnosti
     }
 }
 
-fn validate_compatibility(
-    compatibility: &Value,
-    mode: ValidationMode,
-    diagnostics: &mut ValidationDiagnostics,
-) {
-    let severity = if mode == ValidationMode::Minimal {
-        IssueSeverity::Warning
-    } else {
-        IssueSeverity::Error
-    };
+fn validate_compatibility(compatibility: &Value, diagnostics: &mut ValidationDiagnostics) {
     let Some(compatibility) = compatibility.as_str() else {
-        append_issue(
-            diagnostics,
-            "Field 'compatibility' must be a string",
-            severity,
-        );
         return;
     };
     if compatibility.chars().count() > MAX_COMPATIBILITY_LENGTH {
         append_issue(
             diagnostics,
             format!("Compatibility exceeds {MAX_COMPATIBILITY_LENGTH} character limit"),
-            severity,
+            IssueSeverity::Warning,
         );
     }
 }

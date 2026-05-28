@@ -80,7 +80,7 @@ This goal is not done until all of the following are true:
 - Do not split the CLI into an extra workspace crate unless there is a hard technical reason.
 - Do not optimize for feature novelty before core Agent runtime completeness.
 - Do not treat this as a rewrite of the broader VectorVein repo; this workspace should stay focused on the Agent library.
-- Model-facing prompts, tool schemas, Rustdoc, and package docs should describe the Rust package behavior directly, without implementation history.
+- Model-facing prompts, tool schemas, Rustdoc, and package docs should describe the Rust package behavior directly.
 
 ## Implementation Principle
 

@@ -545,6 +545,54 @@ Use this skill body during execution.
 }
 
 #[test]
+fn activate_skill_ignores_structured_compatibility_metadata() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let skill_dir = workspace.path().join("skills/structured-skill");
+    std::fs::create_dir_all(&skill_dir).expect("skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        r#"---
+name: structured-skill
+description: Structured skill metadata should stay internal
+compatibility:
+  tools:
+    - read_file
+---
+Use this skill without surfacing internal metadata.
+"#,
+    )
+    .expect("skill md");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context
+        .shared_state
+        .insert("available_skills".to_string(), json!(["skills"]));
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "skill_structured",
+                "activate_skill",
+                BTreeMap::from([("skill_name".to_string(), json!("structured-skill"))]),
+            ),
+            &mut context,
+        )
+        .expect("activate_skill");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: serde_json::Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["skill_name"], "structured-skill");
+    assert!(
+        payload.get("compatibility").is_none(),
+        "structured compatibility metadata is internal and should not reach model-visible results"
+    );
+    assert!(
+        !result.content.contains("compatibility") && !result.content.contains("read_file"),
+        "activate_skill should not leak structured internal metadata"
+    );
+}
+
+#[test]
 fn activate_skill_accepts_inline_entries_and_reports_disallowed_skill() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
