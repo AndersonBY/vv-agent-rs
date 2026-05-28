@@ -833,6 +833,62 @@ fn sdk_prepare_task_accepts_explicit_session_id_like_python() {
 }
 
 #[test]
+fn sdk_prepare_task_with_request_accepts_task_name_workspace_and_metadata_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let override_workspace = tempfile::tempdir().expect("override workspace");
+    let client = AgentSDKClient::new_with_agent(
+        AgentSDKOptions {
+            workspace: workspace.path().to_path_buf(),
+            auto_discover_resources: false,
+            ..AgentSDKOptions::default()
+        },
+        {
+            let mut agent = AgentDefinition::default_for_model("demo-model");
+            agent.skill_directories = vec!["skills/preview".to_string()];
+            agent
+        },
+    );
+    std::fs::create_dir_all(override_workspace.path().join("skills/preview")).expect("skill dir");
+    std::fs::write(
+        override_workspace.path().join("skills/preview/SKILL.md"),
+        "---\nname: preview-skill\ndescription: preview skill\n---\nbody",
+    )
+    .expect("skill file");
+
+    let mut request = AgentSessionRunRequest::new("preview request");
+    request.task_name = Some("custom-preview".to_string());
+    request.workspace = Some(override_workspace.path().to_path_buf());
+    request
+        .metadata
+        .insert("session_id".to_string(), json!("session-request"));
+    request
+        .metadata
+        .insert("model_context_window".to_string(), json!(1234));
+    request
+        .shared_state
+        .insert("should_not_leak".to_string(), json!(true));
+    request
+        .initial_messages
+        .push(Message::user("previous turn"));
+
+    let task = client
+        .prepare_task_with_request(request, "demo-model")
+        .expect("prepared task");
+
+    assert!(task.task_id.starts_with("custom-preview_"));
+    assert_eq!(task.user_prompt, "preview request");
+    assert_eq!(task.metadata["session_id"], json!("session-request"));
+    assert_eq!(task.metadata["model_context_window"], json!(1234));
+    assert!(
+        !task.metadata.contains_key("should_not_leak"),
+        "request shared_state should only be used by runtime execution, not task preparation"
+    );
+    assert_eq!(task.initial_messages.len(), 0);
+    assert!(task.system_prompt.contains("preview-skill"));
+    assert!(task.system_prompt.contains("preview skill"));
+}
+
+#[test]
 fn sdk_client_run_requires_agent_when_no_profile_is_configured_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new(

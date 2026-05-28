@@ -663,7 +663,11 @@ The current Rust implementation includes:
   templates, and discovered skill directories also apply to session prompts.
   Explicit `prepare_task*_with_session_id` helpers attach the Python-compatible
   `session_id` metadata during task preview without overwriting a definition's
-  existing `session_id`.
+  existing `session_id`. Request-based prepare helpers
+  (`prepare_task_with_request`, `prepare_task_for_agent_with_request`, and
+  `prepare_task_with_agent_request`) mirror Python's `prepare_task(...,
+  task_name=..., workspace=..., session_id=...)` preview path for custom task id
+  prefixes, workspace-specific skill rendering, and per-run metadata.
 - SDK clients can now create sessions from the configured default agent or the
   only registered profile through `create_default_session*` helpers, and can
   create sessions by profile name without manually passing the copied
