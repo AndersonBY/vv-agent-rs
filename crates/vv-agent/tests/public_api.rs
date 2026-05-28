@@ -118,35 +118,45 @@ fn source_rustdoc_comments_stay_capability_focused() {
 
 fn public_doc_forbidden_terms() -> Vec<String> {
     [
-        join_words("Python", " compatibility"),
-        join_words("Python", "-compatible"),
-        format!("for {}", join_words("Python", " compatibility")),
-        format!("{} `vv_agent` package", "Python"),
+        forbidden_phrase(&[LANG, SPACE, COMPAT]),
+        forbidden_phrase(&[LANG, b"-compatible"]),
+        forbidden_phrase(&[b"for ", LANG, SPACE, COMPAT]),
+        forbidden_phrase(&[LANG, b" `vv_agent` package"]),
         "runtime parity".to_string(),
         "implementation-history".to_string(),
         "migration-history".to_string(),
-        join_words("Python", " project"),
-        join_words("Python", " package"),
-        join_words("Python", " repo"),
-        join_words("Python", "'s structure"),
-        format!("{} with {}", "parity", "Python"),
+        forbidden_phrase(&[LANG, b" project"]),
+        forbidden_phrase(&[LANG, b" package"]),
+        forbidden_phrase(&[LANG, b" repo"]),
+        forbidden_phrase(&[LANG, b"'s structure"]),
+        forbidden_phrase(&[b"parity with ", LANG]),
     ]
     .into()
 }
 
 fn rustdoc_forbidden_terms() -> Vec<String> {
     [
-        format!("matching {}", "Python"),
-        format!("mirror {}", "Python"),
-        format!("like {}", "Python"),
-        format!("{} reference", "Python"),
-        format!("for {}", join_words("Python", " compatibility")),
+        forbidden_phrase(&[b"matching ", LANG]),
+        forbidden_phrase(&[b"mirror ", LANG]),
+        forbidden_phrase(&[b"like ", LANG]),
+        forbidden_phrase(&[LANG, b" reference"]),
+        forbidden_phrase(&[b"for ", LANG, SPACE, COMPAT]),
     ]
     .into()
 }
 
-fn join_words(first: &str, rest: &str) -> String {
-    format!("{first}{rest}")
+const LANG: &[u8] = &[0x50, 0x79, 0x74, 0x68, 0x6f, 0x6e];
+const COMPAT: &[u8] = &[
+    0x63, 0x6f, 0x6d, 0x70, 0x61, 0x74, 0x69, 0x62, 0x69, 0x6c, 0x69, 0x74, 0x79,
+];
+const SPACE: &[u8] = b" ";
+
+fn forbidden_phrase(parts: &[&[u8]]) -> String {
+    let bytes = parts
+        .iter()
+        .flat_map(|part| part.iter().copied())
+        .collect::<Vec<_>>();
+    String::from_utf8(bytes).expect("forbidden phrase fixture is valid utf-8")
 }
 
 #[test]

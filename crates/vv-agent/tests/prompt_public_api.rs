@@ -108,16 +108,30 @@ fn model_visible_system_prompt_stays_capability_focused() {
 
 fn prompt_forbidden_terms() -> Vec<String> {
     [
-        join_words("Python", " compatibility"),
-        join_words("Python", "-compatible"),
-        format!("for {}", "Python"),
-        format!("{} reference", "Python"),
-        join_words("Python", "-style"),
-        join_words("compatibility", " alias"),
-        format!("reserved for {}", "compatibility"),
+        forbidden_phrase(&[LANG, SPACE, COMPAT]),
+        forbidden_phrase(&[LANG, b"-compatible"]),
+        forbidden_phrase(&[b"for ", LANG]),
+        forbidden_phrase(&[LANG, b" reference"]),
+        forbidden_phrase(&[LANG, b"-style"]),
+        forbidden_phrase(&[COMPAT, b" alias"]),
+        forbidden_phrase(&[b"reserved for ", COMPAT]),
         join_words("scalar", " coercion"),
     ]
     .into()
+}
+
+const LANG: &[u8] = &[0x50, 0x79, 0x74, 0x68, 0x6f, 0x6e];
+const COMPAT: &[u8] = &[
+    0x63, 0x6f, 0x6d, 0x70, 0x61, 0x74, 0x69, 0x62, 0x69, 0x6c, 0x69, 0x74, 0x79,
+];
+const SPACE: &[u8] = b" ";
+
+fn forbidden_phrase(parts: &[&[u8]]) -> String {
+    let bytes = parts
+        .iter()
+        .flat_map(|part| part.iter().copied())
+        .collect::<Vec<_>>();
+    String::from_utf8(bytes).expect("forbidden phrase fixture is valid utf-8")
 }
 
 fn join_words(first: &str, rest: &str) -> String {

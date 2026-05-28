@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         make_task_id("thread_async"),
         resolved.model_id,
         system_prompt,
-        "Python 的 GIL 是什么? 一句话回答",
+        "Rust 的所有权模型是什么? 一句话回答",
     );
     task2.max_cycles = 3;
     let token = CancellationToken::default();

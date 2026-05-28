@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("[demo] 场景 2: parallel_map 通过 CeleryBackend 接口并行/回退执行");
     let prompts = vec![
-        "Python 的 GIL 是什么? 一句话回答".to_string(),
+        "Rust 的所有权模型是什么? 一句话回答".to_string(),
         "什么是 REST API? 一句话回答".to_string(),
         "Docker 和虚拟机的区别? 一句话回答".to_string(),
     ];
