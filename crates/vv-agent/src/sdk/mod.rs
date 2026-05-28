@@ -1,5 +1,5 @@
 pub mod client;
-pub mod python_hooks;
+mod python_hooks;
 pub mod resources;
 pub mod session;
 pub mod types;

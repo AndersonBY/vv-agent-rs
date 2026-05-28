@@ -658,6 +658,42 @@ fn session_memory_extracts_new_messages_and_renders_grouped_context() {
 }
 
 #[test]
+fn session_memory_skips_compacted_summary_messages_during_extraction() {
+    let prompts = Arc::new(Mutex::new(Vec::<String>::new()));
+    let captured_prompts = Arc::clone(&prompts);
+    let mut memory = SessionMemory::new(SessionMemoryConfig {
+        min_tokens_before_extraction: 50,
+        min_text_messages: 1,
+        extraction_callback: Some(Arc::new(move |prompt, _backend, _model| {
+            captured_prompts
+                .lock()
+                .expect("prompts")
+                .push(prompt.to_string());
+            Some(
+                r#"[{"category":"key_fact","content":"new follow-up","importance":6}]"#.to_string(),
+            )
+        })),
+        ..SessionMemoryConfig::default()
+    });
+    let messages = vec![
+        Message::system("sys"),
+        Message::user(
+            "<Original User Request>\nstart\n</Original User Request>\n\n\
+<Compressed Agent Memory>\nsummary\n</Compressed Agent Memory>",
+        ),
+        Message::assistant("new answer"),
+    ];
+
+    let merged = memory.extract(&messages, 7, 120);
+
+    assert_eq!(merged, 1);
+    let prompts = prompts.lock().expect("prompts");
+    assert!(!prompts[0].contains("<Compressed Agent Memory>"));
+    assert!(!prompts[0].contains("summary"));
+    assert!(prompts[0].contains("new answer"));
+}
+
+#[test]
 fn session_memory_extract_handles_callback_panic() {
     let mut memory = SessionMemory::new(SessionMemoryConfig {
         min_tokens_before_extraction: 50,

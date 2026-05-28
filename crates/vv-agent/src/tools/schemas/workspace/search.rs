@@ -48,9 +48,9 @@ pub(in crate::tools::schemas) fn workspace_grep_schema() -> Value {
                 "properties": {
                     "pattern": {"type": "string", "description": "Regex pattern to search for; escape regex metacharacters when searching for literal text such as dots, brackets, or file extensions."},
                     "path": {"type": "string", "description": "Optional search root or single file path. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'. A single file path searches that file directly, even if it is hidden or under an ignored root."},
-                    "glob": {"type": "string", "description": "Optional file glob filter. Default **/*."},
-                    "include_hidden": {"type": "boolean", "description": "Whether hidden files are included. Default false."},
-                    "include_ignored": {"type": "boolean", "description": "When searching workspace root, include files under common dependency/cache directories. Default false."},
+                    "glob": {"type": "string", "description": "Optional file glob filter such as `**/*.rs` or `docs/**/*.md`. Use it to narrow by filename, path segment, or extension before running broad regex searches. Default **/*."},
+                    "include_hidden": {"type": "boolean", "description": "Whether hidden files and dotfiles are included. Default false; set true only when explicitly searching hidden project files such as .env.example, .github, or dot-directories."},
+                    "include_ignored": {"type": "boolean", "description": "When searching workspace root, include files under common dependency/cache directories. Default false; set true only when explicitly inspecting generated, dependency, cache, or build-output paths."},
                     "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"], "description": "Search output mode. Default is 'content'."},
                     "b": {"type": "integer", "description": "Lines before each match. Only used in content mode."},
                     "a": {"type": "integer", "description": "Lines after each match. Only used in content mode."},
@@ -58,10 +58,10 @@ pub(in crate::tools::schemas) fn workspace_grep_schema() -> Value {
                     "n": {"type": "boolean", "description": "Whether to include line numbers in content output. Default true."},
                     "i": {"type": "boolean", "description": "Force case-insensitive search."},
                     "type": {"type": "string", "description": "File type shortcut (e.g. py/js/ts/md/json). Unsupported or unknown shortcuts return a structured error listing supported values."},
-                    "head_limit": {"type": "integer", "minimum": 1, "description": "Limit to first N output rows/entries."},
+                    "head_limit": {"type": "integer", "minimum": 1, "description": "Cap output to the first N rows or entries. Use this for broad searches, then run a narrower follow-up query if matches are truncated."},
                     "multiline": {"type": "boolean", "description": "Enable multiline regex mode."},
                     "case_sensitive": {"type": "boolean", "description": "Explicitly override smart-case behavior and `i`."},
-                    "max_results": {"type": "integer", "minimum": 1, "description": "Same behavior as `head_limit`."}
+                    "max_results": {"type": "integer", "minimum": 1, "description": "Same behavior as `head_limit`; cap output rows or entries before planning a narrower follow-up search."}
                 },
                 "required": ["pattern"]
             }

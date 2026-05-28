@@ -29,10 +29,10 @@ pub(in crate::tools::schemas) fn list_files_schema() -> Value {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Optional search root path. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'."},
-                    "glob": {"type": "string", "description": "Optional glob pattern. Default **/*."},
-                    "include_hidden": {"type": "boolean", "description": "Whether hidden files are included. Default false."},
-                    "include_ignored": {"type": "boolean", "description": "When listing workspace root, include files under common dependency/cache directories. Default false."},
-                    "max_results": {"type": "integer", "description": "Maximum number of file paths returned in one call. Default 500; larger values are capped."},
+                    "glob": {"type": "string", "description": "Optional glob filter such as `**/*.rs` or `src/**/*.md`. Use it to narrow by filename, directory, or extensions before listing broad trees. Default **/*."},
+                    "include_hidden": {"type": "boolean", "description": "Whether hidden files and dotfiles are included. Default false; set true only when the task explicitly needs paths such as .env.example, .github, or other hidden project files."},
+                    "include_ignored": {"type": "boolean", "description": "When listing workspace root, include files under common dependency/cache directories. Default false; set true only when explicitly inspecting generated, dependency, cache, or build-output paths."},
+                    "max_results": {"type": "integer", "description": "Maximum number of file paths returned in one call. Default 500; larger values are capped. If truncated, use returned counts to run a narrower follow-up query."},
                     "scan_limit": {"type": "integer", "description": "Maximum files scanned before stopping early to keep listing fast. If reached, response includes `count_is_estimate=true`."}
                 },
                 "required": []

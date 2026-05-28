@@ -421,6 +421,58 @@ fn background_session_manager_can_adopt_running_process_with_started_at() {
 }
 
 #[test]
+fn background_session_timeout_kills_process_and_preserves_output() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let command = vec![
+        "bash".to_string(),
+        "-lc".to_string(),
+        "printf background-partial; sleep 5".to_string(),
+    ];
+    let started = start_captured_process(&command, workspace.path(), None).expect("start process");
+    let output_path = started.output_path.clone();
+    for _ in 0..20 {
+        if read_captured_output(&output_path, 100).contains("background-partial") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(
+        read_captured_output(&output_path, 100).contains("background-partial"),
+        "test setup should wait until the background process has emitted partial output"
+    );
+    let session_id = background_session_manager().adopt_running_process_with_options(
+        BackgroundSessionAdoptOptions::new(
+            "printf background-partial; sleep 5",
+            workspace.path(),
+            1,
+            started.child,
+            started.output_path,
+        )
+        .with_shell("bash")
+        .with_started_at(Instant::now() - Duration::from_secs(2)),
+    );
+
+    let payload = background_session_manager().check(&session_id);
+
+    assert_eq!(payload["status"], "timeout");
+    assert_eq!(payload["session_id"], session_id);
+    assert_eq!(payload["shell"], "bash");
+    assert!(payload["output"]
+        .as_str()
+        .expect("output")
+        .contains("background-partial"));
+    assert_ne!(
+        payload["exit_code"].as_i64().expect("exit_code"),
+        0,
+        "timed-out background sessions should report a non-zero exit code"
+    );
+
+    let second_check = background_session_manager().check(&session_id);
+    assert_eq!(second_check["status"], "timeout");
+    assert_eq!(second_check["output"], payload["output"]);
+}
+
+#[test]
 fn foreground_timeout_moves_command_to_background() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

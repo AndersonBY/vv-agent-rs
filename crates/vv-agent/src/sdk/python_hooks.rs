@@ -27,7 +27,7 @@ impl PythonRuntimeHook {
 
     fn invoke(&self, method: &str, event: Value) -> Option<Value> {
         invoke_agent_hook(&self.hook_file, method, event)
-            .unwrap_or_else(|error| panic!("python runtime hook failed: {error}"))
+            .unwrap_or_else(|error| panic!("runtime hook failed: {error}"))
     }
 }
 
@@ -76,7 +76,7 @@ fn invoke_agent_hook(
         .spawn()
         .map_err(|error| {
             format!(
-                "failed to start python hook bridge with {}: {error}",
+                "failed to start runtime hook bridge with {}: {error}",
                 runner.label
             )
         })?;
@@ -84,19 +84,19 @@ fn invoke_agent_hook(
     let stdin = child
         .stdin
         .as_mut()
-        .ok_or_else(|| "failed to open python hook stdin".to_string())?;
+        .ok_or_else(|| "failed to open runtime hook stdin".to_string())?;
     stdin
         .write_all(event.to_string().as_bytes())
-        .map_err(|error| format!("failed to write python hook event: {error}"))?;
+        .map_err(|error| format!("failed to write runtime hook event: {error}"))?;
     drop(child.stdin.take());
 
     let output = child
         .wait_with_output()
-        .map_err(|error| format!("failed to wait for python hook: {error}"))?;
+        .map_err(|error| format!("failed to wait for runtime hook: {error}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(format!(
-            "python hook failed for {}::{method}: {stderr}",
+            "runtime hook failed for {}::{method}: {stderr}",
             hook_file.display()
         ));
     }
@@ -105,7 +105,7 @@ fn invoke_agent_hook(
         return Ok(None);
     }
     let parsed = serde_json::from_str::<Value>(&stdout)
-        .map_err(|error| format!("invalid python hook bridge JSON: {error}: {stdout}"))?;
+        .map_err(|error| format!("invalid runtime hook bridge JSON: {error}: {stdout}"))?;
     if parsed.get("kind").and_then(Value::as_str) == Some("none") {
         return Ok(None);
     }

@@ -116,6 +116,38 @@ fn source_rustdoc_comments_stay_capability_focused() {
     );
 }
 
+#[test]
+fn runtime_hook_bridge_stays_internal_to_sdk() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sdk_mod =
+        std::fs::read_to_string(manifest_dir.join("src/sdk/mod.rs")).expect("read SDK module");
+    let implementation_module_export = format!(
+        "pub mod {}_hooks",
+        forbidden_phrase(&[TERM_LANGUAGE]).to_ascii_lowercase()
+    );
+
+    assert!(
+        !sdk_mod.contains(&implementation_module_export),
+        "SDK public modules should expose Rust agent capabilities, not hook bridge internals"
+    );
+}
+
+#[test]
+fn hook_bridge_error_text_stays_runtime_focused() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = std::fs::read_to_string(manifest_dir.join("src/sdk/python_hooks.rs"))
+        .expect("read hook bridge source");
+    let source_language_hook = format!(
+        "{} hook",
+        forbidden_phrase(&[TERM_LANGUAGE]).to_ascii_lowercase()
+    );
+
+    assert!(
+        !contains_forbidden_term(&source, &source_language_hook),
+        "runtime hook error strings should describe the failing runtime hook without source-language history"
+    );
+}
+
 fn public_doc_forbidden_terms() -> Vec<String> {
     [
         forbidden_phrase(&[TERM_LANGUAGE]),

@@ -43,10 +43,10 @@ pub(super) fn bash_schema() -> Value {
                 "properties": {
                     "command": {"type": "string", "description": "Bash command string. The runtime executes it through the configured shell."},
                     "exec_dir": {"type": "string", "description": "Execution directory (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
-                    "timeout": {"type": "integer", "description": "Timeout seconds, default 300, max 600."},
+                    "timeout": {"type": "integer", "description": "Foreground timeout seconds, default 300, max 600. For long-running commands, prefer `run_in_background=true`; if a foreground command times out it is moved to a background session."},
                     "stdin": {"type": "string", "description": "Optional stdin content for interactive prompts, confirmation text, heredoc-style input, or commands that read from standard input. Prefer explicit stdin over embedding secrets or fragile echo pipelines in the command string."},
                     "auto_confirm": {"type": "boolean", "description": "Pipe yes to the command for non-interactive confirmation prompts. Use carefully: do not enable for destructive operations unless the user has already authorized the action and the command target is explicit."},
-                    "run_in_background": {"type": "boolean", "description": "Run command in background and return session_id for polling."}
+                    "run_in_background": {"type": "boolean", "description": "Run a long-running command in background and return a `session_id`; poll it later with `check_background_command` instead of blocking the Agent loop."}
                 },
                 "required": ["command"]
             }

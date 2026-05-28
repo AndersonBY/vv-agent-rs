@@ -178,7 +178,11 @@ fn default_tool_schema_wording_is_preserved() {
         &registry,
         "workspace_grep",
         "glob",
-        &["Optional file glob filter. Default **/*."],
+        &[
+            "Optional file glob filter such as `**/*.rs` or `docs/**/*.md`.",
+            "Use it to narrow by filename, path segment, or extension before running broad regex searches.",
+            "Default **/*.",
+        ],
     );
     assert_property_contains(
         &registry,
@@ -1202,6 +1206,57 @@ fn high_impact_tool_parameters_include_operational_guidance() {
             "sub_task_status",
             "workspace_file_limit",
             vec!["snapshot", "files", "noise"],
+        ),
+        ("list_files", "glob", vec!["filter", "extensions", "narrow"]),
+        (
+            "list_files",
+            "include_hidden",
+            vec!["hidden", "dotfiles", "explicitly"],
+        ),
+        (
+            "list_files",
+            "include_ignored",
+            vec!["dependency", "cache", "explicitly"],
+        ),
+        (
+            "list_files",
+            "max_results",
+            vec!["returned", "follow-up", "narrow"],
+        ),
+        (
+            "workspace_grep",
+            "glob",
+            vec!["filter", "extension", "narrow"],
+        ),
+        (
+            "workspace_grep",
+            "include_hidden",
+            vec!["hidden", "dotfiles", "explicitly"],
+        ),
+        (
+            "workspace_grep",
+            "include_ignored",
+            vec!["dependency", "cache", "explicitly"],
+        ),
+        (
+            "workspace_grep",
+            "head_limit",
+            vec!["cap", "rows", "follow-up"],
+        ),
+        (
+            "workspace_grep",
+            "max_results",
+            vec!["same behavior", "head_limit", "cap"],
+        ),
+        (
+            "bash",
+            "run_in_background",
+            vec!["long-running", "session_id", "poll"],
+        ),
+        (
+            "bash",
+            "timeout",
+            vec!["foreground", "background", "long-running"],
         ),
     ] {
         let description = property_description(&registry, tool_name, property_name);
