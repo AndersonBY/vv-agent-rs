@@ -297,7 +297,7 @@ fn create_sub_task_coerces_scalar_text_arguments_like_python() {
             ),
             &mut context,
         )
-        .expect("create_sub_task scalar coercion");
+        .expect("create_sub_task scalar arguments");
 
     assert_eq!(result.status, ToolResultStatus::Success);
     let captured = captured.lock().expect("captured");

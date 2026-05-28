@@ -82,6 +82,40 @@ Review code.
 }
 
 #[test]
+fn model_visible_system_prompt_does_not_explain_internal_parity_sources() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let options = BuildSystemPromptOptions {
+        current_time_utc: Some("2026-05-26T00:00:00Z".to_string()),
+        session_memory_context: "<Session Memory>\nRemember alpha\n</Session Memory>".to_string(),
+        available_sub_agents: BTreeMap::from([(
+            "reviewer".to_string(),
+            "Reviews source changes".to_string(),
+        )]),
+        available_skills: Some(json!([])),
+        workspace: Some(workspace.path().to_path_buf()),
+        ..BuildSystemPromptOptions::default()
+    };
+
+    let bundle = build_system_prompt_bundle_with_options("You are careful.", options);
+    for forbidden in [
+        "Python compatibility",
+        "Python-compatible",
+        "for Python",
+        "Python reference",
+        "Python-style",
+        "compatibility alias",
+        "reserved for compatibility",
+        "scalar coercion",
+    ] {
+        assert!(
+            !bundle.prompt.contains(forbidden),
+            "model-visible system prompt should not include internal parity source wording `{forbidden}`:\n{}",
+            bundle.prompt
+        );
+    }
+}
+
+#[test]
 fn prompt_public_api_tracks_section_and_tool_cache_breaks() {
     let calls = Arc::new(AtomicUsize::new(0));
     let calls_for_section = Arc::clone(&calls);

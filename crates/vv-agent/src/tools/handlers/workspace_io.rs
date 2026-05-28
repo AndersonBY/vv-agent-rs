@@ -408,18 +408,22 @@ pub(crate) fn read_file_tool() -> ToolSpec {
             match backend.read_text(&path) {
                 Ok(text) => {
                     let lines = text.lines().collect::<Vec<_>>();
-                    let start_index = start_line.saturating_sub(1).min(lines.len());
-                    let end_index = end_line.unwrap_or(lines.len()).min(lines.len());
-                    let selected = &lines[start_index..end_index];
+                    let requested_start_index = start_line.saturating_sub(1);
+                    let slice_start_index = requested_start_index.min(lines.len());
+                    let slice_end_index = end_line
+                        .unwrap_or(lines.len())
+                        .min(lines.len())
+                        .max(slice_start_index);
+                    let selected = &lines[slice_start_index..slice_end_index];
                     let selected_line_count = selected.len();
-                    let actual_start_line = start_index + 1;
-                    let actual_end_line = start_index + selected_line_count;
+                    let actual_start_line = requested_start_index + 1;
+                    let actual_end_line = requested_start_index + selected_line_count;
                     let content = selected
                         .iter()
                         .enumerate()
                         .map(|(offset, line)| {
                             if show_line_numbers {
-                                format!("{}: {line}", start_index + offset + 1)
+                                format!("{}: {line}", actual_start_line + offset)
                             } else {
                                 (*line).to_string()
                             }

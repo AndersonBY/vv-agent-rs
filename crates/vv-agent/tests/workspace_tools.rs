@@ -715,6 +715,34 @@ fn read_file_accepts_string_line_numbers_like_python() {
 }
 
 #[test]
+fn read_file_preserves_requested_start_line_for_empty_out_of_range_slice() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("short.txt"), "one\ntwo").expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "read_empty_range",
+                "read_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("short.txt")),
+                    ("start_line".to_string(), json!(10)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("read tool");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["start_line"], 10);
+    assert_eq!(payload["end_line"], 9);
+    assert_eq!(payload["content"], "");
+}
+
+#[test]
 fn read_file_uses_python_truthiness_for_show_line_numbers() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
