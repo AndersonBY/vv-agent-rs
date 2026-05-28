@@ -50,7 +50,7 @@ The current Rust implementation includes:
 - Stable crate-level exports for core agent types, runtime execution,
   tool dispatch, built-in tool registration, SDK clients, workspace backends,
   prompt helpers, memory helpers, and shared protocol types.
-- `vv-llm = "0.2.1"` based chat client construction through local settings,
+- `vv-llm = "0.2.3"` based chat client construction through local settings,
   endpoint resolution, endpoint retry/failover, streaming events, prompt-cache
   metadata, request debug dumps, resolved token limits, and usage accounting.
   Provider HTTP and request serialization stay delegated to `vv-llm`.

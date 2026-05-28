@@ -753,6 +753,50 @@ fn vv_llm_client_preserves_reasoning_and_tool_extra_content_through_vv_llm() {
 }
 
 #[test]
+fn vv_llm_client_preserves_reasoning_chain_for_deepseek_tool_turns() {
+    let chat_client = RecordingMessagesChatClient::default();
+    let probe = chat_client.clone();
+    let llm = VvLlmClient::new(
+        "deepseek",
+        "deepseek-v4-pro",
+        "deepseek-v4-pro",
+        Box::new(chat_client),
+        90.0,
+    );
+    let assistant_with_reasoning = {
+        let mut message = Message::assistant("first");
+        message.reasoning_content = Some("old-thought".to_string());
+        message
+    };
+    let assistant_without_reasoning = Message::assistant("second");
+
+    let _ = llm
+        .complete(LlmRequest::new(
+            "deepseek-v4-pro",
+            vec![
+                Message::user("start"),
+                assistant_with_reasoning,
+                Message::user("continue"),
+                assistant_without_reasoning,
+            ],
+        ))
+        .expect("deepseek request");
+
+    let request = probe.last_request().expect("recorded request");
+    let assistant_messages = request
+        .messages
+        .iter()
+        .filter(|message| message.role == vv_llm::MessageRole::Assistant)
+        .collect::<Vec<_>>();
+    assert_eq!(assistant_messages.len(), 2);
+    assert_eq!(
+        assistant_messages[0].reasoning_content.as_deref(),
+        Some("old-thought")
+    );
+    assert_eq!(assistant_messages[1].reasoning_content.as_deref(), Some(""));
+}
+
+#[test]
 fn vv_llm_client_applies_deepseek_reasoning_temperature() {
     let chat_client = RecordingMessagesChatClient::default();
     let probe = chat_client.clone();

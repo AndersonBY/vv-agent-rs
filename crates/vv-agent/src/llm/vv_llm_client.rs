@@ -41,6 +41,23 @@ const QWEN_THINKING_KEEP_SUFFIX_MODELS: &[&str] = &[
     "qwen3-vl-30b-a3b-thinking",
     "qwen3-vl-8b-thinking",
 ];
+const REASONING_CHAIN_MODELS: &[&str] = &[
+    "deepseek-reasoner",
+    "deepseek-r1-tools",
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "kimi-k2-thinking",
+    "kimi-k2.5",
+    "kimi-k2.6",
+    "minimax-m2.1",
+    "minimax-m2.1-lightning",
+    "minimax-m2.1-highspeed",
+    "minimax-m2.5",
+    "minimax-m2.5-highspeed",
+    "minimax-m2.7",
+    "minimax-m2.7-highspeed",
+];
+const REASONING_CHAIN_PREFIXES: &[&str] = &["deepseek-", "minimax-m2."];
 
 #[derive(Clone)]
 pub struct VvLlmClient {
@@ -233,6 +250,12 @@ impl VvLlmClient {
         let effective_model = self.effective_model_for_endpoint(&request.model, endpoint);
         let request_options = resolve_request_options(&effective_model);
         let request_model = request_options.model.clone();
+        let preserve_reasoning_chain = should_preserve_reasoning_chain(&[
+            &request.model,
+            &self.selected_model,
+            &endpoint.model_id,
+            &request_model,
+        ]);
         let should_stream = stream_callback.is_some()
             || request
                 .metadata
@@ -244,13 +267,13 @@ impl VvLlmClient {
         let estimated_prompt_tokens = count_messages_tokens(&request.messages, &request_model);
         let mut chat_request = vv_llm::ChatRequest {
             model: request_model.clone(),
-            messages: prepare_messages_for_model(
+            messages: prepare_reasoning_chain_messages(
                 request
                     .messages
                     .into_iter()
                     .map(to_vv_llm_message)
                     .collect(),
-                &request_model,
+                preserve_reasoning_chain,
             ),
             options: vv_llm::ChatRequestOptions {
                 temperature: request_options.temperature,
@@ -271,6 +294,7 @@ impl VvLlmClient {
             &request_metadata,
             &mut chat_request,
         );
+        chat_request.messages = prepare_messages_for_model(chat_request.messages, &request_model);
         if should_stream {
             chat_request.options.stream = Some(true);
         }
@@ -687,6 +711,34 @@ fn prepare_messages_for_model(messages: Vec<vv_llm::Message>, model: &str) -> Ve
             message
         })
         .collect()
+}
+
+fn prepare_reasoning_chain_messages(
+    mut messages: Vec<vv_llm::Message>,
+    preserve_reasoning_chain: bool,
+) -> Vec<vv_llm::Message> {
+    if !preserve_reasoning_chain {
+        return messages;
+    }
+    for message in &mut messages {
+        if message.role == vv_llm::MessageRole::Assistant && message.reasoning_content.is_none() {
+            message.reasoning_content = Some(String::new());
+        }
+    }
+    messages
+}
+
+fn should_preserve_reasoning_chain(candidates: &[&str]) -> bool {
+    candidates.iter().any(|candidate| {
+        let normalized = candidate.trim().to_ascii_lowercase();
+        !normalized.is_empty()
+            && (REASONING_CHAIN_MODELS
+                .iter()
+                .any(|model| normalized == *model)
+                || REASONING_CHAIN_PREFIXES
+                    .iter()
+                    .any(|prefix| normalized.starts_with(prefix)))
+    })
 }
 
 fn to_vv_llm_tool(tool: Value) -> vv_llm::ChatTool {

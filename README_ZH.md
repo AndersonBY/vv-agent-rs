@@ -44,7 +44,7 @@ cargo test --test live_deepseek -- --ignored
 
 - 一个 Cargo workspace，包含主 `vv-agent` library 和同包内 `vv-agent` CLI。
 - 稳定的 crate 顶层导出，覆盖核心 Agent 类型、运行时执行、工具调度、内置工具注册、SDK client、工作区后端、prompt helper、memory helper 和共享协议类型。
-- 基于 crates.io 官方 `vv-llm = "0.2.1"` 的 chat client 构建，支持本地 settings 解析、endpoint 解析、endpoint retry/failover、streaming 事件、prompt-cache metadata、请求 debug dump、模型 token limit 解析和 usage 统计。Provider HTTP 与请求序列化统一交给 `vv-llm`。
+- 基于 crates.io 官方 `vv-llm = "0.2.3"` 的 chat client 构建，支持本地 settings 解析、endpoint 解析、endpoint retry/failover、streaming 事件、prompt-cache metadata、请求 debug dump、模型 token limit 解析和 usage 统计。Provider HTTP 与请求序列化统一交给 `vv-llm`。
 - 用于测试的确定性 `ScriptedLlmClient`，支持固定响应 step、callback 响应 step、实时请求检查和脚本耗尽错误。
 - 多轮运行时执行，支持 tool-schema planning、tool-call dispatch、完成/等待用户收敛、runtime hooks、取消、生命周期事件、before-cycle 消息注入、插话中断和 max-cycle 处理。
 - inline、thread 和 checkpoint-dispatched 执行后端，配套可序列化 runtime recipe，以及 memory、SQLite、Redis 状态存储。
