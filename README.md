@@ -661,6 +661,9 @@ The current Rust implementation includes:
   Rust alternatives. SDK sessions use the same effective agent definition as
   one-shot runs, so startup shell defaults, bash environment overrides, prompt
   templates, and discovered skill directories also apply to session prompts.
+  Explicit `prepare_task*_with_session_id` helpers attach the Python-compatible
+  `session_id` metadata during task preview without overwriting a definition's
+  existing `session_id`.
 - SDK clients can now create sessions from the configured default agent or the
   only registered profile through `create_default_session*` helpers, and can
   create sessions by profile name without manually passing the copied

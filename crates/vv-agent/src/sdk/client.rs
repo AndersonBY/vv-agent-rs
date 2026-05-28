@@ -247,6 +247,12 @@ fn generate_task_id(prefix: &str) -> String {
     format!("{prefix}_{:08x}", counter & 0xffff_ffff)
 }
 
+fn normalize_prepare_session_id(session_id: Option<String>) -> Option<String> {
+    session_id
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn system_prompt_from_definition(
     definition: &AgentDefinition,
     workspace: Option<&Path>,
@@ -590,6 +596,26 @@ impl AgentSDKClient {
             prompt,
             resolved_model_id,
             self.options.workspace.clone(),
+            None::<String>,
+        ))
+    }
+
+    pub fn prepare_task_for_agent_with_session_id(
+        &self,
+        agent_name: impl AsRef<str>,
+        prompt: impl Into<String>,
+        resolved_model_id: impl Into<String>,
+        session_id: impl Into<String>,
+    ) -> Result<AgentTask, String> {
+        let agent_name = agent_name.as_ref().trim();
+        let definition = self.get_agent(agent_name)?.clone();
+        Ok(self.prepare_task_with_named_agent_in_workspace(
+            agent_name,
+            definition,
+            prompt,
+            resolved_model_id,
+            self.options.workspace.clone(),
+            Some(session_id.into()),
         ))
     }
 
@@ -608,6 +634,27 @@ impl AgentSDKClient {
             prompt,
             resolved_model_id,
             workspace,
+            None::<String>,
+        ))
+    }
+
+    pub fn prepare_task_for_agent_in_workspace_with_session_id(
+        &self,
+        agent_name: impl AsRef<str>,
+        prompt: impl Into<String>,
+        resolved_model_id: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+        session_id: impl Into<String>,
+    ) -> Result<AgentTask, String> {
+        let agent_name = agent_name.as_ref().trim();
+        let definition = self.get_agent(agent_name)?.clone();
+        Ok(self.prepare_task_with_named_agent_in_workspace(
+            agent_name,
+            definition,
+            prompt,
+            resolved_model_id,
+            workspace,
+            Some(session_id.into()),
         ))
     }
 
@@ -617,11 +664,29 @@ impl AgentSDKClient {
         prompt: impl Into<String>,
         resolved_model_id: impl Into<String>,
     ) -> AgentTask {
-        self.prepare_task_with_agent_in_workspace(
+        self.prepare_task_with_named_agent_in_workspace(
+            "inline",
             definition,
             prompt,
             resolved_model_id,
             self.options.workspace.clone(),
+            None::<String>,
+        )
+    }
+
+    pub fn prepare_task_with_agent_with_session_id(
+        &self,
+        definition: AgentDefinition,
+        prompt: impl Into<String>,
+        resolved_model_id: impl Into<String>,
+        session_id: impl Into<String>,
+    ) -> AgentTask {
+        self.prepare_task_with_agent_in_workspace_with_session_id(
+            definition,
+            prompt,
+            resolved_model_id,
+            self.options.workspace.clone(),
+            session_id,
         )
     }
 
@@ -638,6 +703,25 @@ impl AgentSDKClient {
             prompt,
             resolved_model_id,
             workspace,
+            None::<String>,
+        )
+    }
+
+    pub fn prepare_task_with_agent_in_workspace_with_session_id(
+        &self,
+        definition: AgentDefinition,
+        prompt: impl Into<String>,
+        resolved_model_id: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+        session_id: impl Into<String>,
+    ) -> AgentTask {
+        self.prepare_task_with_named_agent_in_workspace(
+            "inline",
+            definition,
+            prompt,
+            resolved_model_id,
+            workspace,
+            Some(session_id.into()),
         )
     }
 
@@ -656,6 +740,27 @@ impl AgentSDKClient {
             prompt,
             resolved_model_id,
             self.options.workspace.clone(),
+            None::<String>,
+        ))
+    }
+
+    pub fn prepare_task_with_session_id(
+        &self,
+        prompt: impl Into<String>,
+        resolved_model_id: impl Into<String>,
+        session_id: impl Into<String>,
+    ) -> Result<AgentTask, String> {
+        let (name, definition) = self.default_or_only_agent(
+            "No agent configured. Call prepare_task_with_agent_with_session_id(...) or register named agents first.",
+            "Multiple agents configured. Call prepare_task_for_agent_with_session_id(name, ...) with one of:",
+        )?;
+        Ok(self.prepare_task_with_named_agent_in_workspace(
+            &name,
+            definition,
+            prompt,
+            resolved_model_id,
+            self.options.workspace.clone(),
+            Some(session_id.into()),
         ))
     }
 
@@ -675,6 +780,28 @@ impl AgentSDKClient {
             prompt,
             resolved_model_id,
             workspace,
+            None::<String>,
+        ))
+    }
+
+    pub fn prepare_task_in_workspace_with_session_id(
+        &self,
+        prompt: impl Into<String>,
+        resolved_model_id: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+        session_id: impl Into<String>,
+    ) -> Result<AgentTask, String> {
+        let (name, definition) = self.default_or_only_agent(
+            "No agent configured. Call prepare_task_with_agent_in_workspace_with_session_id(...) or register named agents first.",
+            "Multiple agents configured. Call prepare_task_for_agent_in_workspace_with_session_id(name, ...) with one of:",
+        )?;
+        Ok(self.prepare_task_with_named_agent_in_workspace(
+            &name,
+            definition,
+            prompt,
+            resolved_model_id,
+            workspace,
+            Some(session_id.into()),
         ))
     }
 
@@ -685,6 +812,7 @@ impl AgentSDKClient {
         prompt: impl Into<String>,
         resolved_model_id: impl Into<String>,
         workspace: impl Into<PathBuf>,
+        session_id: Option<String>,
     ) -> AgentTask {
         let workspace = workspace.into();
         let mut task = task_from_definition_with_task_name(
@@ -694,6 +822,11 @@ impl AgentSDKClient {
             Some(agent_name),
         );
         task.model = resolved_model_id.into();
+        if let Some(session_id) = normalize_prepare_session_id(session_id) {
+            task.metadata
+                .entry("session_id".to_string())
+                .or_insert(Value::String(session_id));
+        }
         task
     }
 

@@ -775,6 +775,64 @@ fn sdk_prepare_task_clamps_runtime_limits_like_python() {
 }
 
 #[test]
+fn sdk_prepare_task_accepts_explicit_session_id_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().to_path_buf(),
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("demo-model");
+    agent
+        .metadata
+        .insert("session_id".to_string(), json!("definition-session"));
+
+    let inline_task = client.prepare_task_with_agent_with_session_id(
+        agent.clone(),
+        "hello",
+        "demo-model",
+        "session-preview",
+    );
+    assert_eq!(
+        inline_task.metadata["session_id"],
+        json!("definition-session")
+    );
+
+    let mut client = AgentSDKClient::new_with_agent(
+        AgentSDKOptions {
+            workspace: workspace.path().to_path_buf(),
+            auto_discover_resources: false,
+            ..AgentSDKOptions::default()
+        },
+        AgentDefinition::default_for_model("demo-model"),
+    );
+    client
+        .register_agent(
+            "researcher",
+            AgentDefinition::default_for_model("demo-model"),
+        )
+        .expect("register agent");
+
+    let named_task = client
+        .prepare_task_for_agent_with_session_id(
+            "researcher",
+            "preview named",
+            "demo-model",
+            "session-named",
+        )
+        .expect("named task");
+    assert_eq!(named_task.metadata["session_id"], json!("session-named"));
+
+    let default_task = client
+        .prepare_task_with_session_id("preview default", "demo-model", "session-default")
+        .expect("default task");
+    assert_eq!(
+        default_task.metadata["session_id"],
+        json!("session-default")
+    );
+}
+
+#[test]
 fn sdk_client_run_requires_agent_when_no_profile_is_configured_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new(
