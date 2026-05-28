@@ -340,7 +340,7 @@ fn structured_stream_tool_events_preserve_provider_tool_call_index() {
 }
 
 #[test]
-fn structured_stream_events_estimate_tokens_from_char_count_like_python() {
+fn structured_stream_events_estimate_tokens_from_char_count() {
     let llm = VvLlmClient::new(
         "deepseek",
         "deepseek-v4-pro",
@@ -426,7 +426,7 @@ fn sdk_options_stream_callback_is_forwarded_to_runtime() {
 }
 
 #[test]
-fn vv_llm_client_estimates_usage_when_provider_omits_usage_like_python() {
+fn vv_llm_client_estimates_usage_when_provider_omits_usage() {
     let llm = VvLlmClient::new(
         "openai",
         "demo-model",
@@ -460,7 +460,7 @@ fn vv_llm_client_estimates_usage_when_provider_omits_usage_like_python() {
 }
 
 #[test]
-fn vv_llm_client_auto_streams_deepseek_v4_models_like_python() {
+fn vv_llm_client_auto_streams_deepseek_v4_models() {
     let chat_client = StreamingChatClient::default();
     let probe = chat_client.clone();
     let llm = VvLlmClient::new(
@@ -485,7 +485,7 @@ fn vv_llm_client_auto_streams_deepseek_v4_models_like_python() {
 }
 
 #[test]
-fn vv_llm_client_fails_over_to_next_endpoint_client_like_python() {
+fn vv_llm_client_fails_over_to_next_endpoint_client() {
     let llm = VvLlmClient::new_with_named_endpoint_clients(
         "openai",
         "gpt-4o-alias",
@@ -521,7 +521,7 @@ fn vv_llm_client_fails_over_to_next_endpoint_client_like_python() {
 }
 
 #[test]
-fn vv_llm_client_prefers_last_successful_endpoint_like_python() {
+fn vv_llm_client_prefers_last_successful_endpoint() {
     let primary = CountingFailingChatClient::default();
     let primary_probe = primary.clone();
     let llm = VvLlmClient::new_with_named_endpoint_clients(
@@ -561,7 +561,7 @@ fn vv_llm_client_prefers_last_successful_endpoint_like_python() {
 }
 
 #[test]
-fn vv_llm_client_exposes_python_style_endpoint_randomization_policy() {
+fn vv_llm_client_exposes_agent_endpoint_randomization_policy() {
     let llm = VvLlmClient::new_with_named_endpoint_clients(
         "openai",
         "gpt-4o-mini",
@@ -587,7 +587,7 @@ fn vv_llm_client_exposes_python_style_endpoint_randomization_policy() {
 }
 
 #[test]
-fn vv_llm_client_retries_endpoint_before_failover_like_python() {
+fn vv_llm_client_retries_endpoint_before_failover() {
     let flaky = FlakyChatClient::new(1);
     let flaky_probe = flaky.clone();
     let llm = VvLlmClient::new(
@@ -611,7 +611,7 @@ fn vv_llm_client_retries_endpoint_before_failover_like_python() {
 }
 
 #[test]
-fn vv_llm_client_uses_endpoint_model_for_selected_alias_like_python() {
+fn vv_llm_client_uses_endpoint_model_for_selected_alias() {
     let llm = VvLlmClient::new_with_named_endpoint_clients(
         "openai",
         "gpt-alias",
@@ -635,7 +635,7 @@ fn vv_llm_client_uses_endpoint_model_for_selected_alias_like_python() {
 }
 
 #[test]
-fn vv_llm_client_converts_extra_minimax_system_messages_like_python() {
+fn vv_llm_client_converts_extra_minimax_system_messages() {
     let chat_client = RecordingMessagesChatClient::default();
     let probe = chat_client.clone();
     let llm = VvLlmClient::new(
@@ -671,7 +671,7 @@ fn vv_llm_client_converts_extra_minimax_system_messages_like_python() {
 }
 
 #[test]
-fn vv_llm_client_omits_empty_optional_request_fields_like_python() {
+fn vv_llm_client_omits_empty_optional_request_fields() {
     let chat_client = RecordingMessagesChatClient::default();
     let probe = chat_client.clone();
     let llm = VvLlmClient::new(
@@ -753,7 +753,7 @@ fn vv_llm_client_preserves_reasoning_and_tool_extra_content_through_vv_llm() {
 }
 
 #[test]
-fn vv_llm_client_applies_deepseek_reasoning_temperature_like_python() {
+fn vv_llm_client_applies_deepseek_reasoning_temperature() {
     let chat_client = RecordingMessagesChatClient::default();
     let probe = chat_client.clone();
     let llm = VvLlmClient::new(
@@ -776,7 +776,7 @@ fn vv_llm_client_applies_deepseek_reasoning_temperature_like_python() {
 }
 
 #[test]
-fn vv_llm_client_normalizes_supported_thinking_model_options_like_python() {
+fn vv_llm_client_normalizes_supported_thinking_model_options() {
     let claude_client = RecordingMessagesChatClient::default();
     let claude_probe = claude_client.clone();
     let claude = VvLlmClient::new(
@@ -832,7 +832,7 @@ fn vv_llm_client_normalizes_supported_thinking_model_options_like_python() {
 }
 
 #[test]
-fn vv_llm_client_applies_claude_prompt_cache_through_vv_llm_types_like_python() {
+fn vv_llm_client_applies_claude_prompt_cache_through_vv_llm_types() {
     let chat_client = RecordingMessagesChatClient::default();
     let probe = chat_client.clone();
     let llm = VvLlmClient::new(
@@ -907,7 +907,7 @@ fn vv_llm_client_applies_claude_prompt_cache_through_vv_llm_types_like_python() 
 }
 
 #[test]
-fn vv_llm_client_normalizes_more_provider_model_aliases_like_python() {
+fn vv_llm_client_normalizes_more_provider_model_aliases() {
     let qwen_client = RecordingMessagesChatClient::default();
     let qwen_probe = qwen_client.clone();
     let qwen = VvLlmClient::new(
@@ -1029,7 +1029,7 @@ fn vv_llm_client_normalizes_more_provider_model_aliases_like_python() {
 }
 
 #[test]
-fn vv_llm_client_normalizes_tool_call_ids_and_names_like_python() {
+fn vv_llm_client_normalizes_tool_call_ids_and_names() {
     let llm = VvLlmClient::new(
         "openai",
         "demo-model",
@@ -1052,7 +1052,7 @@ fn vv_llm_client_normalizes_tool_call_ids_and_names_like_python() {
 }
 
 #[test]
-fn vv_llm_stream_collects_raw_content_blocks_like_python() {
+fn vv_llm_stream_collects_raw_content_blocks() {
     let llm = VvLlmClient::new(
         "moonshot",
         "kimi-k2.5",
@@ -1080,7 +1080,7 @@ fn vv_llm_stream_collects_raw_content_blocks_like_python() {
 }
 
 #[test]
-fn vv_llm_client_debug_dump_writes_request_messages_like_python() {
+fn vv_llm_client_debug_dump_writes_request_messages() {
     let dump_dir = tempfile::tempdir().expect("dump dir");
     let chat_client = RecordingMessagesChatClient::default();
     let llm = VvLlmClient::new(

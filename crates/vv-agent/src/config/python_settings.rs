@@ -2,23 +2,23 @@ use serde_json::Value;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum PythonSettingsError {
+pub enum SettingsLiteralError {
     #[error("cannot find LLM_SETTINGS or settings assignment")]
     MissingAssignment,
-    #[error("invalid Python literal settings: {0}")]
+    #[error("invalid settings literal: {0}")]
     InvalidLiteral(String),
-    #[error("failed to decode normalized Python literal as JSON: {0}")]
+    #[error("failed to decode normalized settings literal as JSON: {0}")]
     Json(#[from] serde_json::Error),
 }
 
-pub(super) fn parse_llm_settings_source(source: &str) -> Result<Value, PythonSettingsError> {
+pub(super) fn parse_llm_settings_source(source: &str) -> Result<Value, SettingsLiteralError> {
     let literal = extract_assignment_literal(source, &["LLM_SETTINGS", "settings"])?;
-    let json_source = python_literal_to_json(literal)?;
+    let json_source = literal_to_json(literal)?;
     let value: Value = serde_json::from_str(&json_source)?;
     if value.is_object() {
         Ok(value)
     } else {
-        Err(PythonSettingsError::InvalidLiteral(
+        Err(SettingsLiteralError::InvalidLiteral(
             "settings assignment must evaluate to a mapping".to_string(),
         ))
     }
@@ -26,7 +26,7 @@ pub(super) fn parse_llm_settings_source(source: &str) -> Result<Value, PythonSet
 
 pub(super) fn parse_string_assignment(source: &str, targets: &[&str]) -> Option<String> {
     let literal = extract_assignment_literal(source, targets).ok()?;
-    let json_source = python_literal_to_json(literal).ok()?;
+    let json_source = literal_to_json(literal).ok()?;
     let value = serde_json::from_str::<Value>(&json_source).ok()?;
     value
         .as_str()
@@ -38,13 +38,13 @@ pub(super) fn parse_string_assignment(source: &str, targets: &[&str]) -> Option<
 fn extract_assignment_literal<'a>(
     source: &'a str,
     targets: &[&str],
-) -> Result<&'a str, PythonSettingsError> {
+) -> Result<&'a str, SettingsLiteralError> {
     for target in targets {
         if let Some(value_start) = find_top_level_assignment_value(source, target) {
             return collect_balanced_literal(&source[value_start..]);
         }
     }
-    Err(PythonSettingsError::MissingAssignment)
+    Err(SettingsLiteralError::MissingAssignment)
 }
 
 fn find_top_level_assignment_value(source: &str, target: &str) -> Option<usize> {
@@ -74,9 +74,9 @@ fn starts_with_name(source: &str, name: &str) -> bool {
             .is_none_or(|ch| !is_identifier_continue(ch))
 }
 
-fn collect_balanced_literal(source: &str) -> Result<&str, PythonSettingsError> {
+fn collect_balanced_literal(source: &str) -> Result<&str, SettingsLiteralError> {
     let start = first_literal_char(source).ok_or_else(|| {
-        PythonSettingsError::InvalidLiteral("assignment has no literal value".to_string())
+        SettingsLiteralError::InvalidLiteral("assignment has no literal value".to_string())
     })?;
     let tail = &source[start..];
     let mut depth = 0usize;
@@ -126,7 +126,7 @@ fn collect_balanced_literal(source: &str) -> Result<&str, PythonSettingsError> {
             }
             '}' | ']' | ')' => {
                 if depth == 0 {
-                    return Err(PythonSettingsError::InvalidLiteral(
+                    return Err(SettingsLiteralError::InvalidLiteral(
                         "unbalanced closing delimiter".to_string(),
                     ));
                 }
@@ -150,7 +150,7 @@ fn collect_balanced_literal(source: &str) -> Result<&str, PythonSettingsError> {
         }
     }
 
-    Err(PythonSettingsError::InvalidLiteral(
+    Err(SettingsLiteralError::InvalidLiteral(
         "unterminated literal assignment".to_string(),
     ))
 }
@@ -175,16 +175,16 @@ fn first_literal_char(source: &str) -> Option<usize> {
     None
 }
 
-fn python_literal_to_json(source: &str) -> Result<String, PythonSettingsError> {
+fn literal_to_json(source: &str) -> Result<String, SettingsLiteralError> {
     let mut output = String::with_capacity(source.len());
     let mut index = 0usize;
     while index < source.len() {
         let ch = source[index..].chars().next().ok_or_else(|| {
-            PythonSettingsError::InvalidLiteral("invalid utf-8 boundary".to_string())
+            SettingsLiteralError::InvalidLiteral("invalid utf-8 boundary".to_string())
         })?;
         match ch {
             '\'' | '"' => {
-                let (value, next_index) = parse_python_string(source, index, false)?;
+                let (value, next_index) = parse_literal_string(source, index, false)?;
                 output.push_str(&serde_json::to_string(&value)?);
                 index = next_index;
             }
@@ -211,7 +211,7 @@ fn python_literal_to_json(source: &str) -> Result<String, PythonSettingsError> {
                     if let Some((quote_index, raw)) =
                         prefixed_string_start(source, next_index, word)
                     {
-                        let (value, consumed) = parse_python_string(source, quote_index, raw)?;
+                        let (value, consumed) = parse_literal_string(source, quote_index, raw)?;
                         output.push_str(&serde_json::to_string(&value)?);
                         index = consumed;
                         continue;
@@ -222,7 +222,7 @@ fn python_literal_to_json(source: &str) -> Result<String, PythonSettingsError> {
                     "False" => output.push_str("false"),
                     "None" => output.push_str("null"),
                     other => {
-                        return Err(PythonSettingsError::InvalidLiteral(format!(
+                        return Err(SettingsLiteralError::InvalidLiteral(format!(
                             "unsupported identifier {other:?}"
                         )));
                     }
@@ -238,13 +238,13 @@ fn python_literal_to_json(source: &str) -> Result<String, PythonSettingsError> {
     Ok(output)
 }
 
-fn parse_python_string(
+fn parse_literal_string(
     source: &str,
     start: usize,
     raw: bool,
-) -> Result<(String, usize), PythonSettingsError> {
+) -> Result<(String, usize), SettingsLiteralError> {
     let quote = source[start..].chars().next().ok_or_else(|| {
-        PythonSettingsError::InvalidLiteral("string start is out of bounds".to_string())
+        SettingsLiteralError::InvalidLiteral("string start is out of bounds".to_string())
     })?;
     let quote_len = quote.len_utf8();
     let triple = source[start..].starts_with(&quote.to_string().repeat(3));
@@ -257,7 +257,7 @@ fn parse_python_string(
             return Ok((content, index + quote_len * 3));
         }
         let ch = source[index..].chars().next().ok_or_else(|| {
-            PythonSettingsError::InvalidLiteral("invalid string boundary".to_string())
+            SettingsLiteralError::InvalidLiteral("invalid string boundary".to_string())
         })?;
         if !triple && ch == quote {
             return Ok((content, index + quote_len));
@@ -272,14 +272,14 @@ fn parse_python_string(
         }
     }
 
-    Err(PythonSettingsError::InvalidLiteral(
+    Err(SettingsLiteralError::InvalidLiteral(
         "unterminated string literal".to_string(),
     ))
 }
 
-fn parse_escape(source: &str, start: usize) -> Result<(char, usize), PythonSettingsError> {
+fn parse_escape(source: &str, start: usize) -> Result<(char, usize), SettingsLiteralError> {
     let escaped = source[start..].chars().next().ok_or_else(|| {
-        PythonSettingsError::InvalidLiteral("unterminated escape sequence".to_string())
+        SettingsLiteralError::InvalidLiteral("unterminated escape sequence".to_string())
     })?;
     let next = start + escaped.len_utf8();
     let value = match escaped {
@@ -303,15 +303,15 @@ fn parse_hex_escape(
     source: &str,
     start: usize,
     digits: usize,
-) -> Result<(char, usize), PythonSettingsError> {
+) -> Result<(char, usize), SettingsLiteralError> {
     let mut end = start;
     let mut hex = String::new();
     for _ in 0..digits {
         let ch = source[end..].chars().next().ok_or_else(|| {
-            PythonSettingsError::InvalidLiteral("unterminated hex escape".to_string())
+            SettingsLiteralError::InvalidLiteral("unterminated hex escape".to_string())
         })?;
         if !ch.is_ascii_hexdigit() {
-            return Err(PythonSettingsError::InvalidLiteral(
+            return Err(SettingsLiteralError::InvalidLiteral(
                 "invalid hex escape".to_string(),
             ));
         }
@@ -319,9 +319,9 @@ fn parse_hex_escape(
         end += ch.len_utf8();
     }
     let codepoint = u32::from_str_radix(&hex, 16)
-        .map_err(|_| PythonSettingsError::InvalidLiteral("invalid unicode escape".to_string()))?;
+        .map_err(|_| SettingsLiteralError::InvalidLiteral("invalid unicode escape".to_string()))?;
     let value = char::from_u32(codepoint).ok_or_else(|| {
-        PythonSettingsError::InvalidLiteral("invalid unicode codepoint".to_string())
+        SettingsLiteralError::InvalidLiteral("invalid unicode codepoint".to_string())
     })?;
     Ok((value, end))
 }

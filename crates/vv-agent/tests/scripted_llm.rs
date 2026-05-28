@@ -6,7 +6,7 @@ use vv_agent::{
 };
 
 #[test]
-fn scripted_llm_accepts_callable_steps_like_python() {
+fn scripted_llm_accepts_callable_steps() {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let seen_for_step = Arc::clone(&seen);
     let llm = ScriptedLlmClient::from_steps(vec![
@@ -42,7 +42,7 @@ fn scripted_llm_accepts_callable_steps_like_python() {
 }
 
 #[test]
-fn scripted_llm_reports_exhausted_steps_like_python() {
+fn scripted_llm_reports_exhausted_steps() {
     let llm = ScriptedLlmClient::new(Vec::new());
     let error = llm
         .complete(LlmRequest::new("model", Vec::new()))

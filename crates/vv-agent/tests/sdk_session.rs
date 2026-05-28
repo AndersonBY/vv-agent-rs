@@ -28,7 +28,7 @@ fn preview_text_for_test(text: &str, log_preview_chars: Option<usize>) -> String
 }
 
 #[test]
-fn session_state_starts_with_python_style_todo_list() {
+fn session_state_starts_with_agent_todo_list() {
     let execute_run = Arc::new(|prompt: String| Ok(fake_run(&prompt, AgentStatus::Completed)));
     let session = AgentSession::new(
         execute_run,
@@ -44,7 +44,7 @@ fn session_state_starts_with_python_style_todo_list() {
 }
 
 #[test]
-fn session_id_defaults_to_python_style_hex_prefix() {
+fn session_id_defaults_to_agent_hex_prefix() {
     let execute_run = Arc::new(|prompt: String| Ok(fake_run(&prompt, AgentStatus::Completed)));
     let session = AgentSession::new(
         execute_run,
@@ -61,7 +61,7 @@ fn session_id_defaults_to_python_style_hex_prefix() {
 }
 
 #[test]
-fn session_constructor_preserves_initial_shared_state_like_python() {
+fn session_constructor_preserves_initial_shared_state() {
     let execute_run = Arc::new(|request: vv_agent::AgentSessionRunRequest| {
         assert_eq!(
             request.shared_state.get("seed").and_then(Value::as_str),
@@ -104,7 +104,7 @@ fn session_constructor_preserves_initial_shared_state_like_python() {
 }
 
 #[test]
-fn create_agent_session_helper_accepts_initial_shared_state_like_python() {
+fn create_agent_session_helper_accepts_initial_shared_state() {
     let client = AgentSDKClient::new(AgentSDKOptions {
         auto_discover_resources: false,
         ..AgentSDKOptions::default()
@@ -124,7 +124,7 @@ fn create_agent_session_helper_accepts_initial_shared_state_like_python() {
 }
 
 #[test]
-fn session_exposes_python_style_state_accessors() {
+fn session_exposes_agent_state_accessors() {
     let workspace = tempfile::tempdir().expect("workspace");
     let execute_run = Arc::new(|prompt: String| {
         Ok(AgentRun {
@@ -867,7 +867,7 @@ fn sdk_session_workspace_override_is_used_for_tool_context_and_state() {
 }
 
 #[test]
-fn sdk_client_create_default_session_selects_only_profile_with_workspace_like_python() {
+fn sdk_client_create_default_session_selects_only_profile_with_workspace() {
     let default_workspace = tempfile::tempdir().expect("default workspace");
     let override_workspace = tempfile::tempdir().expect("override workspace");
     let responses = vec![
@@ -920,7 +920,7 @@ fn sdk_client_create_default_session_selects_only_profile_with_workspace_like_py
 }
 
 #[test]
-fn sdk_default_session_combines_id_workspace_and_shared_state_like_python() {
+fn sdk_default_session_combines_id_workspace_and_shared_state() {
     let default_workspace = tempfile::tempdir().expect("default workspace");
     let override_workspace = tempfile::tempdir().expect("override workspace");
     let mut client = AgentSDKClient::new(AgentSDKOptions {
@@ -953,7 +953,7 @@ fn sdk_default_session_combines_id_workspace_and_shared_state_like_python() {
 }
 
 #[test]
-fn sdk_session_absolutizes_relative_workspace_override_like_python() {
+fn sdk_session_absolutizes_relative_workspace_override() {
     let current_dir = std::env::current_dir().expect("current dir");
     let root = tempfile::tempdir_in(&current_dir).expect("root");
     let default_workspace = root.path().join("default-workspace");
@@ -983,7 +983,7 @@ fn sdk_session_absolutizes_relative_workspace_override_like_python() {
 }
 
 #[test]
-fn sdk_session_canonicalizes_workspace_override_like_python() {
+fn sdk_session_canonicalizes_workspace_override() {
     let root = tempfile::tempdir().expect("root");
     let default_workspace = root.path().join("default-workspace");
     let override_workspace = root.path().join("override-workspace");
@@ -1008,7 +1008,7 @@ fn sdk_session_canonicalizes_workspace_override_like_python() {
 }
 
 #[test]
-fn sdk_named_session_combines_id_workspace_and_shared_state_like_python() {
+fn sdk_named_session_combines_id_workspace_and_shared_state() {
     let default_workspace = tempfile::tempdir().expect("default workspace");
     let override_workspace = tempfile::tempdir().expect("override workspace");
     let mut client = AgentSDKClient::new(AgentSDKOptions {
@@ -1064,7 +1064,7 @@ fn sdk_session_reuses_sub_task_manager_across_turns() {
 }
 
 #[test]
-fn sdk_runtime_applies_startup_shell_defaults_to_tool_context_like_python() {
+fn sdk_runtime_applies_startup_shell_defaults_to_tool_context() {
     let responses = vec![
         LLMResponse {
             content: "run shell".to_string(),
@@ -1129,7 +1129,7 @@ fn sdk_runtime_applies_startup_shell_defaults_to_tool_context_like_python() {
 }
 
 #[test]
-fn sdk_session_applies_startup_shell_defaults_to_tool_context_like_python() {
+fn sdk_session_applies_startup_shell_defaults_to_tool_context() {
     let responses = vec![
         LLMResponse {
             content: "run shell".to_string(),
@@ -1216,7 +1216,7 @@ fn sdk_client_query_reports_wait_user_status() {
 }
 
 #[test]
-fn session_continue_after_wait_user_with_multiple_tool_calls_like_python() {
+fn session_continue_after_wait_user_with_multiple_tool_calls() {
     let responses = vec![
         LLMResponse {
             content: "need user input".to_string(),

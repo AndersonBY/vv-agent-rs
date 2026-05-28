@@ -401,7 +401,7 @@ fn default_tool_schema_wording_is_preserved() {
 }
 
 #[test]
-fn builtin_tool_required_fields_match_python_reference_schema() {
+fn builtin_tool_required_fields_match_agent_reference_schema() {
     let registry = build_default_registry();
 
     for (tool_name, expected_required) in [
@@ -425,7 +425,7 @@ fn builtin_tool_required_fields_match_python_reference_schema() {
         let schema = registry.get_schema(tool_name).expect("schema");
         assert_eq!(
             schema["function"]["parameters"]["required"], expected_required,
-            "{tool_name} top-level required fields should match Python v-agent schema"
+            "{tool_name} top-level required fields should match reference schema"
         );
     }
 
@@ -433,24 +433,24 @@ fn builtin_tool_required_fields_match_python_reference_schema() {
     assert_eq!(
         create_sub_task["function"]["parameters"]["properties"]["tasks"]["items"]["required"],
         json!(["task_description"]),
-        "create_sub_task.tasks item required fields should match Python v-agent schema"
+        "create_sub_task.tasks item required fields should match reference schema"
     );
 
     let todo_write = registry.get_schema("todo_write").expect("schema");
     assert_eq!(
         todo_write["function"]["parameters"]["properties"]["todos"]["items"]["required"],
         json!(["title", "status", "priority"]),
-        "todo_write.todos item required fields should match Python v-agent schema"
+        "todo_write.todos item required fields should match reference schema"
     );
     assert!(
         description(&registry, "todo_write")
             .contains("Each item must include `title`, `status`, and `priority`"),
-        "todo_write should guide the model to emit the Python-required fields explicitly"
+        "todo_write should guide the model to emit the required fields explicitly"
     );
 }
 
 #[test]
-fn builtin_tool_properties_and_enums_match_python_reference_schema() {
+fn builtin_tool_properties_and_enums_match_agent_reference_schema() {
     let registry = build_default_registry();
 
     for (tool_name, expected_properties) in [
@@ -569,7 +569,7 @@ fn builtin_tool_properties_and_enums_match_python_reference_schema() {
                 &["function", "parameters", "properties"]
             ),
             expected_properties,
-            "{tool_name} properties should match Python v-agent schema"
+            "{tool_name} properties should match reference schema"
         );
     }
 
@@ -626,7 +626,7 @@ fn builtin_tool_properties_and_enums_match_python_reference_schema() {
 }
 
 #[test]
-fn builtin_tool_property_types_match_python_reference_schema() {
+fn builtin_tool_property_types_match_agent_reference_schema() {
     let registry = build_default_registry();
 
     for (tool_name, property_name, expected_type) in [
@@ -701,7 +701,7 @@ fn builtin_tool_property_types_match_python_reference_schema() {
         assert_eq!(
             schema_type(&registry, tool_name, &[property_name]),
             expected_type,
-            "{tool_name}.{property_name} type should match Python v-agent schema"
+            "{tool_name}.{property_name} type should match reference schema"
         );
     }
 
@@ -729,7 +729,7 @@ fn builtin_tool_property_types_match_python_reference_schema() {
         assert_eq!(
             schema_type(&registry, tool_name, &property_path),
             expected_type,
-            "{tool_name}.{} type should match Python v-agent schema",
+            "{tool_name}.{} type should match reference schema",
             property_path.join(".")
         );
     }
@@ -1078,7 +1078,7 @@ fn every_builtin_tool_schema_has_operational_guidance_not_just_labels() {
 }
 
 #[test]
-fn model_visible_tool_schemas_do_not_explain_internal_parity_sources() {
+fn model_visible_tool_schemas_stay_capability_focused() {
     let registry = build_default_registry();
 
     for schema in registry.list_openai_schemas(None).expect("schemas") {
@@ -1086,7 +1086,7 @@ fn model_visible_tool_schemas_do_not_explain_internal_parity_sources() {
         for forbidden in tool_schema_forbidden_terms() {
             assert!(
                 !serialized.contains(forbidden.as_str()),
-                "model-visible tool schema should not include internal parity source wording `{forbidden}`:\n{serialized}"
+                "model-visible tool schema should not include internal implementation wording `{forbidden}`:\n{serialized}"
             );
         }
     }

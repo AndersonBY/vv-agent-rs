@@ -255,10 +255,13 @@ fn read_string(payload: &serde_json::Map<String, Value>, key: &str) -> Option<St
 }
 
 fn read_bool(payload: &serde_json::Map<String, Value>, key: &str, default: bool) -> bool {
-    payload.get(key).map(python_truthy).unwrap_or(default)
+    payload
+        .get(key)
+        .map(json_value_is_truthy)
+        .unwrap_or(default)
 }
 
-fn python_truthy(value: &Value) -> bool {
+fn json_value_is_truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
         Value::Bool(value) => *value,
@@ -272,7 +275,7 @@ fn python_truthy(value: &Value) -> bool {
 fn read_positive_u32(payload: &serde_json::Map<String, Value>, key: &str, default: u32) -> u32 {
     let parsed = payload
         .get(key)
-        .and_then(python_int)
+        .and_then(json_int)
         .unwrap_or(i64::from(default));
     u32::try_from(parsed.max(1)).unwrap_or(u32::MAX)
 }
@@ -280,7 +283,7 @@ fn read_positive_u32(payload: &serde_json::Map<String, Value>, key: &str, defaul
 fn read_positive_u64(payload: &serde_json::Map<String, Value>, key: &str, default: u64) -> u64 {
     let parsed = payload
         .get(key)
-        .and_then(python_int)
+        .and_then(json_int)
         .unwrap_or_else(|| i64::try_from(default).unwrap_or(i64::MAX));
     u64::try_from(parsed.max(1)).unwrap_or(u64::MAX)
 }
@@ -288,12 +291,12 @@ fn read_positive_u64(payload: &serde_json::Map<String, Value>, key: &str, defaul
 fn read_percentage_u8(payload: &serde_json::Map<String, Value>, key: &str, default: u8) -> u8 {
     let parsed = payload
         .get(key)
-        .and_then(python_int)
+        .and_then(json_int)
         .unwrap_or(i64::from(default));
     u8::try_from(parsed.clamp(1, 100)).unwrap_or(default)
 }
 
-fn python_int(value: &Value) -> Option<i64> {
+fn json_int(value: &Value) -> Option<i64> {
     match value {
         Value::Bool(value) => Some(i64::from(*value)),
         Value::Number(number) => number
@@ -320,7 +323,7 @@ fn read_string_list(payload: &serde_json::Map<String, Value>, key: &str) -> Vec<
         .map(|items| {
             items
                 .iter()
-                .map(python_str)
+                .map(stringify_json_value)
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
                 .collect()
@@ -343,14 +346,14 @@ fn read_string_map(
                     if key.is_empty() {
                         return None;
                     }
-                    Some((key.to_string(), python_str(value)))
+                    Some((key.to_string(), stringify_json_value(value)))
                 })
                 .collect()
         })
         .unwrap_or_default()
 }
 
-fn python_str(value: &Value) -> String {
+fn stringify_json_value(value: &Value) -> String {
     match value {
         Value::Null => "None".to_string(),
         Value::Bool(true) => "True".to_string(),
@@ -358,13 +361,19 @@ fn python_str(value: &Value) -> String {
         Value::Number(number) => number.to_string(),
         Value::String(value) => value.clone(),
         Value::Array(items) => {
-            let items = items.iter().map(python_repr).collect::<Vec<_>>().join(", ");
+            let items = items
+                .iter()
+                .map(json_value_repr)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("[{items}]")
         }
         Value::Object(object) => {
             let items = object
                 .iter()
-                .map(|(key, value)| format!("{}: {}", python_repr_string(key), python_repr(value)))
+                .map(|(key, value)| {
+                    format!("{}: {}", quote_json_string(key), json_value_repr(value))
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("{{{items}}}")
@@ -372,14 +381,14 @@ fn python_str(value: &Value) -> String {
     }
 }
 
-fn python_repr(value: &Value) -> String {
+fn json_value_repr(value: &Value) -> String {
     match value {
-        Value::String(value) => python_repr_string(value),
-        other => python_str(other),
+        Value::String(value) => quote_json_string(value),
+        other => stringify_json_value(other),
     }
 }
 
-fn python_repr_string(value: &str) -> String {
+fn quote_json_string(value: &str) -> String {
     format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 

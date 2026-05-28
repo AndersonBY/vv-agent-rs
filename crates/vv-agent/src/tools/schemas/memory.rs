@@ -6,7 +6,7 @@ Store a durable memory note that should survive future compaction.
 
 When to use:
 - Preserve stable decisions, constraints, file paths, API names, test evidence, user preferences, or implementation facts that would be expensive or risky to rediscover.
-- Capture facts needed by later turns after a long investigation, a live incident, or a multi-step migration.
+- Capture facts needed by later turns after a long investigation, a live incident, or a multi-step implementation.
 - Use this before context compaction when losing a detail would make the Agent repeat work or make an unsafe assumption.
 
 Good memory notes:

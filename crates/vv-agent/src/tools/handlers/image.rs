@@ -6,7 +6,7 @@ use serde_json::json;
 
 use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{
-    coerce_python_text_arg, path_escapes_workspace_error, tool_error_with_code, tool_result,
+    path_escapes_workspace_error, stringify_tool_arg, tool_error_with_code, tool_result,
 };
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
@@ -20,7 +20,7 @@ pub(crate) fn read_image_tool() -> ToolSpec {
         "read_image",
         "Read image from workspace path or HTTP URL for multimodal follow-up.",
         Arc::new(|context, arguments| {
-            let raw_path = coerce_python_text_arg(arguments.get("path"), "");
+            let raw_path = stringify_tool_arg(arguments.get("path"), "");
             let raw_path = raw_path.trim();
             if raw_path.is_empty() {
                 return tool_error_with_code("`path` is required", "path_required");

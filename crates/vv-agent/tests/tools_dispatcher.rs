@@ -40,7 +40,7 @@ fn dispatcher_returns_structured_errors_for_invalid_arguments_and_unknown_tools(
 }
 
 #[test]
-fn dispatcher_normalizes_tool_call_id_and_wait_response_status_like_python() {
+fn dispatcher_normalizes_tool_call_id_and_wait_response_status() {
     let workspace = tempfile::tempdir().expect("workspace");
     let mut registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -81,7 +81,7 @@ fn dispatcher_normalizes_tool_call_id_and_wait_response_status_like_python() {
 }
 
 #[test]
-fn register_tool_with_parameters_creates_schema_and_handler_like_python() {
+fn register_tool_with_parameters_creates_schema_and_handler() {
     let mut registry = ToolRegistry::new();
     registry
         .register_tool_with_parameters(
@@ -118,7 +118,7 @@ fn register_tool_with_parameters_creates_schema_and_handler_like_python() {
 }
 
 #[test]
-fn register_preserves_explicit_schema_registered_before_handler_like_python() {
+fn register_preserves_explicit_schema_registered_before_handler() {
     let mut registry = ToolRegistry::new();
     registry.register_schema(
         "_workflow_custom_run",
@@ -177,7 +177,7 @@ fn register_preserves_explicit_schema_registered_before_handler_like_python() {
 }
 
 #[test]
-fn list_openai_schemas_defaults_to_registered_tools_order_like_python() {
+fn list_openai_schemas_defaults_to_registered_tools_order() {
     let mut registry = ToolRegistry::new();
     registry.register_schema(
         "_schema_only",
@@ -216,7 +216,7 @@ fn list_openai_schemas_defaults_to_registered_tools_order_like_python() {
 }
 
 #[test]
-fn list_openai_schemas_rejects_missing_schema_like_python() {
+fn list_openai_schemas_rejects_missing_schema() {
     let mut registry = ToolRegistry::new();
     registry
         .register(ToolSpec::new(
@@ -250,7 +250,7 @@ fn list_openai_schemas_rejects_missing_schema_like_python() {
 }
 
 #[test]
-fn register_tool_keeps_python_default_empty_object_schema() {
+fn register_tool_keeps_agent_default_empty_object_schema() {
     let mut registry = ToolRegistry::new();
     registry
         .register_tool(

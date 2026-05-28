@@ -100,10 +100,10 @@ pub fn normalize_windows_shell_priority(
     };
     let mut normalized = Vec::new();
     for item in items {
-        if python_falsy(item) {
+        if json_value_is_falsey(item) {
             continue;
         }
-        let value = python_str(item);
+        let value = stringify_json_value(item);
         let value = value.trim();
         if value.is_empty() || normalized.iter().any(|seen| seen == value) {
             continue;
@@ -113,7 +113,7 @@ pub fn normalize_windows_shell_priority(
     Ok(Some(normalized))
 }
 
-fn python_falsy(value: &serde_json::Value) -> bool {
+fn json_value_is_falsey(value: &serde_json::Value) -> bool {
     match value {
         serde_json::Value::Null => true,
         serde_json::Value::Bool(value) => !*value,
@@ -124,7 +124,7 @@ fn python_falsy(value: &serde_json::Value) -> bool {
     }
 }
 
-fn python_str(value: &serde_json::Value) -> String {
+fn stringify_json_value(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::Null => String::new(),
         serde_json::Value::Bool(true) => "True".to_string(),
@@ -132,13 +132,19 @@ fn python_str(value: &serde_json::Value) -> String {
         serde_json::Value::Number(number) => number.to_string(),
         serde_json::Value::String(value) => value.clone(),
         serde_json::Value::Array(items) => {
-            let items = items.iter().map(python_repr).collect::<Vec<_>>().join(", ");
+            let items = items
+                .iter()
+                .map(json_value_repr)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("[{items}]")
         }
         serde_json::Value::Object(object) => {
             let items = object
                 .iter()
-                .map(|(key, value)| format!("{}: {}", python_repr_string(key), python_repr(value)))
+                .map(|(key, value)| {
+                    format!("{}: {}", quote_json_string(key), json_value_repr(value))
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("{{{items}}}")
@@ -146,14 +152,14 @@ fn python_str(value: &serde_json::Value) -> String {
     }
 }
 
-fn python_repr(value: &serde_json::Value) -> String {
+fn json_value_repr(value: &serde_json::Value) -> String {
     match value {
-        serde_json::Value::String(value) => python_repr_string(value),
-        other => python_str(other),
+        serde_json::Value::String(value) => quote_json_string(value),
+        other => stringify_json_value(other),
     }
 }
 
-fn python_repr_string(value: &str) -> String {
+fn quote_json_string(value: &str) -> String {
     format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
@@ -573,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_shell_priority_skips_unavailable_git_bash_like_python() {
+    fn windows_shell_priority_skips_unavailable_git_bash() {
         let priority = vec!["git-bash".to_string(), "cmd".to_string()];
         let discovery = FakeWindowsShellDiscovery::default();
 
@@ -591,7 +597,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_shell_priority_prefers_available_git_bash_like_python() {
+    fn windows_shell_priority_prefers_available_git_bash() {
         let priority = vec![
             "git-bash".to_string(),
             "powershell".to_string(),
@@ -614,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_shell_priority_falls_back_to_powershell_like_python() {
+    fn windows_shell_priority_falls_back_to_powershell() {
         let priority = vec![
             "git-bash".to_string(),
             "powershell".to_string(),
@@ -644,7 +650,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_explicit_unavailable_shell_returns_error_like_python() {
+    fn windows_explicit_unavailable_shell_returns_error() {
         let discovery = FakeWindowsShellDiscovery::default();
         let error = resolve_windows_shell_with_discovery(Some("git-bash"), None, &discovery)
             .expect_err("explicit unavailable shell should error");

@@ -16,7 +16,7 @@ use vv_agent::{
 };
 
 #[test]
-fn public_package_docs_do_not_explain_migration_history() {
+fn public_package_docs_stay_capability_focused() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_dir = manifest_dir
         .parent()
@@ -43,13 +43,48 @@ fn public_package_docs_do_not_explain_migration_history() {
 
     assert!(
         violations.is_empty(),
-        "public package docs should describe capabilities, not migration context:\n{}",
+        "public package docs should describe capabilities directly:\n{}",
         violations.join("\n")
     );
 }
 
 #[test]
-fn source_rustdoc_comments_do_not_explain_migration_history() {
+fn public_package_docs_do_not_dump_internal_file_names() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_dir = manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .expect("workspace dir");
+    let public_docs = [
+        workspace_dir.join("README.md"),
+        workspace_dir.join("README_ZH.md"),
+    ];
+    let noisy_file_names = [
+        "hooks.rs",
+        "tool_schema_parity.rs",
+        "prompt_public_api.rs",
+        "live_deepseek.rs",
+    ];
+
+    let mut violations = Vec::new();
+    for path in public_docs {
+        let content = std::fs::read_to_string(&path).expect("read public doc");
+        for file_name in noisy_file_names {
+            if content.contains(file_name) {
+                violations.push(format!("{} contains {file_name}", path.display()));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "public package docs should not expose internal file inventory:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn source_rustdoc_comments_stay_capability_focused() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source_files = collect_rust_files(&manifest_dir.join("src"));
     let forbidden = rustdoc_forbidden_terms();
@@ -76,7 +111,7 @@ fn source_rustdoc_comments_do_not_explain_migration_history() {
 
     assert!(
         violations.is_empty(),
-        "public rustdoc should describe the Rust API, not migration context:\n{}",
+        "public rustdoc should describe the Rust API directly:\n{}",
         violations.join("\n")
     );
 }
@@ -202,7 +237,7 @@ fn collect_rust_files_inner(path: &Path, files: &mut Vec<std::path::PathBuf>) {
 }
 
 #[test]
-fn python_style_public_aliases_are_available() {
+fn agent_public_aliases_are_available() {
     fn assert_llm_client<T: LLMClient>() {}
     assert_llm_client::<ScriptedLLM>();
 
@@ -243,13 +278,13 @@ fn python_style_public_aliases_are_available() {
 }
 
 #[test]
-fn tools_builtins_module_matches_python_import_path() {
+fn tools_builtins_module_matches_import_path() {
     let registry = vv_agent::tools::builtins::build_default_registry();
     assert!(registry.has_tool(vv_agent::constants::TASK_FINISH_TOOL_NAME));
 }
 
 #[test]
-fn tools_handlers_module_reexports_python_handler_functions() {
+fn tools_handlers_module_reexports_agent_handler_functions() {
     fn assert_handler(
         _: fn(
             &mut vv_agent::ToolContext,
@@ -294,7 +329,7 @@ fn tools_handlers_module_reexports_python_handler_functions() {
 }
 
 #[test]
-fn constants_module_exports_python_tool_names_and_workspace_tool_list() {
+fn constants_module_exports_agent_tool_names_and_workspace_tool_list() {
     use vv_agent::constants;
 
     assert_eq!(constants::TODO_INCOMPLETE_ERROR_CODE, "todo_incomplete");
@@ -388,13 +423,13 @@ fn constants_module_exports_python_tool_names_and_workspace_tool_list() {
 }
 
 #[test]
-fn memory_module_exports_compactable_tools_like_python() {
+fn memory_module_exports_compactable_tools() {
     assert!(vv_agent::memory::COMPACTABLE_TOOLS.contains(&"read_file"));
     assert!(vv_agent::memory::COMPACTABLE_TOOLS.contains(&"workspace_grep"));
 }
 
 #[test]
-fn memory_submodules_match_python_import_paths() {
+fn memory_submodules_match_agent_import_paths() {
     let _error =
         vv_agent::memory::errors::CompactionExhaustedError::new(2, Some("last".to_string()));
     let _manager_config = vv_agent::memory::manager::MemoryManagerConfig::default();
@@ -409,7 +444,7 @@ fn memory_submodules_match_python_import_paths() {
 }
 
 #[test]
-fn runtime_module_exports_python_runtime_public_types() {
+fn runtime_module_exports_agent_runtime_public_types() {
     let _inline = vv_agent::runtime::InlineBackend;
     let _cancelled = vv_agent::runtime::CancelledError::new("Operation was cancelled");
     let _managed: Option<vv_agent::runtime::ManagedSubTask> = None;
@@ -455,7 +490,7 @@ fn runtime_modules_are_not_flattened_at_crate_root() {
 }
 
 #[test]
-fn sub_agent_session_registry_uses_python_public_import_paths() {
+fn sub_agent_session_registry_uses_agent_public_import_paths() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let runtime_mod =
         std::fs::read_to_string(root.join("runtime").join("mod.rs")).expect("runtime/mod.rs");

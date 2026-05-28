@@ -26,7 +26,7 @@ impl PythonRuntimeHook {
     }
 
     fn invoke(&self, method: &str, event: Value) -> Option<Value> {
-        invoke_python_hook(&self.hook_file, method, event)
+        invoke_agent_hook(&self.hook_file, method, event)
             .unwrap_or_else(|error| panic!("python runtime hook failed: {error}"))
     }
 }
@@ -58,12 +58,12 @@ impl RuntimeHook for PythonRuntimeHook {
     }
 }
 
-fn invoke_python_hook(
+fn invoke_agent_hook(
     hook_file: &Path,
     method: &str,
     event: Value,
 ) -> Result<Option<Value>, String> {
-    let runner = resolve_python_hook_runner()?;
+    let runner = resolve_agent_hook_runner()?;
     let mut child = runner
         .command()
         .arg("-c")
@@ -151,23 +151,23 @@ impl PythonHookRunner {
     }
 }
 
-fn resolve_python_hook_runner() -> Result<PythonHookRunner, String> {
+fn resolve_agent_hook_runner() -> Result<PythonHookRunner, String> {
     if let Ok(program) = env::var("VV_AGENT_PYTHON_HOOK_PYTHON") {
         let program = program.trim();
         if !program.is_empty() {
             let runner = PythonHookRunner::new(program);
-            if python_runner_supports_v_agent(&runner) {
+            if runner_supports_v_agent(&runner) {
                 return Ok(runner);
             }
             return Err(format!(
-                "VV_AGENT_PYTHON_HOOK_PYTHON points to {program}, but it is not Python >= 3.12"
+                "VV_AGENT_PYTHON_HOOK_PYTHON points to {program}, but it is not interpreter >= 3.12"
             ));
         }
     }
 
     if let Some(v_agent_dir) = find_v_agent_project_dir() {
         let runner = PythonHookRunner::uv(v_agent_dir);
-        if python_runner_supports_v_agent(&runner) {
+        if runner_supports_v_agent(&runner) {
             return Ok(runner);
         }
     }
@@ -175,18 +175,18 @@ fn resolve_python_hook_runner() -> Result<PythonHookRunner, String> {
     let mut errors = Vec::new();
     for program in ["python3.12", "python3.13", "python", "python3"] {
         let runner = PythonHookRunner::new(program);
-        if python_runner_supports_v_agent(&runner) {
+        if runner_supports_v_agent(&runner) {
             return Ok(runner);
         }
         errors.push(program);
     }
     Err(format!(
-        "could not find a Python >= 3.12 interpreter for Python runtime hooks; tried {}. Set VV_AGENT_PYTHON_HOOK_PYTHON to an explicit interpreter path.",
+        "could not find a interpreter for runtime hooks; tried {}. Set VV_AGENT_PYTHON_HOOK_PYTHON to an explicit interpreter path.",
         errors.join(", ")
     ))
 }
 
-fn python_runner_supports_v_agent(runner: &PythonHookRunner) -> bool {
+fn runner_supports_v_agent(runner: &PythonHookRunner) -> bool {
     runner
         .command()
         .arg("-c")

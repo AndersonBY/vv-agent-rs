@@ -201,7 +201,7 @@ fn create_sub_task_batch_uses_execution_backend_parallel_map() {
 }
 
 #[test]
-fn create_sub_task_coerces_python_style_boolean_arguments() {
+fn create_sub_task_coerces_agent_boolean_arguments() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -258,7 +258,7 @@ fn create_sub_task_coerces_python_style_boolean_arguments() {
 }
 
 #[test]
-fn create_sub_task_coerces_scalar_text_arguments_like_python() {
+fn create_sub_task_coerces_scalar_text_arguments() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -308,7 +308,7 @@ fn create_sub_task_coerces_scalar_text_arguments_like_python() {
 }
 
 #[test]
-fn create_sub_task_falls_back_to_agent_name_when_agent_id_is_empty_like_python() {
+fn create_sub_task_falls_back_to_agent_name_when_agent_id_is_empty() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -385,7 +385,7 @@ fn create_sub_task_errors_when_runner_is_missing() {
 }
 
 #[test]
-fn create_sub_task_rejects_non_array_batch_payload_like_python() {
+fn create_sub_task_rejects_non_array_batch_payload() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -423,7 +423,7 @@ fn create_sub_task_rejects_non_array_batch_payload_like_python() {
 }
 
 #[test]
-fn create_sub_task_batch_reports_invalid_items_and_errors_when_none_are_valid_like_python() {
+fn create_sub_task_batch_reports_invalid_items_and_errors_when_none_are_valid() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -473,7 +473,7 @@ fn create_sub_task_batch_reports_invalid_items_and_errors_when_none_are_valid_li
 }
 
 #[test]
-fn create_sub_task_batch_keeps_invalid_item_entries_like_python() {
+fn create_sub_task_batch_keeps_invalid_item_entries() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -678,7 +678,7 @@ fn create_sub_task_can_start_async_task_and_query_status() {
 }
 
 #[test]
-fn sub_task_manager_rejects_duplicate_running_submit_like_python() {
+fn sub_task_manager_rejects_duplicate_running_submit() {
     let manager = SubTaskManager::default();
     manager
         .submit("sub-dup", "session-dup", "researcher", "first run", || {
@@ -724,7 +724,7 @@ fn sub_task_manager_rejects_duplicate_running_submit_like_python() {
 }
 
 #[test]
-fn sub_task_manager_get_and_wait_return_python_style_record_snapshot() {
+fn sub_task_manager_get_and_wait_return_agent_record_snapshot() {
     let manager = SubTaskManager::default();
     manager
         .submit(
@@ -809,7 +809,7 @@ fn sub_task_status_reports_missing_and_invalid_task_ids() {
 }
 
 #[test]
-fn sub_task_status_coerces_task_ids_message_and_workspace_limit_like_python() {
+fn sub_task_status_coerces_task_ids_message_and_workspace_limit() {
     let _registry_lock = isolated_sub_agent_registry();
     let workspace = tempfile::tempdir().expect("workspace");
     std::fs::write(workspace.path().join("a.txt"), "a").expect("a");
@@ -864,7 +864,7 @@ fn sub_task_status_coerces_task_ids_message_and_workspace_limit_like_python() {
             ),
             &mut context,
         )
-        .expect("sub_task_status coercion");
+        .expect("sub_task_status argument normalization");
 
     unregister_sub_agent_session("session-42");
     assert_eq!(result.status, ToolResultStatus::Success);
@@ -886,7 +886,7 @@ fn sub_task_status_coerces_task_ids_message_and_workspace_limit_like_python() {
 }
 
 #[test]
-fn sub_task_status_uses_python_truthiness_for_ids_and_limit_defaults() {
+fn sub_task_status_uses_json_truthiness_for_ids_and_limit_defaults() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -982,7 +982,7 @@ fn sub_task_status_can_steer_registered_running_session() {
 }
 
 #[test]
-fn sub_agent_session_private_alias_unregisters_only_matching_session_like_python() {
+fn sub_agent_session_private_unregister_removes_only_matching_session() {
     let _registry_lock = isolated_sub_agent_registry();
     let first: Arc<dyn SubAgentSession> = Arc::new(RecordingSubAgentSession {
         received: Arc::new(Mutex::new(Vec::new())),
@@ -1141,7 +1141,7 @@ fn sub_task_status_can_continue_completed_attached_session_without_global_regist
 }
 
 #[test]
-fn sub_task_manager_preserves_attached_resolved_payload_for_continuation_like_python() {
+fn sub_task_manager_preserves_attached_resolved_payload_for_continuation() {
     let _registry_lock = isolated_sub_agent_registry();
     let workspace = tempfile::tempdir().expect("workspace");
     let manager = SubTaskManager::default();
@@ -1191,7 +1191,7 @@ fn sub_task_manager_preserves_attached_resolved_payload_for_continuation_like_py
 }
 
 #[test]
-fn sub_task_manager_records_failed_outcome_when_background_runner_panics_like_python() {
+fn sub_task_manager_records_failed_outcome_when_background_runner_panics() {
     let manager = SubTaskManager::default();
 
     manager
@@ -1215,7 +1215,7 @@ fn sub_task_manager_records_failed_outcome_when_background_runner_panics_like_py
 }
 
 #[test]
-fn sub_task_manager_sanitizes_session_messages_before_continue_like_python() {
+fn sub_task_manager_sanitizes_session_messages_before_continue() {
     let _registry_lock = isolated_sub_agent_registry();
     let manager = SubTaskManager::default();
     let workspace = tempfile::tempdir().expect("workspace");

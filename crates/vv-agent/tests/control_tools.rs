@@ -4,7 +4,7 @@ use serde_json::json;
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolDirective, ToolResultStatus};
 
 #[test]
-fn todo_handlers_expose_python_style_read_and_write_functions() {
+fn todo_handlers_expose_agent_read_and_write_functions() {
     let workspace = tempfile::tempdir().expect("workspace");
     let mut context = ToolContext::new(workspace.path());
     let empty_args = BTreeMap::new();
@@ -24,7 +24,7 @@ fn todo_handlers_expose_python_style_read_and_write_functions() {
         &mut context,
         &BTreeMap::from([(
             "todos".to_string(),
-            json!([{"title": "ship parity", "status": "completed", "priority": "high"}]),
+            json!([{"title": "ship runtime", "status": "completed", "priority": "high"}]),
         )]),
     );
     assert_eq!(write_result.status, ToolResultStatus::Success);
@@ -36,12 +36,12 @@ fn todo_handlers_expose_python_style_read_and_write_functions() {
     assert_eq!(read_written_payload["count"], json!(1));
     assert_eq!(
         read_written_payload["todos"][0]["title"],
-        json!("ship parity")
+        json!("ship runtime")
     );
 }
 
 #[test]
-fn handler_common_helpers_match_python_module() {
+fn handler_common_helpers_match_agent_module() {
     let workspace = tempfile::tempdir().expect("workspace");
     let mut context = ToolContext::new(workspace.path());
     let common = vv_agent::tools::handlers::common::to_json(&json!({"text": "你好"}));
@@ -123,7 +123,7 @@ fn todo_write_updates_shared_state_and_enforces_single_in_progress() {
 }
 
 #[test]
-fn todo_write_rejects_invalid_payloads_like_python() {
+fn todo_write_rejects_invalid_payloads() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -175,7 +175,7 @@ fn todo_write_rejects_invalid_payloads_like_python() {
 }
 
 #[test]
-fn todo_write_generates_python_style_ids_timestamps_and_preserves_created_at() {
+fn todo_write_generates_agent_ids_timestamps_and_preserves_created_at() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -243,7 +243,7 @@ fn todo_write_generates_python_style_ids_timestamps_and_preserves_created_at() {
 }
 
 #[test]
-fn todo_write_coerces_scalar_item_fields_like_python() {
+fn todo_write_coerces_scalar_item_fields() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -312,7 +312,7 @@ fn task_finish_blocks_when_todos_are_incomplete() {
 }
 
 #[test]
-fn task_finish_uses_python_truthiness_for_require_all_done() {
+fn task_finish_uses_json_truthiness_for_require_all_done() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -367,7 +367,7 @@ fn task_finish_uses_python_truthiness_for_require_all_done() {
 }
 
 #[test]
-fn ask_user_returns_python_style_selection_metadata_and_dedupes_options() {
+fn ask_user_returns_agent_selection_metadata_and_dedupes_options() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -399,7 +399,7 @@ fn ask_user_returns_python_style_selection_metadata_and_dedupes_options() {
 }
 
 #[test]
-fn ask_user_uses_python_truthiness_for_allow_custom_options() {
+fn ask_user_uses_json_truthiness_for_allow_custom_options() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -423,7 +423,7 @@ fn ask_user_uses_python_truthiness_for_allow_custom_options() {
 }
 
 #[test]
-fn control_tools_coerce_scalar_fields_like_python() {
+fn control_tools_coerce_scalar_fields() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -535,7 +535,7 @@ Use this skill body during execution.
     assert_eq!(payload["reason"], "Need demo behavior");
     assert!(
         payload.get("compatibility").is_none(),
-        "activate_skill result is model-visible and should not expose internal compatibility metadata"
+        "activate_skill result is model-visible and should not expose internal metadata"
     );
     assert_eq!(context.shared_state["active_skills"], json!(["demo-skill"]));
     assert_eq!(
@@ -589,7 +589,7 @@ fn activate_skill_accepts_inline_entries_and_reports_disallowed_skill() {
 }
 
 #[test]
-fn activate_skill_coerces_scalar_arguments_and_inline_fields_like_python() {
+fn activate_skill_coerces_scalar_arguments_and_inline_fields() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -629,6 +629,6 @@ fn activate_skill_coerces_scalar_arguments_and_inline_fields_like_python() {
     assert_eq!(payload["reason"], "True");
     assert!(
         payload.get("compatibility").is_none(),
-        "activate_skill result is model-visible and should not expose internal compatibility metadata"
+        "activate_skill result is model-visible and should not expose internal metadata"
     );
 }

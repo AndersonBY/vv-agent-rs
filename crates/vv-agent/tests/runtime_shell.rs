@@ -5,7 +5,7 @@ use vv_agent::runtime::shell::{
 };
 
 #[test]
-fn runtime_shell_resolution_matches_python_posix_defaults() {
+fn runtime_shell_resolution_matches_posix_defaults() {
     let resolved = resolve_shell_invocation(None, None).expect("default shell");
     assert_eq!(resolved.kind, "bash");
     assert_eq!(resolved.name, "bash");
@@ -16,7 +16,7 @@ fn runtime_shell_resolution_matches_python_posix_defaults() {
 }
 
 #[test]
-fn runtime_shell_prepares_auto_confirm_like_python() {
+fn runtime_shell_prepares_auto_confirm() {
     let prepared = prepare_shell_execution("cargo test", true, Some("tail"), Some("bash"), None)
         .expect("prepared bash");
     assert_eq!(prepared.command, vec!["bash", "-lc", "yes | (cargo test)"]);
@@ -45,7 +45,7 @@ fn runtime_shell_prepares_auto_confirm_like_python() {
 }
 
 #[test]
-fn runtime_shell_builds_invocation_helper_like_python() {
+fn runtime_shell_builds_invocation_helper() {
     let invocation =
         build_shell_invocation("echo hello", Some("bash"), None).expect("shell invocation");
 
@@ -53,7 +53,7 @@ fn runtime_shell_builds_invocation_helper_like_python() {
 }
 
 #[test]
-fn runtime_shell_normalizes_metadata_priority_with_python_str_truthiness() {
+fn runtime_shell_normalizes_metadata_priority_with_stringify_json_value_truthiness() {
     let priority = normalize_windows_shell_priority(Some(&json!([
         "git-bash", 7, true, false, null, "", 0.0, "git-bash"
     ])))

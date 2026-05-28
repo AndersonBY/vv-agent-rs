@@ -9,7 +9,7 @@ use vv_agent::{
 };
 
 #[test]
-fn tool_execution_result_dict_matches_python_status_shape() {
+fn tool_execution_result_dict_matches_status_shape() {
     let success = ToolExecutionResult::success("call-1", "ok");
     let success_dict = success.to_dict();
     assert_eq!(success_dict["status"], json!("success"));
@@ -31,7 +31,7 @@ fn tool_execution_result_dict_matches_python_status_shape() {
 }
 
 #[test]
-fn tool_execution_result_from_legacy_unknown_status_defaults_to_success_like_python() {
+fn tool_execution_result_from_legacy_unknown_status_defaults_to_success() {
     let payload = json!({
         "tool_call_id": "legacy-call",
         "status": "done",
@@ -46,7 +46,7 @@ fn tool_execution_result_from_legacy_unknown_status_defaults_to_success_like_pyt
 }
 
 #[test]
-fn agent_result_dict_round_trips_python_celery_payload_shape() {
+fn agent_result_dict_round_trips_agent_celery_payload_shape() {
     let mut tool_result = ToolExecutionResult::success("call-1", "tool ok");
     tool_result
         .metadata
@@ -123,7 +123,7 @@ fn agent_result_dict_round_trips_token_usage_cycles() {
 }
 
 #[test]
-fn agent_task_dict_round_trips_python_runtime_recipe_payload_shape() {
+fn agent_task_dict_round_trips_agent_runtime_recipe_payload_shape() {
     let mut task = AgentTask::new("task-1", "deepseek-v4-pro", "system", "user");
     task.max_cycles = 3;
     task.no_tool_policy = NoToolPolicy::WaitUser;
@@ -146,7 +146,7 @@ fn agent_task_dict_round_trips_python_runtime_recipe_payload_shape() {
 }
 
 #[test]
-fn message_to_openai_message_matches_python_multimodal_and_tool_shapes() {
+fn message_to_openai_message_matches_multimodal_and_tool_shapes() {
     let mut assistant = Message::assistant("");
     assistant.reasoning_content = Some("private reasoning".to_string());
     assistant.tool_calls = vec![ToolCall::new(
@@ -197,7 +197,7 @@ fn message_to_openai_message_matches_python_multimodal_and_tool_shapes() {
 }
 
 #[test]
-fn message_to_openai_message_omits_empty_reasoning_like_python() {
+fn message_to_openai_message_omits_empty_reasoning() {
     let mut assistant = Message::assistant("answer");
     assistant.reasoning_content = Some(String::new());
 
@@ -205,12 +205,12 @@ fn message_to_openai_message_omits_empty_reasoning_like_python() {
 
     assert!(
         payload.get("reasoning_content").is_none(),
-        "empty Python reasoning_content values should not be serialized into OpenAI payloads"
+        "empty reasoning_content values should not be serialized into OpenAI payloads"
     );
 }
 
 #[test]
-fn message_to_openai_message_omits_empty_optional_fields_like_python() {
+fn message_to_openai_message_omits_empty_optional_fields() {
     let mut user = Message::user("inspect");
     user.name = Some(String::new());
     user.tool_call_id = Some(String::new());
@@ -224,7 +224,7 @@ fn message_to_openai_message_omits_empty_optional_fields_like_python() {
 }
 
 #[test]
-fn message_dict_round_trips_python_openai_style_tool_calls() {
+fn message_dict_round_trips_agent_openai_style_tool_calls() {
     let payload = json!({
         "role": "assistant",
         "content": "",
@@ -243,7 +243,7 @@ fn message_dict_round_trips_python_openai_style_tool_calls() {
         ],
     });
 
-    let message = Message::from_dict(&payload).expect("message from python dict");
+    let message = Message::from_dict(&payload).expect("message from dict");
 
     assert_eq!(message.tool_calls[0].id, "call_1");
     assert_eq!(message.tool_calls[0].name, "default_api:list_files");
@@ -272,7 +272,7 @@ fn message_dict_round_trips_python_openai_style_tool_calls() {
 }
 
 #[test]
-fn tool_execution_result_to_tool_message_alias_matches_python() {
+fn tool_execution_result_to_tool_message_preserves_alias() {
     let result = ToolExecutionResult::success("call_1", "ok");
 
     let message = result.to_tool_message();
@@ -283,7 +283,7 @@ fn tool_execution_result_to_tool_message_alias_matches_python() {
 }
 
 #[test]
-fn sub_task_protocol_helpers_match_python_defaults_and_dict_shape() {
+fn sub_task_protocol_helpers_match_agent_defaults_and_dict_shape() {
     let request = SubTaskRequest::new("researcher", "collect sources");
     assert_eq!(request.agent_name, "researcher");
     assert_eq!(request.task_description, "collect sources");

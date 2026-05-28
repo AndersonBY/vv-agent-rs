@@ -18,7 +18,7 @@ fn planned_tool_schemas_respect_task_capability_flags() {
 }
 
 #[test]
-fn planned_tool_schemas_include_todo_write_like_python_workspace_tools() {
+fn planned_tool_schemas_include_todo_write_workspace_tools() {
     let registry = build_default_registry();
     let task = AgentTask::new("task_planner", "dummy", "sys", "user");
 
@@ -80,7 +80,7 @@ fn planned_tool_schemas_exclude_tools() {
 }
 
 #[test]
-fn planned_tool_names_keep_unregistered_extra_tools_like_python() {
+fn planned_tool_names_keep_unregistered_extra_tools() {
     let registry = build_default_registry();
     let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
     task.extra_tool_names
@@ -147,7 +147,7 @@ fn planned_tool_schemas_reports_invalid_windows_shell_priority_config() {
 }
 
 #[test]
-fn freeze_dynamic_tool_schema_hints_caches_computer_shell_hint_like_python() {
+fn freeze_dynamic_tool_schema_hints_caches_computer_shell_hint() {
     let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
     task.agent_type = Some("computer".to_string());
     task.metadata
@@ -165,7 +165,7 @@ fn freeze_dynamic_tool_schema_hints_caches_computer_shell_hint_like_python() {
 }
 
 #[test]
-fn freeze_dynamic_tool_schema_hints_also_caches_explicit_bash_tool_like_python() {
+fn freeze_dynamic_tool_schema_hints_also_caches_explicit_bash_tool() {
     let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
     task.agent_type = Some("assistant".to_string());
     task.extra_tool_names.push("bash".to_string());

@@ -3,7 +3,7 @@ use vv_agent::runtime::{normalize_token_usage, summarize_task_token_usage};
 use vv_agent::{CycleRecord, LLMResponse, TokenUsage};
 
 #[test]
-fn normalizes_provider_token_usage_like_python() {
+fn normalizes_provider_token_usage() {
     let usage = normalize_token_usage(&json!({
         "prompt_tokens": "11",
         "completion_tokens": 7.9,
@@ -24,7 +24,7 @@ fn normalizes_provider_token_usage_like_python() {
 }
 
 #[test]
-fn summarizes_task_token_usage_from_cycles_like_python() {
+fn summarizes_task_token_usage_from_cycles() {
     let cycles = vec![
         CycleRecord {
             index: 2,

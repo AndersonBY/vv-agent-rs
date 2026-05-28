@@ -68,7 +68,7 @@ fn default_workspace_tools_can_write_read_replace_and_list_files() {
 }
 
 #[test]
-fn write_file_coerces_scalar_content_like_python() {
+fn write_file_coerces_scalar_content() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -95,7 +95,7 @@ fn write_file_coerces_scalar_content_like_python() {
 }
 
 #[test]
-fn workspace_file_tools_coerce_scalar_path_and_glob_like_python() {
+fn workspace_file_tools_coerce_scalar_path_and_glob() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -184,7 +184,7 @@ fn workspace_file_tools_coerce_scalar_path_and_glob_like_python() {
 }
 
 #[test]
-fn file_str_replace_coerces_scalar_text_arguments_like_python() {
+fn file_str_replace_coerces_scalar_text_arguments() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -215,7 +215,7 @@ fn file_str_replace_coerces_scalar_text_arguments_like_python() {
 }
 
 #[test]
-fn file_str_replace_accepts_string_max_replacements_like_python() {
+fn file_str_replace_accepts_string_max_replacements() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -269,7 +269,7 @@ fn list_files_skips_common_dependency_roots_by_default() {
 }
 
 #[test]
-fn list_files_combines_scan_limit_and_ignored_root_messages_like_python() {
+fn list_files_combines_scan_limit_and_ignored_root_messages() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -312,7 +312,7 @@ fn list_files_combines_scan_limit_and_ignored_root_messages_like_python() {
 }
 
 #[test]
-fn list_files_empty_path_is_workspace_root_like_python() {
+fn list_files_empty_path_is_workspace_root() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -338,7 +338,7 @@ fn list_files_empty_path_is_workspace_root_like_python() {
 }
 
 #[test]
-fn list_files_non_local_backend_does_not_summarize_ignored_roots_like_python() {
+fn list_files_non_local_backend_does_not_summarize_ignored_roots() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let backend = MemoryWorkspaceBackend::default();
@@ -362,7 +362,7 @@ fn list_files_non_local_backend_does_not_summarize_ignored_roots_like_python() {
 }
 
 #[test]
-fn list_files_excludes_hidden_by_default_and_can_include_them_like_python() {
+fn list_files_excludes_hidden_by_default_and_can_include_them() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -398,7 +398,7 @@ fn list_files_excludes_hidden_by_default_and_can_include_them_like_python() {
 }
 
 #[test]
-fn list_files_reports_estimated_count_when_scan_limit_is_reached_like_python() {
+fn list_files_reports_estimated_count_when_scan_limit_is_reached() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -429,7 +429,7 @@ fn list_files_reports_estimated_count_when_scan_limit_is_reached_like_python() {
 }
 
 #[test]
-fn list_files_accepts_string_limits_like_python() {
+fn list_files_accepts_string_limits() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -485,7 +485,7 @@ fn file_info_reports_file_metadata() {
     let modified_at = payload["modified_at"].as_str().expect("modified_at");
     assert!(
         chrono::DateTime::parse_from_rfc3339(modified_at).is_ok(),
-        "modified_at should match Python UTC ISO format, got {modified_at:?}"
+        "modified_at should match UTC ISO format, got {modified_at:?}"
     );
 }
 
@@ -604,7 +604,7 @@ fn workspace_file_tools_can_access_outside_paths_when_metadata_allows_it() {
 }
 
 #[test]
-fn workspace_paths_expand_home_like_python() {
+fn workspace_paths_expand_home() {
     let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
         return;
     };
@@ -749,7 +749,7 @@ fn read_file_returns_file_info_when_char_limit_exceeded() {
 }
 
 #[test]
-fn read_file_accepts_string_line_numbers_like_python() {
+fn read_file_accepts_string_line_numbers() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -806,7 +806,7 @@ fn read_file_preserves_requested_start_line_for_empty_out_of_range_slice() {
 }
 
 #[test]
-fn read_file_uses_python_truthiness_for_show_line_numbers() {
+fn read_file_uses_json_truthiness_for_show_line_numbers() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -832,7 +832,7 @@ fn read_file_uses_python_truthiness_for_show_line_numbers() {
 }
 
 #[test]
-fn write_file_uses_python_truthiness_for_append_flags() {
+fn write_file_uses_json_truthiness_for_append_flags() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -866,7 +866,7 @@ fn write_file_uses_python_truthiness_for_append_flags() {
 }
 
 #[test]
-fn workspace_backends_honor_python_glob_and_missing_file_semantics() {
+fn workspace_backends_honor_agent_glob_and_missing_file_semantics() {
     let workspace = tempfile::tempdir().expect("workspace");
     std::fs::create_dir_all(workspace.path().join("src/nested")).expect("dirs");
     std::fs::write(workspace.path().join("root.rs"), "fn root() {}").expect("root");
@@ -917,7 +917,7 @@ fn workspace_backends_honor_python_glob_and_missing_file_semantics() {
     assert!(!dir_info.is_file);
     assert!(
         chrono::DateTime::parse_from_rfc3339(&dir_info.modified_at).is_ok(),
-        "memory dir modified_at should match Python UTC ISO format, got {:?}",
+        "memory dir modified_at should match UTC ISO format, got {:?}",
         dir_info.modified_at
     );
     let file_info = memory
@@ -926,7 +926,7 @@ fn workspace_backends_honor_python_glob_and_missing_file_semantics() {
         .expect("main file");
     assert!(
         chrono::DateTime::parse_from_rfc3339(&file_info.modified_at).is_ok(),
-        "memory file modified_at should match Python UTC ISO format, got {:?}",
+        "memory file modified_at should match UTC ISO format, got {:?}",
         file_info.modified_at
     );
     assert!(memory.exists("src"));

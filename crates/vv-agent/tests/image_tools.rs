@@ -66,7 +66,7 @@ fn read_image_from_url_attaches_original_url() {
 }
 
 #[test]
-fn read_image_coerces_scalar_path_like_python() {
+fn read_image_coerces_scalar_path() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());

@@ -42,7 +42,7 @@ fn compress_memory_writes_note_to_shared_state() {
 }
 
 #[test]
-fn compress_memory_coerces_scalar_core_information_like_python() {
+fn compress_memory_coerces_scalar_core_information() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -101,7 +101,7 @@ fn memory_manager_compacts_to_original_request_and_summary_block() {
 }
 
 #[test]
-fn memory_manager_uses_summary_callback_and_normalizes_output_like_python() {
+fn memory_manager_uses_summary_callback_and_normalizes_output() {
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         compact_threshold: 10,
         model_context_window: 80,
@@ -155,7 +155,7 @@ fn memory_manager_does_not_compact_small_history() {
 }
 
 #[test]
-fn memory_manager_uses_provider_tokens_and_recent_tool_ids_like_python() {
+fn memory_manager_uses_provider_tokens_and_recent_tool_ids() {
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         model_context_window: 120,
         reserved_output_tokens: 10,
@@ -201,7 +201,7 @@ fn memory_manager_uses_provider_tokens_and_recent_tool_ids_like_python() {
 }
 
 #[test]
-fn memory_manager_appends_python_style_warning_before_compaction() {
+fn memory_manager_appends_agent_warning_before_compaction() {
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         model_context_window: 120,
         reserved_output_tokens: 10,
@@ -230,7 +230,7 @@ fn memory_manager_appends_python_style_warning_before_compaction() {
 }
 
 #[test]
-fn memory_manager_recomputes_length_after_tool_artifact_compaction_like_python() {
+fn memory_manager_recomputes_length_after_tool_artifact_compaction() {
     let workspace = tempfile::tempdir().expect("workspace");
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         model_context_window: 160,
@@ -273,7 +273,7 @@ fn memory_manager_recomputes_length_after_tool_artifact_compaction_like_python()
 }
 
 #[test]
-fn memory_manager_compacts_processed_image_payloads_like_python() {
+fn memory_manager_compacts_processed_image_payloads() {
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         model_context_window: 160,
         reserved_output_tokens: 10,
@@ -321,7 +321,7 @@ fn memory_threshold_uses_configured_and_model_derived_ceiling() {
 }
 
 #[test]
-fn memory_manager_exposes_python_style_threshold_properties() {
+fn memory_manager_exposes_agent_threshold_properties() {
     let manager = MemoryManager::new(MemoryManagerConfig {
         compact_threshold: 100_000,
         model_context_window: 64_000,
@@ -435,7 +435,7 @@ fn memory_manager_restores_key_file_context_after_compaction() {
 }
 
 #[test]
-fn memory_manager_second_compaction_preserves_original_user_messages_like_python() {
+fn memory_manager_second_compaction_preserves_original_user_messages() {
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         compact_threshold: 10,
         model_context_window: 60,
@@ -658,7 +658,7 @@ fn session_memory_extracts_new_messages_and_renders_grouped_context() {
 }
 
 #[test]
-fn session_memory_extract_handles_callback_panic_like_python() {
+fn session_memory_extract_handles_callback_panic() {
     let mut memory = SessionMemory::new(SessionMemoryConfig {
         min_tokens_before_extraction: 50,
         min_text_messages: 1,
@@ -674,7 +674,7 @@ fn session_memory_extract_handles_callback_panic_like_python() {
 }
 
 #[test]
-fn session_memory_parse_handles_non_array_and_greedy_noise_like_python() {
+fn session_memory_parse_handles_non_array_and_greedy_noise() {
     let memory = SessionMemory::new(SessionMemoryConfig::default());
 
     assert!(memory
@@ -859,14 +859,14 @@ fn memory_manager_preserves_session_memory_across_compaction() {
 }
 
 #[test]
-fn memory_manager_compact_directly_applies_session_memory_context_like_python() {
+fn memory_manager_compact_directly_applies_session_memory_context() {
     let mut session_memory = SessionMemory::new(SessionMemoryConfig {
         token_model: "demo".to_string(),
         ..SessionMemoryConfig::default()
     });
     session_memory.state.entries = vec![SessionMemoryEntry::new(
         "decision",
-        "keep the Rust API aligned with Python",
+        "keep the Rust API small",
         2,
         9,
     )];
@@ -887,7 +887,5 @@ fn memory_manager_compact_directly_applies_session_memory_context_like_python() 
     assert_eq!(updated.len(), 2);
     assert!(updated[0].content.starts_with("sys"));
     assert!(updated[0].content.contains("<Session Memory>"));
-    assert!(updated[0]
-        .content
-        .contains("keep the Rust API aligned with Python"));
+    assert!(updated[0].content.contains("keep the Rust API small"));
 }

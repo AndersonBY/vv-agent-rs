@@ -23,7 +23,7 @@ Check status and output for a command launched in background mode.
 When to use:
 - After `bash` returns a `session_id` from `run_in_background=true`.
 - After a foreground command times out and the runtime auto-detaches it into a background session.
-- When a long build, test, server, migration, or watcher needs progress checks without blocking the main Agent loop.
+- When a long build, test, server, release, or watcher needs progress checks without blocking the main Agent loop.
 
 Polling protocol:
 - Poll until the response is terminal: `completed` or an error such as `background_command_failed`.

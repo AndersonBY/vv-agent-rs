@@ -11,9 +11,8 @@ use crate::runtime::processes::{
 use crate::runtime::shell::{normalize_windows_shell_priority, prepare_shell_execution};
 use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{
-    coerce_python_bool_arg, coerce_python_text_arg, parse_integer_arg,
-    path_escapes_workspace_error, tool_error_with_code, tool_result,
-    workspace_relative_path_or_absolute,
+    coerce_truthy_arg, parse_integer_arg, path_escapes_workspace_error, stringify_tool_arg,
+    tool_error_with_code, tool_result, workspace_relative_path_or_absolute,
 };
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
@@ -33,7 +32,7 @@ pub(crate) fn bash_tool() -> ToolSpec {
         "bash",
         "Run a shell command in the current workspace.",
         Arc::new(|context, arguments| {
-            let command = coerce_python_text_arg(arguments.get("command"), "")
+            let command = stringify_tool_arg(arguments.get("command"), "")
                 .trim()
                 .to_string();
             if command.is_empty() {
@@ -54,7 +53,7 @@ pub(crate) fn bash_tool() -> ToolSpec {
                     );
                 }
             }
-            let exec_dir = coerce_python_text_arg(arguments.get("exec_dir"), ".");
+            let exec_dir = stringify_tool_arg(arguments.get("exec_dir"), ".");
             let cwd = match context.resolve_workspace_path(&exec_dir) {
                 Ok(cwd) => cwd,
                 Err(error) => return path_escapes_workspace_error(error),
@@ -79,14 +78,14 @@ pub(crate) fn bash_tool() -> ToolSpec {
             };
             let stdin_text = arguments
                 .contains_key("stdin")
-                .then(|| coerce_python_text_arg(arguments.get("stdin"), ""));
+                .then(|| stringify_tool_arg(arguments.get("stdin"), ""));
             let auto_confirm = arguments
                 .get("auto_confirm")
-                .map(|value| coerce_python_bool_arg(Some(value), false))
+                .map(|value| coerce_truthy_arg(Some(value), false))
                 .unwrap_or(false);
             let run_in_background = arguments
                 .get("run_in_background")
-                .map(|value| coerce_python_bool_arg(Some(value), false))
+                .map(|value| coerce_truthy_arg(Some(value), false))
                 .unwrap_or(false);
             let (shell, windows_shell_priority, bash_env) =
                 match read_shell_defaults(&context.metadata) {
@@ -292,7 +291,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn process_env_injects_windows_python_encoding_defaults_like_python() {
+    fn process_env_injects_windows_agent_encoding_defaults() {
         let process_env =
             build_process_env_with_base(None, true, BTreeMap::new()).expect("windows env");
 
@@ -301,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn process_env_preserves_explicit_windows_python_encoding_overrides_like_python() {
+    fn process_env_preserves_explicit_windows_agent_encoding_overrides() {
         let process_env = build_process_env_with_base(
             Some(&BTreeMap::from([(
                 "PYTHONIOENCODING".to_string(),

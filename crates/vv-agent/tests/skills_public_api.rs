@@ -11,7 +11,7 @@ use vv_agent::skills::{
 };
 
 #[test]
-fn skills_public_api_validates_metadata_like_python() {
+fn skills_public_api_validates_metadata() {
     assert_eq!(
         normalize_validation_mode(Some("compat")).expect("mode"),
         ValidationMode::Compat
@@ -84,7 +84,7 @@ fn skills_public_api_renders_available_skills_xml_with_budget() {
     assert!(xml.contains("metadata-skill"));
     assert!(
         !xml.contains("compatibility") && !xml.contains("rust tests"),
-        "<available_skills> is model-visible and should not expose internal compatibility metadata"
+        "<available_skills> is model-visible and should not expose internal metadata"
     );
     assert!(
         !xml.contains("allowed_tools") && !xml.contains("<metadata>"),
@@ -105,7 +105,7 @@ fn skills_public_api_renders_available_skills_xml_with_budget() {
 }
 
 #[test]
-fn skills_public_api_parses_and_loads_skill_dirs_like_python() {
+fn skills_public_api_parses_and_loads_skill_dirs() {
     let workspace = tempfile::tempdir().expect("workspace");
     let skill_dir = workspace.path().join("skills/review-code");
     fs::create_dir_all(&skill_dir).expect("skill dir");
@@ -174,7 +174,7 @@ Use these instructions.
 }
 
 #[test]
-fn skills_public_api_normalizes_mixed_skill_metadata_like_python() {
+fn skills_public_api_normalizes_mixed_skill_metadata() {
     let workspace = tempfile::tempdir().expect("workspace");
     let skill_dir = workspace.path().join("skills/review-code");
     fs::create_dir_all(&skill_dir).expect("skill dir");
@@ -244,7 +244,7 @@ Loaded instructions.
 }
 
 #[test]
-fn skills_public_api_stringifies_inline_scalar_fields_like_python() {
+fn skills_public_api_stringifies_inline_scalar_fields() {
     let raw_skills = json!([
         {
             "name": 123,
@@ -260,7 +260,7 @@ fn skills_public_api_stringifies_inline_scalar_fields_like_python() {
         },
         {
             "name": 0,
-            "description": "Falsy Python name should be skipped"
+            "description": "Falsy truthy name should be skipped"
         }
     ]);
 

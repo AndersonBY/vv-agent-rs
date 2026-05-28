@@ -14,7 +14,7 @@ Protocol:
 - Only one item may have `status=in_progress`.
 
 When to use:
-- Track multi-step implementation, verification, migration, review, or incident recovery work.
+- Track multi-step implementation, verification, review, release, or incident recovery work.
 - Make progress state explicit before delegating, running long commands, or switching from investigation to edits.
 
 Returns:

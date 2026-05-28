@@ -13,7 +13,7 @@ use vv_agent::prompt::{
 };
 
 #[test]
-fn prompt_public_api_builds_python_style_system_prompt_bundle() {
+fn prompt_public_api_builds_agent_system_prompt_bundle() {
     let workspace = tempfile::tempdir().expect("workspace");
     let skill_dir = workspace.path().join("skills/review-code");
     std::fs::create_dir_all(&skill_dir).expect("skill dir");
@@ -82,7 +82,7 @@ Review code.
 }
 
 #[test]
-fn model_visible_system_prompt_does_not_explain_internal_parity_sources() {
+fn model_visible_system_prompt_stays_capability_focused() {
     let workspace = tempfile::tempdir().expect("workspace");
     let options = BuildSystemPromptOptions {
         current_time_utc: Some("2026-05-26T00:00:00Z".to_string()),
@@ -100,7 +100,7 @@ fn model_visible_system_prompt_does_not_explain_internal_parity_sources() {
     for forbidden in prompt_forbidden_terms() {
         assert!(
             !bundle.prompt.contains(forbidden.as_str()),
-            "model-visible system prompt should not include internal parity source wording `{forbidden}`:\n{}",
+            "model-visible system prompt should not include internal implementation wording `{forbidden}`:\n{}",
             bundle.prompt
         );
     }
@@ -204,7 +204,7 @@ fn prompt_public_api_tracks_section_and_tool_cache_breaks() {
 }
 
 #[test]
-fn prompt_cache_hashes_match_python_sorted_json_payloads() {
+fn prompt_cache_hashes_match_stable_sorted_json_payloads() {
     let system_hash = hash_system_prompt_sections(&[json!({
         "id": "core",
         "text": " stable 文本 ",

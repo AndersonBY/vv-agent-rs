@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{coerce_python_bool_arg, coerce_python_text_arg};
+use crate::tools::common::{coerce_truthy_arg, stringify_tool_arg};
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 pub fn task_finish(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
@@ -19,12 +19,12 @@ pub(crate) fn task_finish_tool() -> ToolSpec {
         Arc::new(|context, arguments| {
             let message = arguments
                 .get("message")
-                .map(|value| coerce_python_text_arg(Some(value), "").trim().to_string())
+                .map(|value| stringify_tool_arg(Some(value), "").trim().to_string())
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "Task completed".to_string());
             let require_all_done = arguments
                 .get("require_all_todos_completed")
-                .map(|value| coerce_python_bool_arg(Some(value), true))
+                .map(|value| coerce_truthy_arg(Some(value), true))
                 .unwrap_or(true);
             if require_all_done {
                 let incomplete_todos = context
@@ -40,7 +40,7 @@ pub(crate) fn task_finish_tool() -> ToolSpec {
                                     .and_then(Value::as_str)
                                     .unwrap_or_default()
                                     .to_ascii_lowercase();
-                                let done = coerce_python_bool_arg(todo.get("done"), false);
+                                let done = coerce_truthy_arg(todo.get("done"), false);
                                 if matches!(status.as_str(), "completed" | "done" | "finished")
                                     || done
                                 {
@@ -82,7 +82,7 @@ pub(crate) fn task_finish_tool() -> ToolSpec {
                 let exposed_files = exposed_files
                     .iter()
                     .filter_map(|path| {
-                        let path = coerce_python_text_arg(Some(path), "").trim().to_string();
+                        let path = stringify_tool_arg(Some(path), "").trim().to_string();
                         (!path.is_empty()).then_some(Value::String(path))
                     })
                     .collect::<Vec<_>>();
@@ -118,17 +118,17 @@ pub(crate) fn ask_user_tool() -> ToolSpec {
         Arc::new(|_context, arguments| {
             let question = arguments
                 .get("question")
-                .map(|value| coerce_python_text_arg(Some(value), "").trim().to_string())
+                .map(|value| stringify_tool_arg(Some(value), "").trim().to_string())
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "Need user input".to_string());
             let selection_type = arguments
                 .get("selection_type")
-                .map(|value| coerce_python_text_arg(Some(value), "").trim().to_string())
+                .map(|value| stringify_tool_arg(Some(value), "").trim().to_string())
                 .filter(|value| value == "single" || value == "multi")
                 .unwrap_or_else(|| "single".to_string());
             let allow_custom_options = arguments
                 .get("allow_custom_options")
-                .map(|value| coerce_python_bool_arg(Some(value), false))
+                .map(|value| coerce_truthy_arg(Some(value), false))
                 .unwrap_or(false);
             let mut payload = BTreeMap::new();
             payload.insert("question".to_string(), Value::String(question.clone()));
@@ -162,7 +162,7 @@ fn normalize_ask_user_options(raw: Option<&Value>) -> Option<Vec<Value>> {
     let options = raw?.as_array()?;
     let mut normalized = Vec::new();
     for option in options {
-        let option_text = coerce_python_text_arg(Some(option), "").trim().to_string();
+        let option_text = stringify_tool_arg(Some(option), "").trim().to_string();
         if option_text.is_empty() {
             continue;
         }

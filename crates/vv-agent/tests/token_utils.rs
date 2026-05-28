@@ -8,7 +8,7 @@ use vv_agent::{
 };
 
 #[test]
-fn count_tokens_prefers_vv_llm_counter_like_python() {
+fn count_tokens_prefers_vv_llm_counter() {
     let text = "hello world";
     let expected = vv_llm::utilities::count_tokens(text, "gpt-4o").expect("vv-llm count");
 
@@ -16,7 +16,7 @@ fn count_tokens_prefers_vv_llm_counter_like_python() {
 }
 
 #[test]
-fn count_tokens_returns_zero_for_empty_text_like_python() {
+fn count_tokens_returns_zero_for_empty_text() {
     assert_eq!(count_tokens("", "gpt-4o"), 0);
 }
 
@@ -29,7 +29,7 @@ fn count_tokens_falls_back_to_cjk_aware_estimate_for_unknown_models() {
 }
 
 #[test]
-fn count_tokens_accepts_json_payload_like_python() {
+fn count_tokens_accepts_json_payload() {
     let payload = json!({"role": "user", "content": "hello"});
     let expected_payload = serde_json::to_string(&payload).expect("json payload");
 
@@ -40,7 +40,7 @@ fn count_tokens_accepts_json_payload_like_python() {
 }
 
 #[test]
-fn count_messages_tokens_fallback_uses_openai_message_payload_like_python() {
+fn count_messages_tokens_fallback_uses_openai_message_payload() {
     let mut message = Message::user("look");
     message.image_url = Some("https://example.test/image.png".to_string());
     let payload = vec![message.to_openai_message(true)];
@@ -53,7 +53,7 @@ fn count_messages_tokens_fallback_uses_openai_message_payload_like_python() {
 }
 
 #[test]
-fn estimate_tokens_handles_cjk_and_ascii_mix_like_python() {
+fn estimate_tokens_handles_cjk_and_ascii_mix() {
     assert_eq!(estimate_tokens("你好", "demo"), 3);
     assert_eq!(estimate_tokens("hello", "demo"), 1);
     assert_eq!(estimate_tokens("你好hello", "demo"), 4);
@@ -93,7 +93,7 @@ fn resolve_model_token_limits_reads_vv_llm_settings_model_config() {
 }
 
 #[test]
-fn resolve_model_token_limits_from_file_accepts_json_settings_like_python_loader() {
+fn resolve_model_token_limits_from_file_accepts_json_settings_loader() {
     let settings = tempfile::NamedTempFile::new().expect("settings file");
     std::fs::write(
         settings.path(),

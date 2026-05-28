@@ -12,128 +12,11 @@ vv-agent-rs/
   Cargo.toml
   crates/vv-agent/
     src/
-      config.rs
-      constants/
-        mod.rs
-        tool_names.rs
-        workspace.rs
-      integrations/
-        mod.rs
-        protocols.rs
-      llm/
-        anthropic_prompt_cache.rs
-        base.rs
-        mod.rs
-        scripted.rs
-        vv_llm_client.rs
-      memory/
-        artifacts.rs
-        manager.rs
-        microcompact.rs
-        mod.rs
-        session.rs
-        session_memory.rs
-        summary.rs
-        token_utils.rs
-      prompt/
-        builder.rs
-        cache_tracker.rs
-        mod.rs
-        templates.rs
-      runtime/
-        backends/
-          base.rs
-          celery.rs
-          celery_tasks.rs
-          inline.rs
-          mod.rs
-          thread.rs
-        background_sessions.rs
-        cancellation.rs
-        context.rs
-        engine.rs
-        hooks.rs
-        mod.rs
-        processes.rs
-        results.rs
-        state.rs
-        stores/
-          mod.rs
-          redis.rs
-          sqlite.rs
-        sub_agents.rs
-        sub_task_manager.rs
-        token_usage.rs
-        tool_planner.rs
-      sdk/
-        client.rs
-        mod.rs
-        python_hooks.rs
-        resources.rs
-        session.rs
-        types.rs
-      skills/
-        errors.rs
-        mod.rs
-        models.rs
-        normalize.rs
-        parser.rs
-        prompt.rs
-        validator.rs
-      tools/
-        base.rs
-        builtins.rs
-        common.rs
-        dispatcher.rs
-        mod.rs
-        registry.rs
-        schemas/
-          command.rs
-          control.rs
-          media.rs
-          memory.rs
-          mod.rs
-          sub_agents.rs
-          todo.rs
-          workspace/
-            edit.rs
-            file_io.rs
-            listing.rs
-            mod.rs
-            search.rs
-        handlers/
-          background.rs
-          bash.rs
-          common.rs
-          control.rs
-          image.rs
-          memory.rs
-          search.rs
-          skills/
-            mod.rs
-            state.rs
-          sub_agents.rs
-          workspace_io.rs
-      types.rs
-      workspace/
-        base.rs
-        local.rs
-        memory.rs
-        mod.rs
-        s3.rs
-      cli.rs
-      main.rs
+      config, constants, integrations, llm, memory, prompt, runtime, sdk,
+      skills, tools, types, workspace, cli
     tests/
-      cli.rs
-      control_tools.rs
-      live_deepseek.rs
-      prompt_public_api.rs
-      runtime_cycle.rs
-      sdk_resources.rs
-      sdk_smoke.rs
-      tool_planner.rs
-      tool_schema_parity.rs
-      workspace_tools.rs
+      public API, runtime, SDK, LLM, tools, workspace, skills, CLI, examples,
+      and live smoke coverage
 ```
 
 The package is named `vv-agent`; the library target is imported as `vv_agent`,
@@ -167,7 +50,7 @@ The current Rust implementation includes:
 - Stable crate-level exports for core agent types, runtime execution,
   tool dispatch, built-in tool registration, SDK clients, workspace backends,
   prompt helpers, memory helpers, and shared protocol types.
-- `vv-llm = "0.2.0"` based chat client construction through local settings,
+- `vv-llm = "0.2.1"` based chat client construction through local settings,
   endpoint resolution, endpoint retry/failover, streaming events, prompt-cache
   metadata, request debug dumps, resolved token limits, and usage accounting.
   Provider HTTP and request serialization stay delegated to `vv-llm`.

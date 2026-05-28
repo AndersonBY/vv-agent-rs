@@ -5,7 +5,7 @@ use vv_agent::{
 };
 
 #[test]
-fn cycle_runner_public_api_builds_assistant_message_like_python() {
+fn cycle_runner_public_api_builds_assistant_message() {
     let mut response = LLMResponse::new("cycle done");
     response
         .raw

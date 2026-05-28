@@ -34,7 +34,7 @@ fn bash_tool_executes_command_in_workspace() {
 }
 
 #[test]
-fn bash_tool_coerces_scalar_exec_dir_and_stdin_like_python() {
+fn bash_tool_coerces_scalar_exec_dir_and_stdin() {
     let workspace = tempfile::tempdir().expect("workspace");
     std::fs::create_dir_all(workspace.path().join("456")).expect("number directory");
     let registry = build_default_registry();
@@ -62,7 +62,7 @@ fn bash_tool_coerces_scalar_exec_dir_and_stdin_like_python() {
 }
 
 #[test]
-fn bash_tool_uses_python_truthiness_for_background_flag() {
+fn bash_tool_uses_json_truthiness_for_background_flag() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -176,7 +176,7 @@ fn background_command_lifecycle_can_be_polled() {
 }
 
 #[test]
-fn check_background_command_coerces_scalar_session_id_like_python() {
+fn check_background_command_coerces_scalar_session_id() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -308,7 +308,7 @@ fn background_command_listener_is_notified_without_polling() {
 }
 
 #[test]
-fn background_session_manager_can_start_process_like_python() {
+fn background_session_manager_can_start_process() {
     let workspace = tempfile::tempdir().expect("workspace");
     let session_id = background_session_manager()
         .start(
@@ -350,7 +350,7 @@ fn background_session_manager_can_start_process_like_python() {
 }
 
 #[test]
-fn background_session_snapshot_keeps_null_shell_like_python() {
+fn background_session_snapshot_keeps_null_shell() {
     let workspace = tempfile::tempdir().expect("workspace");
     let command = vec![
         "bash".to_string(),
@@ -386,7 +386,7 @@ fn background_session_snapshot_keeps_null_shell_like_python() {
 }
 
 #[test]
-fn background_session_manager_can_adopt_running_process_with_started_at_like_python() {
+fn background_session_manager_can_adopt_running_process_with_started_at() {
     let workspace = tempfile::tempdir().expect("workspace");
     let command = vec![
         "bash".to_string(),
@@ -456,7 +456,7 @@ fn foreground_timeout_moves_command_to_background() {
 }
 
 #[test]
-fn bash_tool_accepts_string_timeout_like_python() {
+fn bash_tool_accepts_string_timeout() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -511,7 +511,7 @@ fn bash_tool_passes_stdin_to_command() {
 }
 
 #[test]
-fn captured_process_output_uses_replacement_decoding_like_python() {
+fn captured_process_output_uses_replacement_decoding() {
     let workspace = tempfile::tempdir().expect("workspace");
     let output_path = workspace.path().join("invalid-output.log");
     std::fs::write(&output_path, b"ok\xffdone").expect("invalid utf8 output");
@@ -548,7 +548,7 @@ fn bash_tool_uses_configured_shell_from_metadata() {
 }
 
 #[test]
-fn bash_tool_uses_environment_from_metadata_like_python() {
+fn bash_tool_uses_environment_from_metadata() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -577,7 +577,7 @@ fn bash_tool_uses_environment_from_metadata_like_python() {
 }
 
 #[test]
-fn bash_tool_rejects_invalid_environment_metadata_like_python() {
+fn bash_tool_rejects_invalid_environment_metadata() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -627,7 +627,7 @@ fn bash_tool_rejects_exec_dir_outside_workspace_by_default() {
 }
 
 #[test]
-fn bash_tool_allows_absolute_exec_dir_when_enabled_like_python() {
+fn bash_tool_allows_absolute_exec_dir_when_enabled() {
     let workspace = tempfile::tempdir().expect("workspace");
     let outside = tempfile::tempdir().expect("outside");
     let registry = build_default_registry();

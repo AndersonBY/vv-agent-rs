@@ -8,7 +8,7 @@ use chrono::{SecondsFormat, Utc};
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::coerce_python_text_arg;
+use crate::tools::common::stringify_tool_arg;
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 pub(crate) fn todo_write_tool() -> ToolSpec {
@@ -179,7 +179,7 @@ fn todo_write_error(message: impl Into<String>, error_code: &str) -> ToolExecuti
 }
 
 fn todo_value_to_string(value: &Value) -> String {
-    coerce_python_text_arg(Some(value), "").trim().to_string()
+    stringify_tool_arg(Some(value), "").trim().to_string()
 }
 
 fn generate_todo_id() -> String {

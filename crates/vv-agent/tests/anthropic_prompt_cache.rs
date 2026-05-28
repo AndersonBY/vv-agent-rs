@@ -5,7 +5,7 @@ use vv_agent::llm::{
 };
 
 #[test]
-fn claude_prompt_cache_exports_python_style_ephemeral_cache_control() {
+fn claude_prompt_cache_exports_agent_ephemeral_cache_control() {
     assert_eq!(CACHE_CONTROL_EPHEMERAL(), json!({"type": "ephemeral"}));
 }
 

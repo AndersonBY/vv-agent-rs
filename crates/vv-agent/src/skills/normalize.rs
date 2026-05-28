@@ -63,11 +63,11 @@ fn entries_from_object(
     workspace: Option<&Path>,
     load_instructions: bool,
 ) -> Vec<SkillEntry> {
-    let name = python_or_empty_trimmed_string(object.get("name"));
-    let description = python_or_empty_trimmed_string(object.get("description"));
+    let name = truthy_trimmed_string(object.get("name"));
+    let description = truthy_trimmed_string(object.get("description"));
     let location = object
         .get("location")
-        .map(python_or_empty_value_string)
+        .map(truthy_value_string)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
@@ -89,7 +89,7 @@ fn entries_from_object(
 
     let instructions = object
         .get("instructions")
-        .map(python_or_empty_value_string)
+        .map(truthy_value_string)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .map(|value| value.to_string());
@@ -112,7 +112,7 @@ fn entries_from_object(
         instructions,
         compatibility: object
             .get("compatibility")
-            .map(python_or_empty_value_string)
+            .map(truthy_value_string)
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .map(|value| value.to_string()),
@@ -132,26 +132,26 @@ fn entries_from_object(
     }]
 }
 
-fn python_or_empty_trimmed_string(value: Option<&Value>) -> String {
-    python_or_empty_string(value).trim().to_string()
+fn truthy_trimmed_string(value: Option<&Value>) -> String {
+    truthy_string(value).trim().to_string()
 }
 
-fn python_or_empty_string(value: Option<&Value>) -> String {
-    let Some(value) = value.filter(|value| python_truthy(value)) else {
+fn truthy_string(value: Option<&Value>) -> String {
+    let Some(value) = value.filter(|value| json_value_is_truthy(value)) else {
         return String::new();
     };
-    python_str(value)
+    stringify_json_value(value)
 }
 
-fn python_or_empty_value_string(value: &Value) -> String {
-    if python_truthy(value) {
-        python_str(value)
+fn truthy_value_string(value: &Value) -> String {
+    if json_value_is_truthy(value) {
+        stringify_json_value(value)
     } else {
         String::new()
     }
 }
 
-fn python_truthy(value: &Value) -> bool {
+fn json_value_is_truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
         Value::Bool(value) => *value,
@@ -162,18 +162,18 @@ fn python_truthy(value: &Value) -> bool {
     }
 }
 
-fn python_str(value: &Value) -> String {
+fn stringify_json_value(value: &Value) -> String {
     match value {
         Value::Null => "None".to_string(),
         Value::Bool(true) => "True".to_string(),
         Value::Bool(false) => "False".to_string(),
         Value::Number(number) => number.to_string(),
         Value::String(value) => value.clone(),
-        Value::Array(_) | Value::Object(_) => python_repr(value),
+        Value::Array(_) | Value::Object(_) => json_value_repr(value),
     }
 }
 
-fn python_repr(value: &Value) -> String {
+fn json_value_repr(value: &Value) -> String {
     match value {
         Value::Null => "None".to_string(),
         Value::Bool(true) => "True".to_string(),
@@ -181,14 +181,14 @@ fn python_repr(value: &Value) -> String {
         Value::Number(number) => number.to_string(),
         Value::String(value) => format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'")),
         Value::Array(items) => {
-            let values = items.iter().map(python_repr).collect::<Vec<_>>();
+            let values = items.iter().map(json_value_repr).collect::<Vec<_>>();
             format!("[{}]", values.join(", "))
         }
         Value::Object(object) => {
             let values = object
                 .iter()
                 .map(|(key, value)| {
-                    format!("'{}': {}", key.replace('\'', "\\'"), python_repr(value))
+                    format!("'{}': {}", key.replace('\'', "\\'"), json_value_repr(value))
                 })
                 .collect::<Vec<_>>();
             format!("{{{}}}", values.join(", "))
@@ -311,6 +311,6 @@ fn string_map_from_json_object(
 ) -> BTreeMap<String, String> {
     object
         .iter()
-        .map(|(key, value)| (key.clone(), python_str(value)))
+        .map(|(key, value)| (key.clone(), stringify_json_value(value)))
         .collect()
 }

@@ -30,7 +30,7 @@ fn workspace_grep_finds_content_with_smart_case() {
 }
 
 #[test]
-fn workspace_grep_uses_regex_patterns_like_python() {
+fn workspace_grep_uses_regex_patterns() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -59,7 +59,7 @@ fn workspace_grep_uses_regex_patterns_like_python() {
 }
 
 #[test]
-fn workspace_grep_coerces_scalar_pattern_like_python() {
+fn workspace_grep_coerces_scalar_pattern() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -82,7 +82,7 @@ fn workspace_grep_coerces_scalar_pattern_like_python() {
 }
 
 #[test]
-fn workspace_grep_returns_python_style_text_content_and_structured_metadata() {
+fn workspace_grep_returns_agent_text_content_and_structured_metadata() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -106,7 +106,7 @@ fn workspace_grep_returns_python_style_text_content_and_structured_metadata() {
 }
 
 #[test]
-fn workspace_grep_caps_structured_payload_without_duplication_like_python() {
+fn workspace_grep_caps_structured_payload_without_duplication() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -150,7 +150,7 @@ fn workspace_grep_caps_structured_payload_without_duplication_like_python() {
 }
 
 #[test]
-fn workspace_grep_truncates_large_text_content_like_python() {
+fn workspace_grep_truncates_large_text_content() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -184,7 +184,7 @@ fn workspace_grep_truncates_large_text_content_like_python() {
 }
 
 #[test]
-fn workspace_grep_reports_supported_types_for_unknown_type_like_python() {
+fn workspace_grep_reports_supported_types_for_unknown_type() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -213,7 +213,7 @@ fn workspace_grep_reports_supported_types_for_unknown_type_like_python() {
 }
 
 #[test]
-fn workspace_grep_reports_scalar_type_as_unsupported_like_python() {
+fn workspace_grep_reports_scalar_type_as_unsupported() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -284,7 +284,7 @@ fn workspace_grep_supports_files_and_count_modes_with_type_filter() {
 }
 
 #[test]
-fn workspace_grep_applies_glob_relative_to_search_path_like_python() {
+fn workspace_grep_applies_glob_relative_to_search_path() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -315,7 +315,7 @@ fn workspace_grep_applies_glob_relative_to_search_path_like_python() {
 }
 
 #[test]
-fn workspace_grep_uses_configured_workspace_backend_like_python() {
+fn workspace_grep_uses_configured_workspace_backend() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let backend = MemoryWorkspaceBackend::default();
@@ -393,7 +393,7 @@ fn workspace_grep_respects_hidden_and_ignored_defaults() {
 }
 
 #[test]
-fn workspace_grep_uses_python_truthiness_for_hidden_and_line_flags() {
+fn workspace_grep_uses_json_truthiness_for_hidden_and_line_flags() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -434,7 +434,7 @@ fn workspace_grep_uses_python_truthiness_for_hidden_and_line_flags() {
 }
 
 #[test]
-fn workspace_grep_file_path_target_can_read_hidden_file_like_python() {
+fn workspace_grep_file_path_target_can_read_hidden_file() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -495,7 +495,7 @@ fn workspace_grep_supports_context_lines_and_file_targets() {
 }
 
 #[test]
-fn workspace_grep_accepts_string_limits_and_context_like_python() {
+fn workspace_grep_accepts_string_limits_and_context() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());

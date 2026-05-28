@@ -171,7 +171,7 @@ fn settings_resolution_accepts_embedded_llm_settings() {
 }
 
 #[test]
-fn settings_resolution_collects_all_endpoint_options_like_python() {
+fn settings_resolution_collects_all_endpoint_options() {
     let raw = serde_json::json!({
         "VERSION": "2",
         "endpoints": [
@@ -228,7 +228,7 @@ fn settings_resolution_collects_all_endpoint_options_like_python() {
 }
 
 #[test]
-fn settings_builder_uses_all_enabled_endpoint_options_for_failover_like_python() {
+fn settings_builder_uses_all_enabled_endpoint_options_for_failover() {
     let mut settings_file = tempfile::NamedTempFile::new().expect("settings file");
     write!(
         settings_file,
@@ -274,7 +274,7 @@ fn settings_builder_uses_all_enabled_endpoint_options_for_failover_like_python()
 }
 
 #[test]
-fn build_vv_llm_settings_normalizes_provider_aliases_keys_and_endpoint_options_like_python() {
+fn build_vv_llm_settings_normalizes_provider_aliases_keys_and_endpoint_options() {
     let raw = serde_json::json!({
         "endpoints": [
             {
@@ -390,7 +390,7 @@ fn settings_resolution_accepts_providers_alias_and_decodes_api_keys() {
 }
 
 #[test]
-fn settings_loader_accepts_python_llm_settings_literal() {
+fn settings_loader_accepts_agent_llm_settings_literal() {
     let mut settings_file = tempfile::Builder::new()
         .suffix(".py")
         .tempfile()
@@ -430,7 +430,7 @@ LLM_SETTINGS: SettingsDict = {{
     )
     .expect("write settings");
 
-    let settings = load_llm_settings_from_file(settings_file.path()).expect("load python settings");
+    let settings = load_llm_settings_from_file(settings_file.path()).expect("load settings");
     assert_eq!(
         settings["rate_limit"]["enabled"],
         serde_json::Value::Bool(false)
@@ -494,7 +494,7 @@ settings: SettingsDict = {{
 }
 
 #[test]
-fn settings_loader_accepts_current_python_project_example_like_python() {
+fn settings_loader_accepts_current_agent_project_example() {
     let example =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../v-agent/local_settings.example.py");
 

@@ -70,7 +70,7 @@ fn runtime_executes_tool_calls_until_task_finish() {
 }
 
 #[test]
-fn runtime_preserves_reasoning_content_on_assistant_messages_like_python() {
+fn runtime_preserves_reasoning_content_on_assistant_messages() {
     let mut response = LLMResponse::new("plain answer");
     response
         .raw
@@ -235,7 +235,7 @@ fn runtime_does_not_inject_image_message_for_text_only_task() {
 }
 
 #[test]
-fn runtime_keeps_tool_results_adjacent_before_image_notifications_like_python() {
+fn runtime_keeps_tool_results_adjacent_before_image_notifications() {
     let mut registry = vv_agent::tools::build_default_registry();
     registry
         .register_tool(
@@ -302,7 +302,7 @@ fn runtime_keeps_tool_results_adjacent_before_image_notifications_like_python() 
 }
 
 #[test]
-fn runtime_tool_context_uses_execution_context_metadata_like_python() {
+fn runtime_tool_context_uses_execution_context_metadata() {
     let workspace = tempfile::tempdir().expect("workspace");
     let outside = tempfile::tempdir().expect("outside");
     let outside_file = outside.path().join("outside.txt");
@@ -351,7 +351,7 @@ fn runtime_tool_context_uses_execution_context_metadata_like_python() {
 }
 
 #[test]
-fn runtime_allows_outside_workspace_paths_from_integer_metadata_like_python() {
+fn runtime_allows_outside_workspace_paths_from_integer_metadata() {
     let workspace = tempfile::tempdir().expect("workspace");
     let outside = tempfile::tempdir().expect("outside");
     let outside_file = outside.path().join("outside.txt");
@@ -396,7 +396,7 @@ fn runtime_executes_configured_sub_agent_with_real_runner() {
     sub_task_args.insert("agent_id".to_string(), json!("researcher"));
     sub_task_args.insert(
         "task_description".to_string(),
-        json!("Find the migration target"),
+        json!("Find the target crate"),
     );
     let mut child_finish_args = BTreeMap::new();
     child_finish_args.insert("message".to_string(), json!("child found vv-llm"));
@@ -458,7 +458,7 @@ fn runtime_executes_configured_sub_agent_with_real_runner() {
 }
 
 #[test]
-fn runtime_forwards_stream_callback_to_runtime_backed_sub_agent_like_python() {
+fn runtime_forwards_stream_callback_to_runtime_backed_sub_agent() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let stream_callback: LlmStreamCallback = {
         let events = Arc::clone(&events);
@@ -668,7 +668,7 @@ fn runtime_adds_generated_prompt_sections_to_sub_agent_metadata() {
 }
 
 #[test]
-fn runtime_seeds_skill_state_from_task_metadata_like_python() {
+fn runtime_seeds_skill_state_from_task_metadata() {
     let mut finish_args = BTreeMap::new();
     finish_args.insert("message".to_string(), json!("done"));
     let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
@@ -702,7 +702,7 @@ fn runtime_seeds_skill_state_from_task_metadata_like_python() {
 }
 
 #[test]
-fn runtime_keeps_initial_skill_state_over_task_metadata_like_python() {
+fn runtime_keeps_initial_skill_state_over_task_metadata() {
     let mut finish_args = BTreeMap::new();
     finish_args.insert("message".to_string(), json!("done"));
     let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
@@ -747,7 +747,7 @@ fn runtime_can_poll_async_configured_sub_agent_status() {
     sub_task_args.insert("agent_id".to_string(), json!("researcher"));
     sub_task_args.insert(
         "task_description".to_string(),
-        json!("Collect async migration facts"),
+        json!("Collect async task facts"),
     );
     sub_task_args.insert("wait_for_completion".to_string(), json!(false));
     let llm = InspectingSubTaskStatusLlmClient::new(vec![LLMResponse::with_tool_calls(
@@ -785,7 +785,7 @@ fn runtime_can_continue_completed_async_sub_agent_session() {
     sub_task_args.insert("agent_id".to_string(), json!("researcher"));
     sub_task_args.insert(
         "task_description".to_string(),
-        json!("Collect async migration facts"),
+        json!("Collect async task facts"),
     );
     sub_task_args.insert("wait_for_completion".to_string(), json!(false));
     let llm = InspectingSubTaskContinuationLlmClient::new(vec![LLMResponse::with_tool_calls(
@@ -860,7 +860,7 @@ fn runtime_hooks_can_patch_llm_request_and_tool_result_flow() {
 }
 
 #[test]
-fn runtime_hooks_normalize_pending_tool_call_ids_like_python() {
+fn runtime_hooks_normalize_pending_tool_call_ids() {
     let hook = Arc::new(PendingToolCallIdHook);
     let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
         "finish through pending hook",
@@ -898,7 +898,7 @@ fn runtime_hooks_normalize_pending_tool_call_ids_like_python() {
 }
 
 #[test]
-fn before_tool_call_patch_accepts_direct_result_and_call_conversions_like_python() {
+fn before_tool_call_patch_accepts_direct_result_and_call_conversions() {
     let result_hook = Arc::new(DirectResultBeforeToolHook);
     let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
         "finish through direct hook result",
@@ -1007,7 +1007,7 @@ fn runtime_emits_reference_lifecycle_log_events() {
 }
 
 #[test]
-fn runtime_log_events_include_python_style_previews() {
+fn runtime_log_events_include_agent_previews() {
     let assistant_text = "assistant preview text ".repeat(4);
     let final_text = "final answer preview text ".repeat(4);
     let mut finish_args = BTreeMap::new();
@@ -1102,7 +1102,7 @@ fn runtime_controls_can_inject_messages_before_each_cycle() {
 }
 
 #[test]
-fn runtime_interruption_provider_skips_remaining_tools_like_python() {
+fn runtime_interruption_provider_skips_remaining_tools() {
     let mut registry = vv_agent::tools::build_default_registry();
     registry
         .register_tool(
@@ -1215,7 +1215,7 @@ fn cancellation_token_propagates_to_children_and_runtime() {
 }
 
 #[test]
-fn cancellation_token_callbacks_match_python_semantics() {
+fn cancellation_token_callbacks_match_agent_semantics() {
     let token = CancellationToken::default();
     assert!(!token.cancelled());
     assert!(token.check().is_ok());
@@ -1329,7 +1329,7 @@ fn runtime_compacts_memory_before_large_follow_up_cycle() {
 }
 
 #[test]
-fn runtime_uses_previous_prompt_tokens_for_memory_compaction_like_python() {
+fn runtime_uses_previous_prompt_tokens_for_memory_compaction() {
     let llm = PromptTokenCompactionInspectingLlmClient::default();
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm);
@@ -1437,7 +1437,7 @@ fn runtime_injects_session_memory_context_after_compaction() {
 }
 
 #[test]
-fn runtime_loads_session_memory_by_default_like_python() {
+fn runtime_loads_session_memory_by_default() {
     let workspace = tempfile::tempdir().expect("workspace");
     let storage_dir = workspace
         .path()
@@ -1489,7 +1489,7 @@ fn runtime_loads_session_memory_by_default_like_python() {
 }
 
 #[test]
-fn runtime_disables_session_memory_with_integer_zero_like_python() {
+fn runtime_disables_session_memory_with_integer_zero() {
     let workspace = tempfile::tempdir().expect("workspace");
     let storage_dir = workspace.path().join(".memory/session/int_disabled_task");
     fs::create_dir_all(&storage_dir).expect("session memory dir");
@@ -1538,7 +1538,7 @@ fn runtime_disables_session_memory_with_integer_zero_like_python() {
 }
 
 #[test]
-fn runtime_scopes_session_memory_by_session_id_metadata_like_python() {
+fn runtime_scopes_session_memory_by_session_id_metadata() {
     let workspace = tempfile::tempdir().expect("workspace");
     let storage_dir = workspace.path().join(".memory/session/session-scope");
     fs::create_dir_all(&storage_dir).expect("session memory dir");
@@ -1591,7 +1591,7 @@ fn runtime_scopes_session_memory_by_session_id_metadata_like_python() {
 }
 
 #[test]
-fn runtime_uses_memory_summary_metadata_model_for_session_extraction_like_python() {
+fn runtime_uses_memory_summary_metadata_model_for_session_extraction() {
     let workspace = tempfile::tempdir().expect("workspace");
     let settings_file = workspace.path().join("local_settings.py");
     fs::write(
@@ -1640,7 +1640,7 @@ DEFAULT_USER_MEMORY_SUMMARIZE_MODEL = "settings-model"
 }
 
 #[test]
-fn runtime_uses_local_memory_summary_model_defaults_like_python() {
+fn runtime_uses_local_memory_summary_model_defaults() {
     let workspace = tempfile::tempdir().expect("workspace");
     let settings_file = workspace.path().join("local_settings.py");
     fs::write(
@@ -1683,7 +1683,7 @@ DEFAULT_USER_MEMORY_SUMMARIZE_MODEL = "settings-model"
 }
 
 #[test]
-fn runtime_uses_settings_model_token_limits_for_direct_runtime_memory_like_python() {
+fn runtime_uses_settings_model_token_limits_for_direct_runtime_memory() {
     let workspace = tempfile::tempdir().expect("workspace");
     let settings_file = workspace.path().join("llm_settings.json");
     fs::write(
@@ -1791,7 +1791,7 @@ fn runtime_microcompacts_before_full_memory_compaction() {
 }
 
 #[test]
-fn runtime_respects_configured_microcompact_tool_allowlist_like_python() {
+fn runtime_respects_configured_microcompact_tool_allowlist() {
     let workspace = tempfile::tempdir().expect("workspace");
     let large_tool_payload = "tool output ".repeat(300);
     let llm = MicrocompactInspectingLlmClient::new(large_tool_payload);
@@ -1844,7 +1844,7 @@ fn runtime_respects_configured_microcompact_tool_allowlist_like_python() {
 }
 
 #[test]
-fn runtime_parses_string_float_microcompact_ratio_like_python() {
+fn runtime_parses_string_float_microcompact_ratio() {
     let workspace = tempfile::tempdir().expect("workspace");
     let large_tool_payload = "tool output ".repeat(300);
     let llm = MicrocompactInspectingLlmClient::new(large_tool_payload);

@@ -130,7 +130,7 @@ fn resource_loader_discovers_agents_prompts_and_skills() {
 }
 
 #[test]
-fn resource_loader_force_reload_refreshes_cached_resources_like_python() {
+fn resource_loader_force_reload_refreshes_cached_resources() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     std::fs::create_dir_all(resource_root.join("prompts")).expect("prompts");
@@ -162,7 +162,7 @@ fn resource_loader_force_reload_refreshes_cached_resources_like_python() {
 }
 
 #[test]
-fn sdk_options_resource_loader_discovers_from_custom_roots_like_python() {
+fn sdk_options_resource_loader_discovers_from_custom_roots() {
     let workspace = tempfile::tempdir().expect("workspace");
     let custom_root = workspace.path().join("custom-resources");
     std::fs::create_dir_all(custom_root.join("prompts")).expect("prompts");
@@ -206,7 +206,7 @@ fn sdk_options_resource_loader_discovers_from_custom_roots_like_python() {
 }
 
 #[test]
-fn resource_loader_expands_home_paths_like_python() {
+fn resource_loader_expands_home_paths() {
     let Some(home) = std::env::var_os("HOME") else {
         return;
     };
@@ -224,7 +224,7 @@ fn resource_loader_expands_home_paths_like_python() {
 }
 
 #[test]
-fn resource_loader_canonicalizes_relative_skill_directories_like_python() {
+fn resource_loader_canonicalizes_relative_skill_directories() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     let shared_skills = workspace.path().join("shared-skills");
@@ -260,7 +260,7 @@ fn resource_loader_canonicalizes_relative_skill_directories_like_python() {
 }
 
 #[test]
-fn resource_loader_parses_agent_booleans_with_python_truthiness() {
+fn resource_loader_parses_agent_booleans_with_agent_truthiness() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     std::fs::create_dir_all(&resource_root).expect("resource root");
@@ -342,7 +342,7 @@ fn resource_loader_clamps_numeric_runtime_limits_like_sdk_task_preparation() {
 }
 
 #[test]
-fn resource_loader_stringifies_shell_lists_and_env_like_python() {
+fn resource_loader_stringifies_shell_lists_and_env() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     std::fs::create_dir_all(&resource_root).expect("resource root");
@@ -393,7 +393,7 @@ fn resource_loader_stringifies_shell_lists_and_env_like_python() {
 }
 
 #[test]
-fn resource_loader_canonicalizes_root_skill_directory_like_python() {
+fn resource_loader_canonicalizes_root_skill_directory() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     let noncanonical_resource_root = workspace.path().join("nested/../.vv-agent");
@@ -415,7 +415,7 @@ fn resource_loader_canonicalizes_root_skill_directory_like_python() {
 }
 
 #[test]
-fn resource_loader_canonicalizes_resource_roots_like_python() {
+fn resource_loader_canonicalizes_resource_roots() {
     let workspace = tempfile::tempdir().expect("workspace");
     let canonical_project_root = workspace.path().join(".vv-agent");
     let canonical_global_root = workspace.path().join(".global-vv-agent");
@@ -436,7 +436,7 @@ fn resource_loader_canonicalizes_resource_roots_like_python() {
 }
 
 #[test]
-fn resource_loader_reports_invalid_agent_profiles_like_python() {
+fn resource_loader_reports_invalid_agent_profiles() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     std::fs::create_dir_all(&resource_root).expect("resource root");
@@ -481,7 +481,7 @@ fn resource_loader_reports_invalid_agent_profiles_like_python() {
 }
 
 #[test]
-fn resource_loader_tracks_python_hook_files_for_sdk_runtime_hooks_like_python() {
+fn resource_loader_tracks_agent_hook_files_for_sdk_runtime_hooks() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     std::fs::create_dir_all(resource_root.join("hooks/nested")).expect("hooks");
@@ -513,7 +513,7 @@ fn resource_loader_tracks_python_hook_files_for_sdk_runtime_hooks_like_python() 
 }
 
 #[test]
-fn resource_loader_canonicalizes_hook_file_paths_like_python() {
+fn resource_loader_canonicalizes_hook_file_paths() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     let noncanonical_resource_root = workspace.path().join("nested/../.vv-agent");
@@ -582,7 +582,7 @@ fn sdk_client_auto_discovers_resource_agents_and_runs_by_name() {
 }
 
 #[test]
-fn sdk_client_prepare_task_for_agent_uses_resources_like_python() {
+fn sdk_client_prepare_task_for_agent_uses_resources() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     std::fs::create_dir_all(resource_root.join("prompts")).expect("prompts");
@@ -636,7 +636,7 @@ fn sdk_client_prepare_task_for_agent_uses_resources_like_python() {
 }
 
 #[test]
-fn sdk_client_new_with_agent_prepares_default_task_like_python() {
+fn sdk_client_new_with_agent_prepares_default_task() {
     let workspace = tempfile::tempdir().expect("workspace");
     let mut agent = AgentDefinition::default_for_model("demo-model");
     agent.description = "default inline agent".to_string();
@@ -656,12 +656,12 @@ fn sdk_client_new_with_agent_prepares_default_task_like_python() {
 
     assert_eq!(task.model, "demo-model-resolved");
     assert_eq!(task.user_prompt, "preview default");
-    assert_python_style_task_id(&task.task_id, "default");
+    assert_agent_task_id(&task.task_id, "default");
     assert!(task.system_prompt.contains("default inline agent"));
 }
 
 #[test]
-fn sdk_client_new_with_agents_resolves_only_agent_like_python() {
+fn sdk_client_new_with_agents_resolves_only_agent() {
     let workspace = tempfile::tempdir().expect("workspace");
     let client = AgentSDKClient::new_with_agents(
         AgentSDKOptions {
@@ -682,12 +682,12 @@ fn sdk_client_new_with_agents_resolves_only_agent_like_python() {
         .prepare_task("preview only profile", "demo-model")
         .expect("prepare only agent");
 
-    assert_python_style_task_id(&task.task_id, "researcher");
+    assert_agent_task_id(&task.task_id, "researcher");
     assert_eq!(task.user_prompt, "preview only profile");
 }
 
 #[test]
-fn sdk_prepare_and_run_use_python_style_unique_task_ids() {
+fn sdk_prepare_and_run_use_agent_unique_task_ids() {
     let workspace = tempfile::tempdir().expect("workspace");
     let mut client = AgentSDKClient::new(AgentSDKOptions {
         workspace: workspace.path().to_path_buf(),
@@ -707,8 +707,8 @@ fn sdk_prepare_and_run_use_python_style_unique_task_ids() {
     let second = client
         .prepare_task_for_agent("researcher", "preview two", "demo-model")
         .expect("second task");
-    assert_python_style_task_id(&first.task_id, "researcher");
-    assert_python_style_task_id(&second.task_id, "researcher");
+    assert_agent_task_id(&first.task_id, "researcher");
+    assert_agent_task_id(&second.task_id, "researcher");
     assert_ne!(first.task_id, second.task_id);
 
     let inline = client.prepare_task_with_agent(
@@ -716,7 +716,7 @@ fn sdk_prepare_and_run_use_python_style_unique_task_ids() {
         "preview inline",
         "demo-model",
     );
-    assert_python_style_task_id(&inline.task_id, "inline");
+    assert_agent_task_id(&inline.task_id, "inline");
 
     let captured_task_ids = Arc::new(Mutex::new(Vec::<String>::new()));
     let mut runtime =
@@ -740,10 +740,10 @@ fn sdk_prepare_and_run_use_python_style_unique_task_ids() {
     assert_eq!(run.result.status, AgentStatus::Completed);
     let captured = captured_task_ids.lock().expect("captured task ids");
     assert_eq!(captured.len(), 1);
-    assert_python_style_task_id(&captured[0], "researcher");
+    assert_agent_task_id(&captured[0], "researcher");
 }
 
-fn assert_python_style_task_id(task_id: &str, prefix: &str) {
+fn assert_agent_task_id(task_id: &str, prefix: &str) {
     let Some(suffix) = task_id.strip_prefix(&format!("{prefix}_")) else {
         panic!("task id {task_id:?} did not start with {prefix}_");
     };
@@ -769,7 +769,7 @@ impl RuntimeHook for TaskIdCaptureHook {
 }
 
 #[test]
-fn sdk_prepare_task_resolves_relative_skill_directories_from_workspace_like_python() {
+fn sdk_prepare_task_resolves_relative_skill_directories_from_workspace() {
     let workspace = tempfile::tempdir().expect("workspace");
     let skill_dir = workspace.path().join("skills/alpha");
     std::fs::create_dir_all(&skill_dir).expect("skill dir");
@@ -795,7 +795,7 @@ fn sdk_prepare_task_resolves_relative_skill_directories_from_workspace_like_pyth
 }
 
 #[test]
-fn sdk_prepare_task_clamps_runtime_limits_like_python() {
+fn sdk_prepare_task_clamps_runtime_limits() {
     let workspace = tempfile::tempdir().expect("workspace");
     let client = AgentSDKClient::new(AgentSDKOptions {
         workspace: workspace.path().to_path_buf(),
@@ -815,7 +815,7 @@ fn sdk_prepare_task_clamps_runtime_limits_like_python() {
 }
 
 #[test]
-fn sdk_prepare_task_accepts_explicit_session_id_like_python() {
+fn sdk_prepare_task_accepts_explicit_session_id() {
     let workspace = tempfile::tempdir().expect("workspace");
     let client = AgentSDKClient::new(AgentSDKOptions {
         workspace: workspace.path().to_path_buf(),
@@ -873,7 +873,7 @@ fn sdk_prepare_task_accepts_explicit_session_id_like_python() {
 }
 
 #[test]
-fn sdk_prepare_task_with_request_accepts_task_name_workspace_and_metadata_like_python() {
+fn sdk_prepare_task_with_request_accepts_task_name_workspace_and_metadata() {
     let workspace = tempfile::tempdir().expect("workspace");
     let override_workspace = tempfile::tempdir().expect("override workspace");
     let client = AgentSDKClient::new_with_agent(
@@ -929,7 +929,7 @@ fn sdk_prepare_task_with_request_accepts_task_name_workspace_and_metadata_like_p
 }
 
 #[test]
-fn sdk_client_run_requires_agent_when_no_profile_is_configured_like_python() {
+fn sdk_client_run_requires_agent_when_no_profile_is_configured() {
     let workspace = tempfile::tempdir().expect("workspace");
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new(
         "should not run",
@@ -949,14 +949,14 @@ fn sdk_client_run_requires_agent_when_no_profile_is_configured_like_python() {
 }
 
 #[test]
-fn sdk_client_query_agent_compatibility_wrapper_like_python() {
+fn sdk_client_query_agent_helper_returns_text() {
     let workspace = tempfile::tempdir().expect("workspace");
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
         "done",
         vec![ToolCall::new(
             "finish",
             "task_finish",
-            BTreeMap::from([("message".to_string(), json!("compat-query"))]),
+            BTreeMap::from([("message".to_string(), json!("query-helper"))]),
         )],
     )]));
     let mut client = AgentSDKClient::new(AgentSDKOptions {
@@ -971,11 +971,11 @@ fn sdk_client_query_agent_compatibility_wrapper_like_python() {
 
     let text = client.query_agent("demo", "say ok").expect("query agent");
 
-    assert_eq!(text, "compat-query");
+    assert_eq!(text, "query-helper");
 }
 
 #[test]
-fn sdk_client_query_agent_can_return_wait_reason_when_not_strict_like_python() {
+fn sdk_client_query_agent_can_return_wait_reason_when_not_strict() {
     let workspace = tempfile::tempdir().expect("workspace");
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
         "need input",
@@ -1003,7 +1003,7 @@ fn sdk_client_query_agent_can_return_wait_reason_when_not_strict_like_python() {
 }
 
 #[test]
-fn sdk_client_run_requires_agent_when_multiple_profiles_are_configured_like_python() {
+fn sdk_client_run_requires_agent_when_multiple_profiles_are_configured() {
     let workspace = tempfile::tempdir().expect("workspace");
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new(
         "should not run",
@@ -1089,7 +1089,7 @@ fn sdk_client_uses_llm_builder_when_runtime_is_not_injected() {
 }
 
 #[test]
-fn sdk_one_shot_run_can_override_workspace_like_python() {
+fn sdk_one_shot_run_can_override_workspace() {
     let root = tempfile::tempdir().expect("root");
     let default_workspace = root.path().join("default-workspace");
     let override_workspace = root.path().join("override-workspace");
@@ -1149,7 +1149,7 @@ fn sdk_one_shot_run_can_override_workspace_like_python() {
 }
 
 #[test]
-fn sdk_module_level_run_with_options_and_agent_helper_like_python() {
+fn sdk_module_level_run_with_options_and_agent_helper() {
     let workspace = tempfile::tempdir().expect("workspace");
     let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
         let llm: Arc<dyn LlmClient> =
@@ -1191,7 +1191,7 @@ fn sdk_module_level_run_with_options_and_agent_helper_like_python() {
 }
 
 #[test]
-fn sdk_module_level_query_with_options_and_agent_helper_like_python() {
+fn sdk_module_level_query_with_options_and_agent_helper() {
     let workspace = tempfile::tempdir().expect("workspace");
     let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
         let llm: Arc<dyn LlmClient> =
@@ -1233,7 +1233,7 @@ fn sdk_module_level_query_with_options_and_agent_helper_like_python() {
 }
 
 #[test]
-fn sdk_options_tool_registry_factory_runs_custom_tools_like_python() {
+fn sdk_options_tool_registry_factory_runs_custom_tools() {
     let custom_tool = "_workflow_custom_run";
     let builder: LlmBuilder = Arc::new(move |_, backend, model, _| {
         let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![
@@ -1323,7 +1323,7 @@ fn sdk_options_tool_registry_factory_runs_custom_tools_like_python() {
 }
 
 #[test]
-fn sdk_client_run_agent_with_request_passes_shared_state_like_python() {
+fn sdk_client_run_agent_with_request_passes_shared_state() {
     let custom_tool = "_inspect_shared_state";
     let builder: LlmBuilder = Arc::new(move |_, backend, model, _| {
         let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![
@@ -1395,7 +1395,7 @@ fn sdk_client_run_agent_with_request_passes_shared_state_like_python() {
 }
 
 #[test]
-fn sdk_default_run_request_passes_python_one_shot_runtime_controls() {
+fn sdk_default_run_request_passes_agent_one_shot_runtime_controls() {
     let captured_messages = Arc::new(Mutex::new(Vec::<Vec<Message>>::new()));
     let captured_events = Arc::new(Mutex::new(Vec::<String>::new()));
     let builder: LlmBuilder = {
@@ -1463,7 +1463,7 @@ fn sdk_default_run_request_passes_python_one_shot_runtime_controls() {
 }
 
 #[test]
-fn sdk_default_query_request_can_return_non_completed_wait_reason_like_python() {
+fn sdk_default_query_request_can_return_non_completed_wait_reason() {
     let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
         let llm: Arc<dyn LlmClient> =
             Arc::new(ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
@@ -1506,7 +1506,7 @@ fn sdk_default_query_request_can_return_non_completed_wait_reason_like_python() 
 }
 
 #[test]
-fn sdk_module_level_run_request_helper_passes_shared_state_like_python() {
+fn sdk_module_level_run_request_helper_passes_shared_state() {
     let custom_tool = "_module_inspect_shared_state";
     let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
         let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![
@@ -1581,7 +1581,7 @@ fn sdk_module_level_run_request_helper_passes_shared_state_like_python() {
 }
 
 #[test]
-fn sdk_client_run_agent_with_request_passes_before_cycle_messages_like_python() {
+fn sdk_client_run_agent_with_request_passes_before_cycle_messages() {
     let captured_messages = Arc::new(Mutex::new(Vec::<Vec<Message>>::new()));
     let builder: LlmBuilder = {
         let captured_messages = Arc::clone(&captured_messages);
@@ -1631,7 +1631,7 @@ fn sdk_client_run_agent_with_request_passes_before_cycle_messages_like_python() 
 }
 
 #[test]
-fn sdk_client_run_agent_with_request_passes_interruption_messages_like_python() {
+fn sdk_client_run_agent_with_request_passes_interruption_messages() {
     let custom_tool = "_sdk_noop";
     let builder: LlmBuilder = Arc::new(move |_, backend, model, _| {
         let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![
@@ -1716,7 +1716,7 @@ fn sdk_client_run_agent_with_request_passes_interruption_messages_like_python() 
 }
 
 #[test]
-fn sdk_options_log_handler_receives_runtime_events_like_python() {
+fn sdk_options_log_handler_receives_runtime_events() {
     let events = Arc::new(Mutex::new(Vec::<String>::new()));
     let sink = Arc::clone(&events);
     let builder: LlmBuilder = Arc::new(move |_, backend, model, _| {
@@ -1763,7 +1763,7 @@ fn sdk_options_log_handler_receives_runtime_events_like_python() {
 }
 
 #[test]
-fn sdk_options_runtime_hooks_patch_llm_response_like_python() {
+fn sdk_options_runtime_hooks_patch_llm_response() {
     let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
         let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![LLMResponse::new(
             "plain response",
@@ -1798,7 +1798,7 @@ fn sdk_options_runtime_hooks_patch_llm_response_like_python() {
 }
 
 #[test]
-fn sdk_client_loads_runtime_hooks_from_resource_loader_like_python() {
+fn sdk_client_loads_runtime_hooks_from_resource_loader() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     std::fs::create_dir_all(resource_root.join("hooks")).expect("hooks");
@@ -1855,12 +1855,12 @@ HOOK = ForceFinishHook()
     assert_eq!(run.result.final_answer.as_deref(), Some("hook-finish"));
     assert!(
         client.resource_diagnostics().is_empty(),
-        "Python hook loading should not require Rust-side runtime_hooks diagnostics"
+        "runtime hook loading should not require Rust-side runtime_hooks diagnostics"
     );
 }
 
 #[test]
-fn sdk_options_runtime_hooks_apply_to_injected_runtime_like_python() {
+fn sdk_options_runtime_hooks_apply_to_injected_runtime() {
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new(
         "plain response",
     )]));
@@ -1883,7 +1883,7 @@ fn sdk_options_runtime_hooks_apply_to_injected_runtime_like_python() {
 }
 
 #[test]
-fn sdk_options_pass_debug_dump_dir_to_custom_llm_builder_like_python() {
+fn sdk_options_pass_debug_dump_dir_to_custom_llm_builder() {
     #[derive(Clone, Default)]
     struct DebugAwareLlm {
         debug_dump_dir: Arc<Mutex<Option<std::path::PathBuf>>>,
@@ -1943,7 +1943,7 @@ fn sdk_options_pass_debug_dump_dir_to_custom_llm_builder_like_python() {
 }
 
 #[test]
-fn sdk_client_builds_python_style_system_prompt_from_agent_definition() {
+fn sdk_client_builds_agent_system_prompt_from_agent_definition() {
     let captured_messages = Arc::new(Mutex::new(Vec::<Vec<Message>>::new()));
     let builder: LlmBuilder = {
         let captured_messages = Arc::clone(&captured_messages);

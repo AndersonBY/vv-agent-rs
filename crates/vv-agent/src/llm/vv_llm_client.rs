@@ -1496,7 +1496,7 @@ mod tests {
     }
 
     #[test]
-    fn should_use_stream_matches_python_model_rules() {
+    fn should_use_stream_matches_model_rules() {
         assert!(should_use_stream("deepseek-v4-pro"));
         assert!(should_use_stream("MiniMax-M2.1"));
         assert!(should_use_stream("claude-sonnet-4-6-thinking"));

@@ -420,7 +420,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
-    fn notify_background_listeners_continues_after_listener_panic_like_python() {
+    fn notify_background_listeners_continues_after_listener_panic() {
         let delivered = Arc::new(AtomicUsize::new(0));
         let delivered_listener = Arc::clone(&delivered);
         let listeners: Vec<BackgroundSessionListener> = vec![

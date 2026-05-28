@@ -12,7 +12,7 @@ use vv_agent::{
 };
 
 #[test]
-fn runtime_backends_exports_python_base_execution_backend_paths() {
+fn runtime_backends_exports_agent_base_execution_backend_paths() {
     let _direct = vv_agent::runtime::backends::ExecutionBackend::default();
     let _base = vv_agent::runtime::backends::base::ExecutionBackend::default();
 }
@@ -57,7 +57,7 @@ fn runtime_recipe_round_trips_through_json() {
 }
 
 #[test]
-fn runtime_recipe_matches_python_dict_and_default_checkpoint_path() {
+fn runtime_recipe_matches_dict_and_default_checkpoint_path() {
     let recipe = RuntimeRecipe::new(
         "/tmp/settings.py",
         "deepseek",
@@ -77,7 +77,7 @@ fn runtime_recipe_matches_python_dict_and_default_checkpoint_path() {
 }
 
 #[test]
-fn cycle_task_dispatch_result_matches_python_worker_payload_shape() {
+fn cycle_task_dispatch_result_matches_worker_payload_shape() {
     let result = AgentResult::completed(vec![Message::assistant("done")], Vec::new(), "ok");
     let terminal = CycleTaskDispatchResult::finished(result.clone());
 
@@ -109,7 +109,7 @@ fn celery_backend_without_dispatcher_keeps_inline_parallel_map_fallback() {
 }
 
 #[test]
-fn inline_backend_execute_runs_python_style_cycle_loop() {
+fn inline_backend_execute_runs_agent_cycle_loop() {
     let backend = InlineBackend;
     let task = AgentTask::new("backend-loop", "model", "system", "prompt");
     let initial_messages = vec![Message::user("hello")];
@@ -149,7 +149,7 @@ fn inline_backend_execute_runs_python_style_cycle_loop() {
 }
 
 #[test]
-fn inline_backend_execute_returns_python_style_max_cycles_result() {
+fn inline_backend_execute_returns_agent_max_cycles_result() {
     let backend = InlineBackend;
     let task = AgentTask::new("backend-max", "model", "system", "prompt");
 
@@ -234,7 +234,7 @@ fn celery_backend_inline_execute_matches_inline_fallback() {
 }
 
 #[test]
-fn celery_backend_distributed_requires_store_and_dispatcher_like_python() {
+fn celery_backend_distributed_requires_store_and_dispatcher() {
     let backend = CeleryBackend::distributed(RuntimeRecipe::new(
         "settings.py",
         "deepseek",

@@ -213,7 +213,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn windows_hidden_process_creation_flags_match_python_subprocess_defaults() {
+    fn windows_hidden_process_creation_flags_match_agent_subprocess_defaults() {
         assert_eq!(
             windows_hidden_process_creation_flags(),
             0x0000_0200 | 0x0800_0000
@@ -221,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_taskkill_args_match_python_process_tree_termination() {
+    fn windows_taskkill_args_match_agent_process_tree_termination() {
         assert_eq!(
             windows_taskkill_args(1234),
             vec!["/PID", "1234", "/T", "/F"]

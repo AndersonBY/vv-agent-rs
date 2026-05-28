@@ -8,7 +8,7 @@ use vv_agent::{
 };
 
 #[test]
-fn tool_call_runner_skips_remaining_calls_after_finish_like_python() {
+fn tool_call_runner_skips_remaining_calls_after_finish() {
     let workspace = tempfile::tempdir().expect("workspace");
     let mut registry = ToolRegistry::new();
     registry

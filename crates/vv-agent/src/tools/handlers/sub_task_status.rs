@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{
-    coerce_bool, coerce_python_text_arg, parse_integer_arg, tool_error_with_code, tool_result,
+    coerce_bool, parse_integer_arg, stringify_tool_arg, tool_error_with_code, tool_result,
 };
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
@@ -35,10 +35,10 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
             };
             let mut task_ids = Vec::new();
             for item in raw_task_ids {
-                if is_python_falsey_for_id(item) {
+                if is_falsey_id_value(item) {
                     continue;
                 }
-                let task_id = coerce_python_text_arg(Some(item), "");
+                let task_id = stringify_tool_arg(Some(item), "");
                 let task_id = task_id.trim();
                 if !task_id.is_empty() && !task_ids.iter().any(|known| known == task_id) {
                     task_ids.push(task_id.to_string());
@@ -65,7 +65,7 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
                 if value.is_null() {
                     return None;
                 }
-                let message = coerce_python_text_arg(Some(value), "");
+                let message = stringify_tool_arg(Some(value), "");
                 let message = message.trim();
                 (!message.is_empty()).then(|| message.to_string())
             });
@@ -137,7 +137,7 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
     spec
 }
 
-fn is_python_falsey_for_id(value: &Value) -> bool {
+fn is_falsey_id_value(value: &Value) -> bool {
     match value {
         Value::Null => true,
         Value::Bool(value) => !*value,

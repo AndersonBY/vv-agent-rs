@@ -43,7 +43,7 @@ fn checkpoint(task_id: &str, cycle_index: u32) -> Checkpoint {
 }
 
 #[test]
-fn sqlite_state_store_persists_python_to_dict_payload_shape() {
+fn sqlite_state_store_persists_agent_to_dict_payload_shape() {
     let db = NamedTempFile::new().expect("temp sqlite db");
     let store = SqliteStateStore::new(db.path()).expect("sqlite store");
 
@@ -156,7 +156,7 @@ fn sqlite_state_store_round_trips_checkpoints() {
 }
 
 #[test]
-fn redis_state_store_matches_python_key_and_payload_shape() {
+fn redis_state_store_matches_key_and_payload_shape() {
     let checkpoint = checkpoint("task-redis", 7);
     let payload = RedisStateStore::checkpoint_to_json(&checkpoint).expect("payload");
     let parsed: serde_json::Value = serde_json::from_str(&payload).expect("json payload");

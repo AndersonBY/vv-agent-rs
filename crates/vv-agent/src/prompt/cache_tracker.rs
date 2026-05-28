@@ -107,12 +107,12 @@ fn normalize_section(section: &Value) -> Option<BTreeMap<String, Value>> {
 
 fn hash_json<T: serde::Serialize + ?Sized>(value: &T) -> String {
     let value = serde_json::to_value(value).unwrap_or(Value::Null);
-    let payload = python_sorted_json(&value);
+    let payload = stable_sorted_json(&value);
     let digest = Sha256::digest(payload.as_bytes());
     hex_lower(&digest)
 }
 
-fn python_sorted_json(value: &Value) -> String {
+fn stable_sorted_json(value: &Value) -> String {
     match value {
         Value::Null => "null".to_string(),
         Value::Bool(value) => {
@@ -128,7 +128,7 @@ fn python_sorted_json(value: &Value) -> String {
             "[{}]",
             items
                 .iter()
-                .map(python_sorted_json)
+                .map(stable_sorted_json)
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -142,7 +142,7 @@ fn python_sorted_json(value: &Value) -> String {
                     .map(|(key, value)| format!(
                         "{}: {}",
                         serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string()),
-                        python_sorted_json(value)
+                        stable_sorted_json(value)
                     ))
                     .collect::<Vec<_>>()
                     .join(", ")

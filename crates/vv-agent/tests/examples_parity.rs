@@ -1,7 +1,7 @@
 use std::path::Path;
 
 #[test]
-fn rust_examples_cover_python_example_numbering() {
+fn rust_examples_cover_agent_example_numbering() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let examples_dir = manifest_dir.join("examples");
     let expected = [

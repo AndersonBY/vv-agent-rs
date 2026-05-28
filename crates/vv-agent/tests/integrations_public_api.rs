@@ -10,7 +10,7 @@ impl SkillIntegration for ToggleIntegration {
 }
 
 #[test]
-fn skill_integration_protocol_matches_python_enabled_contract() {
+fn skill_integration_protocol_matches_enabled_contract() {
     let enabled: Box<dyn SkillIntegration> = Box::new(ToggleIntegration(true));
     let disabled: Box<dyn SkillIntegration> = Box::new(ToggleIntegration(false));
 
@@ -19,14 +19,14 @@ fn skill_integration_protocol_matches_python_enabled_contract() {
 }
 
 #[test]
-fn integrations_protocols_submodule_matches_python_import_path() {
+fn integrations_protocols_submodule_matches_import_path() {
     let enabled: Box<dyn ProtocolSkillIntegration> = Box::new(ToggleIntegration(true));
 
     assert!(enabled.enabled());
 }
 
 #[test]
-fn integrations_module_is_split_like_python_package() {
+fn integrations_module_is_split_package() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
 
     assert!(

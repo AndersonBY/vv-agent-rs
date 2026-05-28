@@ -4,9 +4,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{
-    coerce_bool, coerce_python_text_arg, tool_error_with_code, tool_result,
-};
+use crate::tools::common::{coerce_bool, stringify_tool_arg, tool_error_with_code, tool_result};
 use crate::types::{
     AgentStatus, SubTaskRequest, ToolArguments, ToolDirective, ToolExecutionResult,
     ToolResultStatus,
@@ -39,7 +37,7 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                     if raw.is_null() {
                         return None;
                     }
-                    let value = coerce_python_text_arg(Some(raw), "");
+                    let value = stringify_tool_arg(Some(raw), "");
                     let value = value.trim().to_string();
                     (!value.is_empty()).then_some(value)
                 })
@@ -50,7 +48,7 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
 
             let task_description = arguments
                 .get("task_description")
-                .map(|value| coerce_python_text_arg(Some(value), ""))
+                .map(|value| stringify_tool_arg(Some(value), ""))
                 .unwrap_or_default()
                 .trim()
                 .to_string();
@@ -81,7 +79,7 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
             let exclude_files_pattern = arguments
                 .get("exclude_files_pattern")
                 .filter(|value| !value.is_null())
-                .map(|value| coerce_python_text_arg(Some(value), "").trim().to_string());
+                .map(|value| stringify_tool_arg(Some(value), "").trim().to_string());
             let wait_for_completion = arguments
                 .get("wait_for_completion")
                 .is_none_or(|value| coerce_bool(Some(value), true));
@@ -92,7 +90,7 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                     task_description,
                     output_requirements: arguments
                         .get("output_requirements")
-                        .map(|value| coerce_python_text_arg(Some(value), ""))
+                        .map(|value| stringify_tool_arg(Some(value), ""))
                         .unwrap_or_default()
                         .trim()
                         .to_string(),
@@ -186,7 +184,7 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                 };
                 let task_description = item
                     .get("task_description")
-                    .map(|value| coerce_python_text_arg(Some(value), ""))
+                    .map(|value| stringify_tool_arg(Some(value), ""))
                     .unwrap_or_default()
                     .trim()
                     .to_string();
@@ -205,7 +203,7 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                         task_description,
                         output_requirements: item
                             .get("output_requirements")
-                            .map(|value| coerce_python_text_arg(Some(value), ""))
+                            .map(|value| stringify_tool_arg(Some(value), ""))
                             .unwrap_or_default()
                             .trim()
                             .to_string(),

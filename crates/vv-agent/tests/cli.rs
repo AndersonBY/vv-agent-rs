@@ -7,7 +7,7 @@ use vv_agent::cli::{
 use vv_agent::{AgentResult, AgentStatus, ResolvedModelConfig};
 
 #[test]
-fn cli_parser_matches_python_entrypoint_flags() {
+fn cli_parser_matches_entrypoint_flags() {
     let args = parse_cli_args_from_with_default_settings(
         [
             "vv-agent",
@@ -101,7 +101,7 @@ fn cli_task_applies_resolved_vv_llm_token_limits_to_memory_metadata() {
 }
 
 #[test]
-fn cli_result_payload_matches_python_shape() {
+fn cli_result_payload_matches_shape() {
     let result = AgentResult {
         status: AgentStatus::Completed,
         final_answer: Some("done".to_string()),

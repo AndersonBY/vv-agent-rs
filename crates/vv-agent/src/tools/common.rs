@@ -104,7 +104,7 @@ pub(crate) fn coerce_bool(value: Option<&Value>, default: bool) -> bool {
     }
 }
 
-pub(crate) fn coerce_python_bool_arg(value: Option<&Value>, default: bool) -> bool {
+pub(crate) fn coerce_truthy_arg(value: Option<&Value>, default: bool) -> bool {
     match value {
         Some(Value::Null) => false,
         Some(Value::Bool(value)) => *value,
@@ -124,7 +124,7 @@ pub(crate) fn parse_integer_arg(value: &Value) -> Result<i64, ()> {
     }
 }
 
-pub(crate) fn coerce_python_text_arg(value: Option<&Value>, default: &str) -> String {
+pub(crate) fn stringify_tool_arg(value: Option<&Value>, default: &str) -> String {
     match value {
         Some(Value::String(text)) => text.clone(),
         Some(Value::Number(number)) => number.to_string(),

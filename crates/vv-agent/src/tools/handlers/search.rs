@@ -9,9 +9,9 @@ use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{
-    coerce_python_bool_arg, coerce_python_text_arg, command_output_with_executable_busy_retry,
-    grep_text, is_hidden_path, is_ignored_root, is_supported_file_type, matches_file_type,
-    parse_integer_arg, path_escapes_workspace_error, supported_file_types_message,
+    coerce_truthy_arg, command_output_with_executable_busy_retry, grep_text, is_hidden_path,
+    is_ignored_root, is_supported_file_type, matches_file_type, parse_integer_arg,
+    path_escapes_workspace_error, stringify_tool_arg, supported_file_types_message,
     workspace_relative_path_or_absolute, GrepTextOptions,
 };
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
@@ -438,13 +438,13 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
         "workspace_grep",
         "Search workspace files with grep-style semantics.",
         Arc::new(|context, arguments| {
-            let pattern = coerce_python_text_arg(arguments.get("pattern"), "")
+            let pattern = stringify_tool_arg(arguments.get("pattern"), "")
                 .trim()
                 .to_string();
             if pattern.is_empty() {
                 return grep_error("Search pattern is required");
             }
-            let output_mode = coerce_python_text_arg(arguments.get("output_mode"), "content");
+            let output_mode = stringify_tool_arg(arguments.get("output_mode"), "content");
             if !matches!(
                 output_mode.as_str(),
                 "content" | "files_with_matches" | "count"
@@ -455,7 +455,7 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
             }
             let file_type = arguments
                 .get("type")
-                .map(|value| coerce_python_text_arg(Some(value), ""))
+                .map(|value| stringify_tool_arg(Some(value), ""))
                 .map(|value| value.trim().to_ascii_lowercase())
                 .filter(|value| !value.is_empty());
             if let Some(file_type) = &file_type {
@@ -466,13 +466,13 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                     ));
                 }
             }
-            let path = coerce_python_text_arg(arguments.get("path"), ".");
-            let glob = coerce_python_text_arg(arguments.get("glob"), "**/*");
+            let path = stringify_tool_arg(arguments.get("path"), ".");
+            let glob = stringify_tool_arg(arguments.get("glob"), "**/*");
             let glob_pattern = normalized_glob_pattern(&glob);
-            let include_hidden = coerce_python_bool_arg(arguments.get("include_hidden"), false);
-            let include_ignored = coerce_python_bool_arg(arguments.get("include_ignored"), false);
-            let multiline = coerce_python_bool_arg(arguments.get("multiline"), false);
-            let show_line_numbers = coerce_python_bool_arg(arguments.get("n"), true);
+            let include_hidden = coerce_truthy_arg(arguments.get("include_hidden"), false);
+            let include_ignored = coerce_truthy_arg(arguments.get("include_ignored"), false);
+            let multiline = coerce_truthy_arg(arguments.get("multiline"), false);
+            let show_line_numbers = coerce_truthy_arg(arguments.get("n"), true);
             let parse_optional_usize =
                 |name: &str, min_value: i64| -> Result<Option<usize>, String> {
                     match arguments.get(name) {
@@ -511,9 +511,9 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 None => None,
             };
             let case_insensitive = if arguments.contains_key("case_sensitive") {
-                !coerce_python_bool_arg(arguments.get("case_sensitive"), false)
+                !coerce_truthy_arg(arguments.get("case_sensitive"), false)
             } else if arguments.contains_key("i") {
-                coerce_python_bool_arg(arguments.get("i"), false)
+                coerce_truthy_arg(arguments.get("i"), false)
             } else {
                 !pattern.chars().any(char::is_uppercase)
             };
