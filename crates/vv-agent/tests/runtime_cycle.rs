@@ -1533,7 +1533,7 @@ fn runtime_disables_session_memory_with_integer_zero_like_python() {
                 && !message
                     .content
                     .contains("integer zero should disable session memory")),
-        "integer 0 should disable session memory like Python: {first_request:#?}"
+        "integer 0 should disable session memory: {first_request:#?}"
     );
 }
 

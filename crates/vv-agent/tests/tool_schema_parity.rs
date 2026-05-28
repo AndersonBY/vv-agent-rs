@@ -867,11 +867,11 @@ fn tools_module_is_split_into_handler_files() {
         ),
         (
             "background_sessions.rs",
-            "background sessions should live under src/runtime/ like Python runtime/background_sessions.py",
+            "background sessions should live under src/runtime/",
         ),
         (
             "processes.rs",
-            "captured process helpers should live under src/runtime/ like Python runtime/processes.py",
+            "captured process helpers should live under src/runtime/",
         ),
         (
             "sub_agent_sessions.rs",
@@ -879,7 +879,7 @@ fn tools_module_is_split_into_handler_files() {
         ),
         (
             "sub_task_manager.rs",
-            "sub-task manager should live under src/runtime/ like Python runtime/sub_task_manager.py",
+            "sub-task manager should live under src/runtime/",
         ),
         (
             "runtime/backends.rs",
@@ -929,7 +929,7 @@ fn tools_module_is_split_into_handler_files() {
         ),
         (
             "constants.rs",
-            "constants.rs should be split into src/constants/ modules like Python constants/",
+            "constants.rs should be split into src/constants/ modules",
         ),
     ] {
         assert!(!root.join(relative).exists(), "{message}");
@@ -1209,7 +1209,7 @@ fn assert_description_contains(
     for expected in expected_fragments {
         assert!(
             actual.contains(expected),
-            "{tool_name} description should preserve Python reference fragment:\n{expected}\n\nactual:\n{actual}"
+            "{tool_name} description should preserve expected schema guidance:\n{expected}\n\nactual:\n{actual}"
         );
     }
 }
@@ -1224,7 +1224,7 @@ fn assert_property_contains(
     for expected in expected_fragments {
         assert!(
             actual.contains(expected),
-            "{tool_name}.{property_name} description should preserve Python reference fragment:\n{expected}\n\nactual:\n{actual}"
+            "{tool_name}.{property_name} description should preserve expected schema guidance:\n{expected}\n\nactual:\n{actual}"
         );
     }
 }
@@ -1247,7 +1247,7 @@ fn assert_nested_property_contains(
     for expected in expected_fragments {
         assert!(
             actual.contains(expected),
-            "{tool_name}.{} description should preserve Python reference fragment:\n{expected}\n\nactual:\n{actual}",
+            "{tool_name}.{} description should preserve expected schema guidance:\n{expected}\n\nactual:\n{actual}",
             property_path.join("."),
         );
     }

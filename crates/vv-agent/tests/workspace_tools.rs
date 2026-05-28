@@ -718,6 +718,37 @@ fn read_file_returns_file_info_when_requested_slice_exceeds_limits() {
 }
 
 #[test]
+fn read_file_returns_file_info_when_char_limit_exceeded() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("chars.txt"), "a".repeat(50_001))
+        .expect("large char file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "read_large_chars",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!("chars.txt"))]),
+            ),
+            &mut context,
+        )
+        .expect("read tool");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["content"], Value::Null);
+    assert_eq!(payload["file_info"]["total_chars"], 50_001);
+    assert_eq!(payload["requested"]["char_count"], 50_001);
+    assert_eq!(payload["limits"]["max_chars"], 50_000);
+    assert!(payload["message"]
+        .as_str()
+        .expect("message")
+        .contains("exceeds limits"));
+}
+
+#[test]
 fn read_file_accepts_string_line_numbers_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

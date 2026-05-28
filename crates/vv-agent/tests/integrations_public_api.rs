@@ -31,11 +31,11 @@ fn integrations_module_is_split_like_python_package() {
 
     assert!(
         root.join("integrations").join("mod.rs").is_file(),
-        "integrations should be split into src/integrations/mod.rs like Python integrations/__init__.py"
+        "integrations should be split into src/integrations/mod.rs"
     );
     assert!(
         root.join("integrations").join("protocols.rs").is_file(),
-        "integrations protocols should live in src/integrations/protocols.rs like Python integrations/protocols.py"
+        "integrations protocols should live in src/integrations/protocols.rs"
     );
     assert!(
         !root.join("integrations.rs").exists(),

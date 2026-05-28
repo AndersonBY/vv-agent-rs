@@ -25,6 +25,7 @@ fn public_package_docs_do_not_explain_migration_history() {
     let public_docs = [
         workspace_dir.join("README.md"),
         workspace_dir.join("README_ZH.md"),
+        workspace_dir.join("GOAL.md"),
         manifest_dir.join("src/lib.rs"),
     ];
 
@@ -89,6 +90,11 @@ fn public_doc_forbidden_terms() -> Vec<String> {
         "runtime parity".to_string(),
         "implementation-history".to_string(),
         "migration-history".to_string(),
+        join_words("Python", " project"),
+        join_words("Python", " package"),
+        join_words("Python", " repo"),
+        join_words("Python", "'s structure"),
+        format!("{} with {}", "parity", "Python"),
     ]
     .into()
 }
@@ -439,7 +445,7 @@ fn runtime_modules_are_not_flattened_at_crate_root() {
     ] {
         assert!(
             root.join("runtime").join(format!("{module}.rs")).is_file(),
-            "runtime/{module}.rs should mirror Python vv_agent/runtime/{module}.py"
+            "runtime/{module}.rs should stay in the runtime domain module"
         );
         assert!(
             !root.join(format!("{module}.rs")).exists(),
@@ -456,7 +462,7 @@ fn sub_agent_session_registry_uses_python_public_import_paths() {
 
     assert!(
         !runtime_mod.contains("pub mod sub_agent_sessions;"),
-        "Python exposes sub-agent session helpers through vv_agent.runtime.engine and vv_agent.runtime, not a public runtime.sub_agent_sessions module"
+        "sub-agent session helpers should be exposed through runtime::engine and runtime, not a public runtime::sub_agent_sessions module"
     );
 
     let _get_session = vv_agent::runtime::engine::get_sub_agent_session;
