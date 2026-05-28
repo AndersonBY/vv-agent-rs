@@ -46,8 +46,8 @@ pub(super) fn bash_schema() -> Value {
                     "command": {"type": "string", "description": "Bash command string. The runtime executes it through the configured shell."},
                     "exec_dir": {"type": "string", "description": "Execution directory (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
                     "timeout": {"type": "integer", "description": "Timeout seconds, default 300, max 600."},
-                    "stdin": {"type": "string", "description": "Optional stdin content."},
-                    "auto_confirm": {"type": "boolean", "description": "Pipe yes to command when true."},
+                    "stdin": {"type": "string", "description": "Optional stdin content for interactive prompts, confirmation text, heredoc-style input, or commands that read from standard input. Prefer explicit stdin over embedding secrets or fragile echo pipelines in the command string."},
+                    "auto_confirm": {"type": "boolean", "description": "Pipe yes to the command for non-interactive confirmation prompts. Use carefully: do not enable for destructive operations unless the user has already authorized the action and the command target is explicit."},
                     "run_in_background": {"type": "boolean", "description": "Run command in background and return session_id for polling."}
                 },
                 "required": ["command"]

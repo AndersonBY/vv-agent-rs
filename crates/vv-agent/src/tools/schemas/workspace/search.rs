@@ -50,7 +50,7 @@ pub(in crate::tools::schemas) fn workspace_grep_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "description": "Regex pattern to search for."},
+                    "pattern": {"type": "string", "description": "Regex pattern to search for; escape regex metacharacters when searching for literal text such as dots, brackets, or file extensions."},
                     "path": {"type": "string", "description": "Optional search root or single file path. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'. A single file path searches that file directly, even if it is hidden or under an ignored root."},
                     "glob": {"type": "string", "description": "Optional file glob filter. Default **/*."},
                     "include_hidden": {"type": "boolean", "description": "Whether hidden files are included. Default false."},
@@ -61,7 +61,7 @@ pub(in crate::tools::schemas) fn workspace_grep_schema() -> Value {
                     "c": {"type": "integer", "description": "Context lines before and after each match. Overrides b/a."},
                     "n": {"type": "boolean", "description": "Whether to include line numbers in content output. Default true."},
                     "i": {"type": "boolean", "description": "Force case-insensitive search."},
-                    "type": {"type": "string", "description": "File type shortcut (e.g. py/js/ts/md/json)."},
+                    "type": {"type": "string", "description": "File type shortcut (e.g. py/js/ts/md/json). Unsupported or unknown shortcuts return a structured error listing supported values."},
                     "head_limit": {"type": "integer", "minimum": 1, "description": "Limit to first N output rows/entries."},
                     "multiline": {"type": "boolean", "description": "Enable multiline regex mode."},
                     "case_sensitive": {"type": "boolean", "description": "Explicitly override smart-case behavior and `i`."},

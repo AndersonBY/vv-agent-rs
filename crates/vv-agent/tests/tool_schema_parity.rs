@@ -238,7 +238,7 @@ fn default_tool_schema_wording_is_preserved() {
         &registry,
         "todo_write",
         "todos",
-        &["Complete TODO list payload."],
+        &["Complete TODO list replacement payload."],
     );
     assert_nested_property_contains(
         &registry,
@@ -263,12 +263,17 @@ fn default_tool_schema_wording_is_preserved() {
         "exec_dir",
         &["Execution directory (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."],
     );
-    assert_property_contains(&registry, "bash", "stdin", &["Optional stdin content."]);
+    assert_property_contains(
+        &registry,
+        "bash",
+        "stdin",
+        &["Optional stdin content for interactive prompts"],
+    );
     assert_property_contains(
         &registry,
         "bash",
         "auto_confirm",
-        &["Pipe yes to command when true."],
+        &["Pipe yes to the command for non-interactive confirmation prompts."],
     );
 
     assert_description_contains(
@@ -983,6 +988,7 @@ fn high_impact_tool_descriptions_use_reference_style_operational_sections() {
         "read_image",
         "task_finish",
         "ask_user",
+        "activate_skill",
     ] {
         let description = description(&registry, tool_name);
         assert!(
@@ -1078,6 +1084,78 @@ fn every_builtin_tool_schema_has_operational_guidance_not_just_labels() {
 }
 
 #[test]
+fn high_impact_tool_parameters_include_operational_guidance() {
+    let registry = build_default_registry();
+
+    for (tool_name, property_name, required_terms) in [
+        (
+            "bash",
+            "stdin",
+            vec!["interactive", "confirmation", "heredoc"],
+        ),
+        (
+            "bash",
+            "auto_confirm",
+            vec!["non-interactive", "yes", "destructive"],
+        ),
+        (
+            "workspace_grep",
+            "pattern",
+            vec!["regex", "escape", "literal"],
+        ),
+        (
+            "workspace_grep",
+            "type",
+            vec!["shortcut", "supported", "unknown"],
+        ),
+        (
+            "file_str_replace",
+            "new_str",
+            vec!["replacement", "preserve", "line endings"],
+        ),
+        (
+            "todo_write",
+            "todos",
+            vec!["complete", "replacement", "omit"],
+        ),
+    ] {
+        let description = property_description(&registry, tool_name, property_name);
+        let normalized = description.to_lowercase();
+        for term in required_terms {
+            assert!(
+                normalized.contains(term),
+                "{tool_name}.{property_name} description should mention `{term}`: {description}"
+            );
+        }
+    }
+
+    for (property_path, required_terms) in [
+        (
+            vec!["todos", "items", "title"],
+            vec!["actionable", "observable"],
+        ),
+        (
+            vec!["todos", "items", "status"],
+            vec!["pending", "in_progress", "completed"],
+        ),
+        (
+            vec!["todos", "items", "priority"],
+            vec!["high", "medium", "low"],
+        ),
+    ] {
+        let description = nested_property_description(&registry, "todo_write", &property_path);
+        let normalized = description.to_lowercase();
+        for term in required_terms {
+            assert!(
+                normalized.contains(term),
+                "todo_write.{} description should mention `{term}`: {description}",
+                property_path.join(".")
+            );
+        }
+    }
+}
+
+#[test]
 fn model_visible_tool_schemas_stay_capability_focused() {
     let registry = build_default_registry();
 
@@ -1150,6 +1228,25 @@ fn property_description(
                 .as_str()
                 .map(str::to_string)
         })
+        .unwrap_or_default()
+}
+
+fn nested_property_description(
+    registry: &vv_agent::ToolRegistry,
+    tool_name: &str,
+    property_path: &[&str],
+) -> String {
+    let mut cursor =
+        &registry.get_schema(tool_name).expect("schema")["function"]["parameters"]["properties"];
+    for (index, segment) in property_path.iter().enumerate() {
+        if index > 0 && *segment != "items" {
+            cursor = &cursor["properties"];
+        }
+        cursor = &cursor[*segment];
+    }
+    cursor["description"]
+        .as_str()
+        .map(str::to_string)
         .unwrap_or_default()
 }
 
