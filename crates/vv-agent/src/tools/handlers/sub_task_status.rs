@@ -3,7 +3,9 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{coerce_bool, tool_error_with_code, tool_result};
+use crate::tools::common::{
+    coerce_bool, coerce_python_text_arg, parse_integer_arg, tool_error_with_code, tool_result,
+};
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 pub fn sub_task_status(
@@ -33,7 +35,8 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
             };
             let mut task_ids = Vec::new();
             for item in raw_task_ids {
-                let task_id = item.as_str().unwrap_or_default().trim();
+                let task_id = coerce_python_text_arg(Some(item), "");
+                let task_id = task_id.trim();
                 if !task_id.is_empty() && !task_ids.iter().any(|known| known == task_id) {
                     task_ids.push(task_id.to_string());
                 }
@@ -52,15 +55,17 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
                 .unwrap_or_else(|| "basic".to_string());
             let workspace_file_limit = arguments
                 .get("workspace_file_limit")
-                .and_then(Value::as_u64)
+                .and_then(|value| parse_integer_arg(value).ok())
                 .unwrap_or(20)
                 .clamp(1, 100) as usize;
-            let message = arguments
-                .get("message")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string);
+            let message = arguments.get("message").and_then(|value| {
+                if value.is_null() {
+                    return None;
+                }
+                let message = coerce_python_text_arg(Some(value), "");
+                let message = message.trim();
+                (!message.is_empty()).then(|| message.to_string())
+            });
             let wait_for_response = coerce_bool(arguments.get("wait_for_response"), false);
             let mut interaction = None;
             if let Some(message) = message {

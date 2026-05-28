@@ -648,6 +648,83 @@ fn sub_task_status_reports_missing_and_invalid_task_ids() {
 }
 
 #[test]
+fn sub_task_status_coerces_task_ids_message_and_workspace_limit_like_python() {
+    let _registry_lock = isolated_sub_agent_registry();
+    let workspace = tempfile::tempdir().expect("workspace");
+    std::fs::write(workspace.path().join("a.txt"), "a").expect("a");
+    std::fs::write(workspace.path().join("b.txt"), "b").expect("b");
+    std::fs::write(workspace.path().join("c.txt"), "c").expect("c");
+    let registry = build_default_registry();
+    let manager = SubTaskManager::default();
+    let mut context = ToolContext::new(workspace.path());
+    context.sub_task_manager = Some(manager.clone());
+    let received = Arc::new(Mutex::new(Vec::<String>::new()));
+    let session = Arc::new(RecordingSubAgentSession {
+        received: Arc::clone(&received),
+    });
+    register_sub_agent_session("session-42", session.clone());
+    manager
+        .submit("42", "session-42", "researcher", "Numeric task id", || {
+            thread::sleep(Duration::from_millis(100));
+            SubTaskOutcome {
+                task_id: "42".to_string(),
+                agent_name: "researcher".to_string(),
+                status: AgentStatus::Completed,
+                session_id: Some("session-42".to_string()),
+                final_answer: Some("done".to_string()),
+                wait_reason: None,
+                error: None,
+                cycles: 1,
+                todo_list: Vec::new(),
+                resolved: BTreeMap::new(),
+            }
+        })
+        .expect("submit numeric task id");
+    manager.attach_session(
+        "42",
+        "session-42",
+        "researcher",
+        "Numeric task id",
+        context.workspace_backend.clone(),
+        session,
+    );
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_status_coerce",
+                "sub_task_status",
+                BTreeMap::from([
+                    ("task_ids".to_string(), json!([42, 42, ""])),
+                    ("message".to_string(), json!(12345)),
+                    ("detail_level".to_string(), json!("snapshot")),
+                    ("workspace_file_limit".to_string(), json!("2")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("sub_task_status coercion");
+
+    unregister_sub_agent_session("session-42");
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(received.lock().expect("received").as_slice(), ["12345"]);
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["tasks"].as_array().expect("tasks").len(), 1);
+    assert_eq!(payload["tasks"][0]["task_id"], "42");
+    assert_eq!(
+        payload["tasks"][0]["snapshot"]["workspace_files"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        payload["tasks"][0]["snapshot"]["workspace_files_truncated"],
+        true
+    );
+}
+
+#[test]
 fn sub_task_status_can_steer_registered_running_session() {
     let _registry_lock = isolated_sub_agent_registry();
     let workspace = tempfile::tempdir().expect("workspace");
