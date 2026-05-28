@@ -181,6 +181,75 @@ impl vv_llm::ChatClient for UnicodeStreamingChatClient {
     }
 }
 
+#[derive(Clone, Default)]
+struct MultiToolIndexStreamingChatClient;
+
+impl vv_llm::ChatClient for MultiToolIndexStreamingChatClient {
+    fn provider_name(&self) -> &'static str {
+        "test-multi-tool-index-streaming"
+    }
+
+    fn create_completion<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatResponse, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            Ok(vv_llm::ChatResponse {
+                id: "multi-tool-non-stream-response".to_string(),
+                model: "kimi-k2.5".to_string(),
+                content: String::new(),
+                tool_calls: vec![],
+                reasoning_content: None,
+                usage: None,
+            })
+        })
+    }
+
+    fn create_stream<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatStream, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let mut first = vv_llm::ToolCall::function("call_2", "todo_write", "{\"todos\":[");
+            first.index = Some(2);
+            let mut second = vv_llm::ToolCall::function("", "", "{\"title\":\"a\"}");
+            second.index = Some(2);
+            let deltas = vec![
+                Ok(vv_llm::ChatStreamDelta {
+                    tool_calls: vec![first],
+                    ..vv_llm::ChatStreamDelta::default()
+                }),
+                Ok(vv_llm::ChatStreamDelta {
+                    tool_calls: vec![second],
+                    done: true,
+                    ..vv_llm::ChatStreamDelta::default()
+                }),
+            ];
+            Ok(Box::pin(stream::iter(deltas)) as vv_llm::ChatStream)
+        })
+    }
+}
+
 #[test]
 fn runtime_execution_context_stream_callback_uses_vv_llm_streaming() {
     let chat_client = StreamingChatClient::default();
@@ -223,6 +292,51 @@ fn runtime_execution_context_stream_callback_uses_vv_llm_streaming() {
         event.get("event") == Some(&json!("assistant_delta"))
             && event.get("content_delta") == Some(&json!("streamed "))
     }));
+}
+
+#[test]
+fn structured_stream_tool_events_preserve_provider_tool_call_index() {
+    let llm = VvLlmClient::new(
+        "moonshot",
+        "kimi-k2.5",
+        "kimi-k2.5",
+        Box::new(MultiToolIndexStreamingChatClient),
+        90.0,
+    );
+    let events = Arc::new(Mutex::new(Vec::<BTreeMap<String, Value>>::new()));
+    let callback_events = Arc::clone(&events);
+    let stream_callback: StreamCallback = Arc::new(move |event| {
+        callback_events
+            .lock()
+            .expect("stream events lock")
+            .push(event.clone());
+    });
+
+    let response = llm
+        .complete_with_stream(
+            LlmRequest::new("kimi-k2.5", vec![Message::user("stream tool index")]),
+            Some(stream_callback),
+        )
+        .expect("multi-tool index streaming completion");
+
+    assert_eq!(response.tool_calls[0].id, "call_2");
+    let events = events.lock().expect("stream events lock");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.get("event") == Some(&json!("tool_call_started")))
+            .map(|event| event["tool_call_index"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!(2)]
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.get("event") == Some(&json!("tool_call_progress")))
+            .map(|event| event["tool_call_index"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!(2), json!(2)]
+    );
 }
 
 #[test]
@@ -1319,6 +1433,7 @@ impl vv_llm::ChatClient for RecordingMessagesChatClient {
                     id: "call_response".to_string(),
                     name: "default_api:read_file".to_string(),
                     arguments: r#"{"path":"README.md"}"#.to_string(),
+                    index: None,
                     extra_content: Some(json!({"google": {"thought_signature": "sig_456"}})),
                 }],
                 reasoning_content: Some("new-thought".to_string()),

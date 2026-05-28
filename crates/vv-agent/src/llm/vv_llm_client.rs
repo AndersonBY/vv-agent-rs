@@ -1114,6 +1114,7 @@ fn completion_payload_for_usage(content: &str, tool_calls: &[vv_llm::ToolCall]) 
 #[derive(Debug, Default)]
 struct StreamingToolCallParts {
     id: String,
+    index: Option<usize>,
     name: String,
     arguments: String,
 }
@@ -1209,6 +1210,7 @@ async fn collect_vv_llm_stream(
                         } else {
                             tool_call_delta.id.clone()
                         },
+                        index: tool_call_delta.index,
                         ..StreamingToolCallParts::default()
                     },
                 );
@@ -1218,6 +1220,9 @@ async fn collect_vv_llm_stream(
             };
             if !tool_call_delta.id.is_empty() {
                 slot.id = tool_call_delta.id.clone();
+            }
+            if tool_call_delta.index.is_some() {
+                slot.index = tool_call_delta.index;
             }
             let had_name = !slot.name.is_empty();
             if !tool_call_delta.name.is_empty() {
@@ -1424,9 +1429,10 @@ fn emit_stream_event(stream_callback: &Option<LlmStreamCallback>, event: BTreeMa
 fn emit_tool_stream_event(
     stream_callback: &Option<LlmStreamCallback>,
     event_name: &str,
-    tool_call_index: usize,
+    default_tool_call_index: usize,
     tool_call: &StreamingToolCallParts,
 ) {
+    let tool_call_index = tool_call.index.unwrap_or(default_tool_call_index);
     emit_stream_event(
         stream_callback,
         BTreeMap::from([
