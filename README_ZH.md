@@ -17,7 +17,9 @@ vv-agent-rs/
         mod.rs
         tool_names.rs
         workspace.rs
-      integrations.rs
+      integrations/
+        mod.rs
+        protocols.rs
       llm/
         anthropic_prompt_cache.rs
         base.rs
