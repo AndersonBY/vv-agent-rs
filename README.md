@@ -164,7 +164,7 @@ The current Rust implementation includes:
   default tool schemas, workspace tool schemas, and convenience accessors for
   the `task_finish`, `ask_user`, and `activate_skill` schemas. It also exposes
   Python-matched `constants::tool_names` and `constants::workspace` submodules.
-- `vv-llm = "0.1.1"` backed chat client construction through
+- `vv-llm = "0.2.0"` backed chat client construction through
   `build_vv_llm_from_local_settings`, settings-based endpoint resolution, and
   provider HTTP/protocol handling delegated to `vv-llm`, while keeping
   `ScriptedLlmClient` for deterministic tests. The scripted client now mirrors
@@ -193,10 +193,11 @@ The current Rust implementation includes:
 - `llm::apply_claude_prompt_cache` mirrors Python's Anthropic prompt-cache
   planning helper for Claude direct and Vertex requests, including stable
   system sections, tool-schema breakpoints, history breakpoints, thinking-block
-  skipping, and the `anthropic_prompt_cache_enabled` opt-out metadata. Actual
-  provider request serialization remains delegated to `vv-llm`; the helper is
-  exposed for callers and future typed `vv-llm` cache-control support instead
-  of reintroducing hand-written provider HTTP conversion here.
+  skipping, and the `anthropic_prompt_cache_enabled` opt-out metadata.
+  `VvLlmClient` now applies those breakpoints through `vv-llm` typed
+  `cache_control` fields for system text blocks, tools, and history text
+  blocks, while provider request serialization remains delegated to `vv-llm`
+  instead of reintroducing hand-written provider HTTP conversion here.
 - LLM settings normalization keeps Python compatibility for `providers` /
   `backends`, default `VERSION`, endpoint API-key suffix extraction, and
   opt-in base64 key decoding before constructing `vv-llm` clients.
@@ -257,9 +258,10 @@ The current Rust implementation includes:
   streaming `raw_content` block aggregation, structured stream events for
   reasoning/content/tool-call progress with Python-style character-based token
   estimates, provider tool-call id/name normalization, Python-style
-  request-side reasoning/tool-call extension preservation through `vv-llm`
-  typed fields, and Python-style omission of empty optional message request
-  fields before handing typed messages to `vv-llm`. `VvLlmClient` and
+  request-side reasoning/tool-call extension preservation and Anthropic
+  prompt-cache `cache_control` propagation through `vv-llm` typed fields, and
+  Python-style omission of empty optional message request fields before handing
+  typed messages to `vv-llm`. `VvLlmClient` and
   SDK-built vv-llm runtimes also support Python-style debug request dumps via
   `debug_dump_dir`.
 - Core runtime types expose Python-style `to_dict` / `from_dict` helpers for

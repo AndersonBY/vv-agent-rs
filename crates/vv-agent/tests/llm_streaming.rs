@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::stream;
 use serde_json::{json, Value};
+use vv_agent::llm::{PROMPT_CACHE_ENABLED_KEY, SYSTEM_PROMPT_SECTIONS_KEY};
 use vv_agent::{
     AgentDefinition, AgentRuntime, AgentSDKClient, AgentSDKOptions, AgentStatus, AgentTask,
     ExecutionContext, LlmClient, LlmRequest, Message, RuntimeRunControls, StreamCallback,
@@ -581,9 +582,7 @@ fn vv_llm_client_omits_empty_optional_request_fields_like_python() {
     assert_eq!(messages[0].tool_call_id, None);
     assert_eq!(
         messages[0].content,
-        vec![vv_llm::MessageContent::Text {
-            text: "inspect".to_string(),
-        }]
+        vec![vv_llm::MessageContent::text("inspect")]
     );
 }
 
@@ -716,6 +715,81 @@ fn vv_llm_client_normalizes_supported_thinking_model_options_like_python() {
         gemini_request.extra_body["extra_body"]["google"]["thinking_config"]["include_thoughts"],
         json!(true)
     );
+}
+
+#[test]
+fn vv_llm_client_applies_claude_prompt_cache_through_vv_llm_types_like_python() {
+    let chat_client = RecordingMessagesChatClient::default();
+    let probe = chat_client.clone();
+    let llm = VvLlmClient::new(
+        "anthropic",
+        "claude-sonnet-4-6",
+        "claude-sonnet-4-6",
+        Box::new(chat_client),
+        90.0,
+    );
+    let mut request = LlmRequest::new(
+        "claude-sonnet-4-6",
+        vec![
+            Message::system("fallback system text"),
+            Message::user("latest user turn ".repeat(350)),
+        ],
+    );
+    request.metadata = json!({
+        PROMPT_CACHE_ENABLED_KEY: true,
+        SYSTEM_PROMPT_SECTIONS_KEY: [
+            {"id": "stable", "text": "stable section ".repeat(400), "stable": true}
+        ]
+    });
+    request.tools = vec![json!({
+        "type": "function",
+        "function": {
+            "name": "default_api:read_file",
+            "description": "Read a file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"}
+                }
+            }
+        }
+    })];
+
+    let _ = llm.complete(request).expect("claude cached request");
+
+    let request = probe.last_request().expect("recorded request");
+    let system_message = request
+        .messages
+        .iter()
+        .find(|message| message.role == vv_llm::MessageRole::System)
+        .expect("system message");
+    assert!(matches!(
+        system_message.content.last(),
+        Some(vv_llm::MessageContent::Text {
+            cache_control: Some(value),
+            ..
+        }) if value == &json!({"type": "ephemeral"})
+    ));
+    assert_eq!(
+        request
+            .tools
+            .last()
+            .and_then(|tool| tool.cache_control.as_ref()),
+        Some(&json!({"type": "ephemeral"}))
+    );
+    let user_message = request
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == vv_llm::MessageRole::User)
+        .expect("history user message");
+    assert!(matches!(
+        user_message.content.last(),
+        Some(vv_llm::MessageContent::Text {
+            cache_control: Some(value),
+            ..
+        }) if value == &json!({"type": "ephemeral"})
+    ));
 }
 
 #[test]
