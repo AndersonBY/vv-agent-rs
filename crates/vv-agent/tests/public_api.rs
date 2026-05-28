@@ -102,6 +102,27 @@ fn python_style_public_aliases_are_available() {
     let _query_request_helper = vv_agent::query_with_options_and_agent_request;
     let _query_request_strict_helper =
         vv_agent::query_with_options_and_agent_request_with_require_completed;
+    let helper_client = AgentSDKClient::new(AgentSDKOptions {
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    });
+    let _create_session_workspace_state =
+        vv_agent::create_agent_session_with_workspace_and_shared_state(
+            &helper_client,
+            "demo",
+            AgentDefinition::default_for_model("demo"),
+            ".",
+            BTreeMap::new(),
+        );
+    let _create_session_id_workspace_state =
+        vv_agent::create_agent_session_with_id_and_workspace_and_shared_state(
+            &helper_client,
+            "demo",
+            AgentDefinition::default_for_model("demo"),
+            "session-fixed",
+            ".",
+            BTreeMap::new(),
+        );
 }
 
 #[test]

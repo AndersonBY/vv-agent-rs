@@ -530,6 +530,22 @@ impl AgentSDKClient {
         create_agent_session_with_workspace(self, agent_name, definition, workspace)
     }
 
+    pub fn create_session_with_workspace_and_shared_state(
+        &self,
+        agent_name: impl Into<String>,
+        definition: AgentDefinition,
+        workspace: impl Into<PathBuf>,
+        shared_state: Metadata,
+    ) -> AgentSession {
+        create_agent_session_with_workspace_and_shared_state(
+            self,
+            agent_name,
+            definition,
+            workspace,
+            shared_state,
+        )
+    }
+
     pub fn create_session_with_id_and_workspace(
         &self,
         agent_name: impl Into<String>,
@@ -539,6 +555,24 @@ impl AgentSDKClient {
     ) -> AgentSession {
         create_agent_session_with_id_and_workspace(
             self, agent_name, definition, session_id, workspace,
+        )
+    }
+
+    pub fn create_session_with_id_workspace_and_shared_state(
+        &self,
+        agent_name: impl Into<String>,
+        definition: AgentDefinition,
+        session_id: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+        shared_state: Metadata,
+    ) -> AgentSession {
+        create_agent_session_with_id_and_workspace_and_shared_state(
+            self,
+            agent_name,
+            definition,
+            session_id,
+            workspace,
+            shared_state,
         )
     }
 
@@ -732,6 +766,44 @@ impl AgentSDKClient {
         ))
     }
 
+    pub fn create_default_session_with_workspace_and_shared_state(
+        &self,
+        workspace: impl Into<PathBuf>,
+        shared_state: Metadata,
+    ) -> Result<AgentSession, String> {
+        let (name, definition) = self.default_or_only_agent(
+            "No agent configured. Call create_session_with_agent(...) or register named agents first.",
+            "Multiple agents configured. Call create_agent_session_by_name_in_workspace(name, workspace) with one of:",
+        )?;
+        Ok(create_agent_session_with_workspace_and_shared_state(
+            self,
+            name,
+            definition,
+            workspace,
+            shared_state,
+        ))
+    }
+
+    pub fn create_default_session_with_id_workspace_and_shared_state(
+        &self,
+        session_id: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+        shared_state: Metadata,
+    ) -> Result<AgentSession, String> {
+        let (name, definition) = self.default_or_only_agent(
+            "No agent configured. Call create_session_with_agent(...) or register named agents first.",
+            "Multiple agents configured. Call create_agent_session_by_name_with_id_and_workspace(name, session_id, workspace) with one of:",
+        )?;
+        Ok(create_agent_session_with_id_and_workspace_and_shared_state(
+            self,
+            name,
+            definition,
+            session_id,
+            workspace,
+            shared_state,
+        ))
+    }
+
     pub fn create_default_session_with_shared_state(
         &self,
         shared_state: Metadata,
@@ -791,6 +863,42 @@ impl AgentSDKClient {
         let definition = self.get_agent(agent_name)?.clone();
         Ok(create_agent_session_with_id_and_workspace(
             self, agent_name, definition, session_id, workspace,
+        ))
+    }
+
+    pub fn create_agent_session_by_name_in_workspace_with_shared_state(
+        &self,
+        agent_name: impl AsRef<str>,
+        workspace: impl Into<PathBuf>,
+        shared_state: Metadata,
+    ) -> Result<AgentSession, String> {
+        let agent_name = agent_name.as_ref().trim();
+        let definition = self.get_agent(agent_name)?.clone();
+        Ok(create_agent_session_with_workspace_and_shared_state(
+            self,
+            agent_name,
+            definition,
+            workspace,
+            shared_state,
+        ))
+    }
+
+    pub fn create_agent_session_by_name_with_id_workspace_and_shared_state(
+        &self,
+        agent_name: impl AsRef<str>,
+        session_id: impl Into<String>,
+        workspace: impl Into<PathBuf>,
+        shared_state: Metadata,
+    ) -> Result<AgentSession, String> {
+        let agent_name = agent_name.as_ref().trim();
+        let definition = self.get_agent(agent_name)?.clone();
+        Ok(create_agent_session_with_id_and_workspace_and_shared_state(
+            self,
+            agent_name,
+            definition,
+            session_id,
+            workspace,
+            shared_state,
         ))
     }
 

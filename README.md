@@ -630,8 +630,9 @@ The current Rust implementation includes:
 - SDK clients can now create sessions from the configured default agent or the
   only registered profile through `create_default_session*` helpers, and can
   create sessions by profile name without manually passing the copied
-  `AgentDefinition`, matching Python's `client.create_session(...)` selection
-  behavior while using explicit Rust method names.
+  `AgentDefinition`. Session helpers cover the Python `client.create_session(...)`
+  combinations for explicit `session_id`, workspace override, and initial
+  shared state while using explicit Rust method names.
 - Python-style tool planning from `AgentTask` flags, plus `.vv-agent`
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,

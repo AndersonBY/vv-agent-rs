@@ -920,6 +920,72 @@ fn sdk_client_create_default_session_selects_only_profile_with_workspace_like_py
 }
 
 #[test]
+fn sdk_default_session_combines_id_workspace_and_shared_state_like_python() {
+    let default_workspace = tempfile::tempdir().expect("default workspace");
+    let override_workspace = tempfile::tempdir().expect("override workspace");
+    let mut client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: default_workspace.path().to_path_buf(),
+        ..AgentSDKOptions::default()
+    });
+    client
+        .register_agent("demo", AgentDefinition::default_for_model("demo"))
+        .expect("register demo");
+
+    let session = client
+        .create_default_session_with_id_workspace_and_shared_state(
+            "session-fixed",
+            override_workspace.path(),
+            BTreeMap::from([(
+                "seed".to_string(),
+                Value::String("from-default-combo".to_string()),
+            )]),
+        )
+        .expect("default session combo");
+
+    assert_eq!(session.session_id(), "session-fixed");
+    assert_eq!(session.agent_name(), "demo");
+    assert_eq!(session.workspace(), override_workspace.path());
+    assert_eq!(
+        session.shared_state().get("seed").and_then(Value::as_str),
+        Some("from-default-combo")
+    );
+    assert!(!default_workspace.path().join("marker.txt").exists());
+}
+
+#[test]
+fn sdk_named_session_combines_id_workspace_and_shared_state_like_python() {
+    let default_workspace = tempfile::tempdir().expect("default workspace");
+    let override_workspace = tempfile::tempdir().expect("override workspace");
+    let mut client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: default_workspace.path().to_path_buf(),
+        ..AgentSDKOptions::default()
+    });
+    client
+        .register_agent("demo", AgentDefinition::default_for_model("demo"))
+        .expect("register demo");
+
+    let session = client
+        .create_agent_session_by_name_with_id_workspace_and_shared_state(
+            "demo",
+            "named-session-fixed",
+            override_workspace.path(),
+            BTreeMap::from([(
+                "seed".to_string(),
+                Value::String("from-named-combo".to_string()),
+            )]),
+        )
+        .expect("named session combo");
+
+    assert_eq!(session.session_id(), "named-session-fixed");
+    assert_eq!(session.agent_name(), "demo");
+    assert_eq!(session.workspace(), override_workspace.path());
+    assert_eq!(
+        session.shared_state().get("seed").and_then(Value::as_str),
+        Some("from-named-combo")
+    );
+}
+
+#[test]
 fn sdk_session_reuses_sub_task_manager_across_turns() {
     let llm = SessionSubTaskManagerLlm;
     let client = AgentSDKClient::new(AgentSDKOptions::default())
