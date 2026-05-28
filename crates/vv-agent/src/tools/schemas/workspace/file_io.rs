@@ -88,9 +88,9 @@ pub(in crate::tools::schemas) fn read_file_schema() -> Value {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
-                    "start_line": {"type": "integer", "minimum": 1, "description": "Optional starting line number (1-based)."},
-                    "end_line": {"type": "integer", "minimum": 1, "description": "Optional ending line number (1-based, inclusive)."},
-                    "show_line_numbers": {"type": "boolean", "description": "When true, prefixes each output line with its source line number."}
+                    "start_line": {"type": "integer", "minimum": 1, "description": "Optional starting line number (1-based). Use with `end_line` to read a chunk from a large file instead of loading the whole file."},
+                    "end_line": {"type": "integer", "minimum": 1, "description": "Optional ending line number (1-based, inclusive). Pair with `start_line` to keep large-file reads bounded."},
+                    "show_line_numbers": {"type": "boolean", "description": "When true, prefixes each output line with its source line number. Enable when you need to quote precise lines, plan edits, or compare snippets."}
                 },
                 "required": ["path"]
             }
@@ -109,9 +109,9 @@ pub(in crate::tools::schemas) fn write_file_schema() -> Value {
                 "properties": {
                     "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
                     "content": {"type": "string", "description": "The content to write to the file."},
-                    "append": {"type": "boolean", "description": "Set true to append instead of overwrite. Default is false (overwrite)."},
-                    "leading_newline": {"type": "boolean", "description": "Add a leading newline when appending. Default is false."},
-                    "trailing_newline": {"type": "boolean", "description": "Add a trailing newline when appending. Default is false."}
+                    "append": {"type": "boolean", "description": "Set true to append instead of overwrite. Default is false (overwrite). Use append only when existing content must be preserved."},
+                    "leading_newline": {"type": "boolean", "description": "Add a leading newline when appending. Default is false. Use as a separator from existing content when needed."},
+                    "trailing_newline": {"type": "boolean", "description": "Add a trailing newline when appending. Default is false. Use to preserve a line boundary before the next append or shell read."}
                 },
                 "required": ["path", "content"]
             }

@@ -1157,6 +1157,52 @@ fn high_impact_tool_parameters_include_operational_guidance() {
             "todos",
             vec!["complete", "replacement", "omit"],
         ),
+        ("read_file", "start_line", vec!["1-based", "chunk", "large"]),
+        (
+            "read_file",
+            "end_line",
+            vec!["inclusive", "start_line", "large"],
+        ),
+        (
+            "read_file",
+            "show_line_numbers",
+            vec!["quote", "precise", "edits"],
+        ),
+        (
+            "write_file",
+            "append",
+            vec!["preserve", "existing", "overwrite"],
+        ),
+        (
+            "write_file",
+            "leading_newline",
+            vec!["append", "separator", "existing"],
+        ),
+        (
+            "write_file",
+            "trailing_newline",
+            vec!["append", "line boundary", "next append"],
+        ),
+        (
+            "create_sub_task",
+            "output_requirements",
+            vec!["success criteria", "format", "deliverables"],
+        ),
+        (
+            "create_sub_task",
+            "include_main_summary",
+            vec!["context", "parent", "independent"],
+        ),
+        (
+            "create_sub_task",
+            "exclude_files_pattern",
+            vec!["shared context", "large", "irrelevant"],
+        ),
+        (
+            "sub_task_status",
+            "workspace_file_limit",
+            vec!["snapshot", "files", "noise"],
+        ),
     ] {
         let description = property_description(&registry, tool_name, property_name);
         let normalized = description.to_lowercase();

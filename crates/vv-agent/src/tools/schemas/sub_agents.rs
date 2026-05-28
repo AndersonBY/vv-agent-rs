@@ -11,7 +11,7 @@ pub(super) fn create_sub_task_schema() -> Value {
                 "properties": {
                     "agent_id": {"type": "string", "description": "Sub-agent identifier from configured sub_agents mapping."},
                     "task_description": {"type": "string", "description": "Single-task description. Mutually exclusive with `tasks`."},
-                    "output_requirements": {"type": "string", "description": "Optional output constraints for single-task mode."},
+                    "output_requirements": {"type": "string", "description": "Optional output constraints for single-task mode. State success criteria, expected format, and concrete deliverables the parent Agent needs."},
                     "tasks": {
                         "type": "array",
                         "description": "Batch mode: multiple independent tasks for the same sub-agent. Use when parallel work can be safely delegated without shared mutable state.",
@@ -19,13 +19,13 @@ pub(super) fn create_sub_task_schema() -> Value {
                             "type": "object",
                             "properties": {
                                 "task_description": {"type": "string", "description": "Task description for one sub-task."},
-                                "output_requirements": {"type": "string", "description": "Optional output constraints for one sub-task."}
+                                "output_requirements": {"type": "string", "description": "Optional output constraints for one sub-task. State success criteria, expected format, and concrete deliverables."}
                             },
                             "required": ["task_description"]
                         }
                     },
-                    "include_main_summary": {"type": "boolean", "description": "Whether to include parent-task summary context. Default false."},
-                    "exclude_files_pattern": {"type": "string", "description": "Optional regex for excluding files from shared context."},
+                    "include_main_summary": {"type": "boolean", "description": "Whether to include parent-task summary context. Default false. Use when the child needs parent context; keep false for independent tasks."},
+                    "exclude_files_pattern": {"type": "string", "description": "Optional regex for excluding files from shared context. Use to keep large, generated, or irrelevant paths out of child context."},
                     "wait_for_completion": {"type": "boolean", "description": "Whether to wait for completion. Default true; false starts background execution. When false, returned task ids can be polled with `sub_task_status`."}
                 },
                 "required": ["agent_id"]
@@ -46,7 +46,7 @@ pub(super) fn sub_task_status_schema() -> Value {
                     "task_ids": {"type": "array", "description": "Sub-task ids to query. When `message` is provided, only the first id is used as the target.", "items": {"type": "string"}},
                     "message": {"type": "string", "description": "Optional follow-up or steering message for the first task id. Can steer a running task or continue a completed one."},
                     "detail_level": {"type": "string", "enum": ["basic", "snapshot"], "description": "Status response detail level. `snapshot` includes recent activity, latest tool call, and workspace files."},
-                    "workspace_file_limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum number of workspace files returned per task in snapshot mode. Default 20."},
+                    "workspace_file_limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum number of workspace files returned per task in snapshot mode. Default 20. Lower this when file lists add noise; raise it only when files are needed to assess progress."},
                     "wait_for_response": {"type": "boolean", "description": "When `message` is provided, wait until the task finishes processing that message."}
                 },
                 "required": ["task_ids"]
