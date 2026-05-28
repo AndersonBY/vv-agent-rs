@@ -247,9 +247,23 @@ fn python_reference_tool_schema_wording_is_preserved() {
         "create_sub_task",
         &[
             "Create sub-tasks for a configured sub-agent.",
+            "Single task: provide `task_description` (+ optional `output_requirements`)",
             "Batch task: provide `tasks` array for multiple independent tasks of the same sub-agent",
+            "`wait_for_completion=true` (default): wait for result(s) and return final payload",
             "`wait_for_completion=false`: start background sub-task(s) and return `task_id` / `task_ids`",
         ],
+    );
+    assert_property_contains(
+        &registry,
+        "create_sub_task",
+        "agent_id",
+        &["Sub-agent identifier from configured sub_agents mapping."],
+    );
+    assert_property_contains(
+        &registry,
+        "create_sub_task",
+        "wait_for_completion",
+        &["Whether to wait for completion. Default true; false starts background execution."],
     );
 
     assert_description_contains(
@@ -259,6 +273,20 @@ fn python_reference_tool_schema_wording_is_preserved() {
             "Inspect sub-task status and optionally interact with a sub-task.",
             "Capabilities:",
             "Send `message` to the first task id to steer a running task or continue a completed one",
+        ],
+    );
+    assert_property_contains(
+        &registry,
+        "sub_task_status",
+        "message",
+        &["Optional follow-up or steering message for the first task id."],
+    );
+    assert_property_contains(
+        &registry,
+        "sub_task_status",
+        "detail_level",
+        &[
+            "Status response detail level. `snapshot` includes recent activity, latest tool call, and workspace files.",
         ],
     );
 
@@ -293,6 +321,18 @@ fn python_reference_tool_schema_wording_is_preserved() {
         "question",
         &["Question text to ask the user."],
     );
+    assert_property_contains(
+        &registry,
+        "ask_user",
+        "options",
+        &["Optional answer options shown to the user."],
+    );
+    assert_property_contains(
+        &registry,
+        "ask_user",
+        "allow_custom_options",
+        &["Whether users can add custom options."],
+    );
 
     assert_description_contains(
         &registry,
@@ -307,6 +347,12 @@ fn python_reference_tool_schema_wording_is_preserved() {
         "activate_skill",
         "skill_name",
         &["Skill identifier from available skill list."],
+    );
+    assert_property_contains(
+        &registry,
+        "activate_skill",
+        "reason",
+        &["Optional reason for activating this skill."],
     );
 }
 

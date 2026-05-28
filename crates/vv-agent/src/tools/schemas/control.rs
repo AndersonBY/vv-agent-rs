@@ -99,7 +99,7 @@ pub(super) fn activate_skill_schema() -> Value {
                     },
                     "reason": {
                         "type": "string",
-                        "description": "Optional short reason explaining why this skill applies before acting."
+                        "description": "Optional reason for activating this skill. Explain briefly why this skill applies before acting."
                     }
                 },
                 "required": ["skill_name"]

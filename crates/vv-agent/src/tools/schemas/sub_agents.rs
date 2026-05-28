@@ -26,7 +26,7 @@ pub(super) fn create_sub_task_schema() -> Value {
                     },
                     "include_main_summary": {"type": "boolean", "description": "Whether to include parent-task summary context. Default false."},
                     "exclude_files_pattern": {"type": "string", "description": "Optional regex for excluding files in shared context (reserved for compatibility)."},
-                    "wait_for_completion": {"type": "boolean", "description": "Whether to wait for completion. Default true; false starts background execution and returns task ids for `sub_task_status` polling."}
+                    "wait_for_completion": {"type": "boolean", "description": "Whether to wait for completion. Default true; false starts background execution. When false, returned task ids can be polled with `sub_task_status`."}
                 },
                 "required": ["agent_id"]
             }
@@ -44,7 +44,7 @@ pub(super) fn sub_task_status_schema() -> Value {
                 "type": "object",
                 "properties": {
                     "task_ids": {"type": "array", "description": "Sub-task ids to query. When `message` is provided, only the first id is used as the target.", "items": {"type": "string"}},
-                    "message": {"type": "string", "description": "Optional follow-up or steering message for the first task id; can steer a running task or continue a completed one."},
+                    "message": {"type": "string", "description": "Optional follow-up or steering message for the first task id. Can steer a running task or continue a completed one."},
                     "detail_level": {"type": "string", "enum": ["basic", "snapshot"], "description": "Status response detail level. `snapshot` includes recent activity, latest tool call, and workspace files."},
                     "workspace_file_limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum number of workspace files returned per task in snapshot mode. Default 20."},
                     "wait_for_response": {"type": "boolean", "description": "When `message` is provided, wait until the task finishes processing that message."}
