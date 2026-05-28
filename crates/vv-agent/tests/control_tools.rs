@@ -523,10 +523,13 @@ Use this skill body during execution.
         "Use this skill body during execution."
     );
     assert_eq!(payload["description"], "Demo skill description");
-    assert_eq!(payload["compatibility"], "rust tests");
     assert_eq!(payload["allowed_tools"], "read_file, write_file");
     assert_eq!(payload["metadata"]["owner"], "agent");
     assert_eq!(payload["reason"], "Need demo behavior");
+    assert!(
+        payload.get("compatibility").is_none(),
+        "activate_skill result is model-visible and should not expose internal compatibility metadata"
+    );
     assert_eq!(context.shared_state["active_skills"], json!(["demo-skill"]));
     assert_eq!(
         context.shared_state["skill_activation_log"][0]["cycle_index"],
@@ -615,7 +618,10 @@ fn activate_skill_coerces_scalar_arguments_and_inline_fields_like_python() {
     assert_eq!(payload["skill_name"], "123");
     assert_eq!(payload["description"], "456");
     assert_eq!(payload["instructions"], "789");
-    assert_eq!(payload["compatibility"], "True");
     assert_eq!(payload["metadata"]["priority"], "5");
     assert_eq!(payload["reason"], "True");
+    assert!(
+        payload.get("compatibility").is_none(),
+        "activate_skill result is model-visible and should not expose internal compatibility metadata"
+    );
 }

@@ -86,9 +86,6 @@ pub(crate) fn activate_skill_tool() -> ToolSpec {
             if let Some(location) = entry.location {
                 payload.insert("location".to_string(), Value::String(location));
             }
-            if let Some(compatibility) = entry.compatibility {
-                payload.insert("compatibility".to_string(), Value::String(compatibility));
-            }
             if let Some(allowed_tools) = entry.allowed_tools {
                 payload.insert("allowed_tools".to_string(), Value::String(allowed_tools));
             }

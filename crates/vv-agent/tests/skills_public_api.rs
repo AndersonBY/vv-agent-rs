@@ -71,6 +71,26 @@ fn skills_public_api_renders_available_skills_xml_with_budget() {
     assert!(compact.contains("<available_skills>"));
     assert!(!compact.contains("<location>"));
 
+    let entry_with_metadata = SkillEntry {
+        name: "metadata-skill".to_string(),
+        description: "Metadata should stay hidden".to_string(),
+        location: Some("skills/metadata-skill/SKILL.md".to_string()),
+        compatibility: Some("rust tests".to_string()),
+        allowed_tools: Some("read_file".to_string()),
+        metadata: BTreeMap::from([("owner".to_string(), "agent".to_string())]),
+        ..SkillEntry::default()
+    };
+    let xml = render_skills_xml(&[entry_with_metadata], 8000);
+    assert!(xml.contains("metadata-skill"));
+    assert!(
+        !xml.contains("compatibility") && !xml.contains("rust tests"),
+        "<available_skills> is model-visible and should not expose internal compatibility metadata"
+    );
+    assert!(
+        !xml.contains("allowed_tools") && !xml.contains("<metadata>"),
+        "<available_skills> should stay focused on name, description, and location"
+    );
+
     let properties = SkillProperties {
         name: "review-code".to_string(),
         description: "Review code".to_string(),
