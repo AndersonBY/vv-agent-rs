@@ -471,6 +471,12 @@ fn runtime_forwards_stream_callback_to_runtime_backed_sub_agent_like_python() {
                 == Some("researcher")
     }));
     let log_events = log_events.lock().expect("log events");
+    let log_event_names = log_events
+        .iter()
+        .map(|(event, _)| event.as_str())
+        .collect::<Vec<_>>();
+    assert!(log_event_names.contains(&"sub_agent_tool_call_started"));
+    assert!(log_event_names.contains(&"sub_agent_tool_call_progress"));
     let sub_agent_delta = log_events
         .iter()
         .find(|(event, _)| event == "sub_agent_assistant_delta")
@@ -481,6 +487,20 @@ fn runtime_forwards_stream_callback_to_runtime_backed_sub_agent_like_python() {
     assert_eq!(
         sub_agent_delta.1["session_id"],
         sub_agent_delta.1["task_id"]
+    );
+    let sub_agent_progress = log_events
+        .iter()
+        .find(|(event, _)| event == "sub_agent_tool_call_progress")
+        .expect("sub-agent tool progress event in runtime logs");
+    assert_eq!(sub_agent_progress.1["tool_call_id"], json!("sub_tool_1"));
+    assert_eq!(sub_agent_progress.1["function_name"], json!("bash"));
+    assert_eq!(sub_agent_progress.1["arguments_chars"], json!(48));
+    assert_eq!(sub_agent_progress.1["estimated_tokens"], json!(12));
+    assert_eq!(sub_agent_progress.1["sub_agent_name"], json!("researcher"));
+    assert!(sub_agent_progress.1["task_id"].as_str().is_some());
+    assert_eq!(
+        sub_agent_progress.1["session_id"],
+        sub_agent_progress.1["task_id"]
     );
 }
 
@@ -2637,6 +2657,22 @@ impl LlmClient for StreamingSubAgentLlmClient {
                     callback(&BTreeMap::from([
                         ("event".to_string(), json!("assistant_delta")),
                         ("content_delta".to_string(), json!("checking")),
+                    ]));
+                    callback(&BTreeMap::from([
+                        ("event".to_string(), json!("tool_call_started")),
+                        ("tool_call_id".to_string(), json!("sub_tool_1")),
+                        ("tool_call_index".to_string(), json!(0)),
+                        ("function_name".to_string(), json!("bash")),
+                        ("arguments_chars".to_string(), json!(0)),
+                        ("estimated_tokens".to_string(), json!(0)),
+                    ]));
+                    callback(&BTreeMap::from([
+                        ("event".to_string(), json!("tool_call_progress")),
+                        ("tool_call_id".to_string(), json!("sub_tool_1")),
+                        ("tool_call_index".to_string(), json!(0)),
+                        ("function_name".to_string(), json!("bash")),
+                        ("arguments_chars".to_string(), json!(48)),
+                        ("estimated_tokens".to_string(), json!(12)),
                     ]));
                 }
                 Ok(LLMResponse::with_tool_calls(
