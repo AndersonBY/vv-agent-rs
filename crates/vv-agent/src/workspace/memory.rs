@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use super::{
-    glob_match, insert_parent_dirs, normalize_workspace_path, normalized_glob_pattern, not_found,
-    suffix_with_dot, FileInfo, WorkspaceBackend,
+    current_utc_isoformat, glob_match, insert_parent_dirs, normalize_workspace_path,
+    normalized_glob_pattern, not_found, suffix_with_dot, FileInfo, WorkspaceBackend,
 };
 
 #[derive(Debug, Clone)]
@@ -81,7 +81,7 @@ impl WorkspaceBackend for MemoryWorkspaceBackend {
                 is_file: true,
                 is_dir: false,
                 size: content.len() as u64,
-                modified_at: "0".to_string(),
+                modified_at: current_utc_isoformat(),
                 suffix: suffix_with_dot(path),
             }));
         }
@@ -96,7 +96,7 @@ impl WorkspaceBackend for MemoryWorkspaceBackend {
             is_file: false,
             is_dir: true,
             size: 0,
-            modified_at: "0".to_string(),
+            modified_at: current_utc_isoformat(),
             suffix: String::new(),
         }))
     }

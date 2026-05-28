@@ -480,6 +480,13 @@ fn file_info_reports_file_metadata() {
     assert!(info.content.contains("\"exists\":true"));
     assert!(info.content.contains("\"size\":5"));
     assert!(info.content.contains("\"suffix\":\".md\""));
+
+    let payload: Value = serde_json::from_str(&info.content).expect("file_info payload");
+    let modified_at = payload["modified_at"].as_str().expect("modified_at");
+    assert!(
+        chrono::DateTime::parse_from_rfc3339(modified_at).is_ok(),
+        "modified_at should match Python UTC ISO format, got {modified_at:?}"
+    );
 }
 
 #[test]
@@ -780,6 +787,20 @@ fn workspace_backends_honor_python_glob_and_missing_file_semantics() {
     let dir_info = memory.file_info("src").expect("dir info").expect("src dir");
     assert!(dir_info.is_dir);
     assert!(!dir_info.is_file);
+    assert!(
+        chrono::DateTime::parse_from_rfc3339(&dir_info.modified_at).is_ok(),
+        "memory dir modified_at should match Python UTC ISO format, got {:?}",
+        dir_info.modified_at
+    );
+    let file_info = memory
+        .file_info("src/main.rs")
+        .expect("file info")
+        .expect("main file");
+    assert!(
+        chrono::DateTime::parse_from_rfc3339(&file_info.modified_at).is_ok(),
+        "memory file modified_at should match Python UTC ISO format, got {:?}",
+        file_info.modified_at
+    );
     assert!(memory.exists("src"));
     assert!(!memory.is_file("src"));
 }

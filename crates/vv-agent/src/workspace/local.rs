@@ -2,11 +2,11 @@ use std::any::Any;
 use std::fs;
 use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
 
 use super::{
     absolutize_path, expand_home_path, glob_match, normalize_path_lexically,
-    normalized_glob_pattern, path_to_posix, suffix_with_dot, FileInfo, WorkspaceBackend,
+    normalized_glob_pattern, path_to_posix, suffix_with_dot, system_time_to_utc_isoformat,
+    FileInfo, WorkspaceBackend,
 };
 
 #[derive(Debug, Clone)]
@@ -123,10 +123,8 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
         let metadata = fs::metadata(&target)?;
         let modified_at = metadata
             .modified()
-            .ok()
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-            .map(|duration| duration.as_secs().to_string())
-            .unwrap_or_else(|| "0".to_string());
+            .map(system_time_to_utc_isoformat)
+            .unwrap_or_else(|_| system_time_to_utc_isoformat(std::time::SystemTime::UNIX_EPOCH));
         Ok(Some(FileInfo {
             path: self.output_path(&target),
             is_file: metadata.is_file(),

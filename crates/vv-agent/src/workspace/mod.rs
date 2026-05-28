@@ -6,6 +6,7 @@ pub mod s3;
 use std::collections::BTreeSet;
 use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 pub use base::{FileInfo, WorkspaceBackend};
 pub use local::LocalWorkspaceBackend;
@@ -116,6 +117,15 @@ pub(super) fn suffix_with_dot(path: &str) -> String {
     } else {
         format!(".{suffix}")
     }
+}
+
+pub(super) fn system_time_to_utc_isoformat(time: SystemTime) -> String {
+    let datetime: chrono::DateTime<chrono::Utc> = time.into();
+    datetime.to_rfc3339_opts(chrono::SecondsFormat::Micros, false)
+}
+
+pub(super) fn current_utc_isoformat() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, false)
 }
 
 pub(super) fn insert_parent_dirs(dirs: &mut BTreeSet<String>, key: &str) {
