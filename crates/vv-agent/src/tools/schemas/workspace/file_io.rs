@@ -60,7 +60,7 @@ Returns:
 Safety and behavior:
 - Overwrite is the default and replaces the whole file.
 - This can create parent directories when the workspace backend supports it.
-- `content`, path-like scalars, and newline flags follow Python-compatible coercion rules."#;
+- Parent directories may be created when the workspace backend supports it."#;
 
 const FILE_INFO_DESCRIPTION: &str = r#"Read file metadata in workspace, including size, modified time and type.
 
@@ -88,9 +88,9 @@ pub(in crate::tools::schemas) fn read_file_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled). Non-string scalar values are coerced to text for Python compatibility."},
-                    "start_line": {"type": "integer", "minimum": 1, "description": "Optional starting line number (1-based). numeric string values are accepted for Python compatibility."},
-                    "end_line": {"type": "integer", "minimum": 1, "description": "Optional ending line number (1-based, inclusive). numeric string values are accepted for Python compatibility."},
+                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
+                    "start_line": {"type": "integer", "minimum": 1, "description": "Optional starting line number (1-based)."},
+                    "end_line": {"type": "integer", "minimum": 1, "description": "Optional ending line number (1-based, inclusive)."},
                     "show_line_numbers": {"type": "boolean", "description": "When true, prefixes each output line with its source line number."}
                 },
                 "required": ["path"]
@@ -108,8 +108,8 @@ pub(in crate::tools::schemas) fn write_file_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled). Non-string scalar values are coerced to text for Python compatibility."},
-                    "content": {"type": "string", "description": "The content to write to the file. Non-string scalar values are coerced to text for Python compatibility."},
+                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
+                    "content": {"type": "string", "description": "The content to write to the file."},
                     "append": {"type": "boolean", "description": "Set true to append instead of overwrite. Default is false (overwrite)."},
                     "leading_newline": {"type": "boolean", "description": "Add a leading newline when appending. Default is false."},
                     "trailing_newline": {"type": "boolean", "description": "Add a trailing newline when appending. Default is false."}
@@ -129,7 +129,7 @@ pub(in crate::tools::schemas) fn file_info_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled). Non-string scalar values are coerced to text for Python compatibility."}
+                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."}
                 },
                 "required": ["path"]
             }

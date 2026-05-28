@@ -43,10 +43,10 @@ pub(super) fn bash_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "Bash command string. The runtime executes it through the configured shell. Non-string scalar values are coerced to text for Python compatibility."},
-                    "exec_dir": {"type": "string", "description": "Execution directory (workspace-relative by default; absolute path allowed when outside-workspace access is enabled). Non-string scalar values are coerced to text for Python compatibility."},
-                    "timeout": {"type": "integer", "description": "Timeout seconds, default 300, max 600. numeric string values are accepted for Python compatibility."},
-                    "stdin": {"type": "string", "description": "Optional stdin content. Non-string scalar values are coerced to text for Python compatibility."},
+                    "command": {"type": "string", "description": "Bash command string. The runtime executes it through the configured shell."},
+                    "exec_dir": {"type": "string", "description": "Execution directory (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
+                    "timeout": {"type": "integer", "description": "Timeout seconds, default 300, max 600."},
+                    "stdin": {"type": "string", "description": "Optional stdin content."},
                     "auto_confirm": {"type": "boolean", "description": "Pipe yes to command when true."},
                     "run_in_background": {"type": "boolean", "description": "Run command in background and return session_id for polling."}
                 },
@@ -64,7 +64,7 @@ pub(super) fn check_background_command_schema() -> Value {
             "description": CHECK_BACKGROUND_COMMAND_DESCRIPTION,
             "parameters": {
                 "type": "object",
-                "properties": {"session_id": {"type": "string", "description": "Background session identifier. It is returned by `bash` when `run_in_background=true` or when a foreground command times out. Non-string scalar values are coerced to text for Python compatibility."}},
+                "properties": {"session_id": {"type": "string", "description": "Background session identifier. It is returned by `bash` when `run_in_background=true` or when a foreground command times out."}},
                 "required": ["session_id"]
             }
         }

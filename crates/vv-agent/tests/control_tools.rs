@@ -396,7 +396,7 @@ fn control_tools_coerce_scalar_fields_like_python() {
                 BTreeMap::from([
                     ("question".to_string(), json!(123)),
                     ("selection_type".to_string(), json!(false)),
-                    ("options".to_string(), json!([1, true, 1, null])),
+                    ("options".to_string(), json!([1, true, false, 1, null])),
                 ]),
             ),
             &mut context,
@@ -408,14 +408,23 @@ fn control_tools_coerce_scalar_fields_like_python() {
         serde_json::from_str(&ask_result.content).expect("ask payload");
     assert_eq!(ask_payload["question"], "123");
     assert_eq!(ask_payload["selection_type"], "single");
-    assert_eq!(ask_payload["options"], json!(["1", "true"]));
+    assert_eq!(
+        ask_payload["options"],
+        json!(["1", "True", "False", "None"])
+    );
 
     let finish_result = registry
         .execute(
             &ToolCall::new(
                 "finish_scalar",
                 "task_finish",
-                BTreeMap::from([("message".to_string(), json!(456))]),
+                BTreeMap::from([
+                    ("message".to_string(), json!(456)),
+                    (
+                        "exposed_files".to_string(),
+                        json!(["report.md", 7, false, null, ""]),
+                    ),
+                ]),
             ),
             &mut context,
         )
@@ -426,6 +435,10 @@ fn control_tools_coerce_scalar_fields_like_python() {
         serde_json::from_str(&finish_result.content).expect("finish payload");
     assert_eq!(finish_payload["message"], "456");
     assert_eq!(finish_result.metadata["final_message"], json!("456"));
+    assert_eq!(
+        finish_result.metadata["exposed_files"],
+        json!(["report.md", "7", "False", "None"])
+    );
 }
 
 #[test]

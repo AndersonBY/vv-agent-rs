@@ -50,22 +50,22 @@ pub(in crate::tools::schemas) fn workspace_grep_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "description": "Regex pattern to search for. Non-string scalar values are coerced to text for Python compatibility."},
-                    "path": {"type": "string", "description": "Optional search root or single file path. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'. A single file path searches that file directly, even if it is hidden or under an ignored root. Non-string scalar values are coerced to text for Python compatibility."},
-                    "glob": {"type": "string", "description": "Optional file glob filter. Default **/*. Non-string scalar values are coerced to text for Python compatibility."},
+                    "pattern": {"type": "string", "description": "Regex pattern to search for."},
+                    "path": {"type": "string", "description": "Optional search root or single file path. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'. A single file path searches that file directly, even if it is hidden or under an ignored root."},
+                    "glob": {"type": "string", "description": "Optional file glob filter. Default **/*."},
                     "include_hidden": {"type": "boolean", "description": "Whether hidden files are included. Default false."},
                     "include_ignored": {"type": "boolean", "description": "When searching workspace root, include files under common dependency/cache directories. Default false."},
-                    "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"], "description": "Search output mode. Default is 'content'. Non-string scalar values are coerced to text before validation for Python compatibility."},
-                    "b": {"type": "integer", "description": "Lines before each match. Only used in content mode. numeric string values are accepted for Python compatibility."},
-                    "a": {"type": "integer", "description": "Lines after each match. Only used in content mode. numeric string values are accepted for Python compatibility."},
-                    "c": {"type": "integer", "description": "Context lines before and after each match. Overrides b/a. numeric string values are accepted for Python compatibility."},
+                    "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"], "description": "Search output mode. Default is 'content'."},
+                    "b": {"type": "integer", "description": "Lines before each match. Only used in content mode."},
+                    "a": {"type": "integer", "description": "Lines after each match. Only used in content mode."},
+                    "c": {"type": "integer", "description": "Context lines before and after each match. Overrides b/a."},
                     "n": {"type": "boolean", "description": "Whether to include line numbers in content output. Default true."},
                     "i": {"type": "boolean", "description": "Force case-insensitive search."},
-                    "type": {"type": "string", "description": "File type shortcut (e.g. py/js/ts/md/json). Non-string scalar values are coerced to text before validation for Python compatibility."},
-                    "head_limit": {"type": "integer", "minimum": 1, "description": "Limit to first N output rows/entries. numeric string values are accepted for Python compatibility."},
+                    "type": {"type": "string", "description": "File type shortcut (e.g. py/js/ts/md/json)."},
+                    "head_limit": {"type": "integer", "minimum": 1, "description": "Limit to first N output rows/entries."},
                     "multiline": {"type": "boolean", "description": "Enable multiline regex mode."},
                     "case_sensitive": {"type": "boolean", "description": "Explicitly override smart-case behavior and `i`."},
-                    "max_results": {"type": "integer", "minimum": 1, "description": "Compatibility alias for `head_limit`. numeric string values are accepted for Python compatibility."}
+                    "max_results": {"type": "integer", "minimum": 1, "description": "Compatibility alias for `head_limit`."}
                 },
                 "required": ["pattern"]
             }

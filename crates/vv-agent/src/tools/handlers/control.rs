@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::coerce_python_bool_arg;
+use crate::tools::common::{coerce_python_bool_arg, coerce_python_text_arg};
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 pub fn task_finish(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
@@ -19,7 +19,7 @@ pub(crate) fn task_finish_tool() -> ToolSpec {
         Arc::new(|context, arguments| {
             let message = arguments
                 .get("message")
-                .map(value_to_trimmed_string)
+                .map(|value| coerce_python_text_arg(Some(value), "").trim().to_string())
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "Task completed".to_string());
             let require_all_done = arguments
@@ -79,10 +79,14 @@ pub(crate) fn task_finish_tool() -> ToolSpec {
             let mut metadata = BTreeMap::new();
             metadata.insert("final_message".to_string(), Value::String(message.clone()));
             if let Some(exposed_files) = arguments.get("exposed_files").and_then(Value::as_array) {
-                metadata.insert(
-                    "exposed_files".to_string(),
-                    Value::Array(exposed_files.clone()),
-                );
+                let exposed_files = exposed_files
+                    .iter()
+                    .filter_map(|path| {
+                        let path = coerce_python_text_arg(Some(path), "").trim().to_string();
+                        (!path.is_empty()).then_some(Value::String(path))
+                    })
+                    .collect::<Vec<_>>();
+                metadata.insert("exposed_files".to_string(), Value::Array(exposed_files));
             }
             ToolExecutionResult {
                 tool_call_id: String::new(),
@@ -114,12 +118,12 @@ pub(crate) fn ask_user_tool() -> ToolSpec {
         Arc::new(|_context, arguments| {
             let question = arguments
                 .get("question")
-                .map(value_to_trimmed_string)
+                .map(|value| coerce_python_text_arg(Some(value), "").trim().to_string())
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "Need user input".to_string());
             let selection_type = arguments
                 .get("selection_type")
-                .map(value_to_trimmed_string)
+                .map(|value| coerce_python_text_arg(Some(value), "").trim().to_string())
                 .filter(|value| value == "single" || value == "multi")
                 .unwrap_or_else(|| "single".to_string());
             let allow_custom_options = arguments
@@ -158,7 +162,7 @@ fn normalize_ask_user_options(raw: Option<&Value>) -> Option<Vec<Value>> {
     let options = raw?.as_array()?;
     let mut normalized = Vec::new();
     for option in options {
-        let option_text = value_to_trimmed_string(option);
+        let option_text = coerce_python_text_arg(Some(option), "").trim().to_string();
         if option_text.is_empty() {
             continue;
         }
@@ -171,12 +175,4 @@ fn normalize_ask_user_options(raw: Option<&Value>) -> Option<Vec<Value>> {
         normalized.push(Value::String(option_text));
     }
     (!normalized.is_empty()).then_some(normalized)
-}
-
-fn value_to_trimmed_string(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.trim().to_string(),
-        Value::Null => String::new(),
-        other => other.to_string().trim().to_string(),
-    }
 }

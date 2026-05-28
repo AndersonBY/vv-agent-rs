@@ -11,7 +11,6 @@ fn default_tool_schemas_include_reference_quality_descriptions() {
     assert!(read_file.contains("Supported behavior:"));
     assert!(read_file.contains("max 2000 lines or 50000 characters"));
     assert!(property_description(&registry, "read_file", "path").contains("workspace-relative"));
-    assert!(property_description(&registry, "read_file", "start_line").contains("numeric string"));
 
     let workspace_grep = description(&registry, "workspace_grep");
     assert!(workspace_grep.contains("OUTPUT MODES:"));
@@ -19,9 +18,6 @@ fn default_tool_schemas_include_reference_quality_descriptions() {
     assert!(
         property_description(&registry, "workspace_grep", "output_mode")
             .contains("Default is 'content'")
-    );
-    assert!(
-        property_description(&registry, "workspace_grep", "head_limit").contains("numeric string")
     );
     assert!(property_description(&registry, "workspace_grep", "path")
         .contains("single file path searches that file directly"));
@@ -33,8 +29,6 @@ fn default_tool_schemas_include_reference_quality_descriptions() {
     assert!(bash.contains("bash_shell"));
     assert!(bash.contains("bash_env"));
     assert!(property_description(&registry, "bash", "command").contains("configured shell"));
-    assert!(property_description(&registry, "bash", "exec_dir").contains("Non-string scalar"));
-    assert!(property_description(&registry, "bash", "stdin").contains("Non-string scalar"));
     assert!(property_description(&registry, "bash", "timeout").contains("default 300, max 600"));
 
     let create_sub_task = description(&registry, "create_sub_task");
@@ -1055,18 +1049,14 @@ fn every_builtin_tool_schema_has_operational_guidance_not_just_labels() {
     assert!(list_files.contains("Use `path`"));
     assert!(list_files.contains("ignored_roots"));
     assert!(list_files.contains("truncated"));
-    assert!(property_description(&registry, "list_files", "path").contains("Non-string scalar"));
-    assert!(property_description(&registry, "list_files", "glob").contains("Non-string scalar"));
     assert!(
         property_description(&registry, "list_files", "scan_limit").contains("count_is_estimate")
     );
-    assert!(property_description(&registry, "list_files", "max_results").contains("numeric string"));
 
     let write_file = description(&registry, "write_file");
     assert!(write_file.contains("Prefer `file_str_replace`"));
     assert!(write_file.contains("create parent directories"));
     assert!(write_file.contains("append=true"));
-    assert!(property_description(&registry, "write_file", "path").contains("Non-string scalar"));
 
     let ask_user = description(&registry, "ask_user");
     assert!(ask_user.contains("Do not use this for facts"));
@@ -1080,16 +1070,36 @@ fn every_builtin_tool_schema_has_operational_guidance_not_just_labels() {
         property_description(&registry, "check_background_command", "session_id")
             .contains("returned by `bash`")
     );
-    assert!(
-        property_description(&registry, "check_background_command", "session_id")
-            .contains("Non-string scalar")
-    );
 
     let read_image = description(&registry, "read_image");
     assert!(read_image.contains("Supported formats"));
     assert!(read_image.contains("5 MiB"));
     assert!(read_image.contains("HTTP URLs are passed through"));
-    assert!(property_description(&registry, "read_image", "path").contains("Non-string scalar"));
+}
+
+#[test]
+fn model_visible_tool_schemas_do_not_explain_internal_parity_sources() {
+    let registry = build_default_registry();
+
+    for schema in registry.list_openai_schemas(None).expect("schemas") {
+        let serialized = schema.to_string();
+        for forbidden in [
+            "Python compatibility",
+            "Python-compatible",
+            "for Python",
+            "Python reference",
+            "Python-style",
+            "Scalar values",
+            "Numeric strings",
+            "converted to text",
+            "scalar coercion",
+        ] {
+            assert!(
+                !serialized.contains(forbidden),
+                "model-visible tool schema should not include internal parity source wording `{forbidden}`:\n{serialized}"
+            );
+        }
+    }
 }
 
 fn description(registry: &vv_agent::ToolRegistry, tool_name: &str) -> String {
