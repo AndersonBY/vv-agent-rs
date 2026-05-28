@@ -99,6 +99,12 @@ allowed-tools: read_file, workspace_grep
 metadata:
   owner: agent
   retries: 2
+  enabled: true
+  missing: null
+  tags:
+    - x
+    - 2
+    - true
 ---
 Use these instructions.
 "#;
@@ -114,6 +120,9 @@ Use these instructions.
     let (metadata, body) = parse_frontmatter(content).expect("frontmatter");
     assert_eq!(metadata["name"], "review-code");
     assert_eq!(metadata["metadata"]["retries"], "2");
+    assert_eq!(metadata["metadata"]["enabled"], "True");
+    assert_eq!(metadata["metadata"]["missing"], "None");
+    assert_eq!(metadata["metadata"]["tags"], "['x', 2, True]");
     assert_eq!(body, "Use these instructions.");
 
     let properties = read_properties(&skill_dir).expect("properties");
@@ -125,6 +134,9 @@ Use these instructions.
     );
     assert_eq!(properties.metadata["owner"], "agent");
     assert_eq!(properties.metadata["retries"], "2");
+    assert_eq!(properties.metadata["enabled"], "True");
+    assert_eq!(properties.metadata["missing"], "None");
+    assert_eq!(properties.metadata["tags"], "['x', 2, True]");
 
     let loaded = read_skill(&skill_dir, Some("strict")).expect("loaded skill");
     assert_eq!(loaded.name(), "review-code");
