@@ -32,13 +32,18 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                 );
             };
 
-            let agent_name = arguments
-                .get("agent_id")
-                .or_else(|| arguments.get("agent_name"))
-                .map(|value| coerce_python_text_arg(Some(value), ""))
-                .unwrap_or_default()
-                .trim()
-                .to_string();
+            let agent_name = ["agent_id", "agent_name"]
+                .into_iter()
+                .find_map(|key| {
+                    let raw = arguments.get(key)?;
+                    if raw.is_null() {
+                        return None;
+                    }
+                    let value = coerce_python_text_arg(Some(raw), "");
+                    let value = value.trim().to_string();
+                    (!value.is_empty()).then_some(value)
+                })
+                .unwrap_or_default();
             if agent_name.is_empty() {
                 return tool_error_with_code("`agent_id` is required", "agent_id_required");
             }

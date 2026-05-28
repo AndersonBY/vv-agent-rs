@@ -308,6 +308,59 @@ fn create_sub_task_coerces_scalar_text_arguments_like_python() {
 }
 
 #[test]
+fn create_sub_task_falls_back_to_agent_name_when_agent_id_is_empty_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let captured_for_runner = captured.clone();
+    context.sub_task_runner = Some(Arc::new(move |request| {
+        captured_for_runner
+            .lock()
+            .expect("captured")
+            .push(request.agent_name.clone());
+        SubTaskOutcome {
+            task_id: "sub_agent_fallback".to_string(),
+            agent_name: request.agent_name,
+            status: AgentStatus::Completed,
+            session_id: None,
+            final_answer: Some("done".to_string()),
+            wait_reason: None,
+            error: None,
+            cycles: 1,
+            todo_list: Vec::new(),
+            resolved: BTreeMap::new(),
+        }
+    }));
+
+    for (call_id, agent_id, expected) in [
+        ("empty_agent_id", json!(""), "fallback-empty"),
+        ("null_agent_id", Value::Null, "fallback-null"),
+    ] {
+        let result = registry
+            .execute(
+                &ToolCall::new(
+                    call_id,
+                    "create_sub_task",
+                    BTreeMap::from([
+                        ("agent_id".to_string(), agent_id),
+                        ("agent_name".to_string(), json!(expected)),
+                        ("task_description".to_string(), json!("Check fallback")),
+                    ]),
+                ),
+                &mut context,
+            )
+            .expect("create_sub_task agent fallback");
+        assert_eq!(result.status, ToolResultStatus::Success);
+    }
+
+    assert_eq!(
+        captured.lock().expect("captured").as_slice(),
+        ["fallback-empty", "fallback-null"]
+    );
+}
+
+#[test]
 fn create_sub_task_errors_when_runner_is_missing() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
@@ -772,6 +825,38 @@ fn sub_task_status_coerces_task_ids_message_and_workspace_limit_like_python() {
         payload["tasks"][0]["snapshot"]["workspace_files_truncated"],
         true
     );
+}
+
+#[test]
+fn sub_task_status_uses_python_truthiness_for_ids_and_limit_defaults() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.sub_task_manager = Some(SubTaskManager::default());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_status_truthy",
+                "sub_task_status",
+                BTreeMap::from([
+                    ("task_ids".to_string(), json!([0, false, "known", "known"])),
+                    ("workspace_file_limit".to_string(), json!(false)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("sub_task_status truthiness");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    let task_ids = payload["tasks"]
+        .as_array()
+        .expect("tasks")
+        .iter()
+        .map(|task| task["task_id"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(task_ids, vec!["known"]);
 }
 
 #[test]

@@ -35,6 +35,9 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
             };
             let mut task_ids = Vec::new();
             for item in raw_task_ids {
+                if is_python_falsey_for_id(item) {
+                    continue;
+                }
                 let task_id = coerce_python_text_arg(Some(item), "");
                 let task_id = task_id.trim();
                 if !task_id.is_empty() && !task_ids.iter().any(|known| known == task_id) {
@@ -132,4 +135,15 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
         spec.schema = schema;
     }
     spec
+}
+
+fn is_python_falsey_for_id(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Bool(value) => !*value,
+        Value::Number(number) => number.as_f64() == Some(0.0),
+        Value::String(value) => value.is_empty(),
+        Value::Array(items) => items.is_empty(),
+        Value::Object(object) => object.is_empty(),
+    }
 }
