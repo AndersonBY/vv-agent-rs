@@ -4,9 +4,11 @@ use std::sync::Mutex;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::runtime::checkpoint_codec::{
+    cycles_from_json, cycles_to_json, messages_from_json, messages_to_json,
+};
 use crate::runtime::state::{
-    checkpoint_status_from_value, checkpoint_status_value, from_json, to_json, Checkpoint,
-    StateStore,
+    checkpoint_status_from_value, checkpoint_status_value, Checkpoint, StateStore,
 };
 
 #[derive(Debug)]
@@ -49,9 +51,10 @@ impl SqliteStateStore {
 
 impl StateStore for SqliteStateStore {
     fn save_checkpoint(&self, checkpoint: Checkpoint) -> Result<()> {
-        let messages_json = to_json(&checkpoint.messages)?;
-        let cycles_json = to_json(&checkpoint.cycles)?;
-        let shared_state_json = to_json(&checkpoint.shared_state)?;
+        let messages_json = messages_to_json(&checkpoint.messages)?;
+        let cycles_json = cycles_to_json(&checkpoint.cycles)?;
+        let shared_state_json = serde_json::to_string(&checkpoint.shared_state)
+            .map_err(|error| Error::other(error.to_string()))?;
         self.connection
             .lock()
             .map_err(|_| Error::other("sqlite state store lock is poisoned"))?
@@ -103,9 +106,10 @@ impl StateStore for SqliteStateStore {
             task_id,
             cycle_index,
             status: checkpoint_status_from_value(&status)?,
-            messages: from_json(&messages)?,
-            cycles: from_json(&cycles)?,
-            shared_state: from_json(&shared_state)?,
+            messages: messages_from_json(&messages)?,
+            cycles: cycles_from_json(&cycles)?,
+            shared_state: serde_json::from_str(&shared_state)
+                .map_err(|error| Error::other(error.to_string()))?,
         }))
     }
 

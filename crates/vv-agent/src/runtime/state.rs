@@ -97,14 +97,6 @@ pub(crate) fn checkpoint_status_from_value(value: &str) -> Result<AgentStatus> {
     }
 }
 
-pub(crate) fn to_json<T: Serialize>(value: &T) -> Result<String> {
-    serde_json::to_string(value).map_err(|error| Error::new(ErrorKind::InvalidData, error))
-}
-
-pub(crate) fn from_json<T: for<'de> Deserialize<'de>>(value: &str) -> Result<T> {
-    serde_json::from_str(value).map_err(|error| Error::new(ErrorKind::InvalidData, error))
-}
-
 fn poisoned(name: &str) -> Error {
     Error::other(format!("{name} lock is poisoned"))
 }

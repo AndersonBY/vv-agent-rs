@@ -2,12 +2,9 @@ use std::io::{Error, Result};
 use std::sync::Mutex;
 
 use redis::{Commands, Connection};
-use serde::{Deserialize, Serialize};
 
-use crate::runtime::state::{
-    checkpoint_status_from_value, checkpoint_status_value, to_json, Checkpoint, StateStore,
-};
-use crate::types::{CycleRecord, Message, Metadata};
+use crate::runtime::checkpoint_codec;
+use crate::runtime::state::{Checkpoint, StateStore};
 
 const KEY_PREFIX: &str = "vv_agent:checkpoint:";
 
@@ -21,16 +18,6 @@ impl std::fmt::Debug for RedisStateStore {
             .debug_struct("RedisStateStore")
             .finish_non_exhaustive()
     }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct RedisCheckpointPayload {
-    task_id: String,
-    cycle_index: u32,
-    status: String,
-    messages: Vec<Message>,
-    cycles: Vec<CycleRecord>,
-    shared_state: Metadata,
 }
 
 impl RedisStateStore {
@@ -47,27 +34,11 @@ impl RedisStateStore {
     }
 
     pub fn checkpoint_to_json(checkpoint: &Checkpoint) -> Result<String> {
-        to_json(&RedisCheckpointPayload {
-            task_id: checkpoint.task_id.clone(),
-            cycle_index: checkpoint.cycle_index,
-            status: checkpoint_status_value(checkpoint.status).to_string(),
-            messages: checkpoint.messages.clone(),
-            cycles: checkpoint.cycles.clone(),
-            shared_state: checkpoint.shared_state.clone(),
-        })
+        checkpoint_codec::checkpoint_to_json(checkpoint)
     }
 
     pub fn checkpoint_from_json(raw: &str) -> Result<Checkpoint> {
-        let payload: RedisCheckpointPayload =
-            serde_json::from_str(raw).map_err(|error| Error::other(error.to_string()))?;
-        Ok(Checkpoint {
-            task_id: payload.task_id,
-            cycle_index: payload.cycle_index,
-            status: checkpoint_status_from_value(&payload.status)?,
-            messages: payload.messages,
-            cycles: payload.cycles,
-            shared_state: payload.shared_state,
-        })
+        checkpoint_codec::checkpoint_from_json(raw)
     }
 }
 

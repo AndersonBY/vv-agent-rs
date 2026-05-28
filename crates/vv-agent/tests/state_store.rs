@@ -1,10 +1,17 @@
 use serde_json::json;
+use tempfile::NamedTempFile;
 use vv_agent::runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 use vv_agent::runtime::stores::redis::RedisStateStore;
 use vv_agent::runtime::stores::sqlite::SqliteStateStore;
 use vv_agent::{AgentStatus, CycleRecord, Message, ToolCall, ToolExecutionResult};
 
 fn checkpoint(task_id: &str, cycle_index: u32) -> Checkpoint {
+    let mut assistant = Message::assistant("hi there");
+    assistant.tool_calls = vec![ToolCall::new(
+        "c1",
+        "test",
+        [("key".to_string(), json!("val"))].into_iter().collect(),
+    )];
     Checkpoint {
         task_id: task_id.to_string(),
         cycle_index,
@@ -12,7 +19,7 @@ fn checkpoint(task_id: &str, cycle_index: u32) -> Checkpoint {
         messages: vec![
             Message::system("sys prompt"),
             Message::user("hello"),
-            Message::assistant("hi there"),
+            assistant,
         ],
         cycles: vec![CycleRecord {
             index: 1,
@@ -33,6 +40,48 @@ fn checkpoint(task_id: &str, cycle_index: u32) -> Checkpoint {
         .into_iter()
         .collect(),
     }
+}
+
+#[test]
+fn sqlite_state_store_persists_python_to_dict_payload_shape() {
+    let db = NamedTempFile::new().expect("temp sqlite db");
+    let store = SqliteStateStore::new(db.path()).expect("sqlite store");
+
+    store
+        .save_checkpoint(checkpoint("task-shape", 3))
+        .expect("save");
+    store.close().expect("close");
+
+    let connection = rusqlite::Connection::open(db.path()).expect("open sqlite db");
+    let (messages, cycles): (String, String) = connection
+        .query_row(
+            "SELECT messages, cycles FROM checkpoints WHERE task_id = ?1",
+            ["task-shape"],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("checkpoint row");
+    let messages: serde_json::Value = serde_json::from_str(&messages).expect("messages json");
+    let cycles: serde_json::Value = serde_json::from_str(&cycles).expect("cycles json");
+
+    assert_eq!(
+        messages[2]["tool_calls"][0],
+        json!({
+            "id": "c1",
+            "type": "function",
+            "function": {
+                "name": "test",
+                "arguments": "{\"key\":\"val\"}"
+            }
+        })
+    );
+    assert_eq!(
+        cycles[0]["tool_calls"][0],
+        json!({
+            "id": "c1",
+            "name": "test",
+            "arguments": {"key": "val"}
+        })
+    );
 }
 
 #[test]
@@ -121,6 +170,25 @@ fn redis_state_store_matches_python_key_and_payload_shape() {
     assert_eq!(parsed["status"], "running");
     assert!(parsed["messages"].is_array());
     assert!(parsed["cycles"].is_array());
+    assert_eq!(
+        parsed["messages"][2]["tool_calls"][0],
+        json!({
+            "id": "c1",
+            "type": "function",
+            "function": {
+                "name": "test",
+                "arguments": "{\"key\":\"val\"}"
+            }
+        })
+    );
+    assert_eq!(
+        parsed["cycles"][0]["tool_calls"][0],
+        json!({
+            "id": "c1",
+            "name": "test",
+            "arguments": {"key": "val"}
+        })
+    );
     assert_eq!(parsed["shared_state"]["counter"], json!(42));
 
     let round_trip = RedisStateStore::checkpoint_from_json(&payload).expect("round trip");
