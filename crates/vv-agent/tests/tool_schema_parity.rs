@@ -122,8 +122,20 @@ fn python_reference_tool_schema_wording_is_preserved() {
     assert_property_contains(
         &registry,
         "write_file",
+        "path",
+        &["Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."],
+    );
+    assert_property_contains(
+        &registry,
+        "write_file",
         "content",
         &["The content to write to the file."],
+    );
+    assert_property_contains(
+        &registry,
+        "write_file",
+        "append",
+        &["Set true to append instead of overwrite. Default is false (overwrite)."],
     );
 
     assert_description_contains(
@@ -168,6 +180,24 @@ fn python_reference_tool_schema_wording_is_preserved() {
         "path",
         &["Optional search root or single file path. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'."],
     );
+    assert_property_contains(
+        &registry,
+        "workspace_grep",
+        "glob",
+        &["Optional file glob filter. Default **/*."],
+    );
+    assert_property_contains(
+        &registry,
+        "workspace_grep",
+        "output_mode",
+        &["Search output mode. Default is 'content'."],
+    );
+    assert_property_contains(
+        &registry,
+        "workspace_grep",
+        "type",
+        &["File type shortcut (e.g. py/js/ts/md/json)."],
+    );
 
     assert_description_contains(
         &registry,
@@ -179,6 +209,12 @@ fn python_reference_tool_schema_wording_is_preserved() {
         "file_str_replace",
         "old_str",
         &["The source text to replace."],
+    );
+    assert_property_contains(
+        &registry,
+        "file_str_replace",
+        "max_replacements",
+        &["Optional cap when replace_all=false. Default 1."],
     );
 
     assert_description_contains(
@@ -227,6 +263,19 @@ fn python_reference_tool_schema_wording_is_preserved() {
         ],
     );
     assert_property_contains(&registry, "bash", "command", &["Bash command string."]);
+    assert_property_contains(
+        &registry,
+        "bash",
+        "exec_dir",
+        &["Execution directory (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."],
+    );
+    assert_property_contains(&registry, "bash", "stdin", &["Optional stdin content."]);
+    assert_property_contains(
+        &registry,
+        "bash",
+        "auto_confirm",
+        &["Pipe yes to command when true."],
+    );
 
     assert_description_contains(
         &registry,
@@ -339,6 +388,7 @@ fn python_reference_tool_schema_wording_is_preserved() {
         "activate_skill",
         &[
             "Activate a skill from the current task's available skill list.",
+            "skill instructions are loaded from SKILL.md when location is provided",
             "Use this tool only for skills explicitly listed in <available_skills>.",
         ],
     );
