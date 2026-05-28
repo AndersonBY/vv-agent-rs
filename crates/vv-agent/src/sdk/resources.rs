@@ -149,11 +149,11 @@ impl AgentResourceLoader {
             definition.backend = read_string(payload, "backend");
             definition.language =
                 read_string(payload, "language").unwrap_or_else(|| "zh-CN".to_string());
-            definition.max_cycles = read_u32(payload, "max_cycles", 10).max(1);
+            definition.max_cycles = read_positive_u32(payload, "max_cycles", 10);
             definition.memory_compact_threshold =
-                read_u64(payload, "memory_compact_threshold", 128_000);
+                read_positive_u64(payload, "memory_compact_threshold", 128_000);
             definition.memory_threshold_percentage =
-                read_u8(payload, "memory_threshold_percentage", 90);
+                read_percentage_u8(payload, "memory_threshold_percentage", 90);
             definition.no_tool_policy = read_no_tool_policy(payload);
             definition.allow_interruption = read_bool(payload, "allow_interruption", true);
             definition.use_workspace = read_bool(payload, "use_workspace", true);
@@ -269,24 +269,40 @@ fn python_truthy(value: &Value) -> bool {
     }
 }
 
-fn read_u32(payload: &serde_json::Map<String, Value>, key: &str, default: u32) -> u32 {
-    payload
+fn read_positive_u32(payload: &serde_json::Map<String, Value>, key: &str, default: u32) -> u32 {
+    let parsed = payload
         .get(key)
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-        .unwrap_or(default)
+        .and_then(python_int)
+        .unwrap_or(i64::from(default));
+    u32::try_from(parsed.max(1)).unwrap_or(u32::MAX)
 }
 
-fn read_u64(payload: &serde_json::Map<String, Value>, key: &str, default: u64) -> u64 {
-    payload.get(key).and_then(Value::as_u64).unwrap_or(default)
+fn read_positive_u64(payload: &serde_json::Map<String, Value>, key: &str, default: u64) -> u64 {
+    let parsed = payload
+        .get(key)
+        .and_then(python_int)
+        .unwrap_or_else(|| i64::try_from(default).unwrap_or(i64::MAX));
+    u64::try_from(parsed.max(1)).unwrap_or(u64::MAX)
 }
 
-fn read_u8(payload: &serde_json::Map<String, Value>, key: &str, default: u8) -> u8 {
-    payload
+fn read_percentage_u8(payload: &serde_json::Map<String, Value>, key: &str, default: u8) -> u8 {
+    let parsed = payload
         .get(key)
-        .and_then(Value::as_u64)
-        .and_then(|value| u8::try_from(value).ok())
-        .unwrap_or(default)
+        .and_then(python_int)
+        .unwrap_or(i64::from(default));
+    u8::try_from(parsed.clamp(1, 100)).unwrap_or(default)
+}
+
+fn python_int(value: &Value) -> Option<i64> {
+    match value {
+        Value::Bool(value) => Some(i64::from(*value)),
+        Value::Number(number) => number
+            .as_i64()
+            .or_else(|| number.as_u64().and_then(|value| i64::try_from(value).ok()))
+            .or_else(|| number.as_f64().map(|value| value.trunc() as i64)),
+        Value::String(value) => value.trim().parse::<i64>().ok(),
+        _ => None,
+    }
 }
 
 fn read_no_tool_policy(payload: &serde_json::Map<String, Value>) -> NoToolPolicy {
@@ -469,7 +485,7 @@ fn read_sub_agents(payload: &serde_json::Map<String, Value>) -> BTreeMap<String,
         let mut sub_agent = SubAgentConfig::new(model, description);
         sub_agent.backend = read_string(config, "backend");
         sub_agent.system_prompt = read_string(config, "system_prompt");
-        sub_agent.max_cycles = read_u32(config, "max_cycles", 8).max(1);
+        sub_agent.max_cycles = read_positive_u32(config, "max_cycles", 8);
         sub_agent.exclude_tools = read_string_list(config, "exclude_tools");
         sub_agent.metadata = read_metadata(config, "metadata");
         sub_agents.insert(name.clone(), sub_agent);
