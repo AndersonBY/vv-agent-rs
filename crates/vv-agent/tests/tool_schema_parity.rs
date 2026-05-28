@@ -80,6 +80,38 @@ fn default_tool_schemas_include_reference_quality_descriptions() {
 }
 
 #[test]
+fn control_tool_parameter_descriptions_steer_high_quality_agent_decisions() {
+    let registry = build_default_registry();
+
+    let ask_user = description(&registry, "ask_user");
+    assert!(ask_user.contains("When to use:"));
+    assert!(ask_user.contains("Do not use this for facts"));
+    assert!(ask_user.contains("blocks the runtime"));
+    assert!(property_description(&registry, "ask_user", "question")
+        .contains("the smallest decision needed to unblock progress"));
+    assert!(property_description(&registry, "ask_user", "options").contains("2-3"));
+    assert!(property_description(&registry, "ask_user", "options").contains("mutually exclusive"));
+    assert!(
+        property_description(&registry, "ask_user", "selection_type")
+            .contains("Use `multi` only when")
+    );
+    assert!(
+        property_description(&registry, "ask_user", "allow_custom_options")
+            .contains("preset options may be incomplete")
+    );
+
+    let activate_skill = description(&registry, "activate_skill");
+    assert!(activate_skill.contains("When to use:"));
+    assert!(activate_skill.contains("Read the returned SKILL.md instructions"));
+    assert!(activate_skill.contains("Do not invent"));
+    assert!(
+        property_description(&registry, "activate_skill", "skill_name").contains("exact `name`")
+    );
+    assert!(property_description(&registry, "activate_skill", "reason")
+        .contains("why this skill applies before acting"));
+}
+
+#[test]
 fn tools_module_is_split_into_handler_files() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     assert!(root.join("tools").join("mod.rs").is_file());

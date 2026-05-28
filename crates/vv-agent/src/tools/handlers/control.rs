@@ -18,9 +18,9 @@ pub(crate) fn task_finish_tool() -> ToolSpec {
         Arc::new(|context, arguments| {
             let message = arguments
                 .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("Task completed")
-                .to_string();
+                .map(value_to_trimmed_string)
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "Task completed".to_string());
             let require_all_done = arguments
                 .get("require_all_todos_completed")
                 .and_then(Value::as_bool)
@@ -114,15 +114,14 @@ pub(crate) fn ask_user_tool() -> ToolSpec {
         Arc::new(|_context, arguments| {
             let question = arguments
                 .get("question")
-                .and_then(Value::as_str)
-                .unwrap_or("Need user input")
-                .to_string();
+                .map(value_to_trimmed_string)
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "Need user input".to_string());
             let selection_type = arguments
                 .get("selection_type")
-                .and_then(Value::as_str)
-                .filter(|value| *value == "single" || *value == "multi")
-                .unwrap_or("single")
-                .to_string();
+                .map(value_to_trimmed_string)
+                .filter(|value| value == "single" || value == "multi")
+                .unwrap_or_else(|| "single".to_string());
             let allow_custom_options = arguments
                 .get("allow_custom_options")
                 .and_then(Value::as_bool)

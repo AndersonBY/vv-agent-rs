@@ -304,6 +304,52 @@ fn ask_user_returns_python_style_selection_metadata_and_dedupes_options() {
 }
 
 #[test]
+fn control_tools_coerce_scalar_fields_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let ask_result = registry
+        .execute(
+            &ToolCall::new(
+                "ask_scalar",
+                "ask_user",
+                BTreeMap::from([
+                    ("question".to_string(), json!(123)),
+                    ("selection_type".to_string(), json!(false)),
+                    ("options".to_string(), json!([1, true, 1, null])),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("ask_user");
+
+    assert_eq!(ask_result.status, ToolResultStatus::Success);
+    let ask_payload: serde_json::Value =
+        serde_json::from_str(&ask_result.content).expect("ask payload");
+    assert_eq!(ask_payload["question"], "123");
+    assert_eq!(ask_payload["selection_type"], "single");
+    assert_eq!(ask_payload["options"], json!(["1", "true"]));
+
+    let finish_result = registry
+        .execute(
+            &ToolCall::new(
+                "finish_scalar",
+                "task_finish",
+                BTreeMap::from([("message".to_string(), json!(456))]),
+            ),
+            &mut context,
+        )
+        .expect("task_finish");
+
+    assert_eq!(finish_result.status, ToolResultStatus::Success);
+    let finish_payload: serde_json::Value =
+        serde_json::from_str(&finish_result.content).expect("finish payload");
+    assert_eq!(finish_payload["message"], "456");
+    assert_eq!(finish_result.metadata["final_message"], json!("456"));
+}
+
+#[test]
 fn activate_skill_loads_skill_md_and_updates_shared_state() {
     let workspace = tempfile::tempdir().expect("workspace");
     let skill_dir = workspace.path().join("skills/demo-skill");

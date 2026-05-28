@@ -59,20 +59,23 @@ pub(super) fn ask_user_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "question": {"type": "string", "description": "Question text to ask the user."},
+                    "question": {
+                        "type": "string",
+                        "description": "Question text shown to the user. Ask the smallest decision needed to unblock progress, include relevant context, and avoid bundling unrelated questions."
+                    },
                     "options": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional answer options shown to the user."
+                        "description": "Optional answer options shown to the user. Prefer 2-3 concise, mutually exclusive choices when the decision has clear outcomes."
                     },
                     "selection_type": {
                         "type": "string",
                         "enum": ["single", "multi"],
-                        "description": "Single or multi-choice mode when options are provided."
+                        "description": "Single or multi-choice mode when options are provided. Use `multi` only when several choices may validly apply at the same time."
                     },
                     "allow_custom_options": {
                         "type": "boolean",
-                        "description": "Whether users can add custom options."
+                        "description": "Whether users can add custom options. Set true when preset options may be incomplete or the user may need to provide a custom path, credential label, or preference."
                     }
                 },
                 "required": ["question"]
@@ -86,12 +89,18 @@ pub(super) fn activate_skill_schema() -> Value {
         "type": "function",
         "function": {
             "name": "activate_skill",
-            "description": "Activate a skill from the current task's available skill list.\n\nThe skill metadata follows the Agent Skills specification (https://github.com/agentskills/agentskills):\n- name/description are exposed in <available_skills>\n- skill instructions are loaded from SKILL.md when location is provided\n\nUse this tool only for skills explicitly listed in <available_skills>.",
+            "description": "Activate a skill from the current task's available skill list.\n\nWhen to use:\n- A listed skill directly applies to the current task, workflow, domain, or required process discipline.\n- The skill may contain repository-specific instructions, validation steps, tool constraints, or templates that should guide the next action.\n\nProtocol:\n- Use this tool only for skills explicitly listed in <available_skills>.\n- Do not invent skill names or activate unrelated skills.\n- Read the returned SKILL.md instructions before acting, then follow any mandatory workflow.\n\nThe skill metadata follows the Agent Skills specification (https://github.com/agentskills/agentskills): name/description are exposed in <available_skills>, and instructions are loaded from SKILL.md when location is provided.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "skill_name": {"type": "string", "description": "Skill identifier from available skill list."},
-                    "reason": {"type": "string", "description": "Optional reason for activating this skill."}
+                    "skill_name": {
+                        "type": "string",
+                        "description": "The exact `name` from the available skill list. Do not pass a path, title, or inferred alias."
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Optional short reason explaining why this skill applies before acting."
+                    }
                 },
                 "required": ["skill_name"]
             }

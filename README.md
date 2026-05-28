@@ -371,13 +371,14 @@ The current Rust implementation includes:
 - Default tool schemas now use reference-quality descriptions derived from
   Python `v-agent`, with extra actionable guidance for high-impact tools such
   as `task_finish`, `list_files`, `write_file`, `file_str_replace`,
-  `file_info`, `compress_memory`, `check_background_command`, and `read_image`,
-  so the model sees complete operational guidance for file access, grep,
-  bash/background commands, todos, skills, images, and sub-agents. Workspace
-  schemas are split below `tools/schemas/workspace/` into file I/O, listing,
-  search, and edit modules, and schema parity tests now require operational
-  sections on the high-impact tools so future edits do not collapse them back
-  into short labels.
+  `file_info`, `compress_memory`, `check_background_command`, `ask_user`,
+  `activate_skill`, and `read_image`, so the model sees complete operational
+  guidance for file access, grep, bash/background commands, todos, skills,
+  images, and sub-agents. Workspace schemas are split below
+  `tools/schemas/workspace/` into file I/O, listing, search, and edit modules,
+  and schema parity tests now require operational sections and control-tool
+  parameter guidance so future edits do not collapse them back into short
+  labels.
 - Planned tool schemas include Python-style dynamic runtime hints for shell
   execution, so `bash` advertises the actual shell prefix or invalid shell
   configuration in the LLM-visible description. Runtime runs freeze that hint
@@ -399,8 +400,10 @@ The current Rust implementation includes:
   hosts, and Windows process cleanup uses Python-style `taskkill /T /F` before
   falling back to direct child termination.
 - Built-in control tools (`task_finish`, `ask_user`, `todo_write`), with
-  Python-style TODO validation, generated ids, status/priority defaults, and
-  timestamp preservation; core workspace tools (`list_files`, `file_info`,
+  Python-style TODO validation, generated ids, status/priority defaults,
+  timestamp preservation, and scalar `task_finish.message` /
+  `ask_user.question` coercion so imperfect model arguments keep their meaning
+  instead of falling back to defaults; core workspace tools (`list_files`, `file_info`,
   `read_file`, `write_file`, `file_str_replace`, `workspace_grep`,
   `read_image`, with image-message injection limited to `native_multimodal`
   tasks, Python-style `read_file` numeric-string line range parsing,
