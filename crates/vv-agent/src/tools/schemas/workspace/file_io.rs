@@ -14,6 +14,12 @@ Supported behavior:
 - Enforces read limits per request: max 2000 lines or 50000 characters.
 - Large reads return file info payload instead of full content.
 
+Guidance:
+- Prefer this tool instead of shell commands like cat/head/tail.
+- For large files, read in chunks by line range.
+- By default, paths are workspace-relative.
+- If runtime metadata enables outside-workspace access, absolute local paths are allowed.
+
 Returns:
 - A UTF-8 text slice with path metadata, requested line range, actual returned range, and optional line numbers.
 - If the request exceeds safe limits, a file-info style payload with file statistics and suggested smaller ranges instead of flooding the LLM context.
@@ -24,7 +30,21 @@ Safety and limits:
 - Prefer `file_info` before reading unknown large or binary-looking paths.
 - Paths are workspace-relative by default; absolute local paths require explicit outside-workspace runtime permission."#;
 
-const WRITE_FILE_DESCRIPTION: &str = r#"Write content to a workspace file.
+const WRITE_FILE_DESCRIPTION: &str = r#"Write content to a file in workspace.
+
+MODES:
+- Overwrite (default): Replaces entire file content.
+- Append: Adds to existing content (`append=true`).
+
+WARNING:
+- By default, this OVERWRITES the entire file.
+- Use `append=true` to add content instead.
+
+PARAMETERS:
+- `path` (required): Workspace-relative path by default. Absolute path is allowed when outside-workspace access is enabled.
+- `content` (required): Content to write.
+- `append` (optional): Set true to append instead of overwrite.
+- `leading_newline`/`trailing_newline` (optional): Add newlines when appending.
 
 When to use:
 - Create a new file, replace an entire generated artifact, or append a clearly bounded section to an existing file.
@@ -42,7 +62,9 @@ Safety and behavior:
 - This can create parent directories when the workspace backend supports it.
 - `content`, path-like scalars, and newline flags follow Python-compatible coercion rules."#;
 
-const FILE_INFO_DESCRIPTION: &str = r#"Inspect file metadata in workspace without loading full contents.
+const FILE_INFO_DESCRIPTION: &str = r#"Read file metadata in workspace, including size, modified time and type.
+
+Inspect file metadata in workspace without loading full contents.
 
 When to use:
 - Use before reading large or binary files.

@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-const WORKSPACE_GREP_DESCRIPTION: &str = r#"Search workspace files with regex using backend-style grep semantics.
+const WORKSPACE_GREP_DESCRIPTION: &str = r#"Search workspace files with regex (backend-style grep semantics).
 
 When to use:
 - Find symbols, text, config keys, error strings, TODOs, or call sites before deciding which files to read or edit.
@@ -22,11 +22,19 @@ FILTERS:
 - `include_hidden`: include hidden files/directories.
 - `include_ignored`: include common dependency/cache roots at workspace root.
 
-CONTENT OPTIONS:
+CONTENT OPTIONS (only for `content` mode):
 - `b`: lines before each match.
 - `a`: lines after each match.
 - `c`: lines before+after and overrides b/a.
 - `n`: include line numbers.
+
+LIMITING:
+- `head_limit`: return only first N output rows/entries
+- `max_results`: compatibility alias for `head_limit`
+
+Guidance:
+- Prefer this tool over ad-hoc shell grep for direct content search.
+- Narrow broad searches with `path`/`glob`/`type` for better performance.
 
 Returns:
 - Matching content rows, file paths, or counts according to `output_mode`.
@@ -43,7 +51,7 @@ pub(in crate::tools::schemas) fn workspace_grep_schema() -> Value {
                 "type": "object",
                 "properties": {
                     "pattern": {"type": "string", "description": "Regex pattern to search for. Non-string scalar values are coerced to text for Python compatibility."},
-                    "path": {"type": "string", "description": "Optional search root or single file path. A single file path searches that file directly, even if it is hidden or under an ignored root. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'. Non-string scalar values are coerced to text for Python compatibility."},
+                    "path": {"type": "string", "description": "Optional search root or single file path. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'. A single file path searches that file directly, even if it is hidden or under an ignored root. Non-string scalar values are coerced to text for Python compatibility."},
                     "glob": {"type": "string", "description": "Optional file glob filter. Default **/*. Non-string scalar values are coerced to text for Python compatibility."},
                     "include_hidden": {"type": "boolean", "description": "Whether hidden files are included. Default false."},
                     "include_ignored": {"type": "boolean", "description": "When searching workspace root, include files under common dependency/cache directories. Default false."},

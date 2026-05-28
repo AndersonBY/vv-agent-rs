@@ -80,6 +80,230 @@ fn default_tool_schemas_include_reference_quality_descriptions() {
 }
 
 #[test]
+fn python_reference_tool_schema_wording_is_preserved() {
+    let registry = build_default_registry();
+
+    assert_description_contains(
+        &registry,
+        "read_file",
+        &[
+            "Read file contents from workspace.",
+            "Supported behavior:",
+            "Guidance:",
+            "Prefer this tool instead of shell commands like cat/head/tail.",
+            "By default, paths are workspace-relative.",
+        ],
+    );
+    assert_property_contains(
+        &registry,
+        "read_file",
+        "path",
+        &["Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."],
+    );
+    assert_property_contains(
+        &registry,
+        "read_file",
+        "start_line",
+        &["Optional starting line number (1-based)."],
+    );
+
+    assert_description_contains(
+        &registry,
+        "write_file",
+        &[
+            "Write content to a file in workspace.",
+            "MODES:",
+            "WARNING:",
+            "PARAMETERS:",
+            "By default, this OVERWRITES the entire file.",
+            "`leading_newline`/`trailing_newline` (optional): Add newlines when appending.",
+        ],
+    );
+    assert_property_contains(
+        &registry,
+        "write_file",
+        "content",
+        &["The content to write to the file."],
+    );
+
+    assert_description_contains(
+        &registry,
+        "list_files",
+        &[
+            "List files in workspace with optional path and glob filtering.",
+            "Large results are truncated, and common dependency/cache directories",
+            "(like node_modules/.venv) are summarized by default when listing from workspace root.",
+        ],
+    );
+    assert_property_contains(&registry, "list_files", "path", &["Default '.'."]);
+    assert_property_contains(
+        &registry,
+        "list_files",
+        "scan_limit",
+        &["If reached, response includes `count_is_estimate=true`."],
+    );
+
+    assert_description_contains(
+        &registry,
+        "file_info",
+        &["Read file metadata in workspace, including size, modified time and type."],
+    );
+
+    assert_description_contains(
+        &registry,
+        "workspace_grep",
+        &[
+            "Search workspace files with regex (backend-style grep semantics).",
+            "OUTPUT MODES:",
+            "FILTERS:",
+            "CONTENT OPTIONS (only for `content` mode):",
+            "LIMITING:",
+            "`max_results`: compatibility alias for `head_limit`",
+            "Prefer this tool over ad-hoc shell grep for direct content search.",
+        ],
+    );
+    assert_property_contains(
+        &registry,
+        "workspace_grep",
+        "path",
+        &["Optional search root or single file path. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'."],
+    );
+
+    assert_description_contains(
+        &registry,
+        "file_str_replace",
+        &["Replace text in a workspace file."],
+    );
+    assert_property_contains(
+        &registry,
+        "file_str_replace",
+        "old_str",
+        &["The source text to replace."],
+    );
+
+    assert_description_contains(
+        &registry,
+        "compress_memory",
+        &["Store key summary notes to reduce future context load."],
+    );
+    assert_property_contains(
+        &registry,
+        "compress_memory",
+        "core_information",
+        &["Key information that should be preserved after compression."],
+    );
+
+    assert_description_contains(
+        &registry,
+        "todo_write",
+        &[
+            "Create and manage structured TODO list for multi-step execution.",
+            "Protocol:",
+            "Send the complete `todos` array each time.",
+            "Use this tool to keep task planning explicit and machine-readable.",
+        ],
+    );
+    assert_property_contains(
+        &registry,
+        "todo_write",
+        "todos",
+        &["Complete TODO list payload."],
+    );
+
+    assert_description_contains(
+        &registry,
+        "bash",
+        &[
+            "Execute bash command in workspace.",
+            "Guidelines:",
+            "Use `run_in_background=true` for long-running commands and poll with check tool.",
+        ],
+    );
+    assert_property_contains(&registry, "bash", "command", &["Bash command string."]);
+
+    assert_description_contains(
+        &registry,
+        "check_background_command",
+        &[
+            "Check status/output for command launched in background mode, including sessions auto-detached after foreground timeout.",
+        ],
+    );
+    assert_property_contains(
+        &registry,
+        "check_background_command",
+        "session_id",
+        &["Background session identifier."],
+    );
+
+    assert_description_contains(
+        &registry,
+        "create_sub_task",
+        &[
+            "Create sub-tasks for a configured sub-agent.",
+            "Batch task: provide `tasks` array for multiple independent tasks of the same sub-agent",
+            "`wait_for_completion=false`: start background sub-task(s) and return `task_id` / `task_ids`",
+        ],
+    );
+
+    assert_description_contains(
+        &registry,
+        "sub_task_status",
+        &[
+            "Inspect sub-task status and optionally interact with a sub-task.",
+            "Capabilities:",
+            "Send `message` to the first task id to steer a running task or continue a completed one",
+        ],
+    );
+
+    assert_description_contains(
+        &registry,
+        "read_image",
+        &[
+            "Read image from workspace path or HTTP URL, then attach the image payload to the next LLM turn as multimodal content.",
+        ],
+    );
+
+    assert_description_contains(
+        &registry,
+        "task_finish",
+        &["When task goals are fully complete, call this tool to end the task and return final message."],
+    );
+    assert_property_contains(
+        &registry,
+        "task_finish",
+        "message",
+        &["Final response shown to user."],
+    );
+
+    assert_description_contains(
+        &registry,
+        "ask_user",
+        &["Pause execution and ask the user for required clarification or decision."],
+    );
+    assert_property_contains(
+        &registry,
+        "ask_user",
+        "question",
+        &["Question text to ask the user."],
+    );
+
+    assert_description_contains(
+        &registry,
+        "activate_skill",
+        &[
+            "Activate a skill from the current task's available skill list.",
+            "Use this tool only for skills explicitly listed in <available_skills>.",
+        ],
+    );
+    assert_property_contains(
+        &registry,
+        "activate_skill",
+        "skill_name",
+        &["Skill identifier from available skill list."],
+    );
+}
+
+#[test]
 fn control_tool_parameter_descriptions_steer_high_quality_agent_decisions() {
     let registry = build_default_registry();
 
@@ -431,4 +655,33 @@ fn property_description(
                 .map(str::to_string)
         })
         .unwrap_or_default()
+}
+
+fn assert_description_contains(
+    registry: &vv_agent::ToolRegistry,
+    tool_name: &str,
+    expected_fragments: &[&str],
+) {
+    let actual = description(registry, tool_name);
+    for expected in expected_fragments {
+        assert!(
+            actual.contains(expected),
+            "{tool_name} description should preserve Python reference fragment:\n{expected}\n\nactual:\n{actual}"
+        );
+    }
+}
+
+fn assert_property_contains(
+    registry: &vv_agent::ToolRegistry,
+    tool_name: &str,
+    property_name: &str,
+    expected_fragments: &[&str],
+) {
+    let actual = property_description(registry, tool_name, property_name);
+    for expected in expected_fragments {
+        assert!(
+            actual.contains(expected),
+            "{tool_name}.{property_name} description should preserve Python reference fragment:\n{expected}\n\nactual:\n{actual}"
+        );
+    }
 }

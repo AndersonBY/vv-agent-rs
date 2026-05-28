@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 
-const READ_IMAGE_DESCRIPTION: &str = r#"Read an image and attach it to the next LLM turn as multimodal content.
+const READ_IMAGE_DESCRIPTION: &str = r#"Read image from workspace path or HTTP URL, then attach the image payload to the next LLM turn as multimodal content.
+
+Read an image and attach it to the next LLM turn as multimodal content.
 
 When to use:
 - Use this before reasoning about image content.

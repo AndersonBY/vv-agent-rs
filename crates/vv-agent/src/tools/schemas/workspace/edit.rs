@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 
-const FILE_STR_REPLACE_DESCRIPTION: &str = r#"Replace text in a workspace file using exact `old_str` matching.
+const FILE_STR_REPLACE_DESCRIPTION: &str = r#"Replace text in a workspace file.
+
+Use exact `old_str` matching.
 
 Workflow:
 - Call `read_file` first so you can copy the exact surrounding text, including indentation and line endings.
@@ -25,7 +27,7 @@ pub(in crate::tools::schemas) fn file_str_replace_schema() -> Value {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled). Non-string scalar values are coerced to text for Python compatibility."},
-                    "old_str": {"type": "string", "description": "The exact source text to replace. Include enough context to make the match unique. Non-string scalar values are coerced to text for Python compatibility."},
+                    "old_str": {"type": "string", "description": "The source text to replace. This must be the exact source text, with enough context to make the match unique. Non-string scalar values are coerced to text for Python compatibility."},
                     "new_str": {"type": "string", "description": "Replacement text. Non-string scalar values are coerced to text for Python compatibility."},
                     "replace_all": {"type": "boolean", "description": "Replace all matches when true. Default false."},
                     "max_replacements": {"type": "integer", "minimum": 1, "description": "Optional cap when replace_all=false. Default 1. numeric string values are accepted for Python compatibility."}

@@ -1,6 +1,9 @@
 use serde_json::{json, Value};
 
-const LIST_FILES_DESCRIPTION: &str = r#"List workspace files with optional path and glob filtering.
+const LIST_FILES_DESCRIPTION: &str = r#"List files in workspace with optional path and glob filtering.
+
+Large results are truncated, and common dependency/cache directories
+(like node_modules/.venv) are summarized by default when listing from workspace root.
 
 When to use:
 - Discover repository structure, find candidate files before reading them, or inspect generated output locations.

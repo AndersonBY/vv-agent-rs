@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 
-const COMPRESS_MEMORY_DESCRIPTION: &str = r#"Store a durable memory note that should survive future compaction.
+const COMPRESS_MEMORY_DESCRIPTION: &str = r#"Store key summary notes to reduce future context load.
+
+Store a durable memory note that should survive future compaction.
 
 When to use:
 - Preserve stable decisions, constraints, file paths, API names, test evidence, user preferences, or implementation facts that would be expensive or risky to rediscover.

@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 
-const TASK_FINISH_DESCRIPTION: &str = r#"Finish the current task and return the final response.
+const TASK_FINISH_DESCRIPTION: &str = r#"When task goals are fully complete, call this tool to end the task and return final message.
+
+Finish the current task and return the final response.
 
 When to use:
 - Only call this when the user's requested work is genuinely complete, verified, and no unfinished TODO remains.
@@ -12,7 +14,9 @@ Completion protocol:
 - If `todo_write` has pending or in-progress work, keep `require_all_todos_completed=true` so the runtime can reject premature finish.
 - The message should include concise outcome, important verification evidence, and any remaining caveats."#;
 
-const ASK_USER_DESCRIPTION: &str = r#"Pause execution and ask the user for required clarification or a decision.
+const ASK_USER_DESCRIPTION: &str = r#"Pause execution and ask the user for required clarification or decision.
+
+Pause execution and ask the user for required clarification or a decision.
 
 When to use:
 - The task cannot be completed safely because a real user preference, permission, credential, destructive action, or ambiguous scope decision is missing.
@@ -32,7 +36,7 @@ pub(super) fn task_finish_schema() -> Value {
                 "properties": {
                     "message": {
                         "type": "string",
-                        "description": "Final response shown to the user. Include the result, important verification evidence, and any remaining caveats."
+                        "description": "Final response shown to user. Include the result, important verification evidence, and any remaining caveats."
                     },
                     "exposed_files": {
                         "type": "array",
@@ -61,7 +65,7 @@ pub(super) fn ask_user_schema() -> Value {
                 "properties": {
                     "question": {
                         "type": "string",
-                        "description": "Question text shown to the user. Ask the smallest decision needed to unblock progress, include relevant context, and avoid bundling unrelated questions."
+                        "description": "Question text to ask the user. Ask the smallest decision needed to unblock progress, include relevant context, and avoid bundling unrelated questions."
                     },
                     "options": {
                         "type": "array",
@@ -95,7 +99,7 @@ pub(super) fn activate_skill_schema() -> Value {
                 "properties": {
                     "skill_name": {
                         "type": "string",
-                        "description": "The exact `name` from the available skill list. Do not pass a path, title, or inferred alias."
+                        "description": "Skill identifier from available skill list. The exact `name` from the available skill list. Do not pass a path, title, or inferred alias."
                     },
                     "reason": {
                         "type": "string",
