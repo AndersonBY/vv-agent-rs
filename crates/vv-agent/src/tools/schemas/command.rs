@@ -18,8 +18,6 @@ Guidelines:
 
 const CHECK_BACKGROUND_COMMAND_DESCRIPTION: &str = r#"Check status/output for command launched in background mode, including sessions auto-detached after foreground timeout.
 
-Check status and output for a command launched in background mode.
-
 When to use:
 - After `bash` returns a `session_id` from `run_in_background=true`.
 - After a foreground command times out and the runtime auto-detaches it into a background session.

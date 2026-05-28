@@ -460,6 +460,39 @@ fn workspace_grep_file_path_target_can_read_hidden_file() {
 }
 
 #[test]
+fn workspace_grep_file_path_target_can_read_inside_ignored_root() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::create_dir_all(workspace.path().join("node_modules/pkg")).expect("dir");
+    std::fs::write(
+        workspace.path().join("node_modules/pkg/x.js"),
+        "const token = 'Agent';",
+    )
+    .expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "grep_file_ignored_root_target",
+                "workspace_grep",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("Agent")),
+                    ("path".to_string(), json!("node_modules/pkg/x.js")),
+                    ("output_mode".to_string(), json!("files_with_matches")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep ignored-root file target");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.metadata["files"], json!(["node_modules/pkg/x.js"]));
+    assert_eq!(result.metadata["summary"]["files_searched"], 1);
+    assert_eq!(result.metadata["summary"]["total_matches"], 1);
+}
+
+#[test]
 fn workspace_grep_supports_context_lines_and_file_targets() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

@@ -4,7 +4,7 @@ const WORKSPACE_GREP_DESCRIPTION: &str = r#"Search workspace files with regex (b
 
 When to use:
 - Find symbols, text, config keys, error strings, TODOs, or call sites before deciding which files to read or edit.
-- Prefer this tool over ad-hoc shell grep for direct content search because it returns structured metadata and honors workspace access rules.
+- Prefer this tool over ad-hoc shell grep for direct content search.
 - Narrow broad searches with `path`, `glob`, or `type` so results stay useful and fast.
 
 OUTPUT MODES:
@@ -31,10 +31,6 @@ CONTENT OPTIONS (only for `content` mode):
 LIMITING:
 - `head_limit`: return only first N output rows/entries
 - `max_results`: same behavior as `head_limit`
-
-Guidance:
-- Prefer this tool over ad-hoc shell grep for direct content search.
-- Narrow broad searches with `path`/`glob`/`type` for better performance.
 
 Returns:
 - Matching content rows, file paths, or counts according to `output_mode`.

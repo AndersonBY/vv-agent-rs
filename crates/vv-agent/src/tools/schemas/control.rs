@@ -16,8 +16,6 @@ Completion protocol:
 
 const ASK_USER_DESCRIPTION: &str = r#"Pause execution and ask the user for required clarification or decision.
 
-Pause execution and ask the user for required clarification or a decision.
-
 When to use:
 - The task cannot be completed safely because a real user preference, permission, credential, destructive action, or ambiguous scope decision is missing.
 - A reasonable default would risk doing the wrong work or violating the user's stated constraints.

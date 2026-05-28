@@ -2,11 +2,8 @@ use serde_json::{json, Value};
 
 const READ_IMAGE_DESCRIPTION: &str = r#"Read image from workspace path or HTTP URL, then attach the image payload to the next LLM turn as multimodal content.
 
-Read an image and attach it to the next LLM turn as multimodal content.
-
 When to use:
-- Use this before reasoning about image content.
-- Before reasoning about image content, UI screenshots, diagrams, visual errors, generated assets, or visual regression evidence.
+- Use this before reasoning about image content such as UI screenshots, diagrams, visual errors, generated assets, or visual regression evidence.
 - Use this when text tools can only tell you that an image exists, but the Agent needs to inspect what is actually visible.
 - Prefer workspace-relative paths for local artifacts unless outside-workspace access is explicitly enabled.
 

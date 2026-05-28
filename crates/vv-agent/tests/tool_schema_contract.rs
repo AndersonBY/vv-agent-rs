@@ -1048,6 +1048,45 @@ fn high_impact_tool_descriptions_use_operational_sections() {
 }
 
 #[test]
+fn tool_descriptions_do_not_repeat_operational_guidance() {
+    let registry = build_default_registry();
+
+    for (tool_name, repeated_phrases) in [
+        (
+            "ask_user",
+            vec!["Pause execution and ask the user for required clarification"],
+        ),
+        (
+            "check_background_command",
+            vec!["command launched in background mode"],
+        ),
+        (
+            "read_image",
+            vec![
+                "attach it to the next LLM turn as multimodal content",
+                "before reasoning about image content",
+            ],
+        ),
+        ("file_info", vec!["before reading large or binary files"]),
+        ("write_file", vec!["Parent directories may be created"]),
+        (
+            "workspace_grep",
+            vec!["Prefer this tool over ad-hoc shell grep"],
+        ),
+    ] {
+        let description = description(&registry, tool_name).to_lowercase();
+        for phrase in repeated_phrases {
+            let phrase = phrase.to_lowercase();
+            let count = description.matches(&phrase).count();
+            assert!(
+                count <= 1,
+                "{tool_name} repeats guidance phrase `{phrase}` {count} times:\n{description}"
+            );
+        }
+    }
+}
+
+#[test]
 fn every_builtin_tool_schema_has_operational_guidance_not_just_labels() {
     let registry = build_default_registry();
 

@@ -269,6 +269,30 @@ fn list_files_skips_common_dependency_roots_by_default() {
 }
 
 #[test]
+fn list_files_can_list_inside_ignored_root_when_targeted_directly() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::create_dir_all(workspace.path().join("node_modules/pkg")).expect("node_modules dir");
+    std::fs::write(workspace.path().join("node_modules/pkg/a.js"), "a").expect("ignored file");
+
+    let list = registry
+        .execute(
+            &ToolCall::new(
+                "list_targeted_ignored_root",
+                "list_files",
+                BTreeMap::from([("path".to_string(), json!("node_modules"))]),
+            ),
+            &mut context,
+        )
+        .expect("list_files");
+    let payload: Value = serde_json::from_str(&list.content).expect("list payload");
+
+    assert_eq!(payload["files"], json!(["node_modules/pkg/a.js"]));
+    assert!(payload.get("ignored_roots").is_none());
+}
+
+#[test]
 fn list_files_combines_scan_limit_and_ignored_root_messages() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

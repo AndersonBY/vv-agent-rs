@@ -59,8 +59,7 @@ Returns:
 
 Safety and behavior:
 - Overwrite is the default and replaces the whole file.
-- This can create parent directories when the workspace backend supports it.
-- Parent directories may be created when the workspace backend supports it."#;
+- This can create parent directories when the workspace backend supports it."#;
 
 const FILE_INFO_DESCRIPTION: &str = r#"Read file metadata in workspace, including size, modified time and type.
 
@@ -68,7 +67,7 @@ Inspect file metadata in workspace without loading full contents.
 
 When to use:
 - Use before reading large or binary files.
-- Before reading large or binary files, before deciding read ranges, or before editing a path whose size/type is unknown.
+- Use before deciding read ranges, or before editing a path whose size/type is unknown.
 - Check whether a path is a file or directory and whether it has a suffix that suggests text, image, archive, or binary content.
 - Estimate whether `read_file`, `read_image`, or a narrower grep/search is the right next tool.
 
