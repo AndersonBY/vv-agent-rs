@@ -397,7 +397,12 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
             if completed == 0 {
                 return tool_result(
                     ToolResultStatus::Error,
-                    payload,
+                    json!({
+                        "ok": false,
+                        "error": "All batch sub-tasks failed",
+                        "error_code": "create_sub_task_batch_failed",
+                        "details": payload,
+                    }),
                     Some("create_sub_task_batch_failed"),
                     ToolDirective::Continue,
                 );

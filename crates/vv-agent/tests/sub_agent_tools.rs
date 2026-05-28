@@ -522,6 +522,64 @@ fn create_sub_task_batch_keeps_invalid_item_entries_like_python() {
 }
 
 #[test]
+fn create_sub_task_batch_all_runtime_failures_uses_structured_error_envelope() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.sub_task_runner = Some(Arc::new(|request| SubTaskOutcome {
+        task_id: format!("sub_{}", request.task_description.replace(' ', "_")),
+        agent_name: request.agent_name,
+        status: AgentStatus::Failed,
+        session_id: None,
+        final_answer: None,
+        wait_reason: None,
+        error: Some(format!("failed: {}", request.task_description)),
+        cycles: 1,
+        todo_list: Vec::new(),
+        resolved: BTreeMap::new(),
+    }));
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_batch_failed",
+                "create_sub_task",
+                BTreeMap::from([
+                    ("agent_id".to_string(), json!("research-sub")),
+                    (
+                        "tasks".to_string(),
+                        json!([
+                            {"task_description": "Collect facts"},
+                            {"task_description": "Write report"}
+                        ]),
+                    ),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("create_sub_task");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("create_sub_task_batch_failed")
+    );
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"], "All batch sub-tasks failed");
+    assert_eq!(payload["error_code"], "create_sub_task_batch_failed");
+    assert_eq!(payload["details"]["summary"]["total"], 2);
+    assert_eq!(payload["details"]["summary"]["completed"], 0);
+    assert_eq!(payload["details"]["summary"]["failed"], 2);
+    assert_eq!(payload["details"]["results"][0]["status"], "failed");
+    assert_eq!(
+        payload["details"]["results"][0]["error"],
+        "failed: Collect facts"
+    );
+    assert_eq!(payload["details"]["wait_for_completion"], true);
+}
+
+#[test]
 fn create_sub_task_can_start_async_task_and_query_status() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
