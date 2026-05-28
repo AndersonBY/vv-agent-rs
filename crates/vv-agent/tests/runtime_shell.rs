@@ -1,5 +1,7 @@
+use serde_json::json;
 use vv_agent::runtime::shell::{
-    build_shell_invocation, prepare_shell_execution, resolve_shell_invocation,
+    build_shell_invocation, normalize_windows_shell_priority, prepare_shell_execution,
+    resolve_shell_invocation,
 };
 
 #[test]
@@ -48,4 +50,21 @@ fn runtime_shell_builds_invocation_helper_like_python() {
         build_shell_invocation("echo hello", Some("bash"), None).expect("shell invocation");
 
     assert_eq!(invocation, vec!["bash", "-lc", "echo hello"]);
+}
+
+#[test]
+fn runtime_shell_normalizes_metadata_priority_with_python_str_truthiness() {
+    let priority = normalize_windows_shell_priority(Some(&json!([
+        "git-bash", 7, true, false, null, "", 0.0, "git-bash"
+    ])))
+    .expect("priority");
+
+    assert_eq!(
+        priority,
+        Some(vec![
+            "git-bash".to_string(),
+            "7".to_string(),
+            "True".to_string(),
+        ])
+    );
 }

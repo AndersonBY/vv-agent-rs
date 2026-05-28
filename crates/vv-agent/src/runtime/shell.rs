@@ -100,13 +100,61 @@ pub fn normalize_windows_shell_priority(
     };
     let mut normalized = Vec::new();
     for item in items {
-        let value = item.as_str().unwrap_or_default().trim();
+        if python_falsy(item) {
+            continue;
+        }
+        let value = python_str(item);
+        let value = value.trim();
         if value.is_empty() || normalized.iter().any(|seen| seen == value) {
             continue;
         }
         normalized.push(value.to_string());
     }
     Ok(Some(normalized))
+}
+
+fn python_falsy(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => true,
+        serde_json::Value::Bool(value) => !*value,
+        serde_json::Value::Number(number) => number.as_f64() == Some(0.0),
+        serde_json::Value::String(value) => value.is_empty(),
+        serde_json::Value::Array(items) => items.is_empty(),
+        serde_json::Value::Object(object) => object.is_empty(),
+    }
+}
+
+fn python_str(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::Bool(true) => "True".to_string(),
+        serde_json::Value::Bool(false) => "False".to_string(),
+        serde_json::Value::Number(number) => number.to_string(),
+        serde_json::Value::String(value) => value.clone(),
+        serde_json::Value::Array(items) => {
+            let items = items.iter().map(python_repr).collect::<Vec<_>>().join(", ");
+            format!("[{items}]")
+        }
+        serde_json::Value::Object(object) => {
+            let items = object
+                .iter()
+                .map(|(key, value)| format!("{}: {}", python_repr_string(key), python_repr(value)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{{items}}}")
+        }
+    }
+}
+
+fn python_repr(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(value) => python_repr_string(value),
+        other => python_str(other),
+    }
+}
+
+fn python_repr_string(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
 fn resolve_windows_shell(

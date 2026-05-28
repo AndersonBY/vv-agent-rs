@@ -265,7 +265,7 @@ fn python_truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
         Value::Bool(value) => *value,
-        Value::Number(number) => number.as_i64() != Some(0),
+        Value::Number(number) => number.as_f64() != Some(0.0),
         Value::String(value) => !value.is_empty(),
         Value::Array(value) => !value.is_empty(),
         Value::Object(value) => !value.is_empty(),
@@ -307,10 +307,9 @@ fn read_string_list(payload: &serde_json::Map<String, Value>, key: &str) -> Vec<
         .map(|items| {
             items
                 .iter()
-                .filter_map(Value::as_str)
-                .map(str::trim)
+                .map(python_str)
+                .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
-                .map(str::to_string)
                 .collect()
         })
         .unwrap_or_default()
@@ -331,17 +330,44 @@ fn read_string_map(
                     if key.is_empty() {
                         return None;
                     }
-                    Some((
-                        key.to_string(),
-                        value
-                            .as_str()
-                            .map(str::to_string)
-                            .unwrap_or_else(|| value.to_string()),
-                    ))
+                    Some((key.to_string(), python_str(value)))
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn python_str(value: &Value) -> String {
+    match value {
+        Value::Null => "None".to_string(),
+        Value::Bool(true) => "True".to_string(),
+        Value::Bool(false) => "False".to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(value) => value.clone(),
+        Value::Array(items) => {
+            let items = items.iter().map(python_repr).collect::<Vec<_>>().join(", ");
+            format!("[{items}]")
+        }
+        Value::Object(object) => {
+            let items = object
+                .iter()
+                .map(|(key, value)| format!("{}: {}", python_repr_string(key), python_repr(value)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{{items}}}")
+        }
+    }
+}
+
+fn python_repr(value: &Value) -> String {
+    match value {
+        Value::String(value) => python_repr_string(value),
+        other => python_str(other),
+    }
+}
+
+fn python_repr_string(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
 fn read_metadata(payload: &serde_json::Map<String, Value>, key: &str) -> Metadata {

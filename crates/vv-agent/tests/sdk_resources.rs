@@ -274,7 +274,7 @@ fn resource_loader_parses_agent_booleans_with_python_truthiness() {
                     "allow_interruption": 0,
                     "use_workspace": "",
                     "enable_todo_management": "false",
-                    "native_multimodal": [],
+                    "native_multimodal": 0.0,
                     "enable_sub_agents": {"value": false}
                 }
             }
@@ -296,6 +296,57 @@ fn resource_loader_parses_agent_booleans_with_python_truthiness() {
     assert!(agent.enable_todo_management);
     assert!(!agent.native_multimodal);
     assert!(agent.enable_sub_agents);
+}
+
+#[test]
+fn resource_loader_stringifies_shell_lists_and_env_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let resource_root = workspace.path().join(".vv-agent");
+    std::fs::create_dir_all(&resource_root).expect("resource root");
+    std::fs::write(
+        resource_root.join("agents.json"),
+        json!({
+            "profiles": {
+                "shells": {
+                    "description": "shell profile",
+                    "model": "demo-model",
+                    "windows_shell_priority": ["powershell", 7, true, null, ""],
+                    "bash_env": {
+                        "TEXT": "value",
+                        "COUNT": 7,
+                        "FLAG": true,
+                        "NONE": null,
+                        "EMPTY_KEY": "keep"
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .expect("agents");
+
+    let mut loader = AgentResourceLoader::with_resource_dirs(
+        workspace.path(),
+        &resource_root,
+        workspace.path().join(".none"),
+    );
+    let discovered = loader.discover();
+    let agent = &discovered.agents["shells"];
+
+    assert_eq!(
+        agent.windows_shell_priority,
+        vec!["powershell", "7", "True", "None"]
+    );
+    assert_eq!(
+        agent.bash_env,
+        BTreeMap::from([
+            ("COUNT".to_string(), "7".to_string()),
+            ("EMPTY_KEY".to_string(), "keep".to_string()),
+            ("FLAG".to_string(), "True".to_string()),
+            ("NONE".to_string(), "None".to_string()),
+            ("TEXT".to_string(), "value".to_string()),
+        ])
+    );
 }
 
 #[test]

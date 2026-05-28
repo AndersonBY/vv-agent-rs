@@ -674,7 +674,9 @@ The current Rust implementation includes:
   expand `~` like Python, and resource roots, root skill directories, hook file
   paths, and SDK session workspace overrides are canonicalized like Python
   `Path.resolve()` when the path exists. Agent profile bool fields preserve
-  Python `bool(...)` truthiness. `AgentResourceLoader::discover_force_reload`
+  Python `bool(...)` truthiness, and shell list / environment values such as
+  `windows_shell_priority` and `bash_env` are stringified with Python
+  `str(...)` compatibility. `AgentResourceLoader::discover_force_reload`
   refreshes cached resources after on-disk changes. SDK clients can also inject
   a custom `AgentResourceLoader` to discover agents and prompt templates from
   non-default roots. Python hook files under `.vv-agent/hooks` are discovered
@@ -684,6 +686,9 @@ The current Rust implementation includes:
 - SDK client, tool registry, workspace backends, and shared protocol types.
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, schema parity, and workspace tools.
+- Checked-in Rust examples have started mirroring Python `v-agent/examples`
+  numbering. The first batch covers quick-start direct runtime usage, SDK
+  named profiles, session API usage, and `.vv-agent` resource discovery.
 
 Provider request serialization is intentionally delegated to the crates.io
 `vv-llm` crate; request-side provider details should be added there instead of
