@@ -241,9 +241,6 @@ impl AgentResourceLoader {
             if !discovered.hooks.contains(&path) {
                 discovered.hooks.push(path.clone());
             }
-            discovered.diagnostics.push(format!(
-                "Python hook file discovered but Rust cannot load it automatically: {path}. Pass Rust RuntimeHook objects through AgentSDKOptions.runtime_hooks."
-            ));
         }
     }
 }

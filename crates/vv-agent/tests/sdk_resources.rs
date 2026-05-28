@@ -438,7 +438,7 @@ fn resource_loader_reports_invalid_agent_profiles_like_python() {
 }
 
 #[test]
-fn resource_loader_tracks_python_hook_files_with_rust_diagnostics() {
+fn resource_loader_tracks_python_hook_files_for_sdk_runtime_hooks_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     std::fs::create_dir_all(resource_root.join("hooks/nested")).expect("hooks");
@@ -466,10 +466,7 @@ fn resource_loader_tracks_python_hook_files_with_rust_diagnostics() {
         .hook_files
         .iter()
         .any(|path| path.ends_with("hooks/nested/index.py")));
-    assert!(discovered.diagnostics.iter().any(|diagnostic| {
-        diagnostic.contains("Python hook file discovered")
-            && diagnostic.contains("AgentSDKOptions.runtime_hooks")
-    }));
+    assert!(discovered.diagnostics.is_empty());
 }
 
 #[test]
@@ -1755,6 +1752,68 @@ fn sdk_options_runtime_hooks_patch_llm_response_like_python() {
 
     assert_eq!(run.result.status, AgentStatus::Completed);
     assert_eq!(run.result.final_answer.as_deref(), Some("hook-finish"));
+}
+
+#[test]
+fn sdk_client_loads_runtime_hooks_from_resource_loader_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let resource_root = workspace.path().join(".vv-agent");
+    std::fs::create_dir_all(resource_root.join("hooks")).expect("hooks");
+    std::fs::write(
+        resource_root.join("hooks/force_finish.py"),
+        r#"from vv_agent.constants import TASK_FINISH_TOOL_NAME
+from vv_agent.runtime import AfterLLMEvent, BaseRuntimeHook
+from vv_agent.types import LLMResponse, ToolCall
+
+class ForceFinishHook(BaseRuntimeHook):
+    def after_llm(self, event: AfterLLMEvent):
+        return LLMResponse(
+            content=event.response.content,
+            tool_calls=[ToolCall(id="h1", name=TASK_FINISH_TOOL_NAME, arguments={"message": "hook-finish"})],
+        )
+
+HOOK = ForceFinishHook()
+"#,
+    )
+    .expect("hook file");
+    let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
+        let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![LLMResponse::new(
+            "plain response",
+        )]));
+        Ok((
+            llm,
+            ResolvedModelConfig::new(
+                backend.to_string(),
+                model.to_string(),
+                model.to_string(),
+                model.to_string(),
+                Vec::new(),
+            ),
+        ))
+    });
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        resource_loader: Some(AgentResourceLoader::with_resource_dirs(
+            workspace.path(),
+            &resource_root,
+            workspace.path().join(".none"),
+        )),
+        llm_builder: Some(builder),
+        ..AgentSDKOptions::default()
+    });
+
+    let run = client
+        .run_with_agent(
+            AgentDefinition::default_for_model("demo-model"),
+            "use discovered hook",
+        )
+        .expect("run through discovered hook");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(run.result.final_answer.as_deref(), Some("hook-finish"));
+    assert!(
+        client.resource_diagnostics().is_empty(),
+        "Python hook loading should not require Rust-side runtime_hooks diagnostics"
+    );
 }
 
 #[test]

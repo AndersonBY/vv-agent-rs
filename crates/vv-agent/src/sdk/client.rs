@@ -17,6 +17,7 @@ use crate::runtime::{AgentRuntime, ExecutionContext, RuntimeRunControls};
 use crate::types::{AgentTask, Metadata};
 use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
+use super::python_hooks::PythonRuntimeHook;
 use super::resources::AgentResourceLoader;
 use super::session::{AgentSession, AgentSessionRunRequest};
 use super::types::{query_text_from_run, AgentDefinition, AgentRun, AgentSDKOptions, SdkLlmClient};
@@ -303,7 +304,7 @@ fn system_prompt_from_definition(
 }
 
 impl AgentSDKClient {
-    pub fn new(options: AgentSDKOptions) -> Self {
+    pub fn new(mut options: AgentSDKOptions) -> Self {
         let mut agents = BTreeMap::new();
         let mut prompt_templates = BTreeMap::new();
         let mut resource_skill_directories = Vec::new();
@@ -319,6 +320,11 @@ impl AgentSDKClient {
             prompt_templates = discovered.prompts;
             resource_skill_directories = discovered.skill_directories;
             resource_diagnostics = discovered.diagnostics;
+            for hook_file in discovered.hook_files {
+                options
+                    .runtime_hooks
+                    .push(Arc::new(PythonRuntimeHook::new(hook_file)));
+            }
         }
 
         let runtime_options = options.clone();

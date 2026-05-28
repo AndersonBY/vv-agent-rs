@@ -694,8 +694,12 @@ The current Rust implementation includes:
   a custom `AgentResourceLoader` to discover agents and prompt templates from
   non-default roots. Python hook files under `.vv-agent/hooks` are discovered
   on the Python-style `DiscoveredResources.hooks` field, with `hook_files`
-  retained as a Rust compatibility alias, and reported through diagnostics;
-  Rust hook execution uses `AgentSDKOptions.runtime_hooks`.
+  retained as a Rust compatibility alias, and automatically attached as runtime
+  hooks by `AgentSDKClient`. The bridge prefers the sibling Python `v-agent`
+  project through `uv run python`, or an explicit `VV_AGENT_PYTHON_HOOK_PYTHON`
+  interpreter, so existing Python hook files can keep using `vv_agent.runtime`
+  event types. Native Rust hook injection still uses
+  `AgentSDKOptions.runtime_hooks`.
 - SDK client, tool registry, workspace backends, and shared protocol types.
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, schema parity, workspace tools, and

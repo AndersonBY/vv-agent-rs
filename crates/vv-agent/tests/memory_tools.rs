@@ -648,6 +648,25 @@ fn session_memory_extract_handles_callback_panic_like_python() {
 }
 
 #[test]
+fn session_memory_parse_handles_non_array_and_greedy_noise_like_python() {
+    let memory = SessionMemory::new(SessionMemoryConfig::default());
+
+    assert!(memory
+        .parse_extraction_result(r#"{"category":"key_fact"}"#, 1)
+        .is_empty());
+
+    let parsed = memory.parse_extraction_result(
+        r#"prefix [{"category":"key_fact","content":"ok","importance":6}] trailing ] noise"#,
+        2,
+    );
+
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0].content, "ok");
+    assert_eq!(parsed[0].source_cycle, 2);
+    assert_eq!(parsed[0].importance, 6);
+}
+
+#[test]
 fn session_memory_persists_scoped_state_and_rejects_path_traversal() {
     let workspace = tempfile::tempdir().expect("workspace");
     let mut memory = SessionMemory::with_workspace(
