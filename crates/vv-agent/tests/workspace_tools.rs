@@ -614,6 +614,18 @@ fn workspace_paths_expand_home_like_python() {
 }
 
 #[test]
+fn local_workspace_backend_replaces_invalid_utf8_when_reading_text() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let path = workspace.path().join("mixed.log");
+    std::fs::write(&path, b"ok\xffdone").expect("write invalid utf8");
+    let local = LocalWorkspaceBackend::new(workspace.path());
+
+    let text = local.read_text("mixed.log").expect("read text");
+
+    assert_eq!(text, "ok\u{fffd}done");
+}
+
+#[test]
 fn read_file_returns_file_info_when_requested_slice_exceeds_limits() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

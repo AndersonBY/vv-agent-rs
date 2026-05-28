@@ -89,7 +89,8 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
     }
 
     fn read_text(&self, path: &str) -> std::io::Result<String> {
-        fs::read_to_string(self.resolve_path(path)?)
+        let bytes = fs::read(self.resolve_path(path)?)?;
+        Ok(String::from_utf8_lossy(&bytes).to_string())
     }
 
     fn read_bytes(&self, path: &str) -> std::io::Result<Vec<u8>> {
