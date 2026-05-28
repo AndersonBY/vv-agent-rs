@@ -174,11 +174,8 @@ pub(crate) fn list_files_tool() -> ToolSpec {
         "list_files",
         "List files in the current workspace.",
         Arc::new(|context, arguments| {
-            let path = arguments.get("path").and_then(Value::as_str).unwrap_or(".");
-            let glob = arguments
-                .get("glob")
-                .and_then(Value::as_str)
-                .unwrap_or("**/*");
+            let path = coerce_python_text_arg(arguments.get("path"), ".");
+            let glob = coerce_python_text_arg(arguments.get("glob"), "**/*");
             let max_results = match arguments.get("max_results") {
                 Some(value) => match parse_integer_arg(value) {
                     Ok(limit) => limit.clamp(1, 5_000) as usize,
@@ -205,12 +202,12 @@ pub(crate) fn list_files_tool() -> ToolSpec {
                 .get("include_hidden")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            let resolved_path = match context.resolve_workspace_path(path) {
+            let resolved_path = match context.resolve_workspace_path(&path) {
                 Ok(path) => path,
                 Err(error) => return path_escapes_workspace_error(error),
             };
             let backend = context.effective_workspace_backend();
-            let root_listing = is_workspace_root_path(path);
+            let root_listing = is_workspace_root_path(&path);
             let is_local_backend = backend.as_any().is::<LocalWorkspaceBackend>();
             let rg_result = backend
                 .as_any()
@@ -229,7 +226,7 @@ pub(crate) fn list_files_tool() -> ToolSpec {
                         context,
                         base_path: &resolved_path,
                         base_is_workspace_root: root_listing,
-                        glob,
+                        glob: &glob,
                         include_hidden,
                         include_ignored,
                         ignored_root_names: &ignored_root_names,
@@ -249,7 +246,7 @@ pub(crate) fn list_files_tool() -> ToolSpec {
                     ignored_roots,
                 ))
             } else {
-                match backend.list_files(path, glob) {
+                match backend.list_files(&path, &glob) {
                     Ok(mut files) => {
                         let summarize_ignored_roots =
                             is_local_backend && root_listing && !include_ignored;
@@ -338,14 +335,15 @@ pub(crate) fn file_info_tool() -> ToolSpec {
         "file_info",
         "Return metadata for a workspace path.",
         Arc::new(|context, arguments| {
-            let Some(path) = arguments.get("path").and_then(Value::as_str) else {
+            if !arguments.contains_key("path") {
                 return tool_error("missing required argument: path");
-            };
-            if let Err(error) = context.resolve_workspace_path(path) {
+            }
+            let path = coerce_python_text_arg(arguments.get("path"), "");
+            if let Err(error) = context.resolve_workspace_path(&path) {
                 return path_escapes_workspace_error(error);
             }
             let backend = context.effective_workspace_backend();
-            match backend.file_info(path) {
+            match backend.file_info(&path) {
                 Ok(Some(info)) => {
                     let mut payload = json!({
                         "path": info.path,
@@ -381,14 +379,15 @@ pub(crate) fn read_file_tool() -> ToolSpec {
         "read_file",
         "Read a text file from the current workspace.",
         Arc::new(|context, arguments| {
-            let Some(path) = arguments.get("path").and_then(Value::as_str) else {
+            if !arguments.contains_key("path") {
                 return tool_error("missing required argument: path");
-            };
-            if let Err(error) = context.resolve_workspace_path(path) {
+            }
+            let path = coerce_python_text_arg(arguments.get("path"), "");
+            if let Err(error) = context.resolve_workspace_path(&path) {
                 return path_escapes_workspace_error(error);
             }
             let backend = context.effective_workspace_backend();
-            if !backend.is_file(path) {
+            if !backend.is_file(&path) {
                 return tool_error(format!("file not found: {path}"));
             }
             let start_line = match arguments.get("start_line") {
@@ -409,7 +408,7 @@ pub(crate) fn read_file_tool() -> ToolSpec {
                 .get("show_line_numbers")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            match backend.read_text(path) {
+            match backend.read_text(&path) {
                 Ok(text) => {
                     let lines = text.lines().collect::<Vec<_>>();
                     let start_index = start_line.saturating_sub(1).min(lines.len());
@@ -499,10 +498,11 @@ pub(crate) fn write_file_tool() -> ToolSpec {
         "write_file",
         "Write a text file in the current workspace.",
         Arc::new(|context, arguments| {
-            let Some(path) = arguments.get("path").and_then(Value::as_str) else {
+            if !arguments.contains_key("path") {
                 return tool_error("missing required argument: path");
-            };
-            if let Err(error) = context.resolve_workspace_path(path) {
+            }
+            let path = coerce_python_text_arg(arguments.get("path"), "");
+            if let Err(error) = context.resolve_workspace_path(&path) {
                 return path_escapes_workspace_error(error);
             }
             let backend = context.effective_workspace_backend();
@@ -527,7 +527,7 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                 content.as_str(),
                 if trailing_newline { "\n" } else { "" }
             );
-            match backend.write_text(path, &write_content, append) {
+            match backend.write_text(&path, &write_content, append) {
                 Ok(written) => crate::types::ToolExecutionResult::success(
                     "",
                     json!({
@@ -563,14 +563,15 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
         "file_str_replace",
         "Replace text in a workspace file.",
         Arc::new(|context, arguments| {
-            let Some(path) = arguments.get("path").and_then(Value::as_str) else {
+            if !arguments.contains_key("path") {
                 return tool_error("missing required argument: path");
-            };
-            if let Err(error) = context.resolve_workspace_path(path) {
+            }
+            let path = coerce_python_text_arg(arguments.get("path"), "");
+            if let Err(error) = context.resolve_workspace_path(&path) {
                 return path_escapes_workspace_error(error);
             }
             let backend = context.effective_workspace_backend();
-            if !backend.is_file(path) {
+            if !backend.is_file(&path) {
                 return tool_error(format!("file not found: {path}"));
             }
             let old_str = coerce_python_text_arg(arguments.get("old_str"), "");
@@ -589,7 +590,7 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
                 },
                 None => 1,
             };
-            match backend.read_text(path) {
+            match backend.read_text(&path) {
                 Ok(text) => {
                     let occurrence_count = text.matches(&old_str).count();
                     if occurrence_count == 0 {
@@ -605,7 +606,7 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
                     } else {
                         replace_n(&text, &old_str, &new_str, max_replacements)
                     };
-                    match backend.write_text(path, &replaced_text, false) {
+                    match backend.write_text(&path, &replaced_text, false) {
                         Ok(_) => crate::types::ToolExecutionResult::success(
                             "",
                             json!({

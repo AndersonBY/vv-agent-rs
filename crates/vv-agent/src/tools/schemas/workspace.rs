@@ -9,7 +9,7 @@ pub(super) fn read_file_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
+                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled). Non-string scalar values are coerced to text for Python compatibility."},
                     "start_line": {"type": "integer", "minimum": 1, "description": "Optional starting line number (1-based). numeric string values are accepted for Python compatibility."},
                     "end_line": {"type": "integer", "minimum": 1, "description": "Optional ending line number (1-based, inclusive). numeric string values are accepted for Python compatibility."},
                     "show_line_numbers": {"type": "boolean", "description": "When true, prefixes each output line with its source line number."}
@@ -29,7 +29,7 @@ pub(super) fn write_file_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
+                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled). Non-string scalar values are coerced to text for Python compatibility."},
                     "content": {"type": "string", "description": "The content to write to the file. Non-string scalar values are coerced to text for Python compatibility."},
                     "append": {"type": "boolean", "description": "Set true to append instead of overwrite. Default is false (overwrite)."},
                     "leading_newline": {"type": "boolean", "description": "Add a leading newline when appending. Default is false."},
@@ -50,8 +50,8 @@ pub(super) fn list_files_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Optional search root path. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'."},
-                    "glob": {"type": "string", "description": "Optional glob pattern. Default **/*."},
+                    "path": {"type": "string", "description": "Optional search root path. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'. Non-string scalar values are coerced to text for Python compatibility."},
+                    "glob": {"type": "string", "description": "Optional glob pattern. Default **/*. Non-string scalar values are coerced to text for Python compatibility."},
                     "include_hidden": {"type": "boolean", "description": "Whether hidden files are included. Default false."},
                     "include_ignored": {"type": "boolean", "description": "When listing workspace root, include files under common dependency/cache directories. Default false."},
                     "max_results": {"type": "integer", "description": "Maximum number of file paths returned in one call. Default 500; larger values are capped. numeric string values are accepted for Python compatibility."},
@@ -72,7 +72,7 @@ pub(super) fn file_info_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."}
+                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled). Non-string scalar values are coerced to text for Python compatibility."}
                 },
                 "required": ["path"]
             }
@@ -121,7 +121,7 @@ pub(super) fn file_str_replace_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
+                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled). Non-string scalar values are coerced to text for Python compatibility."},
                     "old_str": {"type": "string", "description": "The exact source text to replace. Include enough context to make the match unique. Non-string scalar values are coerced to text for Python compatibility."},
                     "new_str": {"type": "string", "description": "Replacement text. Non-string scalar values are coerced to text for Python compatibility."},
                     "replace_all": {"type": "boolean", "description": "Replace all matches when true. Default false."},

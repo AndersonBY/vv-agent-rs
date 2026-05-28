@@ -34,6 +34,34 @@ fn bash_tool_executes_command_in_workspace() {
 }
 
 #[test]
+fn bash_tool_coerces_scalar_exec_dir_and_stdin_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    std::fs::create_dir_all(workspace.path().join("456")).expect("number directory");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "bash_scalar_args",
+                "bash",
+                BTreeMap::from([
+                    ("command".to_string(), json!("cat")),
+                    ("exec_dir".to_string(), json!(456)),
+                    ("stdin".to_string(), json!(123)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("bash tool");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: Value = serde_json::from_str(&result.content).expect("bash payload");
+    assert_eq!(payload["cwd"], json!("456"));
+    assert_eq!(payload["output"], json!("123"));
+}
+
+#[test]
 fn bash_tool_blocks_dangerous_command() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

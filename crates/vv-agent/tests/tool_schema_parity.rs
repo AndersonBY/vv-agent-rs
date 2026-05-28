@@ -33,6 +33,8 @@ fn default_tool_schemas_include_reference_quality_descriptions() {
     assert!(bash.contains("bash_shell"));
     assert!(bash.contains("bash_env"));
     assert!(property_description(&registry, "bash", "command").contains("configured shell"));
+    assert!(property_description(&registry, "bash", "exec_dir").contains("Non-string scalar"));
+    assert!(property_description(&registry, "bash", "stdin").contains("Non-string scalar"));
     assert!(property_description(&registry, "bash", "timeout").contains("default 300, max 600"));
 
     let create_sub_task = description(&registry, "create_sub_task");
@@ -255,6 +257,8 @@ fn every_builtin_tool_schema_has_operational_guidance_not_just_labels() {
     assert!(list_files.contains("Use `path`"));
     assert!(list_files.contains("ignored_roots"));
     assert!(list_files.contains("truncated"));
+    assert!(property_description(&registry, "list_files", "path").contains("Non-string scalar"));
+    assert!(property_description(&registry, "list_files", "glob").contains("Non-string scalar"));
     assert!(
         property_description(&registry, "list_files", "scan_limit").contains("count_is_estimate")
     );
@@ -264,6 +268,7 @@ fn every_builtin_tool_schema_has_operational_guidance_not_just_labels() {
     assert!(write_file.contains("Prefer `file_str_replace`"));
     assert!(write_file.contains("create parent directories"));
     assert!(write_file.contains("append=true"));
+    assert!(property_description(&registry, "write_file", "path").contains("Non-string scalar"));
 
     let ask_user = description(&registry, "ask_user");
     assert!(ask_user.contains("Do not use this for facts"));

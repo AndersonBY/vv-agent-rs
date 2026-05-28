@@ -385,10 +385,11 @@ The current Rust implementation includes:
   `read_file`, `write_file`, `file_str_replace`, `workspace_grep`,
   `read_image`, with image-message injection limited to `native_multimodal`
   tasks, Python-style `read_file` numeric-string line range parsing,
-  `list_files` numeric-string limits, Python-style scalar text coercion for
-  `write_file`/`file_str_replace`, `file_str_replace` numeric-string
-  replacement limits, hidden-file filtering, Python-style local ripgrep fast
-  path, and scan-limit estimate payloads, and
+  `list_files` numeric-string limits plus scalar `path`/`glob` coercion,
+  Python-style scalar `path` coercion for file read/write/info/replace tools,
+  Python-style scalar text coercion for `write_file`/`file_str_replace`,
+  `file_str_replace` numeric-string replacement limits, hidden-file filtering,
+  Python-style local ripgrep fast path, and scan-limit estimate payloads, and
   `workspace_grep` regex search, numeric-string limits/context parsing, text
   content with structured matches kept in metadata, Python-style glob filtering,
   Python-style scalar text coercion, configured workspace backend support,
@@ -398,10 +399,10 @@ The current Rust implementation includes:
   Python);
   memory notes through `compress_memory`; and `bash` /
   `check_background_command` command tools with captured output, Python-style
-  replacement decoding, stdin, numeric-string timeout parsing,
-  metadata-controlled shell selection via `bash_shell`, foreground timeout
-  handoff, background polling, and automatic terminal background-session
-  listener notifications. `BackgroundSessionManager::start` also mirrors
+  replacement decoding, scalar `exec_dir`/`stdin` coercion, numeric-string
+  timeout parsing, metadata-controlled shell selection via `bash_shell`,
+  foreground timeout handoff, background polling, and automatic terminal
+  background-session listener notifications. `BackgroundSessionManager::start` also mirrors
   Python's manager-level command startup path, including shell preparation,
   stdin, auto-confirm, and process environment overrides. Background listener
   adoption supports explicit `started_at` timestamps, and listener failures are

@@ -95,6 +95,95 @@ fn write_file_coerces_scalar_content_like_python() {
 }
 
 #[test]
+fn workspace_file_tools_coerce_scalar_path_and_glob_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let write = registry
+        .execute(
+            &ToolCall::new(
+                "write_scalar_path",
+                "write_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!(123)),
+                    ("content".to_string(), json!("one")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("write_file");
+
+    assert_eq!(write.status, ToolResultStatus::Success);
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("123")).expect("scalar path file"),
+        "one"
+    );
+
+    let read = registry
+        .execute(
+            &ToolCall::new(
+                "read_scalar_path",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!(123))]),
+            ),
+            &mut context,
+        )
+        .expect("read_file");
+    assert_eq!(read.status, ToolResultStatus::Success);
+    assert!(read.content.contains("\"path\":\"123\""));
+    assert!(read.content.contains("\"content\":\"one\""));
+
+    let replace = registry
+        .execute(
+            &ToolCall::new(
+                "replace_scalar_path",
+                "file_str_replace",
+                BTreeMap::from([
+                    ("path".to_string(), json!(123)),
+                    ("old_str".to_string(), json!("one")),
+                    ("new_str".to_string(), json!("two")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("file_str_replace");
+    assert_eq!(replace.status, ToolResultStatus::Success);
+
+    let info = registry
+        .execute(
+            &ToolCall::new(
+                "info_scalar_path",
+                "file_info",
+                BTreeMap::from([("path".to_string(), json!(123))]),
+            ),
+            &mut context,
+        )
+        .expect("file_info");
+    assert_eq!(info.status, ToolResultStatus::Success);
+    assert!(info.content.contains("\"path\":\"123\""));
+
+    std::fs::create_dir_all(workspace.path().join("456")).expect("number dir");
+    std::fs::write(workspace.path().join("456/123"), "number glob").expect("number glob file");
+    std::fs::write(workspace.path().join("456/other.txt"), "other").expect("other file");
+    let list = registry
+        .execute(
+            &ToolCall::new(
+                "list_scalar_path_glob",
+                "list_files",
+                BTreeMap::from([
+                    ("path".to_string(), json!(456)),
+                    ("glob".to_string(), json!(123)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("list_files");
+    let list_payload: Value = serde_json::from_str(&list.content).expect("list payload");
+    assert_eq!(list_payload["files"], json!(["456/123"]));
+}
+
+#[test]
 fn file_str_replace_coerces_scalar_text_arguments_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

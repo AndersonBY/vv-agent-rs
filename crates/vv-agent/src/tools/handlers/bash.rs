@@ -11,8 +11,8 @@ use crate::processes::{
 use crate::runtime::shell::{normalize_windows_shell_priority, prepare_shell_execution};
 use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{
-    parse_integer_arg, path_escapes_workspace_error, tool_error_with_code, tool_result,
-    workspace_relative_path_or_absolute,
+    coerce_python_text_arg, parse_integer_arg, path_escapes_workspace_error, tool_error_with_code,
+    tool_result, workspace_relative_path_or_absolute,
 };
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
@@ -32,10 +32,7 @@ pub(crate) fn bash_tool() -> ToolSpec {
         "bash",
         "Run a shell command in the current workspace.",
         Arc::new(|context, arguments| {
-            let command = arguments
-                .get("command")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
+            let command = coerce_python_text_arg(arguments.get("command"), "")
                 .trim()
                 .to_string();
             if command.is_empty() {
@@ -56,11 +53,8 @@ pub(crate) fn bash_tool() -> ToolSpec {
                     );
                 }
             }
-            let exec_dir = arguments
-                .get("exec_dir")
-                .and_then(Value::as_str)
-                .unwrap_or(".");
-            let cwd = match context.resolve_workspace_path(exec_dir) {
+            let exec_dir = coerce_python_text_arg(arguments.get("exec_dir"), ".");
+            let cwd = match context.resolve_workspace_path(&exec_dir) {
                 Ok(cwd) => cwd,
                 Err(error) => return path_escapes_workspace_error(error),
             };
@@ -82,7 +76,9 @@ pub(crate) fn bash_tool() -> ToolSpec {
                 },
                 None => 300,
             };
-            let stdin_text = arguments.get("stdin").and_then(Value::as_str);
+            let stdin_text = arguments
+                .contains_key("stdin")
+                .then(|| coerce_python_text_arg(arguments.get("stdin"), ""));
             let auto_confirm = arguments
                 .get("auto_confirm")
                 .and_then(Value::as_bool)
@@ -100,7 +96,7 @@ pub(crate) fn bash_tool() -> ToolSpec {
             let prepared = match prepare_shell_execution(
                 &command,
                 auto_confirm,
-                stdin_text,
+                stdin_text.as_deref(),
                 shell.as_deref(),
                 windows_shell_priority.as_deref(),
             ) {
