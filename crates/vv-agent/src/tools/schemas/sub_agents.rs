@@ -25,7 +25,7 @@ pub(super) fn create_sub_task_schema() -> Value {
                         }
                     },
                     "include_main_summary": {"type": "boolean", "description": "Whether to include parent-task summary context. Default false."},
-                    "exclude_files_pattern": {"type": "string", "description": "Optional regex for excluding files in shared context (reserved for compatibility)."},
+                    "exclude_files_pattern": {"type": "string", "description": "Optional regex for excluding files from shared context."},
                     "wait_for_completion": {"type": "boolean", "description": "Whether to wait for completion. Default true; false starts background execution. When false, returned task ids can be polled with `sub_task_status`."}
                 },
                 "required": ["agent_id"]

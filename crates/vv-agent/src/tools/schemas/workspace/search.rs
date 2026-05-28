@@ -30,7 +30,7 @@ CONTENT OPTIONS (only for `content` mode):
 
 LIMITING:
 - `head_limit`: return only first N output rows/entries
-- `max_results`: compatibility alias for `head_limit`
+- `max_results`: same behavior as `head_limit`
 
 Guidance:
 - Prefer this tool over ad-hoc shell grep for direct content search.
@@ -65,7 +65,7 @@ pub(in crate::tools::schemas) fn workspace_grep_schema() -> Value {
                     "head_limit": {"type": "integer", "minimum": 1, "description": "Limit to first N output rows/entries."},
                     "multiline": {"type": "boolean", "description": "Enable multiline regex mode."},
                     "case_sensitive": {"type": "boolean", "description": "Explicitly override smart-case behavior and `i`."},
-                    "max_results": {"type": "integer", "minimum": 1, "description": "Compatibility alias for `head_limit`."}
+                    "max_results": {"type": "integer", "minimum": 1, "description": "Same behavior as `head_limit`."}
                 },
                 "required": ["pattern"]
             }

@@ -164,7 +164,7 @@ fn python_reference_tool_schema_wording_is_preserved() {
             "FILTERS:",
             "CONTENT OPTIONS (only for `content` mode):",
             "LIMITING:",
-            "`max_results`: compatibility alias for `head_limit`",
+            "`max_results`: same behavior as `head_limit`",
             "Prefer this tool over ad-hoc shell grep for direct content search.",
         ],
     );
@@ -1089,6 +1089,8 @@ fn model_visible_tool_schemas_do_not_explain_internal_parity_sources() {
             "for Python",
             "Python reference",
             "Python-style",
+            "compatibility alias",
+            "reserved for compatibility",
             "Scalar values",
             "Numeric strings",
             "converted to text",
