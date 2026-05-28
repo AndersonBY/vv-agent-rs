@@ -64,7 +64,7 @@ pub(super) fn check_background_command_schema() -> Value {
             "description": CHECK_BACKGROUND_COMMAND_DESCRIPTION,
             "parameters": {
                 "type": "object",
-                "properties": {"session_id": {"type": "string", "description": "Background session identifier. It is returned by `bash` when `run_in_background=true` or when a foreground command times out."}},
+                "properties": {"session_id": {"type": "string", "description": "Background session identifier. It is returned by `bash` when `run_in_background=true` or when a foreground command times out. Non-string scalar values are coerced to text for Python compatibility."}},
                 "required": ["session_id"]
             }
         }

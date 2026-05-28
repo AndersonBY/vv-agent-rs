@@ -176,6 +176,33 @@ fn background_command_lifecycle_can_be_polled() {
 }
 
 #[test]
+fn check_background_command_coerces_scalar_session_id_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "bash_bg_scalar_check",
+                "check_background_command",
+                BTreeMap::from([("session_id".to_string(), json!(123))]),
+            ),
+            &mut context,
+        )
+        .expect("check background command");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("background_command_failed")
+    );
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["status"], "missing");
+    assert_eq!(payload["session_id"], "123");
+}
+
+#[test]
 fn background_command_listener_receives_terminal_event() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

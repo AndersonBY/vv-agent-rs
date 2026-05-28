@@ -1080,6 +1080,10 @@ fn every_builtin_tool_schema_has_operational_guidance_not_just_labels() {
         property_description(&registry, "check_background_command", "session_id")
             .contains("returned by `bash`")
     );
+    assert!(
+        property_description(&registry, "check_background_command", "session_id")
+            .contains("Non-string scalar")
+    );
 
     let read_image = description(&registry, "read_image");
     assert!(read_image.contains("Supported formats"));
