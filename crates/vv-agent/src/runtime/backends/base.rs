@@ -1,3 +1,3 @@
-//! Base backend import path matching Python `vv_agent.runtime.backends.base`.
+//! Base runtime backend re-export.
 
 pub use super::RuntimeExecutionBackend as ExecutionBackend;

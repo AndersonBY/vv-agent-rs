@@ -2,8 +2,8 @@
 
 Rust workspace for the VectorVein agent runtime, SDK, CLI, built-in tools, and
 workspace backends. The crate is intended to be useful as an independent Rust
-package: model-facing prompts and tool schemas describe what the agent can do,
-without exposing implementation-history notes.
+package with model-facing prompts and tool schemas focused on actionable
+capabilities, constraints, and expected inputs.
 
 ## Layout
 

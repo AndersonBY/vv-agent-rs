@@ -1,4 +1,4 @@
-//! Session memory import path matching Python `vv_agent.memory.session_memory`.
+//! Session memory re-exports.
 
 pub use super::session::{
     SessionMemory, SessionMemoryConfig, SessionMemoryEntry, SessionMemoryExtractionCallback,

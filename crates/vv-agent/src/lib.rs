@@ -1,9 +1,7 @@
-//! Rust implementation surface for the Python `vv_agent` package.
+//! VectorVein agent runtime, SDK, CLI, tools, memory, prompt, and workspace APIs.
 //!
-//! The first Rust milestone keeps module names and top-level exports aligned
-//! with `v-agent/src/vv_agent/__init__.py` so downstream Rust callers can start
-//! using a stable library API while deeper runtime parity is filled in module by
-//! module.
+//! This crate exposes a stable Rust library surface for building and running
+//! agent workflows with built-in tool dispatch and vv-llm backed chat clients.
 
 pub mod cli;
 pub mod config;

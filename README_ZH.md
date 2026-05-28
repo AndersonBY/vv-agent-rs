@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-VectorVein Agent 的 Rust 工作空间，包含运行时、SDK、CLI、内置工具和工作区后端。这个 crate 应该作为独立 Rust 包使用：面向模型的 prompt 和工具 schema 只描述 Agent 能力，不暴露实现来源或迁移过程说明。
+VectorVein Agent 的 Rust 工作空间，包含运行时、SDK、CLI、内置工具和工作区后端。这个 crate 应该作为独立 Rust 包使用：面向模型的 prompt 和工具 schema 聚焦可执行能力、约束和输入要求。
 
 ## 目录结构
 

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use vv_agent::{
     background_session_manager, build_default_registry, dispatch_tool_call,
@@ -13,6 +14,85 @@ use vv_agent::{
     StateStore, ThreadBackend, ToolCall, ToolExecutionResult, ToolNotFoundError, ToolRegistry,
     VVLlmClient, WorkspaceBackend,
 };
+
+#[test]
+fn public_package_docs_do_not_explain_migration_history() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_dir = manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .expect("workspace dir");
+    let public_docs = [
+        workspace_dir.join("README.md"),
+        workspace_dir.join("README_ZH.md"),
+        manifest_dir.join("src/lib.rs"),
+    ];
+
+    let forbidden = [
+        "Python compatibility",
+        "Python-compatible",
+        "for Python compatibility",
+        "Python `vv_agent` package",
+        "runtime parity",
+        "implementation-history",
+        "migration-history",
+    ];
+
+    let mut violations = Vec::new();
+    for path in public_docs {
+        let content = std::fs::read_to_string(&path).expect("read public doc");
+        for phrase in forbidden {
+            if content.contains(phrase) {
+                violations.push(format!("{} contains {phrase}", path.display()));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "public package docs should describe capabilities, not migration context:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn source_rustdoc_comments_do_not_explain_migration_history() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source_files = collect_rust_files(&manifest_dir.join("src"));
+    let forbidden = [
+        "matching Python",
+        "mirror Python",
+        "like Python",
+        "Python reference",
+        "for Python compatibility",
+    ];
+
+    let mut violations = Vec::new();
+    for path in source_files {
+        let content = std::fs::read_to_string(&path).expect("read source file");
+        for (index, line) in content.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if !(trimmed.starts_with("//!") || trimmed.starts_with("///")) {
+                continue;
+            }
+            for phrase in forbidden {
+                if trimmed.contains(phrase) {
+                    violations.push(format!(
+                        "{}:{} contains {phrase}",
+                        path.display(),
+                        index + 1
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "public rustdoc should describe the Rust API, not migration context:\n{}",
+        violations.join("\n")
+    );
+}
 
 #[test]
 fn top_level_types_are_constructible() {
@@ -82,6 +162,23 @@ fn top_level_types_are_constructible() {
     let _listener: BackgroundSessionListener = std::sync::Arc::new(|_| {});
     let _session_cancellation: Option<SessionCancellationHandle> = None;
     let _ = background_session_manager();
+}
+
+fn collect_rust_files(root: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    collect_rust_files_inner(root, &mut files);
+    files
+}
+
+fn collect_rust_files_inner(path: &Path, files: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(path).expect("read source directory") {
+        let path = entry.expect("read source entry").path();
+        if path.is_dir() {
+            collect_rust_files_inner(&path, files);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            files.push(path);
+        }
+    }
 }
 
 #[test]
