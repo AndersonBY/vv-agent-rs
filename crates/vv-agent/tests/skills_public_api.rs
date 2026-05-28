@@ -219,7 +219,12 @@ fn skills_public_api_stringifies_inline_scalar_fields_like_python() {
             "description": 456,
             "instructions": 789,
             "compatibility": true,
-            "metadata": {"priority": 5}
+            "metadata": {
+                "priority": 5,
+                "enabled": true,
+                "missing": null,
+                "tags": ["x", 2, true]
+            }
         },
         {
             "name": 0,
@@ -235,4 +240,7 @@ fn skills_public_api_stringifies_inline_scalar_fields_like_python() {
     assert_eq!(entries[0].instructions.as_deref(), Some("789"));
     assert_eq!(entries[0].compatibility.as_deref(), Some("True"));
     assert_eq!(entries[0].metadata["priority"], "5");
+    assert_eq!(entries[0].metadata["enabled"], "True");
+    assert_eq!(entries[0].metadata["missing"], "None");
+    assert_eq!(entries[0].metadata["tags"], "['x', 2, True]");
 }

@@ -169,7 +169,30 @@ fn python_str(value: &Value) -> String {
         Value::Bool(false) => "False".to_string(),
         Value::Number(number) => number.to_string(),
         Value::String(value) => value.clone(),
-        other => other.to_string(),
+        Value::Array(_) | Value::Object(_) => python_repr(value),
+    }
+}
+
+fn python_repr(value: &Value) -> String {
+    match value {
+        Value::Null => "None".to_string(),
+        Value::Bool(true) => "True".to_string(),
+        Value::Bool(false) => "False".to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(value) => format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'")),
+        Value::Array(items) => {
+            let values = items.iter().map(python_repr).collect::<Vec<_>>();
+            format!("[{}]", values.join(", "))
+        }
+        Value::Object(object) => {
+            let values = object
+                .iter()
+                .map(|(key, value)| {
+                    format!("'{}': {}", key.replace('\'', "\\'"), python_repr(value))
+                })
+                .collect::<Vec<_>>();
+            format!("{{{}}}", values.join(", "))
+        }
     }
 }
 
@@ -288,14 +311,6 @@ fn string_map_from_json_object(
 ) -> BTreeMap<String, String> {
     object
         .iter()
-        .map(|(key, value)| {
-            (
-                key.clone(),
-                value
-                    .as_str()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| value.to_string()),
-            )
-        })
+        .map(|(key, value)| (key.clone(), python_str(value)))
         .collect()
 }
