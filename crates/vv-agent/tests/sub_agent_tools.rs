@@ -1420,6 +1420,13 @@ fn sub_task_status_snapshot_tracks_session_activity_and_workspace_files() {
     );
     assert_eq!(task["snapshot"]["latest_tool_call"]["name"], "read_file");
     assert_eq!(task["snapshot"]["latest_cycle"]["cycle_index"], 1);
+    let updated_at = task["snapshot"]["updated_at"]
+        .as_str()
+        .expect("snapshot updated_at should be an ISO timestamp string");
+    assert!(
+        updated_at.contains('T') && updated_at.ends_with("+00:00"),
+        "snapshot updated_at should use UTC ISO timestamp format, got {updated_at:?}"
+    );
     assert_eq!(task["snapshot"]["workspace_files"], json!(["notes.md"]));
     assert_eq!(task["snapshot"]["workspace_file_count"], 1);
     assert_eq!(task["snapshot"]["workspace_files_truncated"], false);

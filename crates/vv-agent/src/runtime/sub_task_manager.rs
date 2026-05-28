@@ -4,7 +4,9 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
+
+use chrono::{SecondsFormat, Utc};
 
 use serde_json::{json, Map, Value};
 
@@ -47,7 +49,7 @@ pub struct ManagedSubTaskSnapshot {
     pub recent_activity: Option<String>,
     pub latest_cycle: Option<Value>,
     pub latest_tool_call: Option<Value>,
-    pub updated_at: u128,
+    pub updated_at: String,
 }
 
 impl std::fmt::Debug for SubTaskManager {
@@ -112,7 +114,7 @@ impl SubTaskManager {
                     latest_cycle: None,
                     latest_tool_call: None,
                     handle: None,
-                    updated_at: now_millis(),
+                    updated_at: now_iso(),
                     manager_listener_attached: false,
                 },
             );
@@ -144,7 +146,7 @@ impl SubTaskManager {
                 }
                 record.update_from_outcome(&outcome);
                 record.outcome = Some(outcome);
-                record.updated_at = now_millis();
+                record.updated_at = now_iso();
                 record.handle = None;
             }
         });
@@ -152,7 +154,7 @@ impl SubTaskManager {
         let mut tasks = self.tasks.lock().expect("sub-task manager poisoned");
         if let Some(record) = tasks.get_mut(&task_id) {
             record.handle = Some(handle);
-            record.updated_at = now_millis();
+            record.updated_at = now_iso();
         }
         Ok(())
     }
@@ -172,7 +174,7 @@ impl SubTaskManager {
                 }
                 record.update_from_outcome(&outcome);
                 record.outcome = Some(outcome);
-                record.updated_at = now_millis();
+                record.updated_at = now_iso();
             }
             None => {
                 let mut record = ManagedSubTask {
@@ -189,7 +191,7 @@ impl SubTaskManager {
                     latest_tool_call: None,
                     task_id: task_id.clone(),
                     handle: None,
-                    updated_at: now_millis(),
+                    updated_at: now_iso(),
                     manager_listener_attached: false,
                 };
                 record.update_from_outcome(&outcome);
@@ -243,7 +245,7 @@ impl SubTaskManager {
                     if !resolved.is_empty() {
                         record.resolved = resolved;
                     }
-                    record.updated_at = now_millis();
+                    record.updated_at = now_iso();
                     let should_attach_listener = !record.manager_listener_attached;
                     record.manager_listener_attached = true;
                     should_attach_listener
@@ -265,7 +267,7 @@ impl SubTaskManager {
                             latest_cycle: None,
                             latest_tool_call: None,
                             handle: None,
-                            updated_at: now_millis(),
+                            updated_at: now_iso(),
                             manager_listener_attached: true,
                         },
                     );
@@ -318,7 +320,7 @@ impl SubTaskManager {
             record.task_title = prompt.to_string();
             record.outcome = None;
             record.recent_activity = Some(prompt.to_string());
-            record.updated_at = now_millis();
+            record.updated_at = now_iso();
             (
                 record.session_id.clone(),
                 record.agent_name.clone(),
@@ -378,7 +380,7 @@ impl SubTaskManager {
                 record.agent_name = outcome.agent_name.clone();
                 record.update_from_outcome(&outcome);
                 record.outcome = Some(outcome);
-                record.updated_at = now_millis();
+                record.updated_at = now_iso();
                 record.handle = None;
             }
         });
@@ -386,7 +388,7 @@ impl SubTaskManager {
         let mut tasks = self.tasks.lock().expect("sub-task manager poisoned");
         if let Some(record) = tasks.get_mut(task_id) {
             record.handle = Some(handle);
-            record.updated_at = now_millis();
+            record.updated_at = now_iso();
         }
         Ok(())
     }
@@ -512,7 +514,7 @@ impl SubTaskManager {
         let Some(record) = tasks.get_mut(task_id) else {
             return;
         };
-        record.updated_at = now_millis();
+        record.updated_at = now_iso();
         match event {
             "session_run_start" => {
                 if let Some(prompt) = preview_text(payload.get("prompt")) {
@@ -616,7 +618,7 @@ pub struct ManagedSubTask {
     latest_cycle: Option<Value>,
     latest_tool_call: Option<Value>,
     handle: Option<JoinHandle<()>>,
-    updated_at: u128,
+    updated_at: String,
     manager_listener_attached: bool,
 }
 
@@ -704,7 +706,7 @@ impl ManagedSubTask {
             recent_activity: self.recent_activity.clone(),
             latest_cycle: self.latest_cycle.clone(),
             latest_tool_call: self.latest_tool_call.clone(),
-            updated_at: self.updated_at,
+            updated_at: self.updated_at.clone(),
         }
     }
 
@@ -801,11 +803,8 @@ fn status_label(status: AgentStatus) -> &'static str {
     }
 }
 
-fn now_millis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default()
+fn now_iso() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Micros, false)
 }
 
 fn panic_payload_to_string(payload: &(dyn Any + Send)) -> String {
