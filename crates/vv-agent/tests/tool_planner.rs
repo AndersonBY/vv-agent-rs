@@ -165,6 +165,27 @@ fn freeze_dynamic_tool_schema_hints_caches_computer_shell_hint() {
 }
 
 #[test]
+fn freeze_dynamic_tool_schema_hints_preserves_existing_shell_hint() {
+    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    task.agent_type = Some("computer".to_string());
+    task.metadata.insert(
+        "_vv_agent_bash_runtime_hint".to_string(),
+        json!("Runtime shell hint: cached before dispatch."),
+    );
+    task.metadata.insert(
+        "bash_shell".to_string(),
+        json!("definitely-not-installed-shell"),
+    );
+
+    freeze_dynamic_tool_schema_hints(&mut task);
+
+    assert_eq!(
+        task.metadata["_vv_agent_bash_runtime_hint"],
+        json!("Runtime shell hint: cached before dispatch.")
+    );
+}
+
+#[test]
 fn freeze_dynamic_tool_schema_hints_also_caches_explicit_bash_tool() {
     let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
     task.agent_type = Some("assistant".to_string());
