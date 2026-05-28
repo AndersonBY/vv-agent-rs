@@ -207,11 +207,46 @@ fn list_openai_schemas_defaults_to_registered_tools_order_like_python() {
 
     let names = registry
         .list_openai_schemas(None)
+        .expect("schemas")
         .iter()
         .filter_map(|schema| schema["function"]["name"].as_str().map(str::to_string))
         .collect::<Vec<_>>();
 
     assert_eq!(names, vec!["_b_second", "_a_first"]);
+}
+
+#[test]
+fn list_openai_schemas_rejects_missing_schema_like_python() {
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(ToolSpec::new(
+            "_handler_without_schema",
+            "Handler registered without an explicit schema.",
+            Arc::new(|_context, _arguments| ToolExecutionResult::success("", "{}")),
+        ))
+        .expect("register handler");
+
+    registry.register_schema(
+        "_schema_only",
+        json!({
+            "type": "function",
+            "function": {
+                "name": "_schema_only",
+                "description": "Schema without a handler.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        }),
+    );
+
+    let names = vec![
+        "_handler_without_schema".to_string(),
+        "_missing_schema".to_string(),
+    ];
+    let error = registry
+        .list_openai_schemas(Some(&names))
+        .expect_err("missing explicit schema should fail");
+
+    assert!(error.contains("Schema not registered: _missing_schema"));
 }
 
 #[test]

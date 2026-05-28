@@ -82,16 +82,22 @@ impl ToolRegistry {
         self.schemas.get(name).cloned()
     }
 
-    pub fn list_openai_schemas(&self, tool_names: Option<&[String]>) -> Vec<Value> {
+    pub fn list_openai_schemas(&self, tool_names: Option<&[String]>) -> Result<Vec<Value>, String> {
         match tool_names {
             Some(names) => names
                 .iter()
-                .filter_map(|name| self.get_schema(name))
+                .map(|name| {
+                    self.get_schema(name)
+                        .ok_or_else(|| format!("Schema not registered: {name}"))
+                })
                 .collect(),
             None => self
                 .tool_order
                 .iter()
-                .filter_map(|name| self.get_schema(name))
+                .map(|name| {
+                    self.get_schema(name)
+                        .ok_or_else(|| format!("Schema not registered: {name}"))
+                })
                 .collect(),
         }
     }

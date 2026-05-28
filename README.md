@@ -355,6 +355,8 @@ The current Rust implementation includes:
   order where callers can `register_schema()` before `register(ToolSpec)` and
   keep the richer schema for later planning; default `list_openai_schemas()`
   output follows registered handler order and does not leak schema-only entries.
+  Explicit `tool_names` schema listing is strict like Python and returns an
+  error when a requested schema is missing instead of silently dropping it.
   `tools::handlers` now re-exports the same direct handler function names as Python
   `vv_agent.tools.handlers.__all__`, and each focused handler module exposes
   its Python-matched entrypoint.

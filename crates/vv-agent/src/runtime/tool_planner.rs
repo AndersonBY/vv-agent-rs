@@ -63,7 +63,10 @@ pub fn plan_tool_schemas(
         .into_iter()
         .filter(|name| registry.has_tool(name) && registry.has_schema(name))
         .collect::<Vec<_>>();
-    patch_dynamic_tool_schema_hints(task, registry.list_openai_schemas(Some(&available_names)))
+    let schemas = registry
+        .list_openai_schemas(Some(&available_names))
+        .expect("planned tool names were pre-filtered to registered schemas");
+    patch_dynamic_tool_schema_hints(task, schemas)
 }
 
 pub fn freeze_dynamic_tool_schema_hints(task: &mut AgentTask) {
