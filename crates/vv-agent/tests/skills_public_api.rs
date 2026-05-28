@@ -100,6 +100,10 @@ fn skills_public_api_renders_available_skills_xml_with_budget() {
         metadata: BTreeMap::from([("owner".to_string(), "agent".to_string())]),
     };
     let payload = properties.to_value();
+    assert!(
+        payload.get("compatibility").is_none(),
+        "public skill payloads are often model-visible and should not expose internal metadata"
+    );
     assert_eq!(payload["allowed-tools"], "read_file");
     assert_eq!(payload["metadata"]["owner"], "agent");
 }
