@@ -707,6 +707,112 @@ fn local_workspace_backend_skips_unreadable_dirs_when_listing_files() {
 }
 
 #[test]
+fn local_workspace_backend_matches_direct_file_backend_contract() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let local = LocalWorkspaceBackend::new(workspace.path());
+
+    local
+        .write_text("hello.txt", "world", false)
+        .expect("write text");
+    assert_eq!(local.read_text("hello.txt").expect("read text"), "world");
+
+    local.write_text("log.txt", "a", false).expect("write log");
+    local.write_text("log.txt", "b", true).expect("append log");
+    assert_eq!(local.read_text("log.txt").expect("read log"), "ab");
+
+    std::fs::write(workspace.path().join("bin.dat"), b"\x00\x01\x02").expect("write bytes");
+    assert_eq!(
+        local.read_bytes("bin.dat").expect("read bytes"),
+        b"\x00\x01\x02"
+    );
+
+    local.write_text("a.py", "x", false).expect("write py");
+    local.write_text("b.txt", "y", false).expect("write txt");
+    assert_eq!(
+        local.list_files(".", "**/*.py").expect("glob"),
+        vec!["a.py"]
+    );
+
+    let info = local
+        .file_info("hello.txt")
+        .expect("file info")
+        .expect("hello exists");
+    assert_eq!(info.path, "hello.txt");
+    assert!(info.is_file);
+    assert!(!info.is_dir);
+    assert_eq!(info.size, 5);
+    assert_eq!(info.suffix, ".txt");
+    assert!(local.file_info("missing.txt").expect("missing").is_none());
+
+    local.write_text("empty.txt", "", false).expect("empty");
+    assert!(local.exists("empty.txt"));
+    assert!(local.is_file("empty.txt"));
+    assert!(!local.exists("nope"));
+
+    local.mkdir("deep/nested/dir").expect("mkdir");
+    assert!(workspace.path().join("deep/nested/dir").is_dir());
+}
+
+#[test]
+fn memory_workspace_backend_matches_direct_file_backend_contract() {
+    let memory = MemoryWorkspaceBackend::default();
+
+    memory
+        .write_text("hello.txt", "world", false)
+        .expect("write text");
+    assert_eq!(memory.read_text("hello.txt").expect("read text"), "world");
+
+    memory.write_text("log.txt", "a", false).expect("write log");
+    memory.write_text("log.txt", "b", true).expect("append log");
+    assert_eq!(memory.read_text("log.txt").expect("read log"), "ab");
+
+    memory
+        .write_text("data.txt", "abc", false)
+        .expect("write data");
+    assert_eq!(memory.read_bytes("data.txt").expect("read bytes"), b"abc");
+    assert_eq!(
+        memory.read_text("missing.txt").expect_err("missing").kind(),
+        ErrorKind::NotFound
+    );
+
+    memory.write_text("a.py", "x", false).expect("write py");
+    memory.write_text("b.txt", "y", false).expect("write txt");
+    assert_eq!(
+        memory.list_files(".", "**/*.py").expect("glob"),
+        vec!["a.py".to_string()]
+    );
+
+    let info = memory
+        .file_info("hello.txt")
+        .expect("file info")
+        .expect("hello exists");
+    assert_eq!(info.path, "hello.txt");
+    assert!(info.is_file);
+    assert!(!info.is_dir);
+    assert_eq!(info.size, 5);
+    assert_eq!(info.suffix, ".txt");
+
+    memory.mkdir("mydir").expect("mkdir mydir");
+    let dir_info = memory
+        .file_info("mydir")
+        .expect("dir info")
+        .expect("mydir exists");
+    assert!(dir_info.is_dir);
+    assert!(!dir_info.is_file);
+    assert!(memory.file_info("nope.txt").expect("missing").is_none());
+
+    memory.write_text("empty.txt", "", false).expect("empty");
+    assert!(memory.exists("empty.txt"));
+    assert!(memory.is_file("empty.txt"));
+    assert!(!memory.exists("nope"));
+
+    memory.mkdir("deep/nested/dir").expect("mkdir nested");
+    assert!(memory.exists("deep"));
+    assert!(memory.exists("deep/nested"));
+    assert!(memory.exists("deep/nested/dir"));
+}
+
+#[test]
 fn read_file_returns_file_info_when_requested_slice_exceeds_limits() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
