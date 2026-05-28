@@ -308,9 +308,14 @@ pub(crate) fn list_files_tool() -> ToolSpec {
                                 .map(|path| json!({"path": path}))
                                 .collect(),
                         );
+                        let ignored_message =
+                            "Common dependency/cache directories are summarized by default. List those directories explicitly when needed.";
                         payload["message"] = Value::String(
-                            "Common dependency/cache directories are summarized by default."
-                                .to_string(),
+                            payload
+                                .get("message")
+                                .and_then(Value::as_str)
+                                .map(|message| format!("{message} {ignored_message}"))
+                                .unwrap_or_else(|| ignored_message.to_string()),
                         );
                     }
                     crate::types::ToolExecutionResult::success("", payload.to_string())

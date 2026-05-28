@@ -269,6 +269,49 @@ fn list_files_skips_common_dependency_roots_by_default() {
 }
 
 #[test]
+fn list_files_combines_scan_limit_and_ignored_root_messages_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("a.txt"), "a").expect("a file");
+    std::fs::write(workspace.path().join("b.txt"), "b").expect("b file");
+    std::fs::write(workspace.path().join("c.txt"), "c").expect("c file");
+    std::fs::create_dir_all(workspace.path().join("node_modules/pkg")).expect("ignored dir");
+    std::fs::write(
+        workspace.path().join("node_modules/pkg/ignored.js"),
+        "ignored",
+    )
+    .expect("ignored file");
+
+    let list = registry
+        .execute(
+            &ToolCall::new(
+                "list_limited_with_ignored",
+                "list_files",
+                BTreeMap::from([
+                    ("max_results".to_string(), json!(1)),
+                    ("scan_limit".to_string(), json!(2)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("list_files");
+    let payload: Value = serde_json::from_str(&list.content).expect("list payload");
+    let message = payload["message"].as_str().expect("combined message");
+
+    assert_eq!(payload["count_is_estimate"], json!(true));
+    assert_eq!(payload["ignored_roots"], json!([{"path": "node_modules"}]));
+    assert!(
+        message.contains("Listing stopped early due to scan limit"),
+        "missing scan-limit guidance: {message}"
+    );
+    assert!(
+        message.contains("Common dependency/cache directories are summarized by default"),
+        "missing ignored-root guidance: {message}"
+    );
+}
+
+#[test]
 fn list_files_empty_path_is_workspace_root_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

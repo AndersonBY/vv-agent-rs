@@ -407,7 +407,8 @@ The current Rust implementation includes:
   Python-style scalar `path` coercion for file read/write/info/replace tools,
   Python-style scalar text coercion for `write_file`/`file_str_replace`,
   `file_str_replace` numeric-string replacement limits, hidden-file filtering,
-  Python-style local ripgrep fast path, and scan-limit estimate payloads, and
+  Python-style local ripgrep fast path, scan-limit estimate payloads, and
+  combined scan-limit / ignored-root guidance messages, and
   `workspace_grep` regex search, numeric-string limits/context parsing, text
   content with structured matches kept in metadata, Python-style glob filtering,
   Python-style scalar text coercion, configured workspace backend support,
