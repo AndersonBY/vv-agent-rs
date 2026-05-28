@@ -42,6 +42,32 @@ fn compress_memory_writes_note_to_shared_state() {
 }
 
 #[test]
+fn compress_memory_coerces_scalar_core_information_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.cycle_index = 4;
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "mem_scalar",
+                "compress_memory",
+                BTreeMap::from([("core_information".to_string(), json!(123))]),
+            ),
+            &mut context,
+        )
+        .expect("compress_memory");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(
+        context.shared_state["memory_notes"][0]["core_information"],
+        json!("123")
+    );
+    assert_eq!(context.shared_state["memory_notes"][0]["cycle_index"], 4);
+}
+
+#[test]
 fn memory_manager_compacts_to_original_request_and_summary_block() {
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         compact_threshold: 10,
