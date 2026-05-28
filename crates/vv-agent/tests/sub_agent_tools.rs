@@ -258,6 +258,56 @@ fn create_sub_task_coerces_python_style_boolean_arguments() {
 }
 
 #[test]
+fn create_sub_task_coerces_scalar_text_arguments_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let captured_for_runner = captured.clone();
+    context.sub_task_runner = Some(Arc::new(move |request| {
+        captured_for_runner
+            .lock()
+            .expect("captured")
+            .push(request.clone());
+        SubTaskOutcome {
+            task_id: "sub_scalar".to_string(),
+            agent_name: request.agent_name,
+            status: AgentStatus::Completed,
+            session_id: None,
+            final_answer: Some("done".to_string()),
+            wait_reason: None,
+            error: None,
+            cycles: 1,
+            todo_list: Vec::new(),
+            resolved: BTreeMap::new(),
+        }
+    }));
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_scalar",
+                "create_sub_task",
+                BTreeMap::from([
+                    ("agent_id".to_string(), json!(42)),
+                    ("task_description".to_string(), json!(12345)),
+                    ("output_requirements".to_string(), json!(false)),
+                    ("exclude_files_pattern".to_string(), json!(99)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("create_sub_task scalar coercion");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let captured = captured.lock().expect("captured");
+    assert_eq!(captured[0].agent_name, "42");
+    assert_eq!(captured[0].task_description, "12345");
+    assert_eq!(captured[0].output_requirements, "False");
+    assert_eq!(captured[0].exclude_files_pattern.as_deref(), Some("99"));
+}
+
+#[test]
 fn create_sub_task_errors_when_runner_is_missing() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

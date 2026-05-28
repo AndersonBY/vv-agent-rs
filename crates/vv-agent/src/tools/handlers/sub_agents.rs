@@ -4,7 +4,9 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{coerce_bool, tool_error_with_code, tool_result};
+use crate::tools::common::{
+    coerce_bool, coerce_python_text_arg, tool_error_with_code, tool_result,
+};
 use crate::types::{
     AgentStatus, SubTaskRequest, ToolArguments, ToolDirective, ToolExecutionResult,
     ToolResultStatus,
@@ -33,7 +35,7 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
             let agent_name = arguments
                 .get("agent_id")
                 .or_else(|| arguments.get("agent_name"))
-                .and_then(Value::as_str)
+                .map(|value| coerce_python_text_arg(Some(value), ""))
                 .unwrap_or_default()
                 .trim()
                 .to_string();
@@ -43,7 +45,7 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
 
             let task_description = arguments
                 .get("task_description")
-                .and_then(Value::as_str)
+                .map(|value| coerce_python_text_arg(Some(value), ""))
                 .unwrap_or_default()
                 .trim()
                 .to_string();
@@ -73,8 +75,8 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                 .is_some_and(|value| coerce_bool(Some(value), false));
             let exclude_files_pattern = arguments
                 .get("exclude_files_pattern")
-                .and_then(Value::as_str)
-                .map(str::to_string);
+                .filter(|value| !value.is_null())
+                .map(|value| coerce_python_text_arg(Some(value), "").trim().to_string());
             let wait_for_completion = arguments
                 .get("wait_for_completion")
                 .is_none_or(|value| coerce_bool(Some(value), true));
@@ -85,7 +87,7 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                     task_description,
                     output_requirements: arguments
                         .get("output_requirements")
-                        .and_then(Value::as_str)
+                        .map(|value| coerce_python_text_arg(Some(value), ""))
                         .unwrap_or_default()
                         .trim()
                         .to_string(),
@@ -177,27 +179,28 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                     ));
                     continue;
                 };
-                let Some(task_description) = item
+                let task_description = item
                     .get("task_description")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                else {
+                    .map(|value| coerce_python_text_arg(Some(value), ""))
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                if task_description.is_empty() {
                     batch_requests.push((
                         index,
                         None,
                         Some("`task_description` is required".to_string()),
                     ));
                     continue;
-                };
+                }
                 batch_requests.push((
                     index,
                     Some(SubTaskRequest {
                         agent_name: agent_name.clone(),
-                        task_description: task_description.to_string(),
+                        task_description,
                         output_requirements: item
                             .get("output_requirements")
-                            .and_then(Value::as_str)
+                            .map(|value| coerce_python_text_arg(Some(value), ""))
                             .unwrap_or_default()
                             .trim()
                             .to_string(),
