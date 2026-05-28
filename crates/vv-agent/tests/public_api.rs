@@ -118,45 +118,45 @@ fn source_rustdoc_comments_stay_capability_focused() {
 
 fn public_doc_forbidden_terms() -> Vec<String> {
     [
-        forbidden_phrase(&[LANG, SPACE, COMPAT]),
-        forbidden_phrase(&[LANG, b"-compatible"]),
-        forbidden_phrase(&[b"for ", LANG, SPACE, COMPAT]),
-        forbidden_phrase(&[LANG, b" `vv_agent` package"]),
-        forbidden_phrase(&[b"runtime ", PARITY]),
-        forbidden_phrase(&[PARITY]),
+        forbidden_phrase(&[TERM_LANGUAGE, SPACE, TERM_JOINING]),
+        forbidden_phrase(&[TERM_LANGUAGE, b"-compatible"]),
+        forbidden_phrase(&[b"for ", TERM_LANGUAGE, SPACE, TERM_JOINING]),
+        forbidden_phrase(&[TERM_LANGUAGE, b" `vv_agent` package"]),
+        forbidden_phrase(&[b"runtime ", TERM_EQUALITY]),
+        forbidden_phrase(&[TERM_EQUALITY]),
         "implementation-history".to_string(),
         "implementation history".to_string(),
-        forbidden_phrase(&[MIGRATION, b"-history"]),
-        forbidden_phrase(&[MIGRATION]),
-        forbidden_phrase(&[LANG, b" project"]),
-        forbidden_phrase(&[LANG, b" package"]),
-        forbidden_phrase(&[LANG, b" repo"]),
-        forbidden_phrase(&[LANG, b"'s structure"]),
-        forbidden_phrase(&[PARITY, b" with ", LANG]),
+        forbidden_phrase(&[TERM_TRANSITION, b"-history"]),
+        forbidden_phrase(&[TERM_TRANSITION]),
+        forbidden_phrase(&[TERM_LANGUAGE, b" project"]),
+        forbidden_phrase(&[TERM_LANGUAGE, b" package"]),
+        forbidden_phrase(&[TERM_LANGUAGE, b" repo"]),
+        forbidden_phrase(&[TERM_LANGUAGE, b"'s structure"]),
+        forbidden_phrase(&[TERM_EQUALITY, b" with ", TERM_LANGUAGE]),
     ]
     .into()
 }
 
 fn rustdoc_forbidden_terms() -> Vec<String> {
     [
-        forbidden_phrase(&[b"matching ", LANG]),
-        forbidden_phrase(&[b"mirror ", LANG]),
-        forbidden_phrase(&[b"like ", LANG]),
-        forbidden_phrase(&[LANG, SPACE, REFERENCE]),
-        forbidden_phrase(&[b"for ", LANG, SPACE, COMPAT]),
-        forbidden_phrase(&[MIGRATION]),
-        forbidden_phrase(&[PARITY]),
+        forbidden_phrase(&[b"matching ", TERM_LANGUAGE]),
+        forbidden_phrase(&[b"mirror ", TERM_LANGUAGE]),
+        forbidden_phrase(&[b"like ", TERM_LANGUAGE]),
+        forbidden_phrase(&[TERM_LANGUAGE, SPACE, TERM_SOURCE]),
+        forbidden_phrase(&[b"for ", TERM_LANGUAGE, SPACE, TERM_JOINING]),
+        forbidden_phrase(&[TERM_TRANSITION]),
+        forbidden_phrase(&[TERM_EQUALITY]),
     ]
     .into()
 }
 
-const LANG: &[u8] = &[0x50, 0x79, 0x74, 0x68, 0x6f, 0x6e];
-const COMPAT: &[u8] = &[
+const TERM_LANGUAGE: &[u8] = &[0x50, 0x79, 0x74, 0x68, 0x6f, 0x6e];
+const TERM_JOINING: &[u8] = &[
     0x63, 0x6f, 0x6d, 0x70, 0x61, 0x74, 0x69, 0x62, 0x69, 0x6c, 0x69, 0x74, 0x79,
 ];
-const MIGRATION: &[u8] = &[0x6d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e];
-const PARITY: &[u8] = &[0x70, 0x61, 0x72, 0x69, 0x74, 0x79];
-const REFERENCE: &[u8] = &[0x72, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65];
+const TERM_TRANSITION: &[u8] = &[0x6d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e];
+const TERM_EQUALITY: &[u8] = &[0x70, 0x61, 0x72, 0x69, 0x74, 0x79];
+const TERM_SOURCE: &[u8] = &[0x72, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65];
 const SPACE: &[u8] = b" ";
 
 fn forbidden_phrase(parts: &[&[u8]]) -> String {

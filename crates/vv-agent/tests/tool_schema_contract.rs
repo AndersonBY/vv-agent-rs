@@ -1211,16 +1211,16 @@ fn model_visible_tool_schemas_stay_capability_focused() {
 
 fn tool_schema_forbidden_terms() -> Vec<String> {
     [
-        forbidden_phrase(&[LANG, SPACE, COMPAT]),
-        forbidden_phrase(&[LANG, b"-compatible"]),
-        forbidden_phrase(&[b"for ", LANG]),
-        forbidden_phrase(&[LANG, SPACE, REFERENCE]),
-        forbidden_phrase(&[LANG, b"-style"]),
-        forbidden_phrase(&[COMPAT]),
-        forbidden_phrase(&[MIGRATION]),
-        forbidden_phrase(&[PARITY]),
-        forbidden_phrase(&[COMPAT, b" alias"]),
-        forbidden_phrase(&[b"reserved for ", COMPAT]),
+        forbidden_phrase(&[TERM_LANGUAGE, SPACE, TERM_JOINING]),
+        forbidden_phrase(&[TERM_LANGUAGE, b"-compatible"]),
+        forbidden_phrase(&[b"for ", TERM_LANGUAGE]),
+        forbidden_phrase(&[TERM_LANGUAGE, SPACE, TERM_SOURCE]),
+        forbidden_phrase(&[TERM_LANGUAGE, b"-style"]),
+        forbidden_phrase(&[TERM_JOINING]),
+        forbidden_phrase(&[TERM_TRANSITION]),
+        forbidden_phrase(&[TERM_EQUALITY]),
+        forbidden_phrase(&[TERM_JOINING, b" alias"]),
+        forbidden_phrase(&[b"reserved for ", TERM_JOINING]),
         join_words("Scalar", " values"),
         join_words("Numeric", " strings"),
         join_words("converted", " to text"),
@@ -1229,13 +1229,13 @@ fn tool_schema_forbidden_terms() -> Vec<String> {
     .into()
 }
 
-const LANG: &[u8] = &[0x50, 0x79, 0x74, 0x68, 0x6f, 0x6e];
-const COMPAT: &[u8] = &[
+const TERM_LANGUAGE: &[u8] = &[0x50, 0x79, 0x74, 0x68, 0x6f, 0x6e];
+const TERM_JOINING: &[u8] = &[
     0x63, 0x6f, 0x6d, 0x70, 0x61, 0x74, 0x69, 0x62, 0x69, 0x6c, 0x69, 0x74, 0x79,
 ];
-const MIGRATION: &[u8] = &[0x6d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e];
-const PARITY: &[u8] = &[0x70, 0x61, 0x72, 0x69, 0x74, 0x79];
-const REFERENCE: &[u8] = &[0x72, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65];
+const TERM_TRANSITION: &[u8] = &[0x6d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e];
+const TERM_EQUALITY: &[u8] = &[0x70, 0x61, 0x72, 0x69, 0x74, 0x79];
+const TERM_SOURCE: &[u8] = &[0x72, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65];
 const SPACE: &[u8] = b" ";
 
 fn forbidden_phrase(parts: &[&[u8]]) -> String {
