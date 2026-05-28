@@ -217,8 +217,11 @@ The current Rust implementation includes:
 - Runtime hooks modeled after Python `RuntimeHookManager`: callers can patch
   messages before memory compaction, patch LLM request messages/schemas, patch
   LLM responses, patch or short-circuit tool calls, and patch tool results.
-  `RuntimeHookManager::has_hooks()` is available as a Python-style convenience
-  alias for embedders.
+  `BeforeToolCallPatch` implements `From<ToolCall>` and
+  `From<ToolExecutionResult>`, so Rust hooks can write `Some(call.into())` or
+  `Some(result.into())` for Python-like direct call replacement or
+  short-circuiting. `RuntimeHookManager::has_hooks()` is available as a
+  Python-style convenience alias for embedders.
 - Runtime assistant messages preserve provider `raw.reasoning_content` in the
   transcript, matching Python `CycleRunner` behavior for reasoning-chain and
   resume flows.

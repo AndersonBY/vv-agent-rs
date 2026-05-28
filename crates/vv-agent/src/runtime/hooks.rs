@@ -56,6 +56,34 @@ pub struct BeforeToolCallPatch {
     pub result: Option<ToolExecutionResult>,
 }
 
+impl BeforeToolCallPatch {
+    pub fn call(call: ToolCall) -> Self {
+        Self {
+            call: Some(call),
+            result: None,
+        }
+    }
+
+    pub fn result(result: ToolExecutionResult) -> Self {
+        Self {
+            call: None,
+            result: Some(result),
+        }
+    }
+}
+
+impl From<ToolCall> for BeforeToolCallPatch {
+    fn from(call: ToolCall) -> Self {
+        Self::call(call)
+    }
+}
+
+impl From<ToolExecutionResult> for BeforeToolCallPatch {
+    fn from(result: ToolExecutionResult) -> Self {
+        Self::result(result)
+    }
+}
+
 pub trait RuntimeHook: Send + Sync {
     fn before_memory_compact(&self, _event: BeforeMemoryCompactEvent<'_>) -> Option<Vec<Message>> {
         None

@@ -764,6 +764,63 @@ fn runtime_hooks_normalize_pending_tool_call_ids_like_python() {
 }
 
 #[test]
+fn before_tool_call_patch_accepts_direct_result_and_call_conversions_like_python() {
+    let result_hook = Arc::new(DirectResultBeforeToolHook);
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+        "finish through direct hook result",
+        vec![ToolCall::new(
+            "direct_result_finish",
+            "task_finish",
+            BTreeMap::from([("message".to_string(), json!("original"))]),
+        )],
+    )]);
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.hooks.push(result_hook);
+
+    let result = runtime
+        .run(AgentTask::new(
+            "direct_result_hook_task",
+            "demo",
+            "system",
+            "go",
+        ))
+        .expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(
+        result.final_answer.as_deref(),
+        Some("finished by direct result hook")
+    );
+
+    let call_hook = Arc::new(PatchCallBeforeToolHook);
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+        "finish through patched hook call",
+        vec![ToolCall::new(
+            "patch_call_finish",
+            "task_finish",
+            BTreeMap::from([("message".to_string(), json!("original"))]),
+        )],
+    )]);
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.hooks.push(call_hook);
+
+    let result = runtime
+        .run(AgentTask::new(
+            "patch_call_hook_task",
+            "demo",
+            "system",
+            "go",
+        ))
+        .expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(
+        result.final_answer.as_deref(),
+        Some("finished by patched call hook")
+    );
+}
+
+#[test]
 fn runtime_emits_reference_lifecycle_log_events() {
     let mut finish_args = BTreeMap::new();
     finish_args.insert("message".to_string(), json!("logged finish"));
@@ -2148,6 +2205,44 @@ impl RuntimeHook for PendingToolCallIdHook {
             call: None,
             result: Some(result),
         })
+    }
+}
+
+struct DirectResultBeforeToolHook;
+
+impl RuntimeHook for DirectResultBeforeToolHook {
+    fn before_tool_call(
+        &self,
+        event: vv_agent::BeforeToolCallEvent<'_>,
+    ) -> Option<BeforeToolCallPatch> {
+        assert_eq!(event.call.id, "direct_result_finish");
+        let mut result = ToolExecutionResult::success(
+            event.call.id.clone(),
+            json!({"message": "finished by direct result hook"}).to_string(),
+        );
+        result.directive = ToolDirective::Finish;
+        result.metadata.insert(
+            "final_message".to_string(),
+            json!("finished by direct result hook"),
+        );
+        Some(result.into())
+    }
+}
+
+struct PatchCallBeforeToolHook;
+
+impl RuntimeHook for PatchCallBeforeToolHook {
+    fn before_tool_call(
+        &self,
+        event: vv_agent::BeforeToolCallEvent<'_>,
+    ) -> Option<BeforeToolCallPatch> {
+        assert_eq!(event.call.id, "patch_call_finish");
+        let mut patched = event.call.clone();
+        patched.arguments.insert(
+            "message".to_string(),
+            json!("finished by patched call hook"),
+        );
+        Some(patched.into())
     }
 }
 

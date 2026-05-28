@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::path::Path;
 
 use vv_agent::{
     build_openai_llm_from_local_settings, build_vv_llm_from_local_settings, build_vv_llm_settings,
@@ -57,6 +58,37 @@ fn settings_builder_returns_vv_llm_backed_client() {
     assert_eq!(resolved.endpoint().unwrap().endpoint_id, "moonshot-default");
     assert_eq!(client.provider_name(), "openai-compatible");
     assert_eq!(client.model_id(), "kimi-k2-thinking");
+}
+
+#[test]
+fn vv_agent_does_not_embed_provider_protocol_clients() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let src_dir = manifest_dir.join("src");
+    let mut violations = Vec::new();
+
+    for source_path in rust_source_files(&src_dir) {
+        let relative_path = source_path
+            .strip_prefix(manifest_dir)
+            .unwrap_or(&source_path);
+        let content = std::fs::read_to_string(&source_path).expect("read source file");
+        for forbidden in [
+            "async_openai",
+            "anthropic::",
+            "ChatCompletionRequest",
+            "/chat/completions",
+            "/messages",
+        ] {
+            if content.contains(forbidden) {
+                violations.push(format!("{} contains {forbidden}", relative_path.display()));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Provider protocol clients must stay in vv-llm, not vv-agent:\n{}",
+        violations.join("\n")
+    );
 }
 
 #[test]
@@ -458,4 +490,23 @@ settings: SettingsDict = {{
 
     assert_eq!(resolved.endpoint().unwrap().endpoint_id, "moonshot-default");
     assert_eq!(resolved.model_id, "kimi-k2-thinking");
+}
+
+fn rust_source_files(root: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    collect_rust_source_files(root, &mut files);
+    files
+}
+
+fn collect_rust_source_files(path: &Path, files: &mut Vec<std::path::PathBuf>) {
+    let entries = std::fs::read_dir(path).expect("read source directory");
+    for entry in entries {
+        let entry = entry.expect("read source entry");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rust_source_files(&path, files);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            files.push(path);
+        }
+    }
 }

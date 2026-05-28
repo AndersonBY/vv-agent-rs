@@ -38,10 +38,30 @@ fn default_tool_schemas_include_reference_quality_descriptions() {
     let create_sub_task = description(&registry, "create_sub_task");
     assert!(create_sub_task.contains("Modes:"));
     assert!(create_sub_task.contains("wait_for_completion=true"));
+    assert!(create_sub_task.contains("multiple independent tasks"));
+    assert!(create_sub_task.contains("same sub-agent"));
+    assert!(create_sub_task.contains("parallel"));
+    assert!(create_sub_task.contains("partial failures"));
+    assert!(property_description(&registry, "create_sub_task", "tasks").contains("parallel work"));
+    assert!(
+        property_description(&registry, "create_sub_task", "wait_for_completion")
+            .contains("background")
+    );
 
     let sub_task_status = description(&registry, "sub_task_status");
     assert!(sub_task_status.contains("Capabilities:"));
     assert!(sub_task_status.contains("detail_level=snapshot"));
+    assert!(sub_task_status.contains("first task id"));
+    assert!(sub_task_status.contains("continue a completed one"));
+    assert!(sub_task_status.contains("max_cycles"));
+    assert!(
+        property_description(&registry, "sub_task_status", "message")
+            .contains("running task or continue a completed one")
+    );
+    assert!(
+        property_description(&registry, "sub_task_status", "wait_for_response")
+            .contains("wait until the task finishes processing")
+    );
 
     let todo_write = description(&registry, "todo_write");
     assert!(todo_write.contains("Protocol:"));
