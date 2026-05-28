@@ -5,7 +5,8 @@ const TODO_WRITE_DESCRIPTION: &str = r#"Create and manage structured TODO list f
 Protocol:
 - Send the complete `todos` array each time.
 - The payload is a replacement payload, not a patch.
-- Existing items with matching `id` are updated and keep their original `created_at`.
+- Existing items with matching `id` are updated.
+- Matching items keep their original `created_at`.
 - Items omitted from the new array are removed.
 - Missing `id` values are generated automatically as short stable ids.
 - Each item must include `title`, `status`, and `priority`.
@@ -36,7 +37,7 @@ pub(super) fn todo_write_schema() -> Value {
                         "items": {
                             "type": "object",
                             "properties": {
-                                "id": {"type": "string", "description": "Existing TODO id for update; omit for a generated 8-character id."},
+                                "id": {"type": "string", "description": "Existing TODO id for update; omit for new item. When omitted, a generated 8-character id is assigned."},
                                 "title": {"type": "string", "description": "TODO title."},
                                 "status": {"type": "string", "enum": ["pending", "in_progress", "completed"], "description": "TODO status."},
                                 "priority": {"type": "string", "enum": ["low", "medium", "high"], "description": "TODO priority."}

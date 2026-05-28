@@ -200,6 +200,7 @@ fn python_reference_tool_schema_wording_is_preserved() {
             "Create and manage structured TODO list for multi-step execution.",
             "Protocol:",
             "Send the complete `todos` array each time.",
+            "Existing items with matching `id` are updated.",
             "Use this tool to keep task planning explicit and machine-readable.",
         ],
     );
@@ -208,6 +209,12 @@ fn python_reference_tool_schema_wording_is_preserved() {
         "todo_write",
         "todos",
         &["Complete TODO list payload."],
+    );
+    assert_nested_property_contains(
+        &registry,
+        "todo_write",
+        &["todos", "items", "id"],
+        &["Existing TODO id for update; omit for new item."],
     );
 
     assert_description_contains(
@@ -956,6 +963,30 @@ fn assert_property_contains(
         assert!(
             actual.contains(expected),
             "{tool_name}.{property_name} description should preserve Python reference fragment:\n{expected}\n\nactual:\n{actual}"
+        );
+    }
+}
+
+fn assert_nested_property_contains(
+    registry: &vv_agent::ToolRegistry,
+    tool_name: &str,
+    property_path: &[&str],
+    expected_fragments: &[&str],
+) {
+    let schema = registry.get_schema(tool_name).expect("schema");
+    let mut cursor = &schema["function"]["parameters"]["properties"];
+    for (index, segment) in property_path.iter().enumerate() {
+        if index > 0 && *segment != "items" {
+            cursor = &cursor["properties"];
+        }
+        cursor = &cursor[*segment];
+    }
+    let actual = cursor["description"].as_str().unwrap_or_default();
+    for expected in expected_fragments {
+        assert!(
+            actual.contains(expected),
+            "{tool_name}.{} description should preserve Python reference fragment:\n{expected}\n\nactual:\n{actual}",
+            property_path.join("."),
         );
     }
 }
