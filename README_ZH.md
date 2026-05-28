@@ -212,8 +212,8 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - SDK client 现在可以通过 `create_default_session*` helpers 按 default agent 或唯一已注册 profile 创建 session，也可以按 profile 名称创建 session，不再需要手动复制 `AgentDefinition`；session helper 已覆盖 Python `client.create_session(...)` 中显式 `session_id`、workspace override 和初始 shared state 的组合，同时保留 Rust 显式方法名。
 - 基于 `AgentTask` flags 的 Python 风格工具规划，以及 `.vv-agent` 下 `agents.json`、prompt templates 和 skill directories 的资源发现；`agents.json` 已支持完整 agent 字段，包括 sub-agent definitions、tool flags、shell defaults、metadata 和资源路径。资源路径、resource roots、root skill directory、hook 文件路径和 SDK session workspace override 都会像 Python `Path.resolve()` 一样展开 `~` 并规范化已存在路径；agent profile 中的 bool 字段会保留 Python `bool(...)` truthiness，`windows_shell_priority` 和 `bash_env` 等 shell list / environment 值也会按 Python `str(...)` 兼容转成字符串。`AgentResourceLoader::discover_force_reload` 可在磁盘资源变更后刷新缓存；SDK client 也可注入自定义 `AgentResourceLoader`，从非默认资源根发现 agents 和 prompt templates。`.vv-agent/hooks` 下的 Python hook 文件会暴露在 Python 风格的 `DiscoveredResources.hooks` 字段，同时保留 `hook_files` 作为 Rust 兼容别名，并通过 diagnostics 报告；Rust hook 执行使用 `AgentSDKOptions.runtime_hooks` 注入。
 - SDK 客户端、工具注册表、工作区后端，以及共享协议类型。
-- 覆盖公开 API 构造、Rust SDK 使用、vv-llm 集成、runtime 工具循环、schema parity 和 workspace 工具的 smoke tests。
-- 已开始按 Python `v-agent/examples` 的编号补齐 checked-in Rust examples；第一批覆盖 quick start 直接 runtime、SDK 命名 profiles、session API 和 `.vv-agent` 资源发现。
+- 覆盖公开 API 构造、Rust SDK 使用、vv-llm 集成、runtime 工具循环、schema parity、workspace 工具和 checked-in examples 编号 parity 的 smoke tests。
+- 已按 Python `v-agent/examples` 编号补齐 `01_quick_start` 到 `25_temporary_tool_injection` 的 Rust examples，覆盖 SDK/session API、runtime hooks、自定义工具、子 Agent pipeline、skills、streaming、cancellation、state stores、execution backends、workspace backends 和临时工具注入。
 
 Provider 请求序列化会统一交给 crates.io 官方 `vv-llm` crate；请求侧 provider 细节应优先补到 `vv-llm`，不要在本仓库重新手写 provider 转换。
 迁移目标是尽最大可能照搬 Python `v-agent` 的能力、实现形状和行为，而不是只提供一个最小 Rust wrapper。

@@ -685,10 +685,13 @@ The current Rust implementation includes:
   Rust hook execution uses `AgentSDKOptions.runtime_hooks`.
 - SDK client, tool registry, workspace backends, and shared protocol types.
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
-  integration, runtime tool cycles, schema parity, and workspace tools.
-- Checked-in Rust examples have started mirroring Python `v-agent/examples`
-  numbering. The first batch covers quick-start direct runtime usage, SDK
-  named profiles, session API usage, and `.vv-agent` resource discovery.
+  integration, runtime tool cycles, schema parity, workspace tools, and
+  checked-in example numbering parity.
+- Checked-in Rust examples now mirror Python `v-agent/examples` numbering from
+  `01_quick_start` through `25_temporary_tool_injection`, covering SDK/session
+  APIs, runtime hooks, custom tools, sub-agent pipelines, skills, streaming,
+  cancellation, state stores, execution backends, workspace backends, and
+  temporary tool injection.
 
 Provider request serialization is intentionally delegated to the crates.io
 `vv-llm` crate; request-side provider details should be added there instead of
