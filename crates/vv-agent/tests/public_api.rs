@@ -35,7 +35,7 @@ fn public_package_docs_stay_capability_focused() {
     for path in public_docs {
         let content = std::fs::read_to_string(&path).expect("read public doc");
         for phrase in &forbidden {
-            if content.contains(phrase.as_str()) {
+            if contains_forbidden_term(&content, phrase.as_str()) {
                 violations.push(format!("{} contains {phrase}", path.display()));
             }
         }
@@ -98,7 +98,7 @@ fn source_rustdoc_comments_stay_capability_focused() {
                 continue;
             }
             for phrase in &forbidden {
-                if trimmed.contains(phrase.as_str()) {
+                if contains_forbidden_term(trimmed, phrase.as_str()) {
                     violations.push(format!(
                         "{}:{} contains {phrase}",
                         path.display(),
@@ -165,6 +165,12 @@ fn forbidden_phrase(parts: &[&[u8]]) -> String {
         .flat_map(|part| part.iter().copied())
         .collect::<Vec<_>>();
     String::from_utf8(bytes).expect("forbidden phrase fixture is valid utf-8")
+}
+
+fn contains_forbidden_term(haystack: &str, forbidden: &str) -> bool {
+    haystack
+        .to_ascii_lowercase()
+        .contains(&forbidden.to_ascii_lowercase())
 }
 
 #[test]

@@ -1248,11 +1248,21 @@ fn model_visible_tool_schemas_stay_capability_focused() {
         let serialized = schema.to_string();
         for forbidden in tool_schema_forbidden_terms() {
             assert!(
-                !serialized.contains(forbidden.as_str()),
+                !contains_forbidden_term(&serialized, forbidden.as_str()),
                 "model-visible tool schema should not include internal implementation wording `{forbidden}`:\n{serialized}"
             );
         }
     }
+}
+
+#[test]
+fn tool_schema_wording_guard_catches_case_variants() {
+    let sample = forbidden_phrase(&[b"FOR ", TERM_LANGUAGE, SPACE, TERM_JOINING]);
+
+    assert!(contains_forbidden_term(
+        sample.as_str(),
+        forbidden_phrase(&[b"for ", TERM_LANGUAGE, SPACE, TERM_JOINING]).as_str()
+    ));
 }
 
 fn tool_schema_forbidden_terms() -> Vec<String> {
@@ -1290,6 +1300,12 @@ fn forbidden_phrase(parts: &[&[u8]]) -> String {
         .flat_map(|part| part.iter().copied())
         .collect::<Vec<_>>();
     String::from_utf8(bytes).expect("forbidden phrase fixture is valid utf-8")
+}
+
+fn contains_forbidden_term(haystack: &str, forbidden: &str) -> bool {
+    haystack
+        .to_ascii_lowercase()
+        .contains(&forbidden.to_ascii_lowercase())
 }
 
 fn join_words(first: &str, rest: &str) -> String {

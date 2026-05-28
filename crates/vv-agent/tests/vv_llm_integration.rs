@@ -93,7 +93,7 @@ fn vv_agent_does_not_embed_provider_protocol_clients() {
 }
 
 #[test]
-fn legacy_openai_named_builder_still_delegates_to_vv_llm_builder() {
+fn openai_named_builder_delegates_to_vv_llm_builder() {
     let mut settings_file = tempfile::NamedTempFile::new().expect("settings file");
     write!(
         settings_file,
@@ -128,7 +128,7 @@ fn legacy_openai_named_builder_still_delegates_to_vv_llm_builder() {
         "deepseek-v4-pro",
         90.0,
     )
-    .expect("build legacy alias");
+    .expect("build client");
 
     assert_eq!(resolved.backend, "deepseek");
     assert_eq!(resolved.model_id, "deepseek-v4-pro");

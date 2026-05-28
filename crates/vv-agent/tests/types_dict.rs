@@ -31,14 +31,14 @@ fn tool_execution_result_dict_matches_status_shape() {
 }
 
 #[test]
-fn tool_execution_result_from_legacy_unknown_status_defaults_to_success() {
+fn tool_execution_result_from_unknown_simple_status_defaults_to_success() {
     let payload = json!({
-        "tool_call_id": "legacy-call",
+        "tool_call_id": "simple-call",
         "status": "done",
-        "content": "legacy ok"
+        "content": "simple ok"
     });
 
-    let result = ToolExecutionResult::from_dict(&payload).expect("legacy result from dict");
+    let result = ToolExecutionResult::from_dict(&payload).expect("result from dict");
 
     assert_eq!(result.status, ToolResultStatus::Success);
     assert_eq!(result.to_dict()["status"], json!("success"));

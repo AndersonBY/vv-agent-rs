@@ -164,7 +164,7 @@ impl ToolExecutionResult {
             ),
             (
                 "status".to_string(),
-                Value::String(tool_result_legacy_status(self.status).to_string()),
+                Value::String(tool_result_simple_status(self.status).to_string()),
             ),
             (
                 "status_code".to_string(),
@@ -184,7 +184,7 @@ impl ToolExecutionResult {
         let object = expect_object(data, "ToolExecutionResult")?;
         let status = match read_optional_string(object, "status_code").as_deref() {
             Some(status_code) => parse_tool_result_status(status_code)?,
-            None => parse_legacy_tool_result_status(
+            None => parse_simple_tool_result_status(
                 read_optional_string(object, "status")
                     .as_deref()
                     .unwrap_or("success"),
@@ -613,7 +613,7 @@ fn parse_tool_result_status(value: &str) -> Result<ToolResultStatus, String> {
     }
 }
 
-fn parse_legacy_tool_result_status(value: &str) -> Result<ToolResultStatus, String> {
+fn parse_simple_tool_result_status(value: &str) -> Result<ToolResultStatus, String> {
     match value {
         "success" => Ok(ToolResultStatus::Success),
         "error" => Ok(ToolResultStatus::Error),
@@ -621,7 +621,7 @@ fn parse_legacy_tool_result_status(value: &str) -> Result<ToolResultStatus, Stri
     }
 }
 
-fn tool_result_legacy_status(status: ToolResultStatus) -> &'static str {
+fn tool_result_simple_status(status: ToolResultStatus) -> &'static str {
     match status {
         ToolResultStatus::Error => "error",
         ToolResultStatus::Success
