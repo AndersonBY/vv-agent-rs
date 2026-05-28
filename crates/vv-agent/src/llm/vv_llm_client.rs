@@ -801,6 +801,7 @@ async fn collect_vv_llm_stream(
         }
         if !delta.reasoning_content.is_empty() {
             reasoning_content.push_str(&delta.reasoning_content);
+            let reasoning_chars = reasoning_content.chars().count();
             emit_stream_event(
                 &stream_callback,
                 BTreeMap::from([
@@ -814,17 +815,18 @@ async fn collect_vv_llm_stream(
                     ),
                     (
                         "reasoning_chars".to_string(),
-                        Value::from(reasoning_content.chars().count() as u64),
+                        Value::from(reasoning_chars as u64),
                     ),
                     (
                         "estimated_tokens".to_string(),
-                        Value::from(estimate_stream_tokens(reasoning_content.len()) as u64),
+                        Value::from(estimate_stream_tokens(reasoning_chars) as u64),
                     ),
                 ]),
             );
         }
         if !delta.content.is_empty() {
             content.push_str(&delta.content);
+            let content_chars = content.chars().count();
             emit_stream_event(
                 &stream_callback,
                 BTreeMap::from([
@@ -835,11 +837,11 @@ async fn collect_vv_llm_stream(
                     ("content_delta".to_string(), Value::String(delta.content)),
                     (
                         "content_chars".to_string(),
-                        Value::from(content.chars().count() as u64),
+                        Value::from(content_chars as u64),
                     ),
                     (
                         "estimated_tokens".to_string(),
-                        Value::from(estimate_stream_tokens(content.len()) as u64),
+                        Value::from(estimate_stream_tokens(content_chars) as u64),
                     ),
                 ]),
             );
@@ -1101,17 +1103,17 @@ fn emit_tool_stream_event(
             ),
             (
                 "estimated_tokens".to_string(),
-                Value::from(estimate_stream_tokens(tool_call.arguments.len()) as u64),
+                Value::from(estimate_stream_tokens(tool_call.arguments.chars().count()) as u64),
             ),
         ]),
     );
 }
 
-fn estimate_stream_tokens(text_length: usize) -> usize {
-    if text_length == 0 {
+fn estimate_stream_tokens(char_count: usize) -> usize {
+    if char_count == 0 {
         0
     } else {
-        text_length.div_ceil(4)
+        char_count.div_ceil(4)
     }
 }
 

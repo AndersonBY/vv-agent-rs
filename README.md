@@ -249,9 +249,11 @@ The current Rust implementation includes:
   reasoning temperature, Claude thinking model normalization and token budget,
   Gemini 3 preview routing, Qwen/GLM `-thinking` suffix routing, GPT/O-series
   `-high` alias routing, MiniMax multi-system message preparation, Python-style
-  streaming `raw_content` block aggregation, and provider tool-call id/name
-  normalization. `VvLlmClient` and SDK-built vv-llm runtimes also support
-  Python-style debug request dumps via `debug_dump_dir`.
+  streaming `raw_content` block aggregation, structured stream events for
+  reasoning/content/tool-call progress with Python-style character-based token
+  estimates, and provider tool-call id/name normalization. `VvLlmClient` and
+  SDK-built vv-llm runtimes also support Python-style debug request dumps via
+  `debug_dump_dir`.
 - Core runtime types expose Python-style `to_dict` / `from_dict` helpers for
   task, result, message, cycle, tool-call, and tool-result payloads, including
   legacy tool `status` plus `status_code` for worker interoperability. Agent

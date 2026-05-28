@@ -114,6 +114,70 @@ impl vv_llm::ChatClient for StreamingChatClient {
     }
 }
 
+#[derive(Clone, Default)]
+struct UnicodeStreamingChatClient;
+
+impl vv_llm::ChatClient for UnicodeStreamingChatClient {
+    fn provider_name(&self) -> &'static str {
+        "test-unicode-streaming"
+    }
+
+    fn create_completion<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatResponse, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            Ok(vv_llm::ChatResponse {
+                id: "unicode-non-stream-response".to_string(),
+                model: "deepseek-v4-pro".to_string(),
+                content: "not streamed".to_string(),
+                tool_calls: vec![],
+                usage: None,
+            })
+        })
+    }
+
+    fn create_stream<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatStream, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let deltas = vec![
+                Ok(vv_llm::ChatStreamDelta {
+                    reasoning_content: "思考".to_string(),
+                    ..vv_llm::ChatStreamDelta::default()
+                }),
+                Ok(vv_llm::ChatStreamDelta {
+                    content: "你好世界".to_string(),
+                    done: true,
+                    ..vv_llm::ChatStreamDelta::default()
+                }),
+            ];
+            Ok(Box::pin(stream::iter(deltas)) as vv_llm::ChatStream)
+        })
+    }
+}
+
 #[test]
 fn runtime_execution_context_stream_callback_uses_vv_llm_streaming() {
     let chat_client = StreamingChatClient::default();
@@ -156,6 +220,53 @@ fn runtime_execution_context_stream_callback_uses_vv_llm_streaming() {
         event.get("event") == Some(&json!("assistant_delta"))
             && event.get("content_delta") == Some(&json!("streamed "))
     }));
+}
+
+#[test]
+fn structured_stream_events_estimate_tokens_from_char_count_like_python() {
+    let llm = VvLlmClient::new(
+        "deepseek",
+        "deepseek-v4-pro",
+        "deepseek-v4-pro",
+        Box::new(UnicodeStreamingChatClient),
+        90.0,
+    );
+    let events = Arc::new(Mutex::new(Vec::<BTreeMap<String, Value>>::new()));
+    let callback_events = Arc::clone(&events);
+    let stream_callback: StreamCallback = Arc::new(move |event| {
+        callback_events
+            .lock()
+            .expect("stream events lock")
+            .push(event.clone());
+    });
+
+    let response = llm
+        .complete_with_stream(
+            LlmRequest::new(
+                "deepseek-v4-pro",
+                vec![Message::user("stream unicode content")],
+            ),
+            Some(stream_callback),
+        )
+        .expect("unicode streaming completion");
+
+    assert_eq!(response.content, "你好世界");
+    assert_eq!(response.raw["reasoning_content"], json!("思考"));
+
+    let events = events.lock().expect("stream events lock");
+    let reasoning = events
+        .iter()
+        .find(|event| event.get("event") == Some(&json!("reasoning_delta")))
+        .expect("reasoning delta");
+    assert_eq!(reasoning["reasoning_chars"], json!(2));
+    assert_eq!(reasoning["estimated_tokens"], json!(1));
+
+    let content = events
+        .iter()
+        .find(|event| event.get("event") == Some(&json!("assistant_delta")))
+        .expect("assistant delta");
+    assert_eq!(content["content_chars"], json!(4));
+    assert_eq!(content["estimated_tokens"], json!(1));
 }
 
 #[test]
