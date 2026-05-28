@@ -8,7 +8,6 @@ pub struct SkillProperties {
     pub name: String,
     pub description: String,
     pub license: Option<String>,
-    pub compatibility: Option<String>,
     pub allowed_tools: Option<String>,
     pub metadata: BTreeMap<String, String>,
 }
@@ -58,7 +57,6 @@ pub struct SkillEntry {
     pub description: String,
     pub location: Option<String>,
     pub instructions: Option<String>,
-    pub compatibility: Option<String>,
     pub allowed_tools: Option<String>,
     pub metadata: BTreeMap<String, String>,
     pub load_error: Option<String>,

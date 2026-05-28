@@ -75,7 +75,6 @@ fn skills_public_api_renders_available_skills_xml_with_budget() {
         name: "metadata-skill".to_string(),
         description: "Metadata should stay hidden".to_string(),
         location: Some("skills/metadata-skill/SKILL.md".to_string()),
-        compatibility: Some("rust tests".to_string()),
         allowed_tools: Some("read_file".to_string()),
         metadata: BTreeMap::from([("owner".to_string(), "agent".to_string())]),
         ..SkillEntry::default()
@@ -95,7 +94,6 @@ fn skills_public_api_renders_available_skills_xml_with_budget() {
         name: "review-code".to_string(),
         description: "Review code".to_string(),
         license: Some("MIT".to_string()),
-        compatibility: Some("vv-agent".to_string()),
         allowed_tools: Some("read_file".to_string()),
         metadata: BTreeMap::from([("owner".to_string(), "agent".to_string())]),
     };
@@ -175,6 +173,43 @@ Use these instructions.
     assert!(xml.contains("<available_skills>"));
     assert!(xml.contains("review-code"));
     assert!(xml.contains("SKILL.md"));
+}
+
+#[test]
+fn skills_public_api_ignores_compatibility_frontmatter_in_public_models() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let skill_dir = workspace.path().join("skills/review-code");
+    fs::create_dir_all(&skill_dir).expect("skill dir");
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        r#"---
+name: review-code
+description: Review code safely
+compatibility:
+  tools:
+    - read_file
+---
+Use these instructions.
+"#,
+    )
+    .expect("write skill");
+
+    let properties = read_properties(&skill_dir).expect("properties");
+    let property_payload = properties.to_value();
+    assert!(
+        !property_payload
+            .as_object()
+            .expect("properties payload")
+            .contains_key("compatibility"),
+        "compatibility frontmatter is accepted for existing skills but must not be part of the public skill model"
+    );
+
+    let entries = normalize_skill_list(Some(&json!(["skills"])), Some(workspace.path()), true);
+    assert_eq!(entries.len(), 1);
+    assert!(
+        !format!("{:?}", entries[0]).contains("compatibility"),
+        "normalized skills feed model-visible prompts/results and should not carry compatibility metadata"
+    );
 }
 
 #[test]
@@ -274,7 +309,10 @@ fn skills_public_api_stringifies_inline_scalar_fields() {
     assert_eq!(entries[0].name, "123");
     assert_eq!(entries[0].description, "456");
     assert_eq!(entries[0].instructions.as_deref(), Some("789"));
-    assert_eq!(entries[0].compatibility.as_deref(), Some("True"));
+    assert!(
+        !format!("{:?}", entries[0]).contains("compatibility"),
+        "inline compatibility fields should be ignored before entries reach prompts/results"
+    );
     assert_eq!(entries[0].metadata["priority"], "5");
     assert_eq!(entries[0].metadata["enabled"], "True");
     assert_eq!(entries[0].metadata["missing"], "None");

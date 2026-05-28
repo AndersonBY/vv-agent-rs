@@ -86,7 +86,6 @@ pub fn to_available_skills_xml(skill_dirs: &[PathBuf]) -> Result<String, SkillEr
             name: properties.name,
             description: properties.description,
             location: skill_md.map(|path| path.to_string_lossy().replace('\\', "/")),
-            compatibility: properties.compatibility,
             allowed_tools: properties.allowed_tools,
             metadata: properties.metadata,
             ..SkillEntry::default()

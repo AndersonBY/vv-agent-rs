@@ -8,7 +8,6 @@ use super::parser::{find_skill_md, parse_frontmatter};
 
 const MAX_SKILL_NAME_LENGTH: usize = 64;
 const MAX_DESCRIPTION_LENGTH: usize = 1024;
-const MAX_COMPATIBILITY_LENGTH: usize = 500;
 const ALLOWED_FIELDS: &[&str] = &[
     "name",
     "description",
@@ -105,9 +104,6 @@ pub fn validate_metadata_with_diagnostics(
             .push("Missing required field in frontmatter: description".to_string()),
     }
 
-    if let Some(compatibility) = metadata.get("compatibility") {
-        validate_compatibility(compatibility, &mut diagnostics);
-    }
     Ok(diagnostics)
 }
 
@@ -268,19 +264,6 @@ fn validate_description(description: &str, diagnostics: &mut ValidationDiagnosti
         diagnostics.errors.push(format!(
             "Description exceeds {MAX_DESCRIPTION_LENGTH} character limit"
         ));
-    }
-}
-
-fn validate_compatibility(compatibility: &Value, diagnostics: &mut ValidationDiagnostics) {
-    let Some(compatibility) = compatibility.as_str() else {
-        return;
-    };
-    if compatibility.chars().count() > MAX_COMPATIBILITY_LENGTH {
-        append_issue(
-            diagnostics,
-            format!("Compatibility exceeds {MAX_COMPATIBILITY_LENGTH} character limit"),
-            IssueSeverity::Warning,
-        );
     }
 }
 
