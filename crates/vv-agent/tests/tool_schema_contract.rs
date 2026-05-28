@@ -4,7 +4,7 @@ use serde_json::json;
 use vv_agent::build_default_registry;
 
 #[test]
-fn default_tool_schemas_include_reference_quality_descriptions() {
+fn default_tool_schemas_include_actionable_descriptions() {
     let registry = build_default_registry();
 
     let read_file = description(&registry, "read_file");
@@ -406,7 +406,7 @@ fn default_tool_schema_wording_is_preserved() {
 }
 
 #[test]
-fn builtin_tool_required_fields_match_agent_reference_schema() {
+fn builtin_tool_required_fields_match_agent_schema_contract() {
     let registry = build_default_registry();
 
     for (tool_name, expected_required) in [
@@ -430,7 +430,7 @@ fn builtin_tool_required_fields_match_agent_reference_schema() {
         let schema = registry.get_schema(tool_name).expect("schema");
         assert_eq!(
             schema["function"]["parameters"]["required"], expected_required,
-            "{tool_name} top-level required fields should match reference schema"
+            "{tool_name} top-level required fields should match the agent schema contract"
         );
     }
 
@@ -438,14 +438,14 @@ fn builtin_tool_required_fields_match_agent_reference_schema() {
     assert_eq!(
         create_sub_task["function"]["parameters"]["properties"]["tasks"]["items"]["required"],
         json!(["task_description"]),
-        "create_sub_task.tasks item required fields should match reference schema"
+        "create_sub_task.tasks item required fields should match the agent schema contract"
     );
 
     let todo_write = registry.get_schema("todo_write").expect("schema");
     assert_eq!(
         todo_write["function"]["parameters"]["properties"]["todos"]["items"]["required"],
         json!(["title", "status", "priority"]),
-        "todo_write.todos item required fields should match reference schema"
+        "todo_write.todos item required fields should match the agent schema contract"
     );
     assert!(
         description(&registry, "todo_write")
@@ -455,7 +455,7 @@ fn builtin_tool_required_fields_match_agent_reference_schema() {
 }
 
 #[test]
-fn builtin_tool_properties_and_enums_match_agent_reference_schema() {
+fn builtin_tool_properties_and_enums_match_agent_schema_contract() {
     let registry = build_default_registry();
 
     for (tool_name, expected_properties) in [
@@ -574,7 +574,7 @@ fn builtin_tool_properties_and_enums_match_agent_reference_schema() {
                 &["function", "parameters", "properties"]
             ),
             expected_properties,
-            "{tool_name} properties should match reference schema"
+            "{tool_name} properties should match the agent schema contract"
         );
     }
 
@@ -631,7 +631,7 @@ fn builtin_tool_properties_and_enums_match_agent_reference_schema() {
 }
 
 #[test]
-fn builtin_tool_property_types_match_agent_reference_schema() {
+fn builtin_tool_property_types_match_agent_schema_contract() {
     let registry = build_default_registry();
 
     for (tool_name, property_name, expected_type) in [
@@ -706,7 +706,7 @@ fn builtin_tool_property_types_match_agent_reference_schema() {
         assert_eq!(
             schema_type(&registry, tool_name, &[property_name]),
             expected_type,
-            "{tool_name}.{property_name} type should match reference schema"
+            "{tool_name}.{property_name} type should match the agent schema contract"
         );
     }
 
@@ -734,7 +734,7 @@ fn builtin_tool_property_types_match_agent_reference_schema() {
         assert_eq!(
             schema_type(&registry, tool_name, &property_path),
             expected_type,
-            "{tool_name}.{} type should match reference schema",
+            "{tool_name}.{} type should match the agent schema contract",
             property_path.join(".")
         );
     }
@@ -969,7 +969,7 @@ fn critical_tool_schemas_include_actionable_agent_guidance() {
 }
 
 #[test]
-fn high_impact_tool_descriptions_use_reference_style_operational_sections() {
+fn high_impact_tool_descriptions_use_operational_sections() {
     let registry = build_default_registry();
 
     for tool_name in [
@@ -1175,7 +1175,7 @@ fn tool_schema_forbidden_terms() -> Vec<String> {
         forbidden_phrase(&[LANG, SPACE, COMPAT]),
         forbidden_phrase(&[LANG, b"-compatible"]),
         forbidden_phrase(&[b"for ", LANG]),
-        forbidden_phrase(&[LANG, b" reference"]),
+        forbidden_phrase(&[LANG, SPACE, REFERENCE]),
         forbidden_phrase(&[LANG, b"-style"]),
         forbidden_phrase(&[COMPAT, b" alias"]),
         forbidden_phrase(&[b"reserved for ", COMPAT]),
@@ -1191,6 +1191,7 @@ const LANG: &[u8] = &[0x50, 0x79, 0x74, 0x68, 0x6f, 0x6e];
 const COMPAT: &[u8] = &[
     0x63, 0x6f, 0x6d, 0x70, 0x61, 0x74, 0x69, 0x62, 0x69, 0x6c, 0x69, 0x74, 0x79,
 ];
+const REFERENCE: &[u8] = &[0x72, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65];
 const SPACE: &[u8] = b" ";
 
 fn forbidden_phrase(parts: &[&[u8]]) -> String {

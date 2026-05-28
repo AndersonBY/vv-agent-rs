@@ -111,7 +111,7 @@ fn prompt_forbidden_terms() -> Vec<String> {
         forbidden_phrase(&[LANG, SPACE, COMPAT]),
         forbidden_phrase(&[LANG, b"-compatible"]),
         forbidden_phrase(&[b"for ", LANG]),
-        forbidden_phrase(&[LANG, b" reference"]),
+        forbidden_phrase(&[LANG, SPACE, REFERENCE]),
         forbidden_phrase(&[LANG, b"-style"]),
         forbidden_phrase(&[COMPAT, b" alias"]),
         forbidden_phrase(&[b"reserved for ", COMPAT]),
@@ -124,6 +124,7 @@ const LANG: &[u8] = &[0x50, 0x79, 0x74, 0x68, 0x6f, 0x6e];
 const COMPAT: &[u8] = &[
     0x63, 0x6f, 0x6d, 0x70, 0x61, 0x74, 0x69, 0x62, 0x69, 0x6c, 0x69, 0x74, 0x79,
 ];
+const REFERENCE: &[u8] = &[0x72, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65];
 const SPACE: &[u8] = b" ";
 
 fn forbidden_phrase(parts: &[&[u8]]) -> String {

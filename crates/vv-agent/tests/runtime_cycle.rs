@@ -955,7 +955,7 @@ fn before_tool_call_patch_accepts_direct_result_and_call_conversions() {
 }
 
 #[test]
-fn runtime_emits_reference_lifecycle_log_events() {
+fn runtime_emits_lifecycle_log_events() {
     let mut finish_args = BTreeMap::new();
     finish_args.insert("message".to_string(), json!("logged finish"));
     let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(

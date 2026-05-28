@@ -61,7 +61,7 @@ fn public_package_docs_do_not_dump_internal_file_names() {
     ];
     let noisy_file_names = [
         "hooks.rs",
-        "tool_schema_parity.rs",
+        "tool_schema_contract.rs",
         "prompt_public_api.rs",
         "live_deepseek.rs",
     ];
@@ -122,14 +122,16 @@ fn public_doc_forbidden_terms() -> Vec<String> {
         forbidden_phrase(&[LANG, b"-compatible"]),
         forbidden_phrase(&[b"for ", LANG, SPACE, COMPAT]),
         forbidden_phrase(&[LANG, b" `vv_agent` package"]),
-        "runtime parity".to_string(),
+        forbidden_phrase(&[b"runtime ", PARITY]),
+        forbidden_phrase(&[PARITY]),
         "implementation-history".to_string(),
-        "migration-history".to_string(),
+        forbidden_phrase(&[MIGRATION, b"-history"]),
+        forbidden_phrase(&[MIGRATION]),
         forbidden_phrase(&[LANG, b" project"]),
         forbidden_phrase(&[LANG, b" package"]),
         forbidden_phrase(&[LANG, b" repo"]),
         forbidden_phrase(&[LANG, b"'s structure"]),
-        forbidden_phrase(&[b"parity with ", LANG]),
+        forbidden_phrase(&[PARITY, b" with ", LANG]),
     ]
     .into()
 }
@@ -139,8 +141,10 @@ fn rustdoc_forbidden_terms() -> Vec<String> {
         forbidden_phrase(&[b"matching ", LANG]),
         forbidden_phrase(&[b"mirror ", LANG]),
         forbidden_phrase(&[b"like ", LANG]),
-        forbidden_phrase(&[LANG, b" reference"]),
+        forbidden_phrase(&[LANG, SPACE, REFERENCE]),
         forbidden_phrase(&[b"for ", LANG, SPACE, COMPAT]),
+        forbidden_phrase(&[MIGRATION]),
+        forbidden_phrase(&[PARITY]),
     ]
     .into()
 }
@@ -149,6 +153,9 @@ const LANG: &[u8] = &[0x50, 0x79, 0x74, 0x68, 0x6f, 0x6e];
 const COMPAT: &[u8] = &[
     0x63, 0x6f, 0x6d, 0x70, 0x61, 0x74, 0x69, 0x62, 0x69, 0x6c, 0x69, 0x74, 0x79,
 ];
+const MIGRATION: &[u8] = &[0x6d, 0x69, 0x67, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e];
+const PARITY: &[u8] = &[0x70, 0x61, 0x72, 0x69, 0x74, 0x79];
+const REFERENCE: &[u8] = &[0x72, 0x65, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65];
 const SPACE: &[u8] = b" ";
 
 fn forbidden_phrase(parts: &[&[u8]]) -> String {
