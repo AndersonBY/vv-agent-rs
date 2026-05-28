@@ -491,7 +491,6 @@ fn activate_skill_loads_skill_md_and_updates_shared_state() {
         r#"---
 name: demo-skill
 description: Demo skill description
-compatibility: rust tests
 allowed-tools: read_file, write_file
 metadata:
   owner: agent
@@ -533,10 +532,6 @@ Use this skill body during execution.
     assert_eq!(payload["allowed_tools"], "read_file, write_file");
     assert_eq!(payload["metadata"]["owner"], "agent");
     assert_eq!(payload["reason"], "Need demo behavior");
-    assert!(
-        payload.get("compatibility").is_none(),
-        "activate_skill result is model-visible and should not expose internal metadata"
-    );
     assert_eq!(context.shared_state["active_skills"], json!(["demo-skill"]));
     assert_eq!(
         context.shared_state["skill_activation_log"][0]["cycle_index"],
@@ -545,18 +540,16 @@ Use this skill body during execution.
 }
 
 #[test]
-fn activate_skill_ignores_structured_compatibility_metadata() {
+fn activate_skill_ignores_package_frontmatter_fields() {
     let workspace = tempfile::tempdir().expect("workspace");
-    let skill_dir = workspace.path().join("skills/structured-skill");
+    let skill_dir = workspace.path().join("skills/package-skill");
     std::fs::create_dir_all(&skill_dir).expect("skill dir");
     std::fs::write(
         skill_dir.join("SKILL.md"),
         r#"---
-name: structured-skill
-description: Structured skill metadata should stay internal
-compatibility:
-  tools:
-    - read_file
+name: package-skill
+description: Package fields should stay internal
+license: MIT
 ---
 Use this skill without surfacing internal metadata.
 "#,
@@ -573,7 +566,7 @@ Use this skill without surfacing internal metadata.
             &ToolCall::new(
                 "skill_structured",
                 "activate_skill",
-                BTreeMap::from([("skill_name".to_string(), json!("structured-skill"))]),
+                BTreeMap::from([("skill_name".to_string(), json!("package-skill"))]),
             ),
             &mut context,
         )
@@ -581,13 +574,13 @@ Use this skill without surfacing internal metadata.
 
     assert_eq!(result.status, ToolResultStatus::Success);
     let payload: serde_json::Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["skill_name"], "structured-skill");
+    assert_eq!(payload["skill_name"], "package-skill");
     assert!(
-        payload.get("compatibility").is_none(),
-        "structured compatibility metadata is internal and should not reach model-visible results"
+        payload.get("license").is_none(),
+        "package metadata should not reach model-visible results"
     );
     assert!(
-        !result.content.contains("compatibility") && !result.content.contains("read_file"),
+        !result.content.contains("x-internal-note") && !result.content.contains("MIT"),
         "activate_skill should not leak structured internal metadata"
     );
 }
@@ -648,7 +641,7 @@ fn activate_skill_coerces_scalar_arguments_and_inline_fields() {
                 "name": 123,
                 "description": 456,
                 "instructions": 789,
-                "compatibility": true,
+                "x_internal_note": true,
                 "metadata": {"priority": 5}
             }
         ]),
@@ -676,7 +669,7 @@ fn activate_skill_coerces_scalar_arguments_and_inline_fields() {
     assert_eq!(payload["metadata"]["priority"], "5");
     assert_eq!(payload["reason"], "True");
     assert!(
-        payload.get("compatibility").is_none(),
-        "activate_skill result is model-visible and should not expose internal metadata"
+        payload.get("x_internal_note").is_none(),
+        "activate_skill result is model-visible and should not expose internal fields"
     );
 }

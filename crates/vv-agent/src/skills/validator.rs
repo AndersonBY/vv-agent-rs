@@ -12,7 +12,6 @@ const ALLOWED_FIELDS: &[&str] = &[
     "name",
     "description",
     "license",
-    "compatibility",
     "allowed-tools",
     "metadata",
 ];

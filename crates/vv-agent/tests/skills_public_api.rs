@@ -82,7 +82,7 @@ fn skills_public_api_renders_available_skills_xml_with_budget() {
     let xml = render_skills_xml(&[entry_with_metadata], 8000);
     assert!(xml.contains("metadata-skill"));
     assert!(
-        !xml.contains("compatibility") && !xml.contains("rust tests"),
+        !xml.contains("owner") && !xml.contains("agent"),
         "<available_skills> is model-visible and should not expose internal metadata"
     );
     assert!(
@@ -98,10 +98,6 @@ fn skills_public_api_renders_available_skills_xml_with_budget() {
         metadata: BTreeMap::from([("owner".to_string(), "agent".to_string())]),
     };
     let payload = properties.to_value();
-    assert!(
-        payload.get("compatibility").is_none(),
-        "public skill payloads are often model-visible and should not expose internal metadata"
-    );
     assert_eq!(payload["allowed-tools"], "read_file");
     assert_eq!(payload["metadata"]["owner"], "agent");
 }
@@ -116,7 +112,6 @@ fn skills_public_api_parses_and_loads_skill_dirs() {
 name: review-code
 description: Review code safely
 license: MIT
-compatibility: vv-agent
 allowed-tools: read_file, workspace_grep
 metadata:
   owner: agent
@@ -176,7 +171,7 @@ Use these instructions.
 }
 
 #[test]
-fn skills_public_api_ignores_compatibility_frontmatter_in_public_models() {
+fn skills_public_api_keeps_optional_frontmatter_out_of_prompt_models() {
     let workspace = tempfile::tempdir().expect("workspace");
     let skill_dir = workspace.path().join("skills/review-code");
     fs::create_dir_all(&skill_dir).expect("skill dir");
@@ -185,9 +180,11 @@ fn skills_public_api_ignores_compatibility_frontmatter_in_public_models() {
         r#"---
 name: review-code
 description: Review code safely
-compatibility:
-  tools:
-    - read_file
+license: MIT
+allowed-tools: read_file
+x-internal-note: hidden
+metadata:
+  owner: agent
 ---
 Use these instructions.
 "#,
@@ -200,15 +197,23 @@ Use these instructions.
         !property_payload
             .as_object()
             .expect("properties payload")
-            .contains_key("compatibility"),
-        "compatibility frontmatter is accepted for existing skills but must not be part of the public skill model"
+            .contains_key("x-internal-note"),
+        "unknown frontmatter should not be part of the public skill model"
     );
 
-    let entries = normalize_skill_list(Some(&json!(["skills"])), Some(workspace.path()), true);
+    let entries = normalize_skill_list(Some(&json!(["skills"])), Some(workspace.path()), false);
     assert_eq!(entries.len(), 1);
     assert!(
-        !format!("{:?}", entries[0]).contains("compatibility"),
-        "normalized skills feed model-visible prompts/results and should not carry compatibility metadata"
+        !format!("{:?}", entries[0]).contains("license"),
+        "normalized skills feed model-visible prompts/results and should not carry package metadata"
+    );
+    assert!(
+        !format!("{:?}", entries[0]).contains("x-internal-note"),
+        "normalized skills feed model-visible prompts/results and should not carry unknown metadata"
+    );
+    assert!(
+        !format!("{:?}", entries[0]).contains("MIT"),
+        "normalized skills feed model-visible prompts/results and should not carry package metadata values"
     );
 }
 
@@ -289,7 +294,7 @@ fn skills_public_api_stringifies_inline_scalar_fields() {
             "name": 123,
             "description": 456,
             "instructions": 789,
-            "compatibility": true,
+            "x_internal_note": true,
             "metadata": {
                 "priority": 5,
                 "enabled": true,
@@ -310,8 +315,8 @@ fn skills_public_api_stringifies_inline_scalar_fields() {
     assert_eq!(entries[0].description, "456");
     assert_eq!(entries[0].instructions.as_deref(), Some("789"));
     assert!(
-        !format!("{:?}", entries[0]).contains("compatibility"),
-        "inline compatibility fields should be ignored before entries reach prompts/results"
+        !format!("{:?}", entries[0]).contains("x_internal_note"),
+        "inline internal fields should be ignored before entries reach prompts/results"
     );
     assert_eq!(entries[0].metadata["priority"], "5");
     assert_eq!(entries[0].metadata["enabled"], "True");
