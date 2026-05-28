@@ -153,7 +153,21 @@ fn configure_process_group(command: &mut Command) {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(any(windows, test))]
+fn windows_hidden_process_creation_flags() -> u32 {
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+}
+
+#[cfg(windows)]
+fn configure_process_group(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    command.creation_flags(windows_hidden_process_creation_flags());
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn configure_process_group(_command: &mut Command) {}
 
 #[cfg(unix)]
@@ -167,7 +181,50 @@ fn kill_process_group_or_child(child: &mut Child, force: bool) {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(any(windows, test))]
+fn windows_taskkill_args(pid: u32) -> Vec<String> {
+    vec![
+        "/PID".to_string(),
+        pid.to_string(),
+        "/T".to_string(),
+        "/F".to_string(),
+    ]
+}
+
+#[cfg(windows)]
+fn kill_process_group_or_child(child: &mut Child, _force: bool) {
+    let taskkill = Command::new("taskkill")
+        .args(windows_taskkill_args(child.id()))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    if !taskkill.map(|status| status.success()).unwrap_or(false) {
+        let _ = child.kill();
+    }
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn kill_process_group_or_child(child: &mut Child, _force: bool) {
     let _ = child.kill();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_hidden_process_creation_flags_match_python_subprocess_defaults() {
+        assert_eq!(
+            windows_hidden_process_creation_flags(),
+            0x0000_0200 | 0x0800_0000
+        );
+    }
+
+    #[test]
+    fn windows_taskkill_args_match_python_process_tree_termination() {
+        assert_eq!(
+            windows_taskkill_args(1234),
+            vec!["/PID", "1234", "/T", "/F"]
+        );
+    }
 }

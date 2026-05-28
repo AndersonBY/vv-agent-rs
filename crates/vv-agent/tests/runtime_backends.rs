@@ -77,6 +77,28 @@ fn runtime_recipe_matches_python_dict_and_default_checkpoint_path() {
 }
 
 #[test]
+fn cycle_task_dispatch_result_matches_python_worker_payload_shape() {
+    let result = AgentResult::completed(vec![Message::assistant("done")], Vec::new(), "ok");
+    let terminal = CycleTaskDispatchResult::finished(result.clone());
+
+    let payload = terminal.to_dict();
+    assert_eq!(payload["finished"], json!(true));
+    assert_eq!(payload["result"]["status"], json!("completed"));
+    assert_eq!(payload["result"]["final_answer"], json!("ok"));
+
+    let restored = CycleTaskDispatchResult::from_dict(&payload).expect("dispatch result");
+    assert!(restored.finished);
+    assert_eq!(restored.result, Some(result));
+
+    let unfinished_payload = CycleTaskDispatchResult::unfinished().to_dict();
+    assert_eq!(unfinished_payload, json!({"finished": false}));
+    let unfinished = CycleTaskDispatchResult::from_dict(&unfinished_payload)
+        .expect("unfinished dispatch result");
+    assert!(!unfinished.finished);
+    assert!(unfinished.result.is_none());
+}
+
+#[test]
 fn celery_backend_without_dispatcher_keeps_inline_parallel_map_fallback() {
     let backend = CeleryBackend::inline_fallback();
 
@@ -209,6 +231,40 @@ fn celery_backend_inline_execute_matches_inline_fallback() {
     assert_eq!(result.status, AgentStatus::Completed);
     assert_eq!(result.final_answer.as_deref(), Some("celery-inline"));
     assert_eq!(result.cycles[0].index, 1);
+}
+
+#[test]
+fn celery_backend_distributed_requires_store_and_dispatcher_like_python() {
+    let backend = CeleryBackend::distributed(RuntimeRecipe::new(
+        "settings.py",
+        "deepseek",
+        "deepseek-v4-pro",
+        ".",
+    ));
+    let task = AgentTask::new(
+        "distributed-misconfigured",
+        "deepseek-v4-pro",
+        "system",
+        "prompt",
+    );
+
+    let result = backend.execute(
+        &task,
+        vec![Message::user("hello")],
+        Default::default(),
+        |_cycle_index, _messages, _cycles, _shared_state, _cancellation| {
+            panic!("misconfigured distributed backend should not fall back to inline execution")
+        },
+        None,
+        1,
+    );
+
+    assert_eq!(result.status, AgentStatus::Failed);
+    assert_eq!(result.messages[0].content, "hello");
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("requires a state_store and cycle_dispatcher")));
 }
 
 #[derive(Debug)]

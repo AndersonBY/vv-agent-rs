@@ -4,6 +4,7 @@ use crate::runtime::state::{Checkpoint, StateStore};
 use crate::runtime::token_usage::summarize_task_token_usage;
 use crate::runtime::CancellationToken;
 use crate::types::{AgentResult, AgentStatus, AgentTask, CycleRecord, Message, Metadata};
+use serde_json::Value;
 
 use super::{cancelled_backend_result, execute_cycle_loop, failed_backend_result, RuntimeRecipe};
 
@@ -26,6 +27,31 @@ impl CycleTaskDispatchResult {
             finished: true,
             result: Some(result),
         }
+    }
+
+    pub fn to_dict(&self) -> Value {
+        let mut payload =
+            serde_json::Map::from_iter([("finished".to_string(), Value::Bool(self.finished))]);
+        if let Some(result) = &self.result {
+            payload.insert("result".to_string(), result.to_dict());
+        }
+        Value::Object(payload)
+    }
+
+    pub fn from_dict(data: &Value) -> Result<Self, String> {
+        let object = data
+            .as_object()
+            .ok_or_else(|| "CycleTaskDispatchResult payload must be an object".to_string())?;
+        let finished = object
+            .get("finished")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let result = object
+            .get("result")
+            .filter(|value| !value.is_null())
+            .map(AgentResult::from_dict)
+            .transpose()?;
+        Ok(Self { finished, result })
     }
 }
 
@@ -135,23 +161,35 @@ impl CeleryBackend {
             Option<&CancellationToken>,
         ) -> Option<AgentResult>,
     {
-        if let (Some(recipe), Some(state_store), Some(cycle_dispatcher)) = (
+        match (
             &self.runtime_recipe,
             &self.state_store,
             &self.cycle_dispatcher,
         ) {
-            return self.execute_distributed(
-                initial_messages,
-                shared_state,
-                DistributedRunContext {
-                    task,
-                    recipe,
-                    state_store,
-                    cycle_dispatcher,
-                    cancellation_token,
-                    max_cycles,
-                },
-            );
+            (Some(recipe), Some(state_store), Some(cycle_dispatcher)) => {
+                return self.execute_distributed(
+                    initial_messages,
+                    shared_state,
+                    DistributedRunContext {
+                        task,
+                        recipe,
+                        state_store,
+                        cycle_dispatcher,
+                        cancellation_token,
+                        max_cycles,
+                    },
+                );
+            }
+            (Some(_), _, _) => {
+                return failed_backend_result(
+                    initial_messages,
+                    Vec::new(),
+                    shared_state,
+                    "Celery distributed backend requires a state_store and cycle_dispatcher"
+                        .to_string(),
+                );
+            }
+            (None, _, _) => {}
         }
         execute_cycle_loop(
             initial_messages,

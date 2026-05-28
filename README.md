@@ -256,8 +256,10 @@ The current Rust implementation includes:
   task, result, message, cycle, tool-call, and tool-result payloads, including
   legacy tool `status` plus `status_code` for worker interoperability. Agent
   result payloads round-trip aggregate and per-cycle token usage as structured
-  data. Message dict payloads now use Python/OpenAI-style assistant tool-call
-  shapes and can restore those payloads from Python checkpoints while
+  data, and Celery cycle dispatch results round-trip the Python worker
+  `{"finished": ..., "result": ...}` payload shape. Message dict payloads now
+  use Python/OpenAI-style assistant tool-call shapes and can restore those
+  payloads from Python checkpoints while
   preserving provider `extra_content`. `Message::to_openai_message` also
   mirrors Python multimodal/tool-call payload shaping, including assistant tool
   calls with `content: null`, optional reasoning content, provider
@@ -378,7 +380,10 @@ The current Rust implementation includes:
   resolver, so configured shells, `bash_env` environment overrides, and
   auto-confirm behavior do not diverge. Bash process environment construction
   also mirrors Python's Windows defaults for `PYTHONUTF8` and
-  `PYTHONIOENCODING` while preserving explicit overrides.
+  `PYTHONIOENCODING` while preserving explicit overrides; Windows command
+  launches use hidden-console creation flags to avoid terminal flashes in GUI
+  hosts, and Windows process cleanup uses Python-style `taskkill /T /F` before
+  falling back to direct child termination.
 - Built-in control tools (`task_finish`, `ask_user`, `todo_write`), with
   Python-style TODO validation, generated ids, status/priority defaults, and
   timestamp preservation; core workspace tools (`list_files`, `file_info`,
