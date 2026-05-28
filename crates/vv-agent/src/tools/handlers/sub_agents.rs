@@ -101,7 +101,7 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                         );
                     };
                     let (task_id, session_id) =
-                        crate::sub_task_manager::SubTaskManager::next_task_identity(
+                        crate::runtime::sub_task_manager::SubTaskManager::next_task_identity(
                             &context.task_id,
                             &request.agent_name,
                         );
@@ -268,7 +268,7 @@ pub(crate) fn create_sub_task_tool() -> ToolSpec {
                         continue;
                     };
                     let (task_id, session_id) =
-                        crate::sub_task_manager::SubTaskManager::next_task_identity(
+                        crate::runtime::sub_task_manager::SubTaskManager::next_task_identity(
                             &context.task_id,
                             &agent_name,
                         );

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::background_sessions::background_session_manager;
+use crate::runtime::background_sessions::background_session_manager;
 use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{tool_error_with_code, tool_result};
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};

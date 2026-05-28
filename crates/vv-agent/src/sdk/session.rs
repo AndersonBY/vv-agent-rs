@@ -5,11 +5,13 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-use crate::background_sessions::{background_session_manager, BackgroundSessionSubscription};
+use crate::runtime::background_sessions::{
+    background_session_manager, BackgroundSessionSubscription,
+};
+use crate::runtime::sub_task_manager::SubTaskManager;
 use crate::runtime::{
     BeforeCycleMessageProvider, CancellationToken, InterruptionMessageProvider, StreamCallback,
 };
-use crate::sub_task_manager::SubTaskManager;
 use crate::types::{AgentStatus, Metadata};
 
 use super::types::{agent_status_value, AgentDefinition, AgentRun};

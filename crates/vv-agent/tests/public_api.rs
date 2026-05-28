@@ -315,3 +315,24 @@ fn runtime_module_exports_python_runtime_public_types() {
     let _subscribe_session = vv_agent::runtime::engine::subscribe_sub_agent_session;
     let _steer_session = vv_agent::runtime::engine::steer_sub_agent_session;
 }
+
+#[test]
+fn runtime_modules_are_not_flattened_at_crate_root() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+    for module in [
+        "background_sessions",
+        "processes",
+        "sub_agent_sessions",
+        "sub_task_manager",
+    ] {
+        assert!(
+            root.join("runtime").join(format!("{module}.rs")).is_file(),
+            "runtime/{module}.rs should mirror Python vv_agent/runtime/{module}.py"
+        );
+        assert!(
+            !root.join(format!("{module}.rs")).exists(),
+            "{module}.rs should not be flattened at the crate root"
+        );
+    }
+}

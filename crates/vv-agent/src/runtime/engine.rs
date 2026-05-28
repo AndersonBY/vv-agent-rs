@@ -11,7 +11,7 @@ use crate::memory::{
     CompactionExhaustedError, MemoryManager, MemoryManagerConfig, SessionMemory,
     SessionMemoryConfig, SessionMemoryExtractionCallback, SummaryCallback,
 };
-use crate::sub_task_manager::SubTaskManager;
+use crate::runtime::sub_task_manager::SubTaskManager;
 use crate::tools::{build_default_registry, ToolContext, ToolRegistry};
 use crate::types::{
     AgentResult, AgentStatus, AgentTask, CycleRecord, Message, ToolCall, ToolDirective,
@@ -29,7 +29,7 @@ use super::cycle_runner::{is_prompt_too_long_error, MAX_PROMPT_TOO_LONG_RETRIES}
 use super::results::{assistant_message_from_response, extract_final_message, extract_wait_reason};
 use super::tool_call_runner::{execute_tool_result, needs_tool_call_id, skipped_tool_result};
 
-pub use crate::sub_agent_sessions::{
+pub use crate::runtime::sub_agent_sessions::{
     _register_sub_agent_session, _unregister_sub_agent_session, get_sub_agent_session,
     steer_sub_agent_session, subscribe_sub_agent_session,
 };

@@ -22,7 +22,7 @@ pub struct ToolContext {
     pub metadata: BTreeMap<String, Value>,
     pub workspace_backend: Arc<dyn WorkspaceBackend>,
     pub sub_task_runner: Option<SubTaskRunner>,
-    pub sub_task_manager: Option<crate::sub_task_manager::SubTaskManager>,
+    pub sub_task_manager: Option<crate::runtime::sub_task_manager::SubTaskManager>,
     pub execution_backend: Option<crate::runtime::backends::RuntimeExecutionBackend>,
 }
 

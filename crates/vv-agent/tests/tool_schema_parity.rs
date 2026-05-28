@@ -832,7 +832,6 @@ fn tools_module_is_split_into_handler_files() {
         "skills/parser.rs",
         "skills/prompt.rs",
         "skills/validator.rs",
-        "sub_agent_sessions.rs",
         "memory/artifacts.rs",
         "memory/microcompact.rs",
         "memory/mod.rs",
@@ -872,6 +871,22 @@ fn tools_module_is_split_into_handler_files() {
         (
             "runtime.rs",
             "runtime.rs should be split into src/runtime/ modules",
+        ),
+        (
+            "background_sessions.rs",
+            "background sessions should live under src/runtime/ like Python runtime/background_sessions.py",
+        ),
+        (
+            "processes.rs",
+            "captured process helpers should live under src/runtime/ like Python runtime/processes.py",
+        ),
+        (
+            "sub_agent_sessions.rs",
+            "sub-agent session registry should live under src/runtime/ like Python runtime/sub_agent_sessions.py",
+        ),
+        (
+            "sub_task_manager.rs",
+            "sub-task manager should live under src/runtime/ like Python runtime/sub_task_manager.py",
         ),
         (
             "runtime/backends.rs",

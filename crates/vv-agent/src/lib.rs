@@ -5,28 +5,20 @@
 //! using a stable library API while deeper runtime parity is filled in module by
 //! module.
 
-pub mod background_sessions;
 pub mod cli;
 pub mod config;
 pub mod constants;
 pub mod integrations;
 pub mod llm;
 pub mod memory;
-pub mod processes;
 pub mod prompt;
 pub mod runtime;
 pub mod sdk;
 pub mod skills;
-pub mod sub_agent_sessions;
-pub mod sub_task_manager;
 pub mod tools;
 pub mod types;
 pub mod workspace;
 
-pub use background_sessions::{
-    background_session_manager, BackgroundSessionAdoptOptions, BackgroundSessionListener,
-    BackgroundSessionManager, BackgroundSessionStartOptions, BackgroundSessionSubscription,
-};
 pub use config::{
     apply_resolved_model_limits, build_openai_llm_from_local_settings,
     build_vv_llm_from_local_settings, build_vv_llm_settings, decode_api_key,
@@ -46,6 +38,10 @@ pub use runtime::backends::{
     run_checkpointed_cycle, CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher,
     InlineBackend, RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
 };
+pub use runtime::background_sessions::{
+    background_session_manager, BackgroundSessionAdoptOptions, BackgroundSessionListener,
+    BackgroundSessionManager, BackgroundSessionStartOptions, BackgroundSessionSubscription,
+};
 pub use runtime::shell::{
     build_shell_invocation, prepare_shell_execution, resolve_shell_invocation,
     PreparedShellCommand, ShellInvocation,
@@ -53,6 +49,15 @@ pub use runtime::shell::{
 pub use runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 pub use runtime::stores::redis::RedisStateStore;
 pub use runtime::stores::sqlite::SqliteStateStore;
+pub use runtime::sub_agent_sessions::{
+    _register_sub_agent_session, _unregister_sub_agent_session, continue_sub_agent_session,
+    get_sub_agent_session, register_sub_agent_session, steer_sub_agent_session,
+    sub_agent_session_registry, subscribe_sub_agent_session, unregister_sub_agent_session,
+    SubAgentSession, SubAgentSessionListener, SubAgentSessionRegistry, SubAgentSessionUnsubscribe,
+};
+pub use runtime::sub_task_manager::{
+    ManagedSubTask, ManagedSubTaskSnapshot, SubTaskManager, SubTaskSessionAttachment,
+};
 pub use runtime::{
     AfterLLMEvent, AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BaseRuntimeHook,
     BeforeCycleMessageProvider, BeforeLLMEvent, BeforeLLMPatch, BeforeLlmEvent, BeforeLlmPatch,
@@ -76,15 +81,6 @@ pub use sdk::{
     AgentResourceLoader, AgentRun, AgentSDKClient, AgentSDKOptions, AgentSession,
     AgentSessionRunRequest, AgentSessionState, LlmBuilder, SdkLlmClient, SessionCancellationHandle,
     SessionEventHandler, SessionListenerId, SessionSteeringHandle, ToolRegistryFactory,
-};
-pub use sub_agent_sessions::{
-    _register_sub_agent_session, _unregister_sub_agent_session, continue_sub_agent_session,
-    get_sub_agent_session, register_sub_agent_session, steer_sub_agent_session,
-    sub_agent_session_registry, subscribe_sub_agent_session, unregister_sub_agent_session,
-    SubAgentSession, SubAgentSessionListener, SubAgentSessionRegistry, SubAgentSessionUnsubscribe,
-};
-pub use sub_task_manager::{
-    ManagedSubTask, ManagedSubTaskSnapshot, SubTaskManager, SubTaskSessionAttachment,
 };
 pub use tools::{
     build_default_registry, dispatch_tool_call, ToolContext, ToolHandler, ToolNotFoundError,

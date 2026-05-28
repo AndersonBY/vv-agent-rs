@@ -4,10 +4,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use vv_agent::background_sessions::{
+use vv_agent::runtime::background_sessions::{
     background_session_manager, BackgroundSessionAdoptOptions, BackgroundSessionStartOptions,
 };
-use vv_agent::processes::{read_captured_output, start_captured_process};
+use vv_agent::runtime::processes::{read_captured_output, start_captured_process};
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
 #[test]

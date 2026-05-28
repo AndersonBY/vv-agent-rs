@@ -11,7 +11,6 @@ vv-agent-rs/
   Cargo.toml
   crates/vv-agent/
     src/
-      background_sessions.rs
       config.rs
       constants/
         mod.rs
@@ -73,9 +72,6 @@ vv-agent-rs/
         parser.rs
         prompt.rs
         validator.rs
-      sub_agent_sessions.rs
-      sub_task_manager.rs
-      processes.rs
       tools/
         base.rs
         builtins.rs

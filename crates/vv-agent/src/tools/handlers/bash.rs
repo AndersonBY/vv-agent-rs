@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::background_sessions::background_session_manager;
-use crate::processes::{
+use crate::runtime::background_sessions::background_session_manager;
+use crate::runtime::processes::{
     read_captured_output, remove_captured_output, start_captured_process_with_env, wait_for_child,
 };
 use crate::runtime::shell::{normalize_windows_shell_priority, prepare_shell_execution};

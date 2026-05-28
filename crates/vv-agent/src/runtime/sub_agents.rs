@@ -15,11 +15,11 @@ use crate::prompt::{
     build_raw_system_prompt_sections, build_system_prompt_bundle_with_options,
     BuildSystemPromptOptions,
 };
-use crate::sub_agent_sessions::{
+use crate::runtime::sub_agent_sessions::{
     register_sub_agent_session, unregister_sub_agent_session, SubAgentSession,
     SubAgentSessionListener, SubAgentSessionUnsubscribe,
 };
-use crate::sub_task_manager::{SubTaskManager, SubTaskSessionAttachment};
+use crate::runtime::sub_task_manager::{SubTaskManager, SubTaskSessionAttachment};
 use crate::tools::{SubTaskRunner, ToolRegistry};
 use crate::types::{
     AgentResult, AgentStatus, AgentTask, Metadata, NoToolPolicy, SubAgentConfig, SubTaskOutcome,
