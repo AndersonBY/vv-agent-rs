@@ -572,3 +572,33 @@ fn bash_tool_rejects_exec_dir_outside_workspace_by_default() {
     assert_eq!(result.status, ToolResultStatus::Error);
     assert_eq!(result.error_code.as_deref(), Some("path_escapes_workspace"));
 }
+
+#[test]
+fn bash_tool_allows_absolute_exec_dir_when_enabled_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let outside = tempfile::tempdir().expect("outside");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context
+        .metadata
+        .insert("allow_outside_workspace_paths".to_string(), json!(true));
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "bash_absolute_exec_dir",
+                "bash",
+                BTreeMap::from([
+                    ("command".to_string(), json!("printf outside")),
+                    ("exec_dir".to_string(), json!(outside.path())),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("bash tool");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: Value = serde_json::from_str(&result.content).expect("bash payload");
+    assert_eq!(payload["cwd"], json!(outside.path().to_string_lossy()));
+    assert_eq!(payload["output"], json!("outside"));
+}

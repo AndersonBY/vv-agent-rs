@@ -3,7 +3,8 @@ use std::path::Path;
 
 use vv_agent::{
     build_openai_llm_from_local_settings, build_vv_llm_from_local_settings, build_vv_llm_settings,
-    decode_api_key, load_llm_settings_from_file, resolve_model_endpoint,
+    decode_api_key, load_llm_settings_from_file, load_memory_summary_defaults_from_file,
+    resolve_model_endpoint,
 };
 
 #[test]
@@ -490,6 +491,33 @@ settings: SettingsDict = {{
 
     assert_eq!(resolved.endpoint().unwrap().endpoint_id, "moonshot-default");
     assert_eq!(resolved.model_id, "kimi-k2-thinking");
+}
+
+#[test]
+fn settings_loader_accepts_current_python_project_example_like_python() {
+    let example =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../v-agent/local_settings.example.py");
+
+    let settings = load_llm_settings_from_file(&example).expect("load project example settings");
+    let resolved =
+        resolve_model_endpoint(&settings, "moonshot", "kimi-k2.6").expect("resolve project model");
+
+    assert_eq!(resolved.backend, "moonshot");
+    assert_eq!(resolved.model_id, "kimi-k2.6");
+    assert!(resolved
+        .endpoint()
+        .unwrap()
+        .api_base
+        .starts_with("https://"));
+    assert!(resolved
+        .endpoint()
+        .unwrap()
+        .api_key
+        .starts_with("REPLACE_WITH"));
+
+    let summary_defaults = load_memory_summary_defaults_from_file(&example);
+    assert_eq!(summary_defaults.backend.as_deref(), Some("moonshot"));
+    assert_eq!(summary_defaults.model.as_deref(), Some("kimi-k2.6"));
 }
 
 fn rust_source_files(root: &Path) -> Vec<std::path::PathBuf> {
