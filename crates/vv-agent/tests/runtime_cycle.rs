@@ -628,6 +628,80 @@ fn runtime_adds_generated_prompt_sections_to_sub_agent_metadata() {
 }
 
 #[test]
+fn runtime_seeds_skill_state_from_task_metadata_like_python() {
+    let mut finish_args = BTreeMap::new();
+    finish_args.insert("message".to_string(), json!("done"));
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+        "finish",
+        vec![ToolCall::new(
+            "finish_skill_state",
+            "task_finish",
+            finish_args,
+        )],
+    )]);
+    let runtime = AgentRuntime::new(llm);
+    let mut task = AgentTask::new("skill_state", "demo", "system", "finish");
+    task.metadata.insert(
+        "available_skills".to_string(),
+        json!([{"name": "demo", "description": "Demo skill"}]),
+    );
+    task.metadata
+        .insert("active_skills".to_string(), json!(["already-active"]));
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(
+        result.shared_state["available_skills"],
+        json!([{"name": "demo", "description": "Demo skill"}])
+    );
+    assert_eq!(
+        result.shared_state["active_skills"],
+        json!(["already-active"])
+    );
+}
+
+#[test]
+fn runtime_keeps_initial_skill_state_over_task_metadata_like_python() {
+    let mut finish_args = BTreeMap::new();
+    finish_args.insert("message".to_string(), json!("done"));
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+        "finish",
+        vec![ToolCall::new(
+            "finish_initial_skill_state",
+            "task_finish",
+            finish_args,
+        )],
+    )]);
+    let runtime = AgentRuntime::new(llm);
+    let mut task = AgentTask::new("initial_skill_state", "demo", "system", "finish");
+    task.metadata.insert(
+        "available_skills".to_string(),
+        json!([{"name": "metadata-skill", "description": "Metadata skill"}]),
+    );
+    task.metadata
+        .insert("active_skills".to_string(), json!(["metadata-active"]));
+    task.initial_shared_state.insert(
+        "available_skills".to_string(),
+        json!([{"name": "state-skill", "description": "State skill"}]),
+    );
+    task.initial_shared_state
+        .insert("active_skills".to_string(), json!(["state-active"]));
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(
+        result.shared_state["available_skills"],
+        json!([{"name": "state-skill", "description": "State skill"}])
+    );
+    assert_eq!(
+        result.shared_state["active_skills"],
+        json!(["state-active"])
+    );
+}
+
+#[test]
 fn runtime_can_poll_async_configured_sub_agent_status() {
     let mut sub_task_args = BTreeMap::new();
     sub_task_args.insert("agent_id".to_string(), json!("researcher"));
@@ -1677,6 +1751,49 @@ fn runtime_respects_configured_microcompact_tool_allowlist_like_python() {
             .iter()
             .any(|message| message.content.contains("tool output")),
         "original bash output should remain available: {third_request:#?}"
+    );
+}
+
+#[test]
+fn runtime_parses_string_float_microcompact_ratio_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let large_tool_payload = "tool output ".repeat(300);
+    let llm = MicrocompactInspectingLlmClient::new(large_tool_payload);
+    let inspector = llm.clone();
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.default_workspace = Some(workspace.path().to_path_buf());
+    runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
+        workspace.path(),
+    ));
+    let mut task = AgentTask::new(
+        "microcompact_string_ratio_task",
+        "demo",
+        "system",
+        "inspect memory",
+    );
+    task.memory_compact_threshold = 10_000;
+    task.metadata
+        .insert("model_context_window".to_string(), json!(20_000));
+    task.metadata
+        .insert("reserved_output_tokens".to_string(), json!(0));
+    task.metadata
+        .insert("autocompact_buffer_tokens".to_string(), json!(0));
+    task.metadata
+        .insert("microcompact_trigger_ratio".to_string(), json!("0.01"));
+    task.metadata
+        .insert("microcompact_keep_recent_cycles".to_string(), json!(0));
+    task.metadata
+        .insert("microcompact_min_result_length".to_string(), json!(200));
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let third_request = inspector.third_request_messages();
+    assert!(
+        third_request
+            .iter()
+            .any(|message| message.content == CLEARED_MARKER),
+        "string float microcompact ratio should trigger the same compaction: {third_request:#?}"
     );
 }
 

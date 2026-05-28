@@ -617,7 +617,7 @@ fn parse_legacy_tool_result_status(value: &str) -> Result<ToolResultStatus, Stri
     match value {
         "success" => Ok(ToolResultStatus::Success),
         "error" => Ok(ToolResultStatus::Error),
-        other => Err(format!("unknown legacy tool result status: {other}")),
+        _ => Ok(ToolResultStatus::Success),
     }
 }
 

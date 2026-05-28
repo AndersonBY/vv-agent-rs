@@ -154,6 +154,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         shared_state
             .entry("todo_list".to_string())
             .or_insert_with(|| Value::Array(Vec::new()));
+        seed_skill_state_from_task_metadata(&mut shared_state, &task.metadata);
         let workspace_path = self
             .default_workspace
             .clone()
@@ -914,6 +915,32 @@ fn controls_cancelled(controls: &RuntimeRunControls) -> bool {
         .is_some_and(CancellationToken::is_cancelled)
 }
 
+fn seed_skill_state_from_task_metadata(
+    shared_state: &mut BTreeMap<String, Value>,
+    metadata: &BTreeMap<String, Value>,
+) {
+    if !shared_state.contains_key("available_skills") {
+        if let Some(value) = metadata
+            .get("available_skills")
+            .filter(|value| !value.is_null())
+        {
+            shared_state.insert("available_skills".to_string(), value.clone());
+        }
+    }
+    if !shared_state.contains_key("active_skills") {
+        if let Some(value) = metadata
+            .get("active_skills")
+            .filter(|value| !value.is_null())
+        {
+            let value = value
+                .as_array()
+                .map(|items| Value::Array(items.clone()))
+                .unwrap_or_else(|| Value::Array(Vec::new()));
+            shared_state.insert("active_skills".to_string(), value);
+        }
+    }
+}
+
 fn cancelled_agent_result(
     messages: Vec<crate::types::Message>,
     cycles: Vec<crate::types::CycleRecord>,
@@ -1112,11 +1139,13 @@ where
             "tool_result_artifact_dir",
             ".memory/tool_results",
         ),
-        microcompact_trigger_ratio: task
-            .metadata
-            .get("microcompact_trigger_ratio")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.75),
+        microcompact_trigger_ratio: read_f64_metadata(
+            &task.metadata,
+            "microcompact_trigger_ratio",
+            0.75,
+            0.0,
+            Some(1.0),
+        ),
         microcompact_keep_recent_cycles: read_usize_metadata(
             &task.metadata,
             "microcompact_keep_recent_cycles",
@@ -1193,7 +1222,7 @@ where
             growth_ratio: task
                 .metadata
                 .get("session_memory_growth_ratio")
-                .and_then(Value::as_f64)
+                .and_then(parse_f64_metadata_value)
                 .unwrap_or(0.5)
                 .max(0.0),
             storage_dir: metadata_path(
@@ -1267,6 +1296,32 @@ fn read_u64_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: u64
 
 fn read_usize_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: usize) -> usize {
     read_u64_metadata(metadata, key, default as u64) as usize
+}
+
+fn read_f64_metadata(
+    metadata: &BTreeMap<String, Value>,
+    key: &str,
+    default: f64,
+    minimum: f64,
+    maximum: Option<f64>,
+) -> f64 {
+    let mut value = metadata
+        .get(key)
+        .and_then(parse_f64_metadata_value)
+        .unwrap_or(default)
+        .max(minimum);
+    if let Some(maximum) = maximum {
+        value = value.min(maximum);
+    }
+    value
+}
+
+fn parse_f64_metadata_value(value: &Value) -> Option<f64> {
+    match value {
+        Value::Number(number) => number.as_f64(),
+        Value::String(text) => text.trim().parse::<f64>().ok(),
+        _ => None,
+    }
 }
 
 fn read_bool_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: bool) -> bool {

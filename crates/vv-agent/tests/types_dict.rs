@@ -31,6 +31,21 @@ fn tool_execution_result_dict_matches_python_status_shape() {
 }
 
 #[test]
+fn tool_execution_result_from_legacy_unknown_status_defaults_to_success_like_python() {
+    let payload = json!({
+        "tool_call_id": "legacy-call",
+        "status": "done",
+        "content": "legacy ok"
+    });
+
+    let result = ToolExecutionResult::from_dict(&payload).expect("legacy result from dict");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.to_dict()["status"], json!("success"));
+    assert_eq!(result.to_dict()["status_code"], json!("SUCCESS"));
+}
+
+#[test]
 fn agent_result_dict_round_trips_python_celery_payload_shape() {
     let mut tool_result = ToolExecutionResult::success("call-1", "tool ok");
     tool_result
