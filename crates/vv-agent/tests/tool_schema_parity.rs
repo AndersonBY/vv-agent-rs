@@ -536,6 +536,116 @@ fn builtin_tool_properties_and_enums_match_python_reference_schema() {
 }
 
 #[test]
+fn builtin_tool_property_types_match_python_reference_schema() {
+    let registry = build_default_registry();
+
+    for (tool_name, property_name, expected_type) in [
+        ("activate_skill", "skill_name", "string"),
+        ("activate_skill", "reason", "string"),
+        ("ask_user", "question", "string"),
+        ("ask_user", "options", "array"),
+        ("ask_user", "selection_type", "string"),
+        ("ask_user", "allow_custom_options", "boolean"),
+        ("bash", "command", "string"),
+        ("bash", "exec_dir", "string"),
+        ("bash", "timeout", "integer"),
+        ("bash", "stdin", "string"),
+        ("bash", "auto_confirm", "boolean"),
+        ("bash", "run_in_background", "boolean"),
+        ("check_background_command", "session_id", "string"),
+        ("compress_memory", "core_information", "string"),
+        ("create_sub_task", "agent_id", "string"),
+        ("create_sub_task", "task_description", "string"),
+        ("create_sub_task", "output_requirements", "string"),
+        ("create_sub_task", "tasks", "array"),
+        ("create_sub_task", "include_main_summary", "boolean"),
+        ("create_sub_task", "exclude_files_pattern", "string"),
+        ("create_sub_task", "wait_for_completion", "boolean"),
+        ("file_info", "path", "string"),
+        ("file_str_replace", "path", "string"),
+        ("file_str_replace", "old_str", "string"),
+        ("file_str_replace", "new_str", "string"),
+        ("file_str_replace", "replace_all", "boolean"),
+        ("file_str_replace", "max_replacements", "integer"),
+        ("list_files", "path", "string"),
+        ("list_files", "glob", "string"),
+        ("list_files", "include_hidden", "boolean"),
+        ("list_files", "include_ignored", "boolean"),
+        ("list_files", "max_results", "integer"),
+        ("list_files", "scan_limit", "integer"),
+        ("read_file", "path", "string"),
+        ("read_file", "start_line", "integer"),
+        ("read_file", "end_line", "integer"),
+        ("read_file", "show_line_numbers", "boolean"),
+        ("read_image", "path", "string"),
+        ("sub_task_status", "task_ids", "array"),
+        ("sub_task_status", "message", "string"),
+        ("sub_task_status", "detail_level", "string"),
+        ("sub_task_status", "workspace_file_limit", "integer"),
+        ("sub_task_status", "wait_for_response", "boolean"),
+        ("task_finish", "message", "string"),
+        ("task_finish", "exposed_files", "array"),
+        ("todo_write", "todos", "array"),
+        ("workspace_grep", "pattern", "string"),
+        ("workspace_grep", "path", "string"),
+        ("workspace_grep", "glob", "string"),
+        ("workspace_grep", "include_hidden", "boolean"),
+        ("workspace_grep", "include_ignored", "boolean"),
+        ("workspace_grep", "output_mode", "string"),
+        ("workspace_grep", "b", "integer"),
+        ("workspace_grep", "a", "integer"),
+        ("workspace_grep", "c", "integer"),
+        ("workspace_grep", "n", "boolean"),
+        ("workspace_grep", "i", "boolean"),
+        ("workspace_grep", "type", "string"),
+        ("workspace_grep", "head_limit", "integer"),
+        ("workspace_grep", "multiline", "boolean"),
+        ("workspace_grep", "case_sensitive", "boolean"),
+        ("workspace_grep", "max_results", "integer"),
+        ("write_file", "path", "string"),
+        ("write_file", "content", "string"),
+        ("write_file", "append", "boolean"),
+        ("write_file", "leading_newline", "boolean"),
+        ("write_file", "trailing_newline", "boolean"),
+    ] {
+        assert_eq!(
+            schema_type(&registry, tool_name, &[property_name]),
+            expected_type,
+            "{tool_name}.{property_name} type should match Python v-agent schema"
+        );
+    }
+
+    for (tool_name, property_path, expected_type) in [
+        ("ask_user", vec!["options", "items"], "string"),
+        ("create_sub_task", vec!["tasks", "items"], "object"),
+        (
+            "create_sub_task",
+            vec!["tasks", "items", "task_description"],
+            "string",
+        ),
+        (
+            "create_sub_task",
+            vec!["tasks", "items", "output_requirements"],
+            "string",
+        ),
+        ("sub_task_status", vec!["task_ids", "items"], "string"),
+        ("task_finish", vec!["exposed_files", "items"], "string"),
+        ("todo_write", vec!["todos", "items"], "object"),
+        ("todo_write", vec!["todos", "items", "id"], "string"),
+        ("todo_write", vec!["todos", "items", "title"], "string"),
+        ("todo_write", vec!["todos", "items", "status"], "string"),
+        ("todo_write", vec!["todos", "items", "priority"], "string"),
+    ] {
+        assert_eq!(
+            schema_type(&registry, tool_name, &property_path),
+            expected_type,
+            "{tool_name}.{} type should match Python v-agent schema",
+            property_path.join(".")
+        );
+    }
+}
+
+#[test]
 fn control_tool_parameter_descriptions_steer_high_quality_agent_decisions() {
     let registry = build_default_registry();
 
@@ -930,6 +1040,22 @@ fn enum_values(
         .iter()
         .map(|value| value.as_str().expect("enum string").to_string())
         .collect()
+}
+
+fn schema_type(
+    registry: &vv_agent::ToolRegistry,
+    tool_name: &str,
+    property_path: &[&str],
+) -> String {
+    let schema = registry.get_schema(tool_name).expect("schema");
+    let mut cursor = &schema["function"]["parameters"]["properties"];
+    for (index, segment) in property_path.iter().enumerate() {
+        if index > 0 && *segment != "items" {
+            cursor = &cursor["properties"];
+        }
+        cursor = &cursor[*segment];
+    }
+    cursor["type"].as_str().unwrap_or_default().to_string()
 }
 
 fn sorted(values: Vec<&str>) -> Vec<&str> {
