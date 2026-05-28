@@ -236,6 +236,39 @@ fn todo_write_generates_python_style_ids_timestamps_and_preserves_created_at() {
 }
 
 #[test]
+fn todo_write_coerces_scalar_item_fields_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "todo_scalar_fields",
+                "todo_write",
+                BTreeMap::from([(
+                    "todos".to_string(),
+                    json!([{
+                        "id": false,
+                        "title": true,
+                        "status": "pending",
+                        "priority": "medium"
+                    }]),
+                )]),
+            ),
+            &mut context,
+        )
+        .expect("todo_write");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: serde_json::Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["todos"][0]["id"], "False");
+    assert_eq!(payload["todos"][0]["title"], "True");
+    assert_eq!(context.shared_state["todo_list"][0]["id"], "False");
+    assert_eq!(context.shared_state["todo_list"][0]["title"], "True");
+}
+
+#[test]
 fn task_finish_blocks_when_todos_are_incomplete() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
