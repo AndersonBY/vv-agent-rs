@@ -765,12 +765,14 @@ fn normalize_session_prompt(prompt: String, label: &str) -> Result<String, Strin
 
 fn absolutize_workspace(path: PathBuf) -> PathBuf {
     let path = expand_user_path(path);
-    if path.is_absolute() {
-        return path;
-    }
-    std::env::current_dir()
-        .map(|current_dir| current_dir.join(&path))
-        .unwrap_or(path)
+    let path = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map(|current_dir| current_dir.join(&path))
+            .unwrap_or(path)
+    };
+    path.canonicalize().unwrap_or(path)
 }
 
 fn expand_user_path(path: PathBuf) -> PathBuf {

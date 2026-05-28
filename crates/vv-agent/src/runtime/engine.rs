@@ -1331,6 +1331,11 @@ fn read_bool_metadata(metadata: &BTreeMap<String, Value>, key: &str, default: bo
 fn read_optional_bool_metadata(metadata: &BTreeMap<String, Value>, key: &str) -> Option<bool> {
     metadata.get(key).and_then(|value| match value {
         Value::Bool(flag) => Some(*flag),
+        Value::Number(number) => match number.as_i64() {
+            Some(0) => Some(false),
+            Some(1) => Some(true),
+            _ => None,
+        },
         Value::String(text) => match text.trim().to_ascii_lowercase().as_str() {
             "true" | "1" | "yes" | "y" | "on" => Some(true),
             "false" | "0" | "no" | "n" | "off" => Some(false),

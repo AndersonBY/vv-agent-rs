@@ -407,7 +407,10 @@ The current Rust implementation includes:
   Python-style TODO validation, generated ids, status/priority defaults,
   timestamp preservation, and scalar `task_finish.message` /
   `ask_user.question` coercion so imperfect model arguments keep their meaning
-  instead of falling back to defaults; core workspace tools (`list_files`, `file_info`,
+  instead of falling back to defaults; control-tool and workspace/grep/bash
+  flags that map to Python `bool(...)` preserve Python truthiness, while
+  sub-agent status flags keep the semantic bool parser used by the Python
+  reference; core workspace tools (`list_files`, `file_info`,
   `read_file`, `write_file`, `file_str_replace`, `workspace_grep`,
   `read_image`, with image-message injection limited to `native_multimodal`
   tasks, Python-style `read_file` numeric-string line range parsing,
@@ -668,7 +671,10 @@ The current Rust implementation includes:
   discovery for `agents.json`, prompt templates, and skill directories.
   `agents.json` now carries full agent fields including sub-agent definitions,
   tool flags, shell defaults, metadata, and resource paths. Resource paths
-  expand `~` like Python, and `AgentResourceLoader::discover_force_reload`
+  expand `~` like Python, and resource roots, root skill directories, hook file
+  paths, and SDK session workspace overrides are canonicalized like Python
+  `Path.resolve()` when the path exists. Agent profile bool fields preserve
+  Python `bool(...)` truthiness. `AgentResourceLoader::discover_force_reload`
   refreshes cached resources after on-disk changes. SDK clients can also inject
   a custom `AgentResourceLoader` to discover agents and prompt templates from
   non-default roots. Python hook files under `.vv-agent/hooks` are discovered

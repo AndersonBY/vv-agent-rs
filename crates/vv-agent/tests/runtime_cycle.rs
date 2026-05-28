@@ -351,6 +351,46 @@ fn runtime_tool_context_uses_execution_context_metadata_like_python() {
 }
 
 #[test]
+fn runtime_allows_outside_workspace_paths_from_integer_metadata_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let outside = tempfile::tempdir().expect("outside");
+    let outside_file = outside.path().join("outside.txt");
+    std::fs::write(&outside_file, "outside task metadata").expect("outside file");
+
+    let read_args = BTreeMap::from([("path".to_string(), json!(outside_file))]);
+    let finish_args = BTreeMap::from([("message".to_string(), json!("done"))]);
+    let llm = ScriptedLlmClient::new(vec![
+        LLMResponse::with_tool_calls(
+            "read outside file",
+            vec![ToolCall::new("read_outside", "read_file", read_args)],
+        ),
+        LLMResponse::with_tool_calls(
+            "finish",
+            vec![ToolCall::new("finish", "task_finish", finish_args)],
+        ),
+    ]);
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.default_workspace = Some(workspace.path().to_path_buf());
+    runtime.workspace_backend = std::sync::Arc::new(
+        vv_agent::workspace::LocalWorkspaceBackend::new(workspace.path()),
+    );
+    let mut task = AgentTask::new("task_metadata_outside", "demo", "system", "read");
+    task.metadata
+        .insert("allow_outside_workspace_paths".to_string(), json!(1));
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(
+        result.cycles[0].tool_results[0].status,
+        vv_agent::ToolResultStatus::Success
+    );
+    assert!(result.cycles[0].tool_results[0]
+        .content
+        .contains("outside task metadata"));
+}
+
+#[test]
 fn runtime_executes_configured_sub_agent_with_real_runner() {
     let mut sub_task_args = BTreeMap::new();
     sub_task_args.insert("agent_id".to_string(), json!("researcher"));
@@ -1445,6 +1485,55 @@ fn runtime_loads_session_memory_by_default_like_python() {
             .is_some_and(|message| message.content.contains("<Session Memory>")
                 && message.content.contains("default session memory is loaded")),
         "runtime did not load session memory by default: {first_request:#?}"
+    );
+}
+
+#[test]
+fn runtime_disables_session_memory_with_integer_zero_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let storage_dir = workspace.path().join(".memory/session/int_disabled_task");
+    fs::create_dir_all(&storage_dir).expect("session memory dir");
+    fs::write(
+        storage_dir.join("session_memory.json"),
+        json!({
+            "entries": [{
+                "category": "key_fact",
+                "content": "integer zero should disable session memory",
+                "source_cycle": 1,
+                "importance": 9
+            }],
+            "last_extracted_message_index": -1,
+            "tokens_at_last_extraction": 0,
+            "initialized": true
+        })
+        .to_string(),
+    )
+    .expect("session memory file");
+    let llm = DefaultSessionMemoryInspectingLlmClient::default();
+    let inspector = llm.clone();
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.default_workspace = Some(workspace.path().to_path_buf());
+    runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
+        workspace.path(),
+    ));
+    let mut task = AgentTask::new("int_disabled_task", "demo", "system", "inspect memory");
+    task.max_cycles = 1;
+    task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
+    task.metadata
+        .insert("session_memory_enabled".to_string(), json!(0));
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let first_request = inspector.first_request_messages();
+    assert!(
+        first_request
+            .iter()
+            .all(|message| !message.content.contains("<Session Memory>")
+                && !message
+                    .content
+                    .contains("integer zero should disable session memory")),
+        "integer 0 should disable session memory like Python: {first_request:#?}"
     );
 }
 

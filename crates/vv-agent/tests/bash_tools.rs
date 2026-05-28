@@ -62,6 +62,32 @@ fn bash_tool_coerces_scalar_exec_dir_and_stdin_like_python() {
 }
 
 #[test]
+fn bash_tool_uses_python_truthiness_for_background_flag() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "bash_truthy_background",
+                "bash",
+                BTreeMap::from([
+                    ("command".to_string(), json!("printf background")),
+                    ("run_in_background".to_string(), json!("false")),
+                    ("timeout".to_string(), json!(5)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("bash tool");
+
+    assert_eq!(result.status, ToolResultStatus::Running);
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["status"], "running");
+}
+
+#[test]
 fn bash_tool_blocks_dangerous_command() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

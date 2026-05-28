@@ -7,9 +7,9 @@ use serde_json::{json, Value};
 use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::path_escapes_workspace_error;
 use crate::tools::common::{
-    coerce_python_text_arg, collect_ignored_roots, command_output_with_executable_busy_retry,
-    is_hidden_path, is_ignored_root, parse_integer_arg, replace_n, tool_error,
-    workspace_relative_path_or_absolute,
+    coerce_python_bool_arg, coerce_python_text_arg, collect_ignored_roots,
+    command_output_with_executable_busy_retry, is_hidden_path, is_ignored_root, parse_integer_arg,
+    replace_n, tool_error, workspace_relative_path_or_absolute,
 };
 use crate::types::{ToolArguments, ToolExecutionResult};
 use crate::workspace::{glob_match, normalized_glob_pattern, LocalWorkspaceBackend};
@@ -194,14 +194,8 @@ pub(crate) fn list_files_tool() -> ToolSpec {
                 },
                 None => 50_000,
             };
-            let include_ignored = arguments
-                .get("include_ignored")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let include_hidden = arguments
-                .get("include_hidden")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+            let include_ignored = coerce_python_bool_arg(arguments.get("include_ignored"), false);
+            let include_hidden = coerce_python_bool_arg(arguments.get("include_hidden"), false);
             let resolved_path = match context.resolve_workspace_path(&path) {
                 Ok(path) => path,
                 Err(error) => return path_escapes_workspace_error(error),
@@ -409,10 +403,8 @@ pub(crate) fn read_file_tool() -> ToolSpec {
                 },
                 None => None,
             };
-            let show_line_numbers = arguments
-                .get("show_line_numbers")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+            let show_line_numbers =
+                coerce_python_bool_arg(arguments.get("show_line_numbers"), false);
             match backend.read_text(&path) {
                 Ok(text) => {
                     let lines = text.lines().collect::<Vec<_>>();
@@ -512,20 +504,11 @@ pub(crate) fn write_file_tool() -> ToolSpec {
             }
             let backend = context.effective_workspace_backend();
             let content = coerce_python_text_arg(arguments.get("content"), "");
-            let append = arguments
-                .get("append")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let leading_newline = append
-                && arguments
-                    .get("leading_newline")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-            let trailing_newline = append
-                && arguments
-                    .get("trailing_newline")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
+            let append = coerce_python_bool_arg(arguments.get("append"), false);
+            let leading_newline =
+                append && coerce_python_bool_arg(arguments.get("leading_newline"), false);
+            let trailing_newline =
+                append && coerce_python_bool_arg(arguments.get("trailing_newline"), false);
             let write_content = format!(
                 "{}{}{}",
                 if leading_newline { "\n" } else { "" },
@@ -584,10 +567,7 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
                 return tool_error("`old_str` cannot be empty");
             }
             let new_str = coerce_python_text_arg(arguments.get("new_str"), "");
-            let replace_all = arguments
-                .get("replace_all")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+            let replace_all = coerce_python_bool_arg(arguments.get("replace_all"), false);
             let max_replacements = match arguments.get("max_replacements") {
                 Some(value) => match parse_integer_arg(value) {
                     Ok(limit) => limit.max(1) as usize,

@@ -104,6 +104,18 @@ pub(crate) fn coerce_bool(value: Option<&Value>, default: bool) -> bool {
     }
 }
 
+pub(crate) fn coerce_python_bool_arg(value: Option<&Value>, default: bool) -> bool {
+    match value {
+        Some(Value::Null) => false,
+        Some(Value::Bool(value)) => *value,
+        Some(Value::Number(number)) => number.as_f64().is_some_and(|value| value != 0.0),
+        Some(Value::String(text)) => !text.is_empty(),
+        Some(Value::Array(items)) => !items.is_empty(),
+        Some(Value::Object(object)) => !object.is_empty(),
+        None => default,
+    }
+}
+
 pub(crate) fn parse_integer_arg(value: &Value) -> Result<i64, ()> {
     match value {
         Value::Number(number) => number.as_i64().ok_or(()),

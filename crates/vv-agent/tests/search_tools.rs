@@ -393,6 +393,47 @@ fn workspace_grep_respects_hidden_and_ignored_defaults() {
 }
 
 #[test]
+fn workspace_grep_uses_python_truthiness_for_hidden_and_line_flags() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join(".hidden.txt"), "Agent hidden").expect("hidden");
+
+    let hidden = registry
+        .execute(
+            &ToolCall::new(
+                "grep_truthy_hidden",
+                "workspace_grep",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("Agent")),
+                    ("include_hidden".to_string(), json!("false")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep hidden");
+
+    assert_eq!(hidden.metadata["summary"]["total_matches"], 1);
+
+    let no_line_numbers = registry
+        .execute(
+            &ToolCall::new(
+                "grep_falsey_line_numbers",
+                "workspace_grep",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("Agent")),
+                    ("path".to_string(), json!(".hidden.txt")),
+                    ("n".to_string(), json!("")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep line numbers");
+
+    assert!(no_line_numbers.metadata["matches"][0].get("line").is_none());
+}
+
+#[test]
 fn workspace_grep_file_path_target_can_read_hidden_file_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

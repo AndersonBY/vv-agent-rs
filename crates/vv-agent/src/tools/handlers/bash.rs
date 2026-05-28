@@ -11,8 +11,9 @@ use crate::processes::{
 use crate::runtime::shell::{normalize_windows_shell_priority, prepare_shell_execution};
 use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{
-    coerce_python_text_arg, parse_integer_arg, path_escapes_workspace_error, tool_error_with_code,
-    tool_result, workspace_relative_path_or_absolute,
+    coerce_python_bool_arg, coerce_python_text_arg, parse_integer_arg,
+    path_escapes_workspace_error, tool_error_with_code, tool_result,
+    workspace_relative_path_or_absolute,
 };
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
@@ -81,11 +82,11 @@ pub(crate) fn bash_tool() -> ToolSpec {
                 .then(|| coerce_python_text_arg(arguments.get("stdin"), ""));
             let auto_confirm = arguments
                 .get("auto_confirm")
-                .and_then(Value::as_bool)
+                .map(|value| coerce_python_bool_arg(Some(value), false))
                 .unwrap_or(false);
             let run_in_background = arguments
                 .get("run_in_background")
-                .and_then(Value::as_bool)
+                .map(|value| coerce_python_bool_arg(Some(value), false))
                 .unwrap_or(false);
             let (shell, windows_shell_priority, bash_env) =
                 match read_shell_defaults(&context.metadata) {

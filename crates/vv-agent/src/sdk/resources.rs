@@ -27,10 +27,10 @@ pub struct AgentResourceLoader {
 
 impl AgentResourceLoader {
     pub fn new(workspace: impl Into<PathBuf>) -> Self {
-        let workspace = absolutize_path(expand_user_path(workspace.into()));
+        let workspace = resolve_existing_or_absolute_path(workspace.into());
         Self {
-            project_resource_dir: workspace.join(".vv-agent"),
-            global_resource_dir: absolutize_path(expand_user_path(PathBuf::from("~/.vv-agent"))),
+            project_resource_dir: resolve_existing_or_absolute_path(workspace.join(".vv-agent")),
+            global_resource_dir: resolve_existing_or_absolute_path(PathBuf::from("~/.vv-agent")),
             workspace,
             cached: None,
         }
@@ -42,9 +42,9 @@ impl AgentResourceLoader {
         global_resource_dir: impl Into<PathBuf>,
     ) -> Self {
         Self {
-            workspace: absolutize_path(expand_user_path(workspace.into())),
-            project_resource_dir: absolutize_path(expand_user_path(project_resource_dir.into())),
-            global_resource_dir: absolutize_path(expand_user_path(global_resource_dir.into())),
+            workspace: resolve_existing_or_absolute_path(workspace.into()),
+            project_resource_dir: resolve_existing_or_absolute_path(project_resource_dir.into()),
+            global_resource_dir: resolve_existing_or_absolute_path(global_resource_dir.into()),
             cached: None,
         }
     }
@@ -203,6 +203,7 @@ impl AgentResourceLoader {
         if !skills_dir.is_dir() {
             return;
         }
+        let skills_dir = skills_dir.canonicalize().unwrap_or(skills_dir);
         let path = skills_dir.to_string_lossy().to_string();
         if !discovered.skill_directories.contains(&path) {
             discovered.skill_directories.push(path);
@@ -232,6 +233,7 @@ impl AgentResourceLoader {
         hook_files.sort();
 
         for hook_file in hook_files {
+            let hook_file = hook_file.canonicalize().unwrap_or(hook_file);
             let path = hook_file.to_string_lossy().to_string();
             if !discovered.hook_files.contains(&path) {
                 discovered.hook_files.push(path.clone());
@@ -256,7 +258,18 @@ fn read_string(payload: &serde_json::Map<String, Value>, key: &str) -> Option<St
 }
 
 fn read_bool(payload: &serde_json::Map<String, Value>, key: &str, default: bool) -> bool {
-    payload.get(key).and_then(Value::as_bool).unwrap_or(default)
+    payload.get(key).map(python_truthy).unwrap_or(default)
+}
+
+fn python_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(value) => *value,
+        Value::Number(number) => number.as_i64() != Some(0),
+        Value::String(value) => !value.is_empty(),
+        Value::Array(value) => !value.is_empty(),
+        Value::Object(value) => !value.is_empty(),
+    }
 }
 
 fn read_u32(payload: &serde_json::Map<String, Value>, key: &str, default: u32) -> u32 {
@@ -373,6 +386,11 @@ fn resolve_resource_path(base_dir: &std::path::Path, raw_path: &str) -> String {
     };
     let path = path.canonicalize().unwrap_or(path);
     path.to_string_lossy().to_string()
+}
+
+fn resolve_existing_or_absolute_path(path: PathBuf) -> PathBuf {
+    let path = absolutize_path(expand_user_path(path));
+    path.canonicalize().unwrap_or(path)
 }
 
 fn expand_user_path(path: PathBuf) -> PathBuf {

@@ -671,6 +671,66 @@ fn read_file_accepts_string_line_numbers_like_python() {
 }
 
 #[test]
+fn read_file_uses_python_truthiness_for_show_line_numbers() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("notes.txt"), "alpha\nbeta").expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "read_truthy_show_lines",
+                "read_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("notes.txt")),
+                    ("show_line_numbers".to_string(), json!("false")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("read tool");
+
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["show_line_numbers"], true);
+    assert_eq!(payload["content"], "1: alpha\n2: beta");
+}
+
+#[test]
+fn write_file_uses_python_truthiness_for_append_flags() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("notes.txt"), "alpha").expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "write_truthy_append",
+                "write_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("notes.txt")),
+                    ("content".to_string(), json!("beta")),
+                    ("append".to_string(), json!("false")),
+                    ("leading_newline".to_string(), json!("false")),
+                    ("trailing_newline".to_string(), json!("false")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("write tool");
+
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["append"], true);
+    assert_eq!(payload["leading_newline"], true);
+    assert_eq!(payload["trailing_newline"], true);
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("notes.txt")).expect("notes"),
+        "alpha\nbeta\n"
+    );
+}
+
+#[test]
 fn workspace_backends_honor_python_glob_and_missing_file_semantics() {
     let workspace = tempfile::tempdir().expect("workspace");
     std::fs::create_dir_all(workspace.path().join("src/nested")).expect("dirs");

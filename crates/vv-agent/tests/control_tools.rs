@@ -272,6 +272,61 @@ fn task_finish_blocks_when_todos_are_incomplete() {
 }
 
 #[test]
+fn task_finish_uses_python_truthiness_for_require_all_done() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    registry
+        .execute(
+            &ToolCall::new(
+                "todo_1",
+                "todo_write",
+                BTreeMap::from([(
+                    "todos".to_string(),
+                    json!([{"title": "step1", "status": "pending", "priority": "medium"}]),
+                )]),
+            ),
+            &mut context,
+        )
+        .expect("todo_write");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "finish_truthy",
+                "task_finish",
+                BTreeMap::from([
+                    ("message".to_string(), json!("done")),
+                    ("require_all_todos_completed".to_string(), json!("false")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("task_finish");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("todo_incomplete"));
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "finish_falsey_zero",
+                "task_finish",
+                BTreeMap::from([
+                    ("message".to_string(), json!("done")),
+                    ("require_all_todos_completed".to_string(), json!(0)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("task_finish");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.directive, ToolDirective::Finish);
+}
+
+#[test]
 fn ask_user_returns_python_style_selection_metadata_and_dedupes_options() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
@@ -301,6 +356,30 @@ fn ask_user_returns_python_style_selection_metadata_and_dedupes_options() {
     assert_eq!(payload["allow_custom_options"], true);
     assert_eq!(payload["options"], json!(["A", "B"]));
     assert_eq!(result.metadata["options"], json!(["A", "B"]));
+}
+
+#[test]
+fn ask_user_uses_python_truthiness_for_allow_custom_options() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "ask_truthy",
+                "ask_user",
+                BTreeMap::from([
+                    ("question".to_string(), json!("Choose")),
+                    ("allow_custom_options".to_string(), json!("false")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("ask_user");
+
+    let payload: serde_json::Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["allow_custom_options"], true);
 }
 
 #[test]

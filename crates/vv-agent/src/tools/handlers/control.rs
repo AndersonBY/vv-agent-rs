@@ -4,6 +4,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
+use crate::tools::common::coerce_python_bool_arg;
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 pub fn task_finish(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
@@ -23,7 +24,7 @@ pub(crate) fn task_finish_tool() -> ToolSpec {
                 .unwrap_or_else(|| "Task completed".to_string());
             let require_all_done = arguments
                 .get("require_all_todos_completed")
-                .and_then(Value::as_bool)
+                .map(|value| coerce_python_bool_arg(Some(value), true))
                 .unwrap_or(true);
             if require_all_done {
                 let incomplete_todos = context
@@ -39,8 +40,7 @@ pub(crate) fn task_finish_tool() -> ToolSpec {
                                     .and_then(Value::as_str)
                                     .unwrap_or_default()
                                     .to_ascii_lowercase();
-                                let done =
-                                    todo.get("done").and_then(Value::as_bool).unwrap_or(false);
+                                let done = coerce_python_bool_arg(todo.get("done"), false);
                                 if matches!(status.as_str(), "completed" | "done" | "finished")
                                     || done
                                 {
@@ -124,7 +124,7 @@ pub(crate) fn ask_user_tool() -> ToolSpec {
                 .unwrap_or_else(|| "single".to_string());
             let allow_custom_options = arguments
                 .get("allow_custom_options")
-                .and_then(Value::as_bool)
+                .map(|value| coerce_python_bool_arg(Some(value), false))
                 .unwrap_or(false);
             let mut payload = BTreeMap::new();
             payload.insert("question".to_string(), Value::String(question.clone()));

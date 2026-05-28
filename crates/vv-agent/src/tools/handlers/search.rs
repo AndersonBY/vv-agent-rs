@@ -9,9 +9,9 @@ use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{
-    coerce_python_text_arg, command_output_with_executable_busy_retry, grep_text, is_hidden_path,
-    is_ignored_root, is_supported_file_type, matches_file_type, parse_integer_arg,
-    path_escapes_workspace_error, supported_file_types_message,
+    coerce_python_bool_arg, coerce_python_text_arg, command_output_with_executable_busy_retry,
+    grep_text, is_hidden_path, is_ignored_root, is_supported_file_type, matches_file_type,
+    parse_integer_arg, path_escapes_workspace_error, supported_file_types_message,
     workspace_relative_path_or_absolute, GrepTextOptions,
 };
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
@@ -469,19 +469,10 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
             let path = coerce_python_text_arg(arguments.get("path"), ".");
             let glob = coerce_python_text_arg(arguments.get("glob"), "**/*");
             let glob_pattern = normalized_glob_pattern(&glob);
-            let include_hidden = arguments
-                .get("include_hidden")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let include_ignored = arguments
-                .get("include_ignored")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let multiline = arguments
-                .get("multiline")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let show_line_numbers = arguments.get("n").and_then(Value::as_bool).unwrap_or(true);
+            let include_hidden = coerce_python_bool_arg(arguments.get("include_hidden"), false);
+            let include_ignored = coerce_python_bool_arg(arguments.get("include_ignored"), false);
+            let multiline = coerce_python_bool_arg(arguments.get("multiline"), false);
+            let show_line_numbers = coerce_python_bool_arg(arguments.get("n"), true);
             let parse_optional_usize =
                 |name: &str, min_value: i64| -> Result<Option<usize>, String> {
                     match arguments.get(name) {
@@ -519,12 +510,10 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
                 },
                 None => None,
             };
-            let case_insensitive = if let Some(case_sensitive) =
-                arguments.get("case_sensitive").and_then(Value::as_bool)
-            {
-                !case_sensitive
-            } else if let Some(force_insensitive) = arguments.get("i").and_then(Value::as_bool) {
-                force_insensitive
+            let case_insensitive = if arguments.contains_key("case_sensitive") {
+                !coerce_python_bool_arg(arguments.get("case_sensitive"), false)
+            } else if arguments.contains_key("i") {
+                coerce_python_bool_arg(arguments.get("i"), false)
             } else {
                 !pattern.chars().any(char::is_uppercase)
             };

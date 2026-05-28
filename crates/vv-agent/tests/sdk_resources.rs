@@ -260,6 +260,88 @@ fn resource_loader_canonicalizes_relative_skill_directories_like_python() {
 }
 
 #[test]
+fn resource_loader_parses_agent_booleans_with_python_truthiness() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let resource_root = workspace.path().join(".vv-agent");
+    std::fs::create_dir_all(&resource_root).expect("resource root");
+    std::fs::write(
+        resource_root.join("agents.json"),
+        json!({
+            "profiles": {
+                "truthy": {
+                    "description": "truthy profile",
+                    "model": "demo-model",
+                    "allow_interruption": 0,
+                    "use_workspace": "",
+                    "enable_todo_management": "false",
+                    "native_multimodal": [],
+                    "enable_sub_agents": {"value": false}
+                }
+            }
+        })
+        .to_string(),
+    )
+    .expect("agents");
+
+    let mut loader = AgentResourceLoader::with_resource_dirs(
+        workspace.path(),
+        &resource_root,
+        workspace.path().join(".none"),
+    );
+    let discovered = loader.discover();
+    let agent = &discovered.agents["truthy"];
+
+    assert!(!agent.allow_interruption);
+    assert!(!agent.use_workspace);
+    assert!(agent.enable_todo_management);
+    assert!(!agent.native_multimodal);
+    assert!(agent.enable_sub_agents);
+}
+
+#[test]
+fn resource_loader_canonicalizes_root_skill_directory_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let resource_root = workspace.path().join(".vv-agent");
+    let noncanonical_resource_root = workspace.path().join("nested/../.vv-agent");
+    let root_skills = resource_root.join("skills");
+    std::fs::create_dir_all(workspace.path().join("nested")).expect("nested");
+    std::fs::create_dir_all(&root_skills).expect("skills");
+
+    let mut loader = AgentResourceLoader::with_resource_dirs(
+        workspace.path(),
+        &noncanonical_resource_root,
+        workspace.path().join(".none"),
+    );
+    let discovered = loader.discover();
+
+    assert_eq!(
+        discovered.skill_directories,
+        vec![root_skills.to_string_lossy().to_string()]
+    );
+}
+
+#[test]
+fn resource_loader_canonicalizes_resource_roots_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let canonical_project_root = workspace.path().join(".vv-agent");
+    let canonical_global_root = workspace.path().join(".global-vv-agent");
+    let noncanonical_project_root = workspace.path().join("nested/../.vv-agent");
+    let noncanonical_global_root = workspace.path().join("nested/../.global-vv-agent");
+    std::fs::create_dir_all(workspace.path().join("nested")).expect("nested");
+    std::fs::create_dir_all(&canonical_project_root).expect("project root");
+    std::fs::create_dir_all(&canonical_global_root).expect("global root");
+
+    let loader = AgentResourceLoader::with_resource_dirs(
+        workspace.path(),
+        &noncanonical_project_root,
+        &noncanonical_global_root,
+    );
+
+    assert_eq!(loader.project_resource_dir, canonical_project_root);
+    assert_eq!(loader.global_resource_dir, canonical_global_root);
+}
+
+#[test]
 fn resource_loader_reports_invalid_agent_profiles_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
@@ -337,6 +419,32 @@ fn resource_loader_tracks_python_hook_files_with_rust_diagnostics() {
         diagnostic.contains("Python hook file discovered")
             && diagnostic.contains("AgentSDKOptions.runtime_hooks")
     }));
+}
+
+#[test]
+fn resource_loader_canonicalizes_hook_file_paths_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let resource_root = workspace.path().join(".vv-agent");
+    let noncanonical_resource_root = workspace.path().join("nested/../.vv-agent");
+    std::fs::create_dir_all(workspace.path().join("nested")).expect("nested");
+    std::fs::create_dir_all(resource_root.join("hooks")).expect("hooks");
+    std::fs::write(resource_root.join("hooks/noop.py"), "HOOK = object()").expect("hook");
+
+    let mut loader = AgentResourceLoader::with_resource_dirs(
+        workspace.path(),
+        &noncanonical_resource_root,
+        workspace.path().join(".none"),
+    );
+    let discovered = loader.discover();
+
+    assert_eq!(
+        discovered.hook_files,
+        vec![resource_root
+            .join("hooks/noop.py")
+            .to_string_lossy()
+            .to_string()]
+    );
+    assert!(!discovered.hook_files[0].contains(".."));
 }
 
 #[test]
