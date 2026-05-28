@@ -921,6 +921,30 @@ fn sub_task_manager_preserves_attached_resolved_payload_for_continuation_like_py
 }
 
 #[test]
+fn sub_task_manager_records_failed_outcome_when_background_runner_panics_like_python() {
+    let manager = SubTaskManager::default();
+
+    manager
+        .submit(
+            "sub-task-panic",
+            "sub-session-panic",
+            "researcher",
+            "panic task",
+            || -> SubTaskOutcome { panic!("runner exploded") },
+        )
+        .expect("submit panic task");
+
+    assert!(manager.wait("sub-task-panic", Some(Duration::from_secs(5))));
+    let entries = manager.status_entries(&["sub-task-panic".to_string()], "basic", 10);
+
+    assert_eq!(entries[0]["status"], "failed");
+    assert!(entries[0]["error"]
+        .as_str()
+        .expect("panic error")
+        .contains("runner exploded"));
+}
+
+#[test]
 fn sub_task_manager_sanitizes_session_messages_before_continue_like_python() {
     let _registry_lock = isolated_sub_agent_registry();
     let manager = SubTaskManager::default();

@@ -1,4 +1,6 @@
+use std::any::Any;
 use std::collections::BTreeMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -119,9 +121,24 @@ impl SubTaskManager {
         let tasks = self.tasks.clone();
         let task_id_for_thread = task_id.clone();
         let handle = thread::spawn(move || {
-            let outcome = runner();
+            let outcome = catch_unwind(AssertUnwindSafe(runner));
             let mut tasks = tasks.lock().expect("sub-task manager poisoned");
             if let Some(record) = tasks.get_mut(&task_id_for_thread) {
+                let outcome = match outcome {
+                    Ok(outcome) => outcome,
+                    Err(payload) => SubTaskOutcome {
+                        task_id: record.task_id.clone(),
+                        agent_name: record.agent_name.clone(),
+                        status: AgentStatus::Failed,
+                        session_id: Some(record.session_id.clone()),
+                        final_answer: None,
+                        wait_reason: None,
+                        error: Some(panic_payload_to_string(payload.as_ref())),
+                        cycles: 0,
+                        todo_list: Vec::new(),
+                        resolved: record.resolved.clone(),
+                    },
+                };
                 if !outcome.resolved.is_empty() {
                     record.resolved = outcome.resolved.clone();
                 }
@@ -318,11 +335,13 @@ impl SubTaskManager {
         let agent_name_for_thread = agent_name.clone();
         let handle = thread::spawn(move || {
             register_sub_agent_session(session_id_for_thread.clone(), session.clone());
-            let outcome = session
-                .continue_run(&prompt_for_thread)
-                .unwrap_or_else(|error| SubTaskOutcome {
+            let outcome = match catch_unwind(AssertUnwindSafe(|| {
+                session.continue_run(&prompt_for_thread)
+            })) {
+                Ok(Ok(outcome)) => outcome,
+                Ok(Err(error)) => SubTaskOutcome {
                     task_id: task_id_for_thread.clone(),
-                    agent_name: agent_name_for_thread,
+                    agent_name: agent_name_for_thread.clone(),
                     status: AgentStatus::Failed,
                     session_id: Some(session_id_for_thread.clone()),
                     final_answer: None,
@@ -331,7 +350,20 @@ impl SubTaskManager {
                     cycles: 0,
                     todo_list: Vec::new(),
                     resolved: BTreeMap::new(),
-                });
+                },
+                Err(payload) => SubTaskOutcome {
+                    task_id: task_id_for_thread.clone(),
+                    agent_name: agent_name_for_thread.clone(),
+                    status: AgentStatus::Failed,
+                    session_id: Some(session_id_for_thread.clone()),
+                    final_answer: None,
+                    wait_reason: None,
+                    error: Some(panic_payload_to_string(payload.as_ref())),
+                    cycles: 0,
+                    todo_list: Vec::new(),
+                    resolved: BTreeMap::new(),
+                },
+            };
             unregister_sub_agent_session(&session_id_for_thread);
             let mut tasks = tasks.lock().expect("sub-task manager poisoned");
             if let Some(record) = tasks.get_mut(&task_id_for_thread) {
@@ -774,6 +806,16 @@ fn now_millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
+}
+
+fn panic_payload_to_string(payload: &(dyn Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "sub-task runner panicked".to_string()
 }
 
 fn payload_u32(payload: &BTreeMap<String, Value>, key: &str) -> Option<u32> {
