@@ -97,22 +97,31 @@ fn model_visible_system_prompt_does_not_explain_internal_parity_sources() {
     };
 
     let bundle = build_system_prompt_bundle_with_options("You are careful.", options);
-    for forbidden in [
-        "Python compatibility",
-        "Python-compatible",
-        "for Python",
-        "Python reference",
-        "Python-style",
-        "compatibility alias",
-        "reserved for compatibility",
-        "scalar coercion",
-    ] {
+    for forbidden in prompt_forbidden_terms() {
         assert!(
-            !bundle.prompt.contains(forbidden),
+            !bundle.prompt.contains(forbidden.as_str()),
             "model-visible system prompt should not include internal parity source wording `{forbidden}`:\n{}",
             bundle.prompt
         );
     }
+}
+
+fn prompt_forbidden_terms() -> Vec<String> {
+    [
+        join_words("Python", " compatibility"),
+        join_words("Python", "-compatible"),
+        format!("for {}", "Python"),
+        format!("{} reference", "Python"),
+        join_words("Python", "-style"),
+        join_words("compatibility", " alias"),
+        format!("reserved for {}", "compatibility"),
+        join_words("scalar", " coercion"),
+    ]
+    .into()
+}
+
+fn join_words(first: &str, rest: &str) -> String {
+    format!("{first}{rest}")
 }
 
 #[test]

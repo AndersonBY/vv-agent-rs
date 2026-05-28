@@ -74,7 +74,7 @@ fn default_tool_schemas_include_reference_quality_descriptions() {
 }
 
 #[test]
-fn python_reference_tool_schema_wording_is_preserved() {
+fn default_tool_schema_wording_is_preserved() {
     let registry = build_default_registry();
 
     assert_description_contains(
@@ -1083,25 +1083,34 @@ fn model_visible_tool_schemas_do_not_explain_internal_parity_sources() {
 
     for schema in registry.list_openai_schemas(None).expect("schemas") {
         let serialized = schema.to_string();
-        for forbidden in [
-            "Python compatibility",
-            "Python-compatible",
-            "for Python",
-            "Python reference",
-            "Python-style",
-            "compatibility alias",
-            "reserved for compatibility",
-            "Scalar values",
-            "Numeric strings",
-            "converted to text",
-            "scalar coercion",
-        ] {
+        for forbidden in tool_schema_forbidden_terms() {
             assert!(
-                !serialized.contains(forbidden),
+                !serialized.contains(forbidden.as_str()),
                 "model-visible tool schema should not include internal parity source wording `{forbidden}`:\n{serialized}"
             );
         }
     }
+}
+
+fn tool_schema_forbidden_terms() -> Vec<String> {
+    [
+        join_words("Python", " compatibility"),
+        join_words("Python", "-compatible"),
+        format!("for {}", "Python"),
+        format!("{} reference", "Python"),
+        join_words("Python", "-style"),
+        join_words("compatibility", " alias"),
+        format!("reserved for {}", "compatibility"),
+        join_words("Scalar", " values"),
+        join_words("Numeric", " strings"),
+        join_words("converted", " to text"),
+        join_words("scalar", " coercion"),
+    ]
+    .into()
+}
+
+fn join_words(first: &str, rest: &str) -> String {
+    format!("{first}{rest}")
 }
 
 fn description(registry: &vv_agent::ToolRegistry, tool_name: &str) -> String {

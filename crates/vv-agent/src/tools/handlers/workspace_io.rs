@@ -1,3 +1,4 @@
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -314,7 +315,7 @@ pub(crate) fn list_files_tool() -> ToolSpec {
                     }
                     crate::types::ToolExecutionResult::success("", payload.to_string())
                 }
-                Err(error) => tool_error(error.to_string()),
+                Err(error) => workspace_backend_error(error),
             }
         }),
     );
@@ -358,7 +359,7 @@ pub(crate) fn file_info_tool() -> ToolSpec {
                     crate::types::ToolExecutionResult::success("", payload.to_string())
                 }
                 Ok(None) => tool_error(format!("path not found: {path}")),
-                Err(error) => tool_error(error.to_string()),
+                Err(error) => workspace_backend_error(error),
             }
         }),
     );
@@ -386,8 +387,10 @@ pub(crate) fn read_file_tool() -> ToolSpec {
                 return path_escapes_workspace_error(error);
             }
             let backend = context.effective_workspace_backend();
-            if !backend.is_file(&path) {
-                return tool_error(format!("file not found: {path}"));
+            match backend.file_info(&path) {
+                Ok(Some(info)) if info.is_file => {}
+                Ok(_) => return tool_error(format!("file not found: {path}")),
+                Err(error) => return workspace_backend_error(error),
             }
             let start_line = match arguments.get("start_line") {
                 Some(value) => match parse_integer_arg(value) {
@@ -479,7 +482,7 @@ pub(crate) fn read_file_tool() -> ToolSpec {
                         .to_string(),
                     )
                 }
-                Err(error) => tool_error(error.to_string()),
+                Err(error) => workspace_backend_error(error),
             }
         }),
     );
@@ -532,7 +535,7 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                     })
                     .to_string(),
                 ),
-                Err(error) => tool_error(error.to_string()),
+                Err(error) => workspace_backend_error(error),
             }
         }),
     );
@@ -563,8 +566,10 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
                 return path_escapes_workspace_error(error);
             }
             let backend = context.effective_workspace_backend();
-            if !backend.is_file(&path) {
-                return tool_error(format!("file not found: {path}"));
+            match backend.file_info(&path) {
+                Ok(Some(info)) if info.is_file => {}
+                Ok(_) => return tool_error(format!("file not found: {path}")),
+                Err(error) => return workspace_backend_error(error),
             }
             let old_str = coerce_python_text_arg(arguments.get("old_str"), "");
             if old_str.is_empty() {
@@ -605,10 +610,10 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
                             })
                             .to_string(),
                         ),
-                        Err(error) => tool_error(error.to_string()),
+                        Err(error) => workspace_backend_error(error),
                     }
                 }
-                Err(error) => tool_error(error.to_string()),
+                Err(error) => workspace_backend_error(error),
             }
         }),
     );
@@ -616,6 +621,15 @@ pub(crate) fn file_str_replace_tool() -> ToolSpec {
         spec.schema = schema;
     }
     spec
+}
+
+fn workspace_backend_error(error: std::io::Error) -> ToolExecutionResult {
+    if error.kind() == ErrorKind::PermissionDenied
+        && error.to_string().contains("Path escapes workspace")
+    {
+        return path_escapes_workspace_error(error.to_string());
+    }
+    tool_error(error.to_string())
 }
 
 #[cfg(test)]

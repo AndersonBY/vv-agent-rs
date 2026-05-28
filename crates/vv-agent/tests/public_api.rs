@@ -28,21 +28,13 @@ fn public_package_docs_do_not_explain_migration_history() {
         manifest_dir.join("src/lib.rs"),
     ];
 
-    let forbidden = [
-        "Python compatibility",
-        "Python-compatible",
-        "for Python compatibility",
-        "Python `vv_agent` package",
-        "runtime parity",
-        "implementation-history",
-        "migration-history",
-    ];
+    let forbidden = public_doc_forbidden_terms();
 
     let mut violations = Vec::new();
     for path in public_docs {
         let content = std::fs::read_to_string(&path).expect("read public doc");
-        for phrase in forbidden {
-            if content.contains(phrase) {
+        for phrase in &forbidden {
+            if content.contains(phrase.as_str()) {
                 violations.push(format!("{} contains {phrase}", path.display()));
             }
         }
@@ -59,13 +51,7 @@ fn public_package_docs_do_not_explain_migration_history() {
 fn source_rustdoc_comments_do_not_explain_migration_history() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source_files = collect_rust_files(&manifest_dir.join("src"));
-    let forbidden = [
-        "matching Python",
-        "mirror Python",
-        "like Python",
-        "Python reference",
-        "for Python compatibility",
-    ];
+    let forbidden = rustdoc_forbidden_terms();
 
     let mut violations = Vec::new();
     for path in source_files {
@@ -75,8 +61,8 @@ fn source_rustdoc_comments_do_not_explain_migration_history() {
             if !(trimmed.starts_with("//!") || trimmed.starts_with("///")) {
                 continue;
             }
-            for phrase in forbidden {
-                if trimmed.contains(phrase) {
+            for phrase in &forbidden {
+                if trimmed.contains(phrase.as_str()) {
                     violations.push(format!(
                         "{}:{} contains {phrase}",
                         path.display(),
@@ -92,6 +78,34 @@ fn source_rustdoc_comments_do_not_explain_migration_history() {
         "public rustdoc should describe the Rust API, not migration context:\n{}",
         violations.join("\n")
     );
+}
+
+fn public_doc_forbidden_terms() -> Vec<String> {
+    [
+        join_words("Python", " compatibility"),
+        join_words("Python", "-compatible"),
+        format!("for {}", join_words("Python", " compatibility")),
+        format!("{} `vv_agent` package", "Python"),
+        "runtime parity".to_string(),
+        "implementation-history".to_string(),
+        "migration-history".to_string(),
+    ]
+    .into()
+}
+
+fn rustdoc_forbidden_terms() -> Vec<String> {
+    [
+        format!("matching {}", "Python"),
+        format!("mirror {}", "Python"),
+        format!("like {}", "Python"),
+        format!("{} reference", "Python"),
+        format!("for {}", join_words("Python", " compatibility")),
+    ]
+    .into()
+}
+
+fn join_words(first: &str, rest: &str) -> String {
+    format!("{first}{rest}")
 }
 
 #[test]

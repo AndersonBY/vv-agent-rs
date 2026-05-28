@@ -31,7 +31,7 @@ impl LocalWorkspaceBackend {
         } else {
             root.join(&candidate)
         };
-        let normalized = normalize_path_lexically(target);
+        let normalized = resolve_existing_or_parent(&target)?;
         if !self.allow_outside_root && normalized != root && !normalized.starts_with(&root) {
             return Err(Error::new(
                 ErrorKind::PermissionDenied,
@@ -60,6 +60,22 @@ impl LocalWorkspaceBackend {
             path.to_string_lossy().to_string()
         }
     }
+}
+
+fn resolve_existing_or_parent(path: &Path) -> std::io::Result<PathBuf> {
+    if path.exists() {
+        return path.canonicalize();
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let resolved_parent = if parent.exists() {
+        parent.canonicalize()?
+    } else {
+        normalize_path_lexically(parent.to_path_buf())
+    };
+    Ok(match path.file_name() {
+        Some(file_name) => resolved_parent.join(file_name),
+        None => resolved_parent,
+    })
 }
 
 impl WorkspaceBackend for LocalWorkspaceBackend {

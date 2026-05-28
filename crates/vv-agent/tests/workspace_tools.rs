@@ -530,6 +530,38 @@ fn workspace_file_tools_reject_paths_outside_workspace_by_default() {
     assert_eq!(read.error_code.as_deref(), Some("path_escapes_workspace"));
 }
 
+#[cfg(unix)]
+#[test]
+fn workspace_file_tools_reject_symlink_escape_by_default() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let outside = tempfile::tempdir().expect("outside");
+    let outside_file = outside.path().join("secret.txt");
+    std::fs::write(&outside_file, "outside secret").expect("outside file");
+    std::os::unix::fs::symlink(outside.path(), workspace.path().join("linked-outside"))
+        .expect("symlink");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let read = registry
+        .execute(
+            &ToolCall::new(
+                "read_symlink_escape",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!("linked-outside/secret.txt"))]),
+            ),
+            &mut context,
+        )
+        .expect("read_file symlink escape");
+
+    assert_eq!(read.status, ToolResultStatus::Error);
+    assert_eq!(read.error_code.as_deref(), Some("path_escapes_workspace"));
+    assert!(
+        read.content.contains("Path escapes workspace"),
+        "symlink escape should be rejected, got {}",
+        read.content
+    );
+}
+
 #[test]
 fn workspace_file_tools_can_access_outside_paths_when_metadata_allows_it() {
     let workspace = tempfile::tempdir().expect("workspace");
