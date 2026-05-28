@@ -44,7 +44,7 @@ pub fn todo_write(context: &mut ToolContext, arguments: &ToolArguments) -> ToolE
         }
     }
 
-    let now = Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true);
+    let now = Utc::now().to_rfc3339_opts(SecondsFormat::Micros, false);
     let mut new_todo_list = Vec::new();
 
     for (index, raw_todo_item) in todos.iter().enumerate() {

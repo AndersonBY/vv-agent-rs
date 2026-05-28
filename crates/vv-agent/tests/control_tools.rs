@@ -202,8 +202,15 @@ fn todo_write_generates_python_style_ids_timestamps_and_preserves_created_at() {
     assert_eq!(item["status"], "pending");
     assert_eq!(item["priority"], "medium");
     let created_at = item["created_at"].as_str().expect("created_at").to_string();
-    assert!(!created_at.is_empty());
-    assert!(!item["updated_at"].as_str().expect("updated_at").is_empty());
+    let updated_at = item["updated_at"].as_str().expect("updated_at");
+    assert!(
+        created_at.contains('T') && created_at.ends_with("+00:00"),
+        "created_at should use UTC ISO timestamp format, got {created_at:?}"
+    );
+    assert!(
+        updated_at.contains('T') && updated_at.ends_with("+00:00"),
+        "updated_at should use UTC ISO timestamp format, got {updated_at:?}"
+    );
 
     let result = registry
         .execute(
