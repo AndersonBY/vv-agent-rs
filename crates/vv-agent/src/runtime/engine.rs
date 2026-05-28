@@ -1175,6 +1175,8 @@ where
         .unwrap_or(summary_model);
     let extraction_callback =
         memory_summary_client.map(|client| build_session_memory_extraction_callback(client));
+    let storage_scope = read_optional_string_metadata(&task.metadata, &["session_id", "task_id"])
+        .unwrap_or_else(|| task.task_id.clone());
     let mut session_memory = SessionMemory::with_workspace(
         SessionMemoryConfig {
             min_tokens_before_extraction: read_u64_metadata(
@@ -1210,7 +1212,7 @@ where
             token_model: task.model.clone(),
         },
         workspace,
-        Some(task.task_id.clone()),
+        Some(storage_scope),
     );
     session_memory.load();
     seed_session_memory(

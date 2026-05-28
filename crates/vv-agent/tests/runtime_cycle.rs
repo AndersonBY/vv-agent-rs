@@ -1375,6 +1375,59 @@ fn runtime_loads_session_memory_by_default_like_python() {
 }
 
 #[test]
+fn runtime_scopes_session_memory_by_session_id_metadata_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let storage_dir = workspace.path().join(".memory/session/session-scope");
+    fs::create_dir_all(&storage_dir).expect("session memory dir");
+    fs::write(
+        storage_dir.join("session_memory.json"),
+        json!({
+            "entries": [{
+                "category": "key_fact",
+                "content": "session scoped memory is loaded",
+                "source_cycle": 2,
+                "importance": 8
+            }],
+            "last_extracted_message_index": -1,
+            "tokens_at_last_extraction": 0,
+            "initialized": true
+        })
+        .to_string(),
+    )
+    .expect("session memory file");
+
+    let llm = DefaultSessionMemoryInspectingLlmClient::default();
+    let inspector = llm.clone();
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.default_workspace = Some(workspace.path().to_path_buf());
+    runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
+        workspace.path(),
+    ));
+    let mut task = AgentTask::new(
+        "fresh_task_id_for_same_session",
+        "demo",
+        "system",
+        "inspect scoped memory",
+    );
+    task.max_cycles = 1;
+    task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
+    task.metadata
+        .insert("session_id".to_string(), json!("session-scope"));
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let first_request = inspector.first_request_messages();
+    assert!(
+        first_request
+            .first()
+            .is_some_and(|message| message.content.contains("<Session Memory>")
+                && message.content.contains("session scoped memory is loaded")),
+        "runtime did not use session_id as session-memory storage scope: {first_request:#?}"
+    );
+}
+
+#[test]
 fn runtime_uses_memory_summary_metadata_model_for_session_extraction_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let settings_file = workspace.path().join("local_settings.py");

@@ -86,7 +86,12 @@ vv-agent-rs/
           mod.rs
           sub_agents.rs
           todo.rs
-          workspace.rs
+          workspace/
+            edit.rs
+            file_io.rs
+            listing.rs
+            mod.rs
+            search.rs
         handlers/
           background.rs
           bash.rs
@@ -165,7 +170,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 - `AgentRuntime` 现在持有可配置的 `RuntimeExecutionBackend`，会把 cycle loop 委托给 `InlineBackend`、`ThreadBackend` 或 `CeleryBackend`，对齐 Python `AgentRuntime.run -> execution_backend.execute(...)` 语义；runtime cycle index 也改为与 Python 一致，从 `1` 开始。
 - `memory/` 已拆成 manager、summary 和 token_utils，支持 Python 风格压缩阈值、本地结构化摘要，并在长上下文 follow-up cycle 前自动压缩。Runtime memory 决策也会复用上一轮 provider prompt token totals，并额外估算最近工具结果 token，对齐 Python `CycleRunner` / `MemoryManager` 的压缩启发式；也支持可选的 Python 风格 memory warning，在使用量超过 `memory_threshold_percentage` 时先追加本地化用户提示。Memory summary 也补齐 Python 风格 `summary_callback(prompt, backend, model)` 路径；runtime 会用已配置的 `LlmClient` 构造该 callback，因此 vv-llm-backed client 可以直接生成远端摘要，不需要额外 provider adapter，callback 失败时会回退到本地摘要。
 - 历史大工具结果可以持久化到 `.memory/tool_results`，并在上下文里替换为带 retrieval hint 的压缩内容，对齐 Python `v-agent` 的 artifact compaction 行为。Memory compaction 会先尝试这种 artifact-only reduction，并在不使用过期 provider token totals 的情况下重新计数；若已经回到阈值内，就不再进入 full summary。已经被后续 assistant 消费过的历史图片消息也会丢弃 `image_url` payload，只保留压缩标记。重复 compaction 会继续保留旧压缩块里的 `original_user_messages`，避免长会话多次摘要后丢失用户最初请求。
-- 已加入参考 Python `SessionMemory` 的持久化 session memory： durable entries 会归一化、去重、按预算裁剪，可保存到 `.memory/session`，并在 compaction 前后作为 `<Session Memory>` system context 注入后续 LLM 请求。默认 runtime 可以直接使用已配置的 `LlmClient` 作为 extraction callback，因此 vv-llm-backed client 不需要额外 provider adapter。主任务会像 Python 一样默认启用 session memory，自动生成的子任务默认显式关闭，除非 metadata 覆盖。Memory summary backend/model 选择也对齐 Python 优先级：task metadata、local settings defaults、runtime fallback backend 和 task model；extraction callback 失败会像 Python 一样被隔离，不会让本轮运行中断，也不会写入半更新状态。
+- 已加入参考 Python `SessionMemory` 的持久化 session memory： durable entries 会归一化、去重、按预算裁剪，可保存到 `.memory/session`，并在 compaction 前后作为 `<Session Memory>` system context 注入后续 LLM 请求。存储作用域也按 Python 优先级选择：`metadata.session_id`、`metadata.task_id`、最后 `task.task_id`，因此 SDK session 即使每次生成新的 task id，也会复用同一 session 的持久记忆。默认 runtime 可以直接使用已配置的 `LlmClient` 作为 extraction callback，因此 vv-llm-backed client 不需要额外 provider adapter。主任务会像 Python 一样默认启用 session memory，自动生成的子任务默认显式关闭，除非 metadata 覆盖。Memory summary backend/model 选择也对齐 Python 优先级：task metadata、local settings defaults、runtime fallback backend 和 task model；extraction callback 失败会像 Python 一样被隔离，不会让本轮运行中断，也不会写入半更新状态。
 - 已加入 Python 风格 microcompact：在 full summary compaction 之前清理旧的大型可压缩工具结果，保留近期工具上下文，同时降低长任务的 prompt 压力；task metadata 可以通过 `microcompact_compactable_tools` 覆盖可压缩工具 allowlist。
 - 已加入参考 Python `CycleRunner` 的 prompt-too-long 重试：runtime 会识别常见 provider 上下文超限错误，先强制 normal memory compaction，再退到 emergency compaction 切片，并保留 system message 和近期工具上下文后重试。若所有 PTL 重试都耗尽，runtime 会返回 Python 风格 `CompactionExhaustedError`，包含 attempts 和最后一个 provider error。
 - 已加入参考 Python `post_compact_restore` 的 compaction 后关键文件恢复：summary 会用结构化 `path/action/summary` 记录文件动作，并在预算内把关键 workspace 文件内容放回 `<Post-Compaction File Context>`。

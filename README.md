@@ -86,7 +86,12 @@ vv-agent-rs/
           mod.rs
           sub_agents.rs
           todo.rs
-          workspace.rs
+          workspace/
+            edit.rs
+            file_io.rs
+            listing.rs
+            mod.rs
+            search.rs
         handlers/
           background.rs
           bash.rs
@@ -302,15 +307,17 @@ The current Rust implementation includes:
 - Persistent session memory modeled after Python `SessionMemory`: durable
   entries are normalized, deduplicated, budget-pruned, optionally persisted
   under `.memory/session`, and injected back into runtime LLM requests as a
-  `<Session Memory>` system context before and after compaction. The default runtime can
-  use the configured `LlmClient` as the extraction callback, so vv-llm-backed
-  clients handle session-memory extraction without custom provider adapters.
-  Main tasks enable session memory by default like Python, while generated
-  sub-tasks explicitly opt out unless overridden. Memory-summary backend/model
-  selection follows Python priority: task metadata, local settings defaults,
-  then runtime fallback backend and task model. Extraction callback failures are
-  contained like Python, so a failed memory extraction leaves state unchanged
-  instead of aborting the run.
+  `<Session Memory>` system context before and after compaction. Storage scope
+  follows Python priority: `metadata.session_id`, then `metadata.task_id`, then
+  `task.task_id`, so SDK sessions reuse durable memory across generated task
+  ids. The default runtime can use the configured `LlmClient` as the extraction
+  callback, so vv-llm-backed clients handle session-memory extraction without
+  custom provider adapters. Main tasks enable session memory by default like
+  Python, while generated sub-tasks explicitly opt out unless overridden.
+  Memory-summary backend/model selection follows Python priority: task
+  metadata, local settings defaults, then runtime fallback backend and task
+  model. Extraction callback failures are contained like Python, so a failed
+  memory extraction leaves state unchanged instead of aborting the run.
 - Python-style microcompact support clears old, large, compactable tool results
   before full summary compaction, preserving recent tool context while reducing
   prompt pressure during long runs. Task metadata can override the compactable
