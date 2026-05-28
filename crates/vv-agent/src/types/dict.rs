@@ -22,7 +22,10 @@ impl Message {
         }
         if include_reasoning_content
             && self.role == MessageRole::Assistant
-            && self.reasoning_content.is_some()
+            && self
+                .reasoning_content
+                .as_deref()
+                .is_some_and(|reasoning| !reasoning.is_empty())
         {
             insert_optional_string(&mut payload, "reasoning_content", &self.reasoning_content);
         }

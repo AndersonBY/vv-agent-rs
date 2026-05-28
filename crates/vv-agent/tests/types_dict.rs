@@ -182,6 +182,19 @@ fn message_to_openai_message_matches_python_multimodal_and_tool_shapes() {
 }
 
 #[test]
+fn message_to_openai_message_omits_empty_reasoning_like_python() {
+    let mut assistant = Message::assistant("answer");
+    assistant.reasoning_content = Some(String::new());
+
+    let payload = assistant.to_openai_message(true);
+
+    assert!(
+        payload.get("reasoning_content").is_none(),
+        "empty Python reasoning_content values should not be serialized into OpenAI payloads"
+    );
+}
+
+#[test]
 fn message_dict_round_trips_python_openai_style_tool_calls() {
     let payload = json!({
         "role": "assistant",
