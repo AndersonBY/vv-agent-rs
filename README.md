@@ -367,13 +367,15 @@ The current Rust implementation includes:
 - Split public `skills/` modules for Python-style skill models, directory
   discovery, frontmatter parsing, metadata normalization, validation modes,
   diagnostics, and `<available_skills>` prompt rendering with the same
-  progressive budget degradation used by `v-agent`.
+  progressive budget degradation used by `v-agent`; inline skill dictionaries
+  also follow Python's `str(...)`/truthiness coercion for scalar metadata fields.
 - Split `sdk/` modules matching Python's `types`, `resources`, `session`, and
   `client` layers while keeping the crate-level SDK exports stable.
   `sdk::LLMBuilder` and `sdk::RuntimeLogHandler` are exposed as
   Python-matched aliases for ported callers.
 - `activate_skill` now reuses the public skill parser / normalization layer and
-  keeps handler-local state helpers for activation tracking.
+  keeps handler-local state helpers for activation tracking, including Python
+  `str(...)` coercion for scalar `skill_name` and `reason` arguments.
 - Default tool schemas now use reference-quality descriptions derived from
   Python `v-agent`, with extra actionable guidance for high-impact tools such
   as `task_finish`, `list_files`, `write_file`, `file_str_replace`,

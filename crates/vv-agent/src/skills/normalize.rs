@@ -63,26 +63,24 @@ fn entries_from_object(
     workspace: Option<&Path>,
     load_instructions: bool,
 ) -> Vec<SkillEntry> {
-    let name = object
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim();
-    let description = object
-        .get("description")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim();
+    let name = python_or_empty_trimmed_string(object.get("name"));
+    let description = python_or_empty_trimmed_string(object.get("description"));
     let location = object
         .get("location")
-        .and_then(Value::as_str)
-        .map(str::trim)
+        .map(python_or_empty_value_string)
+        .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
     if (name.is_empty() || description.is_empty())
-        && location.is_some_and(|location| path_exists(location, workspace))
+        && location
+            .as_deref()
+            .is_some_and(|location| path_exists(location, workspace))
     {
-        return entries_from_path(location.unwrap_or_default(), workspace, load_instructions);
+        return entries_from_path(
+            location.as_deref().unwrap_or_default(),
+            workspace,
+            load_instructions,
+        );
     }
 
     if name.is_empty() || description.is_empty() {
@@ -91,31 +89,33 @@ fn entries_from_object(
 
     let instructions = object
         .get("instructions")
-        .and_then(Value::as_str)
-        .map(str::trim)
+        .map(python_or_empty_value_string)
+        .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .map(str::to_string);
+        .map(|value| value.to_string());
     if instructions.is_none()
         && load_instructions
-        && location.is_some_and(|location| path_exists(location, workspace))
+        && location
+            .as_deref()
+            .is_some_and(|location| path_exists(location, workspace))
     {
-        let loaded = entries_from_path(location.unwrap_or_default(), workspace, true);
+        let loaded = entries_from_path(location.as_deref().unwrap_or_default(), workspace, true);
         if !loaded.is_empty() {
             return loaded;
         }
     }
 
     vec![SkillEntry {
-        name: name.to_string(),
-        description: description.to_string(),
-        location: location.map(str::to_string),
+        name,
+        description,
+        location,
         instructions,
         compatibility: object
             .get("compatibility")
-            .and_then(Value::as_str)
-            .map(str::trim)
+            .map(python_or_empty_value_string)
+            .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
-            .map(str::to_string),
+            .map(|value| value.to_string()),
         allowed_tools: object
             .get("allowed-tools")
             .or_else(|| object.get("allowed_tools"))
@@ -130,6 +130,47 @@ fn entries_from_object(
             .unwrap_or_default(),
         load_error: None,
     }]
+}
+
+fn python_or_empty_trimmed_string(value: Option<&Value>) -> String {
+    python_or_empty_string(value).trim().to_string()
+}
+
+fn python_or_empty_string(value: Option<&Value>) -> String {
+    let Some(value) = value.filter(|value| python_truthy(value)) else {
+        return String::new();
+    };
+    python_str(value)
+}
+
+fn python_or_empty_value_string(value: &Value) -> String {
+    if python_truthy(value) {
+        python_str(value)
+    } else {
+        String::new()
+    }
+}
+
+fn python_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(value) => *value,
+        Value::Number(number) => number.as_f64().is_some_and(|value| value != 0.0),
+        Value::String(value) => !value.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(object) => !object.is_empty(),
+    }
+}
+
+fn python_str(value: &Value) -> String {
+    match value {
+        Value::Null => "None".to_string(),
+        Value::Bool(true) => "True".to_string(),
+        Value::Bool(false) => "False".to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(value) => value.clone(),
+        other => other.to_string(),
+    }
 }
 
 fn load_entry(skill_dir: &Path, workspace: Option<&Path>, load_instructions: bool) -> SkillEntry {

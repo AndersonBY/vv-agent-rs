@@ -531,3 +531,45 @@ fn activate_skill_accepts_inline_entries_and_reports_disallowed_skill() {
     assert_eq!(result.status, ToolResultStatus::Error);
     assert_eq!(result.error_code.as_deref(), Some("skill_not_allowed"));
 }
+
+#[test]
+fn activate_skill_coerces_scalar_arguments_and_inline_fields_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.shared_state.insert(
+        "available_skills".to_string(),
+        json!([
+            {
+                "name": 123,
+                "description": 456,
+                "instructions": 789,
+                "compatibility": true,
+                "metadata": {"priority": 5}
+            }
+        ]),
+    );
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "skill_scalar",
+                "activate_skill",
+                BTreeMap::from([
+                    ("skill_name".to_string(), json!(123)),
+                    ("reason".to_string(), json!(true)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("activate scalar skill");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: serde_json::Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["skill_name"], "123");
+    assert_eq!(payload["description"], "456");
+    assert_eq!(payload["instructions"], "789");
+    assert_eq!(payload["compatibility"], "True");
+    assert_eq!(payload["metadata"]["priority"], "5");
+    assert_eq!(payload["reason"], "True");
+}

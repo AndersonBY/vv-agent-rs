@@ -22,17 +22,8 @@ pub(crate) fn activate_skill_tool() -> ToolSpec {
         "activate_skill",
         "Activate a skill from the current task's available skill list.",
         Arc::new(|context, arguments| {
-            let skill_name = arguments
-                .get("skill_name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .trim();
-            let reason = arguments
-                .get("reason")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .trim()
-                .to_string();
+            let skill_name = value_to_trimmed_string(arguments.get("skill_name"));
+            let reason = value_to_trimmed_string(arguments.get("reason"));
             if skill_name.is_empty() {
                 return tool_error_with_code("`skill_name` is required", "skill_name_required");
             }
@@ -119,4 +110,15 @@ pub(crate) fn activate_skill_tool() -> ToolSpec {
         spec.schema = schema;
     }
     spec
+}
+
+fn value_to_trimmed_string(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::String(text)) => text.trim().to_string(),
+        Some(Value::Null) | None => String::new(),
+        Some(Value::Bool(true)) => "True".to_string(),
+        Some(Value::Bool(false)) => "False".to_string(),
+        Some(Value::Number(number)) => number.to_string().trim().to_string(),
+        Some(other) => other.to_string().trim().to_string(),
+    }
 }

@@ -210,3 +210,29 @@ Loaded instructions.
     assert_eq!(prompt_entries.len(), 2);
     assert_eq!(prompt_entries[0].name, "review-code");
 }
+
+#[test]
+fn skills_public_api_stringifies_inline_scalar_fields_like_python() {
+    let raw_skills = json!([
+        {
+            "name": 123,
+            "description": 456,
+            "instructions": 789,
+            "compatibility": true,
+            "metadata": {"priority": 5}
+        },
+        {
+            "name": 0,
+            "description": "Falsy Python name should be skipped"
+        }
+    ]);
+
+    let entries = normalize_skill_list(Some(&raw_skills), None, true);
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].name, "123");
+    assert_eq!(entries[0].description, "456");
+    assert_eq!(entries[0].instructions.as_deref(), Some("789"));
+    assert_eq!(entries[0].compatibility.as_deref(), Some("True"));
+    assert_eq!(entries[0].metadata["priority"], "5");
+}
