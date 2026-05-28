@@ -1,7 +1,13 @@
 use serde_json::json;
 use vv_agent::llm::{
-    apply_claude_prompt_cache, PROMPT_CACHE_ENABLED_KEY, SYSTEM_PROMPT_SECTIONS_KEY,
+    apply_claude_prompt_cache, CACHE_CONTROL_EPHEMERAL, PROMPT_CACHE_ENABLED_KEY,
+    SYSTEM_PROMPT_SECTIONS_KEY,
 };
+
+#[test]
+fn claude_prompt_cache_exports_python_style_ephemeral_cache_control() {
+    assert_eq!(CACHE_CONTROL_EPHEMERAL(), json!({"type": "ephemeral"}));
+}
 
 #[test]
 fn claude_prompt_cache_vertex_marks_history_boundary_and_skips_thinking() {

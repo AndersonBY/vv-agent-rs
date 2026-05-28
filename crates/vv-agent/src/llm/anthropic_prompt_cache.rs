@@ -6,6 +6,15 @@ pub const PROMPT_CACHE_ENABLED_KEY: &str = "anthropic_prompt_cache_enabled";
 const MAX_BREAKPOINTS: usize = 4;
 const THINKING_BLOCK_TYPES: &[&str] = &["thinking", "redacted_thinking"];
 
+pub fn cache_control_ephemeral() -> Value {
+    json!({"type": "ephemeral"})
+}
+
+#[allow(non_snake_case)]
+pub fn CACHE_CONTROL_EPHEMERAL() -> Value {
+    cache_control_ephemeral()
+}
+
 pub fn apply_claude_prompt_cache(
     endpoint_type: &str,
     model: &str,
@@ -295,10 +304,6 @@ fn set_cache_control(block: &mut Value) {
     if let Some(object) = block.as_object_mut() {
         object.insert("cache_control".to_string(), cache_control_ephemeral());
     }
-}
-
-fn cache_control_ephemeral() -> Value {
-    json!({"type": "ephemeral"})
 }
 
 fn estimate_tokens(char_count: usize) -> usize {
