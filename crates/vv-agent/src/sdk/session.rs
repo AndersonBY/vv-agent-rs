@@ -232,12 +232,13 @@ impl AgentSession {
         shared_state
             .entry("todo_list".to_string())
             .or_insert_with(|| Value::Array(Vec::new()));
+        let workspace = absolutize_workspace(workspace.into());
         Self {
             execute_run,
             session_id: normalize_session_id(session_id),
             _agent_name: agent_name.into(),
             _definition: definition,
-            workspace: workspace.into(),
+            workspace,
             shared_state,
             messages: Vec::new(),
             latest_run: None,
@@ -760,6 +761,42 @@ fn normalize_session_prompt(prompt: String, label: &str) -> Result<String, Strin
         return Err(format!("{label} cannot be empty"));
     }
     Ok(prompt.to_string())
+}
+
+fn absolutize_workspace(path: PathBuf) -> PathBuf {
+    let path = expand_user_path(path);
+    if path.is_absolute() {
+        return path;
+    }
+    std::env::current_dir()
+        .map(|current_dir| current_dir.join(&path))
+        .unwrap_or(path)
+}
+
+fn expand_user_path(path: PathBuf) -> PathBuf {
+    let raw_path = path.to_string_lossy();
+    if raw_path == "~" {
+        return home_dir().unwrap_or(path);
+    }
+    if let Some(rest) = raw_path.strip_prefix("~/") {
+        if let Some(home) = home_dir() {
+            return home.join(rest);
+        }
+    }
+    path
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+        .or_else(|| {
+            let drive = std::env::var_os("HOMEDRIVE")?;
+            let path = std::env::var_os("HOMEPATH")?;
+            let mut home = PathBuf::from(drive);
+            home.push(path);
+            Some(home)
+        })
 }
 
 fn generate_session_id() -> String {

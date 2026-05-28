@@ -371,6 +371,7 @@ fn resolve_resource_path(base_dir: &std::path::Path, raw_path: &str) -> String {
     } else {
         absolutize_path(base_dir.join(path))
     };
+    let path = path.canonicalize().unwrap_or(path);
     path.to_string_lossy().to_string()
 }
 

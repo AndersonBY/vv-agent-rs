@@ -224,6 +224,42 @@ fn resource_loader_expands_home_paths_like_python() {
 }
 
 #[test]
+fn resource_loader_canonicalizes_relative_skill_directories_like_python() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let resource_root = workspace.path().join(".vv-agent");
+    let shared_skills = workspace.path().join("shared-skills");
+    std::fs::create_dir_all(&resource_root).expect("resource root");
+    std::fs::create_dir_all(&shared_skills).expect("shared skills");
+    std::fs::write(
+        resource_root.join("agents.json"),
+        json!({
+            "profiles": {
+                "researcher": {
+                    "description": "research profile",
+                    "model": "demo-model",
+                    "skill_directories": ["../shared-skills"]
+                }
+            }
+        })
+        .to_string(),
+    )
+    .expect("agents");
+
+    let mut loader = AgentResourceLoader::with_resource_dirs(
+        workspace.path(),
+        &resource_root,
+        workspace.path().join(".none"),
+    );
+    let discovered = loader.discover();
+
+    assert_eq!(
+        discovered.agents["researcher"].skill_directories,
+        vec![shared_skills.to_string_lossy().to_string()]
+    );
+    assert!(!discovered.agents["researcher"].skill_directories[0].contains(".."));
+}
+
+#[test]
 fn resource_loader_reports_invalid_agent_profiles_like_python() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");

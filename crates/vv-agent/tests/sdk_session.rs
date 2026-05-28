@@ -953,6 +953,36 @@ fn sdk_default_session_combines_id_workspace_and_shared_state_like_python() {
 }
 
 #[test]
+fn sdk_session_absolutizes_relative_workspace_override_like_python() {
+    let current_dir = std::env::current_dir().expect("current dir");
+    let root = tempfile::tempdir_in(&current_dir).expect("root");
+    let default_workspace = root.path().join("default-workspace");
+    let override_workspace = root.path().join("relative-workspace");
+    std::fs::create_dir_all(&default_workspace).expect("default workspace");
+    std::fs::create_dir_all(&override_workspace).expect("override workspace");
+    let relative_workspace = std::path::PathBuf::from(
+        root.path()
+            .file_name()
+            .expect("root file name")
+            .to_string_lossy()
+            .to_string(),
+    )
+    .join("relative-workspace");
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: default_workspace,
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    });
+    let session = client.create_session_with_workspace(
+        "demo",
+        AgentDefinition::default_for_model("demo"),
+        &relative_workspace,
+    );
+
+    assert_eq!(session.workspace(), override_workspace.as_path());
+}
+
+#[test]
 fn sdk_named_session_combines_id_workspace_and_shared_state_like_python() {
     let default_workspace = tempfile::tempdir().expect("default workspace");
     let override_workspace = tempfile::tempdir().expect("override workspace");
