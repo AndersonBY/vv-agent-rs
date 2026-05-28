@@ -1,11 +1,32 @@
 use serde_json::{json, Value};
 
+const TASK_FINISH_DESCRIPTION: &str = r#"Finish the current task and return the final response.
+
+When to use:
+- Only call this when the user's requested work is genuinely complete, verified, and no unfinished TODO remains.
+- Use it after implementation, review, test output, and any required artifact paths are ready to report.
+- Use `exposed_files` to list concrete deliverables the user should inspect.
+
+Completion protocol:
+- Do not call this tool if work is partially complete, blocked, waiting for user input, or still needs verification.
+- If `todo_write` has pending or in-progress work, keep `require_all_todos_completed=true` so the runtime can reject premature finish.
+- The message should include concise outcome, important verification evidence, and any remaining caveats."#;
+
+const ASK_USER_DESCRIPTION: &str = r#"Pause execution and ask the user for required clarification or a decision.
+
+When to use:
+- The task cannot be completed safely because a real user preference, permission, credential, destructive action, or ambiguous scope decision is missing.
+- A reasonable default would risk doing the wrong work or violating the user's stated constraints.
+- Multiple clear options exist and user choice changes the implementation or operational outcome.
+
+Do not use this for facts you can discover with available tools, files, command output, documentation, or local configuration. This blocks the runtime until the user responds, so keep the question concrete, include 2-3 options when possible, and ask only for the decision needed to proceed."#;
+
 pub(super) fn task_finish_schema() -> Value {
     json!({
         "type": "function",
         "function": {
             "name": "task_finish",
-            "description": "Finish the current task and return the final response.\n\nOnly call this when the user's requested work is genuinely complete, verified, and no unfinished TODO remains. If work is partially complete, blocked, waiting for user input, or still needs verification, do not call this tool.\n\nUse `exposed_files` to list concrete deliverables the user should inspect.",
+            "description": TASK_FINISH_DESCRIPTION,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -34,7 +55,7 @@ pub(super) fn ask_user_schema() -> Value {
         "type": "function",
         "function": {
             "name": "ask_user",
-            "description": "Pause execution and ask the user for required clarification or a decision.\n\nUse this only when you cannot safely choose a reasonable default from the current context. Do not use this for facts you can discover with available tools, files, or command output. This blocks the runtime until the user responds, so keep the question concrete and include options when the decision space is clear.",
+            "description": ASK_USER_DESCRIPTION,
             "parameters": {
                 "type": "object",
                 "properties": {

@@ -363,7 +363,11 @@ The current Rust implementation includes:
   as `task_finish`, `list_files`, `write_file`, `file_str_replace`,
   `file_info`, `compress_memory`, `check_background_command`, and `read_image`,
   so the model sees complete operational guidance for file access, grep,
-  bash/background commands, todos, skills, images, and sub-agents.
+  bash/background commands, todos, skills, images, and sub-agents. Workspace
+  schemas are split below `tools/schemas/workspace/` into file I/O, listing,
+  search, and edit modules, and schema parity tests now require operational
+  sections on the high-impact tools so future edits do not collapse them back
+  into short labels.
 - Planned tool schemas include Python-style dynamic runtime hints for shell
   execution, so `bash` advertises the actual shell prefix or invalid shell
   configuration in the LLM-visible description. Runtime runs freeze that hint

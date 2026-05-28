@@ -1,5 +1,21 @@
 use serde_json::{json, Value};
 
+const CHECK_BACKGROUND_COMMAND_DESCRIPTION: &str = r#"Check status and output for a command launched in background mode.
+
+When to use:
+- After `bash` returns a `session_id` from `run_in_background=true`.
+- After a foreground command times out and the runtime auto-detaches it into a background session.
+- When a long build, test, server, migration, or watcher needs progress checks without blocking the main Agent loop.
+
+Polling protocol:
+- Poll until the response is terminal: `completed` or an error such as `background_command_failed`.
+- A `running` response can include recent captured stdout/stderr; use that output to decide whether to wait, stop asking for status, or report a blocker.
+- Stop polling once a terminal status is returned; repeated polling after completion should not be used as a substitute for reading the final payload.
+
+Returns:
+- Current session status, recent output while running, and final exit/output metadata on completion.
+- Structured errors for unknown sessions, failed commands, and runtime-managed background failures."#;
+
 pub(super) fn bash_schema() -> Value {
     json!({
         "type": "function",
@@ -27,7 +43,7 @@ pub(super) fn check_background_command_schema() -> Value {
         "type": "function",
         "function": {
             "name": "check_background_command",
-            "description": "Check status/output for a command launched in background mode, including sessions auto-detached after foreground timeout.\n\nResponses can be `running`, `completed`, or an error with `background_command_failed`. Running responses include recent captured output when available; completed responses include final exit information and output. Poll this after `bash` returns a `session_id`, and stop polling once a terminal status is returned.",
+            "description": CHECK_BACKGROUND_COMMAND_DESCRIPTION,
             "parameters": {
                 "type": "object",
                 "properties": {"session_id": {"type": "string", "description": "Background session identifier returned by `bash` when `run_in_background=true` or when a foreground command times out."}},

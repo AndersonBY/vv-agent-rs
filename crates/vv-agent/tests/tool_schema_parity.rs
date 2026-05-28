@@ -94,7 +94,11 @@ fn tools_module_is_split_into_handler_files() {
         "tools/schemas/memory.rs",
         "tools/schemas/sub_agents.rs",
         "tools/schemas/todo.rs",
-        "tools/schemas/workspace.rs",
+        "tools/schemas/workspace/mod.rs",
+        "tools/schemas/workspace/edit.rs",
+        "tools/schemas/workspace/file_io.rs",
+        "tools/schemas/workspace/listing.rs",
+        "tools/schemas/workspace/search.rs",
         "tools/handlers/control.rs",
         "tools/handlers/todo.rs",
         "tools/handlers/workspace_io.rs",
@@ -195,6 +199,10 @@ fn tools_module_is_split_into_handler_files() {
             "schemas.rs should be split into src/tools/schemas/ domain modules",
         ),
         (
+            "tools/schemas/workspace.rs",
+            "workspace schemas should be split into src/tools/schemas/workspace/ modules",
+        ),
+        (
             "tools/handlers/skills.rs",
             "skills.rs should be split into src/tools/handlers/skills/ modules",
         ),
@@ -247,6 +255,84 @@ fn critical_tool_schemas_include_actionable_agent_guidance() {
     let read_image = description(&registry, "read_image");
     assert!(read_image.contains("multimodal"));
     assert!(read_image.contains("Use this before reasoning about image content"));
+}
+
+#[test]
+fn high_impact_tool_descriptions_use_reference_style_operational_sections() {
+    let registry = build_default_registry();
+
+    for tool_name in [
+        "read_file",
+        "write_file",
+        "list_files",
+        "file_info",
+        "workspace_grep",
+        "file_str_replace",
+        "bash",
+        "check_background_command",
+        "compress_memory",
+        "todo_write",
+        "create_sub_task",
+        "sub_task_status",
+        "read_image",
+        "task_finish",
+        "ask_user",
+    ] {
+        let description = description(&registry, tool_name);
+        assert!(
+            description.len() >= 280,
+            "{tool_name} description is too short to guide agent behavior: {description}"
+        );
+        assert!(
+            description.contains("When to use:")
+                || description.contains("Workflow:")
+                || description.contains("Protocol:")
+                || description.contains("Guidelines:")
+                || description.contains("Modes:")
+                || description.contains("Capabilities:"),
+            "{tool_name} description lacks an operational section: {description}"
+        );
+    }
+
+    let read_file = description(&registry, "read_file");
+    assert!(read_file.contains("When to use:"));
+    assert!(read_file.contains("Returns:"));
+    assert!(read_file.contains("Safety and limits:"));
+
+    let write_file = description(&registry, "write_file");
+    assert!(write_file.contains("When to use:"));
+    assert!(write_file.contains("Do not use this for surgical edits"));
+    assert!(write_file.contains("Returns:"));
+
+    let list_files = description(&registry, "list_files");
+    assert!(list_files.contains("When to use:"));
+    assert!(list_files.contains("Narrow first"));
+    assert!(list_files.contains("Returns:"));
+
+    let file_info = description(&registry, "file_info");
+    assert!(file_info.contains("When to use:"));
+    assert!(file_info.contains("before deciding read ranges"));
+    assert!(file_info.contains("Returns:"));
+
+    let file_str_replace = description(&registry, "file_str_replace");
+    assert!(file_str_replace.contains("Workflow:"));
+    assert!(file_str_replace.contains("never guess whitespace"));
+    assert!(file_str_replace.contains("Returns:"));
+
+    let check_background = description(&registry, "check_background_command");
+    assert!(check_background.contains("When to use:"));
+    assert!(check_background.contains("Polling protocol:"));
+    assert!(check_background.contains("Returns:"));
+
+    let compress_memory = description(&registry, "compress_memory");
+    assert!(compress_memory.contains("When to use:"));
+    assert!(compress_memory.contains("Do not store transient chatter"));
+    assert!(compress_memory.contains("Good memory notes"));
+
+    let read_image = description(&registry, "read_image");
+    assert!(read_image.contains("When to use:"));
+    assert!(read_image.contains("Supported inputs:"));
+    assert!(read_image.contains("Returns:"));
 }
 
 #[test]

@@ -1,11 +1,28 @@
 use serde_json::{json, Value};
 
+const TODO_WRITE_DESCRIPTION: &str = r#"Create and manage a structured TODO list for multi-step execution.
+
+Protocol:
+- Send the complete `todos` array each time; this is a replacement payload, not a patch.
+- Existing items with matching `id` are updated and keep their original `created_at`.
+- Items omitted from the new array are removed.
+- Missing `id` values are generated automatically as short stable ids.
+- Missing status defaults to `pending`; missing priority defaults to `medium`.
+- Only one item may have `status=in_progress`.
+
+When to use:
+- Track multi-step implementation, verification, migration, review, or incident recovery work.
+- Make progress state explicit before delegating, running long commands, or switching from investigation to edits.
+
+Returns:
+- The normalized TODO list with generated ids/defaults and validation errors when statuses conflict."#;
+
 pub(super) fn todo_write_schema() -> Value {
     json!({
         "type": "function",
         "function": {
             "name": "todo_write",
-            "description": "Create and manage structured TODO list for multi-step execution.\n\nProtocol:\n- Send the complete `todos` array each time.\n- Existing items with matching `id` are updated and keep their original `created_at`.\n- Items omitted from the new array are removed.\n- Missing `id` values are generated automatically as short stable ids.\n- Missing status defaults to `pending`; missing priority defaults to `medium`.\n- Only one item may have `status=in_progress`.\n\nUse this tool to keep task planning explicit and machine-readable.",
+            "description": TODO_WRITE_DESCRIPTION,
             "parameters": {
                 "type": "object",
                 "properties": {
