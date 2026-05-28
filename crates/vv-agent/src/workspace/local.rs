@@ -157,7 +157,17 @@ fn walk_recursive(root: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut stack = vec![root.to_path_buf()];
     let mut entries = Vec::new();
     while let Some(path) = stack.pop() {
-        for entry in fs::read_dir(&path)? {
+        let reader = match fs::read_dir(&path) {
+            Ok(reader) => reader,
+            Err(error) if path != root => {
+                if error.kind() == ErrorKind::PermissionDenied {
+                    continue;
+                }
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
+        for entry in reader {
             let entry = entry?;
             let entry_path = entry.path();
             if entry_path.is_dir() {

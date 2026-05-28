@@ -625,6 +625,31 @@ fn local_workspace_backend_replaces_invalid_utf8_when_reading_text() {
     assert_eq!(text, "ok\u{fffd}done");
 }
 
+#[cfg(unix)]
+#[test]
+fn local_workspace_backend_skips_unreadable_dirs_when_listing_files() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let workspace = tempfile::tempdir().expect("workspace");
+    std::fs::write(workspace.path().join("visible.txt"), "visible").expect("visible file");
+    let private_dir = workspace.path().join("private");
+    std::fs::create_dir(&private_dir).expect("private dir");
+    std::fs::write(private_dir.join("hidden.txt"), "hidden").expect("hidden file");
+    std::fs::set_permissions(&private_dir, std::fs::Permissions::from_mode(0o000))
+        .expect("make private dir unreadable");
+
+    let local = LocalWorkspaceBackend::new(workspace.path());
+    let listed = local.list_files(".", "**/*.txt");
+
+    std::fs::set_permissions(&private_dir, std::fs::Permissions::from_mode(0o700))
+        .expect("restore private dir permissions");
+
+    assert_eq!(
+        listed.expect("list should skip unreadable dir"),
+        vec!["visible.txt"]
+    );
+}
+
 #[test]
 fn read_file_returns_file_info_when_requested_slice_exceeds_limits() {
     let workspace = tempfile::tempdir().expect("workspace");
