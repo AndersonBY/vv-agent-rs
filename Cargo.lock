@@ -3392,9 +3392,9 @@ dependencies = [
 
 [[package]]
 name = "vv-llm"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "784bdbeb453fc899b0d1845e5671dfd7fc92d099b792931d69e9c67c1d72ee46"
+checksum = "c8eb79762bf821f01c3d50f4d8cff4e3e741fc2406d279fa3ee2500bf42776da"
 dependencies = [
  "anthropic",
  "async-openai",

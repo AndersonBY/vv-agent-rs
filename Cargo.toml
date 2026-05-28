@@ -1,4 +1,3 @@
 [workspace]
 members = ["crates/vv-agent"]
 resolver = "2"
-

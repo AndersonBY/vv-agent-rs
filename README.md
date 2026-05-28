@@ -164,7 +164,7 @@ The current Rust implementation includes:
   default tool schemas, workspace tool schemas, and convenience accessors for
   the `task_finish`, `ask_user`, and `activate_skill` schemas. It also exposes
   Python-matched `constants::tool_names` and `constants::workspace` submodules.
-- `vv-llm = "0.1.0"` backed chat client construction through
+- `vv-llm = "0.1.1"` backed chat client construction through
   `build_vv_llm_from_local_settings`, settings-based endpoint resolution, and
   provider HTTP/protocol handling delegated to `vv-llm`, while keeping
   `ScriptedLlmClient` for deterministic tests. The scripted client now mirrors
@@ -256,10 +256,12 @@ The current Rust implementation includes:
   `-high` alias routing, MiniMax multi-system message preparation, Python-style
   streaming `raw_content` block aggregation, structured stream events for
   reasoning/content/tool-call progress with Python-style character-based token
-  estimates, provider tool-call id/name normalization, and Python-style
-  omission of empty optional message request fields before handing typed
-  messages to `vv-llm`. `VvLlmClient` and SDK-built vv-llm runtimes also
-  support Python-style debug request dumps via `debug_dump_dir`.
+  estimates, provider tool-call id/name normalization, Python-style
+  request-side reasoning/tool-call extension preservation through `vv-llm`
+  typed fields, and Python-style omission of empty optional message request
+  fields before handing typed messages to `vv-llm`. `VvLlmClient` and
+  SDK-built vv-llm runtimes also support Python-style debug request dumps via
+  `debug_dump_dir`.
 - Core runtime types expose Python-style `to_dict` / `from_dict` helpers for
   task, result, message, cycle, tool-call, and tool-result payloads, including
   legacy tool `status` plus `status_code` for worker interoperability. Agent
@@ -675,10 +677,8 @@ The current Rust implementation includes:
 - Smoke tests covering public API construction, Rust SDK usage, vv-llm
   integration, runtime tool cycles, schema parity, and workspace tools.
 
-Deeper parity work against the Python implementation is still pending for
-production distributed-worker integrations. Provider request serialization is
-intentionally delegated to the crates.io `vv-llm` crate; request-side provider
-details that are not yet represented by `vv-llm` typed APIs should be added
-there instead of reimplemented in this repository. The migration target is to
-copy Python `v-agent` capabilities, implementation shape, and behavior as
-completely as possible, not merely provide a minimal Rust wrapper.
+Provider request serialization is intentionally delegated to the crates.io
+`vv-llm` crate; request-side provider details should be added there instead of
+reimplemented in this repository. The migration target is to copy Python
+`v-agent` capabilities, implementation shape, and behavior as completely as
+possible, not merely provide a minimal Rust wrapper.

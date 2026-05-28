@@ -261,6 +261,7 @@ impl VvLlmClient {
                 .get("tool_choice")
                 .and_then(Value::as_str)
                 .map(str::to_string),
+            extra_body: request_options.extra_body,
         };
         if should_stream {
             chat_request.options.stream = Some(true);
@@ -353,6 +354,7 @@ struct ResolvedRequestOptions {
     model: String,
     temperature: Option<f32>,
     max_tokens: Option<u32>,
+    extra_body: Value,
 }
 
 fn resolve_request_options(model: &str) -> ResolvedRequestOptions {
@@ -360,6 +362,7 @@ fn resolve_request_options(model: &str) -> ResolvedRequestOptions {
     let mut normalized_model = resolved_model.to_ascii_lowercase();
     let mut temperature = None;
     let mut max_tokens = None;
+    let mut extra_body = Value::Null;
 
     if STREAM_MODEL_EXACT
         .iter()
@@ -374,6 +377,9 @@ fn resolve_request_options(model: &str) -> ResolvedRequestOptions {
         normalized_model = resolved_model.to_ascii_lowercase();
         temperature = Some(1.0);
         max_tokens = Some(20_000);
+        extra_body = serde_json::json!({
+            "thinking": {"type": "enabled", "budget_tokens": 16000}
+        });
     }
 
     if matches!(normalized_model.as_str(), "o3-mini-high" | "o4-mini-high")
@@ -381,16 +387,22 @@ fn resolve_request_options(model: &str) -> ResolvedRequestOptions {
     {
         resolved_model = remove_suffix_case_insensitive(&resolved_model, "-high");
         normalized_model = resolved_model.to_ascii_lowercase();
+        extra_body = serde_json::json!({"reasoning_effort": "high"});
     }
 
-    if normalized_model.starts_with("qwen3")
-        && normalized_model.ends_with("-thinking")
-        && !QWEN_THINKING_KEEP_SUFFIX_MODELS
-            .iter()
-            .any(|candidate| normalized_model == *candidate)
-    {
-        resolved_model = remove_suffix_case_insensitive(&resolved_model, "-thinking");
-        normalized_model = resolved_model.to_ascii_lowercase();
+    if normalized_model.starts_with("qwen3") {
+        if normalized_model.ends_with("-thinking") {
+            if !QWEN_THINKING_KEEP_SUFFIX_MODELS
+                .iter()
+                .any(|candidate| normalized_model == *candidate)
+            {
+                resolved_model = remove_suffix_case_insensitive(&resolved_model, "-thinking");
+                normalized_model = resolved_model.to_ascii_lowercase();
+            }
+            extra_body = serde_json::json!({"enable_thinking": true});
+        } else {
+            extra_body = serde_json::json!({"enable_thinking": false});
+        }
     }
 
     if (normalized_model.starts_with("glm-4.") || normalized_model.starts_with("glm-5"))
@@ -398,6 +410,20 @@ fn resolve_request_options(model: &str) -> ResolvedRequestOptions {
     {
         resolved_model = remove_suffix_case_insensitive(&resolved_model, "-thinking");
         normalized_model = resolved_model.to_ascii_lowercase();
+        extra_body = serde_json::json!({"thinking": {"type": "enabled"}});
+    }
+
+    if normalized_model.starts_with("gemini-2.5") {
+        extra_body = serde_json::json!({
+            "extra_body": {
+                "google": {
+                    "thinking_config": {
+                        "thinkingBudget": -1,
+                        "include_thoughts": true
+                    }
+                }
+            }
+        });
     }
 
     if normalized_model.starts_with("gemini-3") {
@@ -405,12 +431,23 @@ fn resolve_request_options(model: &str) -> ResolvedRequestOptions {
         if normalized_model == "gemini-3-pro" || normalized_model == "gemini-3-flash" {
             resolved_model = format!("{resolved_model}-preview");
         }
+        extra_body = serde_json::json!({
+            "extra_body": {
+                "google": {
+                    "thinking_config": {
+                        "thinkingLevel": "high",
+                        "include_thoughts": true
+                    }
+                }
+            }
+        });
     }
 
     ResolvedRequestOptions {
         model: resolved_model,
         temperature,
         max_tokens,
+        extra_body,
     }
 }
 
@@ -593,15 +630,18 @@ fn to_vv_llm_message(message: Message) -> vv_llm::Message {
             .into_iter()
             .map(to_vv_llm_tool_call)
             .collect(),
+        reasoning_content: message.reasoning_content.filter(|value| !value.is_empty()),
     }
 }
 
 fn to_vv_llm_tool_call(tool_call: ToolCall) -> vv_llm::ToolCall {
-    vv_llm::ToolCall::function(
+    let mut vv_tool_call = vv_llm::ToolCall::function(
         tool_call.id,
         tool_call.name,
         Value::Object(tool_call.arguments.into_iter().collect()).to_string(),
-    )
+    );
+    vv_tool_call.extra_content = tool_call.extra_content;
+    vv_tool_call
 }
 
 fn prepare_messages_for_model(messages: Vec<vv_llm::Message>, model: &str) -> Vec<vv_llm::Message> {
@@ -675,6 +715,16 @@ fn from_vv_llm_response(
     let mut raw = crate::types::Metadata::new();
     raw.insert("id".to_string(), Value::String(response.id));
     raw.insert("model".to_string(), Value::String(response.model));
+    if let Some(reasoning_content) = response
+        .reasoning_content
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        raw.insert(
+            "reasoning_content".to_string(),
+            Value::String(reasoning_content.to_string()),
+        );
+    }
     let token_usage = response.usage.map(from_vv_llm_usage).unwrap_or_else(|| {
         estimate_missing_usage(&response.content, &response.tool_calls, estimate)
     });
@@ -693,11 +743,30 @@ fn from_vv_llm_response(
 }
 
 fn from_vv_llm_tool_call(tool_call: vv_llm::ToolCall, index: usize) -> ToolCall {
-    ToolCall::from_raw_arguments(
+    let mut normalized = ToolCall::from_raw_arguments(
         normalize_tool_call_id(&tool_call.id, index),
         normalize_tool_call_name(&tool_call.name),
         Value::String(tool_call.arguments),
-    )
+    );
+    if let Some(extra_content) = tool_call.extra_content {
+        normalized.extra_content = Some(match normalized.extra_content.take() {
+            Some(existing) => merge_tool_call_extra_content(existing, extra_content),
+            None => extra_content,
+        });
+    }
+    normalized
+}
+
+fn merge_tool_call_extra_content(existing: Value, extra_content: Value) -> Value {
+    match (existing, extra_content) {
+        (Value::Object(mut existing), Value::Object(extra)) => {
+            existing.extend(extra);
+            Value::Object(existing)
+        }
+        (existing, extra_content) => {
+            serde_json::json!({"parse_error": existing, "provider_extra_content": extra_content})
+        }
+    }
 }
 
 fn normalize_tool_call_id(id: &str, index: usize) -> String {

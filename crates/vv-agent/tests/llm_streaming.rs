@@ -58,6 +58,7 @@ impl vv_llm::ChatClient for StreamingChatClient {
                     "task_finish",
                     r#"{"message":"non-stream fallback"}"#,
                 )],
+                reasoning_content: None,
                 usage: None,
             })
         })
@@ -142,6 +143,7 @@ impl vv_llm::ChatClient for UnicodeStreamingChatClient {
                 model: "deepseek-v4-pro".to_string(),
                 content: "not streamed".to_string(),
                 tool_calls: vec![],
+                reasoning_content: None,
                 usage: None,
             })
         })
@@ -184,8 +186,8 @@ fn runtime_execution_context_stream_callback_uses_vv_llm_streaming() {
     let probe = chat_client.clone();
     let llm = VvLlmClient::new(
         "deepseek",
-        "deepseek-v4-pro",
-        "deepseek-v4-pro",
+        "deepseek-chat",
+        "deepseek-chat",
         Box::new(chat_client),
         90.0,
     );
@@ -586,6 +588,58 @@ fn vv_llm_client_omits_empty_optional_request_fields_like_python() {
 }
 
 #[test]
+fn vv_llm_client_preserves_reasoning_and_tool_extra_content_through_vv_llm() {
+    let chat_client = RecordingMessagesChatClient::default();
+    let probe = chat_client.clone();
+    let llm = VvLlmClient::new(
+        "deepseek",
+        "deepseek-v4-pro",
+        "deepseek-v4-pro",
+        Box::new(chat_client),
+        90.0,
+    );
+    let mut assistant = Message::assistant("");
+    assistant.reasoning_content = Some("old-thought".to_string());
+    let mut call = vv_agent::ToolCall::new(
+        "call_1",
+        "default_api:list_files",
+        [("path".to_string(), json!("."))].into_iter().collect(),
+    );
+    call.extra_content = Some(json!({"google": {"thought_signature": "sig_123"}}));
+    assistant.tool_calls = vec![call];
+
+    let response = llm
+        .complete(LlmRequest::new(
+            "deepseek-chat",
+            vec![Message::user("continue"), assistant],
+        ))
+        .expect("vv-llm request");
+
+    let request = probe.last_request().expect("recorded request");
+    let assistant = request
+        .messages
+        .iter()
+        .find(|message| message.role == vv_llm::MessageRole::Assistant)
+        .expect("assistant request message");
+    assert_eq!(assistant.reasoning_content.as_deref(), Some("old-thought"));
+    assert_eq!(
+        assistant.tool_calls[0]
+            .extra_content
+            .as_ref()
+            .expect("extra content")["google"]["thought_signature"],
+        json!("sig_123")
+    );
+    assert_eq!(response.raw["reasoning_content"], json!("new-thought"));
+    assert_eq!(
+        response.tool_calls[0]
+            .extra_content
+            .as_ref()
+            .expect("response extra content")["google"]["thought_signature"],
+        json!("sig_456")
+    );
+}
+
+#[test]
 fn vv_llm_client_applies_deepseek_reasoning_temperature_like_python() {
     let chat_client = RecordingMessagesChatClient::default();
     let probe = chat_client.clone();
@@ -630,6 +684,10 @@ fn vv_llm_client_normalizes_supported_thinking_model_options_like_python() {
     assert_eq!(claude_request.model, "claude-opus-4-6");
     assert_eq!(claude_request.options.temperature, Some(1.0));
     assert_eq!(claude_request.options.max_tokens, Some(20_000));
+    assert_eq!(
+        claude_request.extra_body["thinking"],
+        json!({"type": "enabled", "budget_tokens": 16000})
+    );
 
     let gemini_client = RecordingMessagesChatClient::default();
     let gemini_probe = gemini_client.clone();
@@ -650,6 +708,14 @@ fn vv_llm_client_normalizes_supported_thinking_model_options_like_python() {
     let gemini_request = gemini_probe.last_request().expect("gemini request");
     assert_eq!(gemini_request.model, "gemini-3-pro-preview");
     assert_eq!(gemini_request.options.temperature, Some(1.0));
+    assert_eq!(
+        gemini_request.extra_body["extra_body"]["google"]["thinking_config"]["thinkingLevel"],
+        json!("high")
+    );
+    assert_eq!(
+        gemini_request.extra_body["extra_body"]["google"]["thinking_config"]["include_thoughts"],
+        json!(true)
+    );
 }
 
 #[test]
@@ -672,6 +738,10 @@ fn vv_llm_client_normalizes_more_provider_model_aliases_like_python() {
     assert_eq!(
         qwen_probe.last_request().expect("qwen request").model,
         "qwen3-32b"
+    );
+    assert_eq!(
+        qwen_probe.last_request().expect("qwen request").extra_body["enable_thinking"],
+        json!(true)
     );
 
     let qwen_keep_client = RecordingMessagesChatClient::default();
@@ -716,6 +786,10 @@ fn vv_llm_client_normalizes_more_provider_model_aliases_like_python() {
         glm_probe.last_request().expect("glm request").model,
         "glm-5-air"
     );
+    assert_eq!(
+        glm_probe.last_request().expect("glm request").extra_body["thinking"],
+        json!({"type": "enabled"})
+    );
 
     let gpt_client = RecordingMessagesChatClient::default();
     let gpt_probe = gpt_client.clone();
@@ -736,6 +810,10 @@ fn vv_llm_client_normalizes_more_provider_model_aliases_like_python() {
         gpt_probe.last_request().expect("gpt request").model,
         "gpt-5"
     );
+    assert_eq!(
+        gpt_probe.last_request().expect("gpt request").extra_body["reasoning_effort"],
+        json!("high")
+    );
 
     let o3_client = RecordingMessagesChatClient::default();
     let o3_probe = o3_client.clone();
@@ -755,6 +833,10 @@ fn vv_llm_client_normalizes_more_provider_model_aliases_like_python() {
     assert_eq!(
         o3_probe.last_request().expect("o3 request").model,
         "o3-mini"
+    );
+    assert_eq!(
+        o3_probe.last_request().expect("o3 request").extra_body["reasoning_effort"],
+        json!("high")
     );
 }
 
@@ -952,6 +1034,7 @@ impl vv_llm::ChatClient for FlakyChatClient {
                 model: request.model,
                 content: "flaky success".to_string(),
                 tool_calls: Vec::new(),
+                reasoning_content: None,
                 usage: None,
             })
         })
@@ -1006,6 +1089,7 @@ impl vv_llm::ChatClient for RawContentChatClient {
                 model: "kimi-k2.5".to_string(),
                 content: String::new(),
                 tool_calls: Vec::new(),
+                reasoning_content: None,
                 usage: None,
             })
         })
@@ -1080,6 +1164,7 @@ impl vv_llm::ChatClient for UnnormalizedToolCallChatClient {
                     "task _finish",
                     r#"{"message":"done"}"#,
                 )],
+                reasoning_content: None,
                 usage: None,
             })
         })
@@ -1156,7 +1241,13 @@ impl vv_llm::ChatClient for RecordingMessagesChatClient {
                 id: "recording-response".to_string(),
                 model: request.model,
                 content: "recorded".to_string(),
-                tool_calls: Vec::new(),
+                tool_calls: vec![vv_llm::ToolCall {
+                    id: "call_response".to_string(),
+                    name: "default_api:read_file".to_string(),
+                    arguments: r#"{"path":"README.md"}"#.to_string(),
+                    extra_content: Some(json!({"google": {"thought_signature": "sig_456"}})),
+                }],
+                reasoning_content: Some("new-thought".to_string()),
                 usage: None,
             })
         })
@@ -1264,6 +1355,7 @@ impl vv_llm::ChatClient for UsageMissingChatClient {
                 model: request.model,
                 content: "estimated usage response".to_string(),
                 tool_calls: Vec::new(),
+                reasoning_content: None,
                 usage: None,
             })
         })
