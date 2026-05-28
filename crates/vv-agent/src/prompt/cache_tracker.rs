@@ -106,9 +106,49 @@ fn normalize_section(section: &Value) -> Option<BTreeMap<String, Value>> {
 }
 
 fn hash_json<T: serde::Serialize + ?Sized>(value: &T) -> String {
-    let payload = serde_json::to_vec(value).unwrap_or_default();
-    let digest = Sha256::digest(payload);
+    let value = serde_json::to_value(value).unwrap_or(Value::Null);
+    let payload = python_sorted_json(&value);
+    let digest = Sha256::digest(payload.as_bytes());
     hex_lower(&digest)
+}
+
+fn python_sorted_json(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(value) => {
+            if *value {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            }
+        }
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string()),
+        Value::Array(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(python_sorted_json)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Object(object) => {
+            let mut entries = object.iter().collect::<Vec<_>>();
+            entries.sort_by(|left, right| left.0.cmp(right.0));
+            format!(
+                "{{{}}}",
+                entries
+                    .into_iter()
+                    .map(|(key, value)| format!(
+                        "{}: {}",
+                        serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string()),
+                        python_sorted_json(value)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    }
 }
 
 fn hex_lower(bytes: &[u8]) -> String {

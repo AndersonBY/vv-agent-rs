@@ -346,7 +346,8 @@ The current Rust implementation includes:
   tool-call boundaries before summarizing.
 - Split `prompt/` modules modeled after Python `vv_agent.prompt`: system prompt
   builder sections, stable prompt hashes, raw section metadata, localized tool
-  templates, available skills rendering, and prompt-cache break tracking.
+  templates, available skills rendering, and prompt-cache break tracking with
+  Python-compatible sorted JSON hashes for system sections and tool schemas.
 - Split `tools/` modules modeled after Python `v-agent`: `base`, `builtins`,
   `registry`, dispatcher, canonical `schemas/` domain modules, shared `common`
   helpers, and focused handler modules. `tools::handlers::common` mirrors the

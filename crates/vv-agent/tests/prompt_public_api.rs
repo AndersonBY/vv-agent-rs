@@ -159,3 +159,25 @@ fn prompt_public_api_tracks_section_and_tool_cache_breaks() {
     );
     assert!((tracker.cache_hit_rate() - (2.0 / 3.0)).abs() < f64::EPSILON);
 }
+
+#[test]
+fn prompt_cache_hashes_match_python_sorted_json_payloads() {
+    let system_hash = hash_system_prompt_sections(&[json!({
+        "id": "core",
+        "text": " stable 文本 ",
+        "stable": true,
+    })]);
+    assert_eq!(
+        system_hash,
+        "f4b5a29c78a21827a3d7591c5d01217bab73a285e4547044fc08ec81b0eec3f3"
+    );
+
+    let tool_hash = hash_tool_payload(&[json!({
+        "name": "read_file",
+        "input_schema": {"type": "object", "a": 1}
+    })]);
+    assert_eq!(
+        tool_hash,
+        "e90cd0abb1df2274146ffe58d025cfcc4e1fff2b6370f46c9b6e6e5972eecc70"
+    );
+}
