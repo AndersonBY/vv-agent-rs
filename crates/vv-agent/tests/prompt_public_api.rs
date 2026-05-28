@@ -118,6 +118,7 @@ fn prompt_public_wording_guard_catches_case_variants() {
 
 fn prompt_forbidden_terms() -> Vec<String> {
     [
+        forbidden_phrase(&[TERM_LANGUAGE]),
         forbidden_phrase(&[TERM_LANGUAGE, SPACE, TERM_JOINING]),
         forbidden_phrase(&[TERM_LANGUAGE, b"-compatible"]),
         forbidden_phrase(&[b"for ", TERM_LANGUAGE]),

@@ -118,6 +118,7 @@ fn source_rustdoc_comments_stay_capability_focused() {
 
 fn public_doc_forbidden_terms() -> Vec<String> {
     [
+        forbidden_phrase(&[TERM_LANGUAGE]),
         forbidden_phrase(&[TERM_LANGUAGE, SPACE, TERM_JOINING]),
         forbidden_phrase(&[TERM_LANGUAGE, b"-compatible"]),
         forbidden_phrase(&[b"for ", TERM_LANGUAGE, SPACE, TERM_JOINING]),
@@ -139,6 +140,7 @@ fn public_doc_forbidden_terms() -> Vec<String> {
 
 fn rustdoc_forbidden_terms() -> Vec<String> {
     [
+        forbidden_phrase(&[TERM_LANGUAGE]),
         forbidden_phrase(&[b"matching ", TERM_LANGUAGE]),
         forbidden_phrase(&[b"mirror ", TERM_LANGUAGE]),
         forbidden_phrase(&[b"like ", TERM_LANGUAGE]),

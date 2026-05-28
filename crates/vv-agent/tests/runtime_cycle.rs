@@ -668,6 +668,132 @@ fn runtime_adds_generated_prompt_sections_to_sub_agent_metadata() {
 }
 
 #[test]
+fn runtime_preserves_sub_agent_prompt_cache_metadata() {
+    let mut sub_task_args = BTreeMap::new();
+    sub_task_args.insert("agent_id".to_string(), json!("researcher"));
+    sub_task_args.insert(
+        "task_description".to_string(),
+        json!("Inspect configured prompt sections"),
+    );
+    let mut parent_finish_args = BTreeMap::new();
+    parent_finish_args.insert(
+        "message".to_string(),
+        json!("parent saw configured prompt metadata"),
+    );
+
+    let llm = InspectingSubAgentPromptLlmClient::new(vec![
+        LLMResponse::with_tool_calls(
+            "",
+            vec![ToolCall::new(
+                "parent_sub_call",
+                "create_sub_task",
+                sub_task_args,
+            )],
+        ),
+        LLMResponse::with_tool_calls(
+            "",
+            vec![ToolCall::new(
+                "parent_finish",
+                "task_finish",
+                parent_finish_args,
+            )],
+        ),
+    ]);
+    let inspector = llm.clone();
+    let runtime = AgentRuntime::new(llm);
+    let mut task = AgentTask::new(
+        "parent_prompt_configured",
+        "demo",
+        "parent system",
+        "delegate",
+    );
+    let mut sub_agent = SubAgentConfig::new("demo", "research profile");
+    sub_agent
+        .metadata
+        .insert("anthropic_prompt_cache_enabled".to_string(), json!(true));
+    sub_agent.metadata.insert(
+        "system_prompt_sections".to_string(),
+        json!([
+            {"id": "core_identity", "text": "stable section", "stable": true}
+        ]),
+    );
+    task.sub_agents.insert("researcher".to_string(), sub_agent);
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let metadata = inspector
+        .child_system_metadata()
+        .expect("child system metadata");
+    assert_eq!(metadata["anthropic_prompt_cache_enabled"], json!(true));
+    let sections = metadata["system_prompt_sections"]
+        .as_array()
+        .expect("system prompt sections");
+    assert_eq!(sections.len(), 1);
+    assert_eq!(sections[0]["id"], json!("core_identity"));
+}
+
+#[test]
+fn runtime_sub_agent_identity_metadata_cannot_be_overridden_by_request() {
+    let mut sub_task_args = BTreeMap::new();
+    sub_task_args.insert("agent_id".to_string(), json!("researcher"));
+    sub_task_args.insert(
+        "task_description".to_string(),
+        json!("Inspect isolated metadata"),
+    );
+    let mut parent_finish_args = BTreeMap::new();
+    parent_finish_args.insert("message".to_string(), json!("parent saw isolated metadata"));
+
+    let llm = InspectingSubAgentPromptLlmClient::new(vec![
+        LLMResponse::with_tool_calls(
+            "",
+            vec![ToolCall::new(
+                "parent_sub_call",
+                "create_sub_task",
+                sub_task_args,
+            )],
+        ),
+        LLMResponse::with_tool_calls(
+            "",
+            vec![ToolCall::new(
+                "parent_finish",
+                "task_finish",
+                parent_finish_args,
+            )],
+        ),
+    ]);
+    let inspector = llm.clone();
+    let runtime = AgentRuntime::new(llm);
+    let mut task = AgentTask::new("parent_identity", "demo", "parent system", "delegate");
+    let mut sub_agent = SubAgentConfig::new("demo", "research profile");
+    sub_agent
+        .metadata
+        .insert("task_id".to_string(), json!("sub-agent-task-override"));
+    sub_agent.metadata.insert(
+        "session_id".to_string(),
+        json!("sub-agent-session-override"),
+    );
+    sub_agent.metadata.insert(
+        "browser_scope_key".to_string(),
+        json!("sub-agent-browser-override"),
+    );
+    task.sub_agents.insert("researcher".to_string(), sub_agent);
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let metadata = inspector
+        .child_system_metadata()
+        .expect("child system metadata");
+    let task_id = metadata["task_id"].as_str().expect("task id");
+    let session_id = metadata["session_id"].as_str().expect("session id");
+    assert_ne!(task_id, "sub-agent-task-override");
+    assert_ne!(session_id, "sub-agent-session-override");
+    assert_eq!(session_id, task_id);
+    assert_eq!(metadata["browser_scope_key"], metadata["session_id"]);
+}
+
+#[test]
 fn runtime_seeds_skill_state_from_task_metadata() {
     let mut finish_args = BTreeMap::new();
     finish_args.insert("message".to_string(), json!("done"));
@@ -1066,6 +1192,40 @@ fn runtime_log_events_include_agent_previews() {
     assert_eq!(
         completed_event.1["final_answer"],
         preview_text_for_test(&final_text, Some(10))
+    );
+}
+
+#[test]
+fn runtime_emits_run_max_cycles_log_with_final_answer() {
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::new("step 1"), LLMResponse::new("step 2")]);
+    let events = Arc::new(Mutex::new(Vec::<(
+        String,
+        BTreeMap<String, serde_json::Value>,
+    )>::new()));
+    let sink = events.clone();
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.log_handler = Some(Arc::new(Mutex::new(Box::new(
+        move |event: &str, payload: &BTreeMap<String, serde_json::Value>| {
+            sink.lock()
+                .expect("events poisoned")
+                .push((event.to_string(), payload.clone()));
+        },
+    ))));
+    let mut task = AgentTask::new("max_cycles_log", "demo", "system", "keep going");
+    task.max_cycles = 2;
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::MaxCycles);
+    let events = events.lock().expect("events poisoned").clone();
+    let max_cycles = events
+        .iter()
+        .find(|(event, _)| event == "run_max_cycles")
+        .expect("run max cycles event");
+    assert_eq!(max_cycles.1["cycle"], json!(2));
+    assert_eq!(
+        max_cycles.1["final_answer"],
+        json!("Reached max cycles without finish signal.")
     );
 }
 
