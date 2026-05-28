@@ -195,6 +195,20 @@ fn message_to_openai_message_omits_empty_reasoning_like_python() {
 }
 
 #[test]
+fn message_to_openai_message_omits_empty_optional_fields_like_python() {
+    let mut user = Message::user("inspect");
+    user.name = Some(String::new());
+    user.tool_call_id = Some(String::new());
+    user.image_url = Some(String::new());
+
+    let payload = user.to_openai_message(true);
+
+    assert!(payload.get("name").is_none());
+    assert!(payload.get("tool_call_id").is_none());
+    assert_eq!(payload["content"], json!("inspect"));
+}
+
+#[test]
 fn message_dict_round_trips_python_openai_style_tool_calls() {
     let payload = json!({
         "role": "assistant",

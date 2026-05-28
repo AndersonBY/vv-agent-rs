@@ -269,8 +269,8 @@ The current Rust implementation includes:
   payloads from Python checkpoints while
   preserving provider `extra_content`. `Message::to_openai_message` also
   mirrors Python multimodal/tool-call payload shaping, including assistant tool
-  calls with `content: null`, non-empty optional reasoning content, provider
-  `extra_content`, and user image blocks.
+  calls with `content: null`, Python-style omission of empty optional request
+  fields, provider `extra_content`, and user image blocks.
 - `CeleryBackend` now supports a Python-style distributed execution path through
   a pluggable `CycleTaskDispatcher` and shared `StateStore`: it writes the
   initial checkpoint, dispatches one cycle at a time, returns worker terminal

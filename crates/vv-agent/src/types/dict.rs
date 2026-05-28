@@ -9,8 +9,8 @@ impl Message {
             ),
             ("content".to_string(), Value::String(self.content.clone())),
         ]);
-        insert_optional_string(&mut payload, "name", &self.name);
-        insert_optional_string(&mut payload, "tool_call_id", &self.tool_call_id);
+        insert_non_empty_optional_string(&mut payload, "name", &self.name);
+        insert_non_empty_optional_string(&mut payload, "tool_call_id", &self.tool_call_id);
         if self.role == MessageRole::Assistant && !self.tool_calls.is_empty() {
             payload.insert(
                 "tool_calls".to_string(),
@@ -20,17 +20,15 @@ impl Message {
                 payload.insert("content".to_string(), Value::Null);
             }
         }
-        if include_reasoning_content
-            && self.role == MessageRole::Assistant
-            && self
-                .reasoning_content
-                .as_deref()
-                .is_some_and(|reasoning| !reasoning.is_empty())
-        {
-            insert_optional_string(&mut payload, "reasoning_content", &self.reasoning_content);
+        if include_reasoning_content && self.role == MessageRole::Assistant {
+            insert_non_empty_optional_string(
+                &mut payload,
+                "reasoning_content",
+                &self.reasoning_content,
+            );
         }
         if self.role == MessageRole::User {
-            if let Some(image_url) = &self.image_url {
+            if let Some(image_url) = self.image_url.as_deref().filter(|value| !value.is_empty()) {
                 let mut blocks = Vec::new();
                 if !self.content.is_empty() {
                     blocks.push(serde_json::json!({
@@ -537,6 +535,16 @@ fn insert_optional_string(
 ) {
     if let Some(value) = value {
         object.insert(key.to_string(), Value::String(value.clone()));
+    }
+}
+
+fn insert_non_empty_optional_string(
+    object: &mut serde_json::Map<String, Value>,
+    key: &str,
+    value: &Option<String>,
+) {
+    if let Some(value) = value.as_deref().filter(|value| !value.is_empty()) {
+        object.insert(key.to_string(), Value::String(value.to_string()));
     }
 }
 
