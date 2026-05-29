@@ -12,13 +12,13 @@ use super::response::{
     UsageEstimateContext,
 };
 
-#[derive(Debug, Default)]
-struct StreamingToolCallParts {
-    id: String,
-    index: Option<usize>,
-    name: String,
-    arguments: String,
-}
+mod events;
+mod raw_content;
+mod tool_calls;
+
+use events::{emit_assistant_delta_event, emit_reasoning_delta_event, emit_tool_stream_event};
+use raw_content::collect_raw_content;
+use tool_calls::{resolve_stream_tool_call_key, StreamingToolCallParts};
 
 pub(super) async fn collect_vv_llm_stream(
     chat_client: Arc<dyn vv_llm::ChatClient>,
@@ -50,49 +50,12 @@ pub(super) async fn collect_vv_llm_stream(
         if !delta.reasoning_content.is_empty() {
             reasoning_content.push_str(&delta.reasoning_content);
             let reasoning_chars = reasoning_content.chars().count();
-            emit_stream_event(
-                &stream_callback,
-                BTreeMap::from([
-                    (
-                        "event".to_string(),
-                        Value::String("reasoning_delta".to_string()),
-                    ),
-                    (
-                        "reasoning_delta".to_string(),
-                        Value::String(delta.reasoning_content),
-                    ),
-                    (
-                        "reasoning_chars".to_string(),
-                        Value::from(reasoning_chars as u64),
-                    ),
-                    (
-                        "estimated_tokens".to_string(),
-                        Value::from(estimate_stream_tokens(reasoning_chars) as u64),
-                    ),
-                ]),
-            );
+            emit_reasoning_delta_event(&stream_callback, delta.reasoning_content, reasoning_chars);
         }
         if !delta.content.is_empty() {
             content.push_str(&delta.content);
             let content_chars = content.chars().count();
-            emit_stream_event(
-                &stream_callback,
-                BTreeMap::from([
-                    (
-                        "event".to_string(),
-                        Value::String("assistant_delta".to_string()),
-                    ),
-                    ("content_delta".to_string(), Value::String(delta.content)),
-                    (
-                        "content_chars".to_string(),
-                        Value::from(content_chars as u64),
-                    ),
-                    (
-                        "estimated_tokens".to_string(),
-                        Value::from(estimate_stream_tokens(content_chars) as u64),
-                    ),
-                ]),
-            );
+            emit_assistant_delta_event(&stream_callback, delta.content, content_chars);
         }
         for (tool_call_index, tool_call_delta) in delta.tool_calls.into_iter().enumerate() {
             let key = resolve_stream_tool_call_key(
@@ -198,174 +161,4 @@ pub(super) async fn collect_vv_llm_stream(
         raw,
         token_usage,
     })
-}
-
-fn resolve_stream_tool_call_key(
-    tool_call: &vv_llm::ToolCall,
-    index: usize,
-    active_tool_call_key: Option<&str>,
-) -> String {
-    if !tool_call.id.is_empty() {
-        return tool_call.id.clone();
-    }
-    if let Some(active) = active_tool_call_key {
-        return active.to_string();
-    }
-    format!("call_stream_{index}")
-}
-
-fn collect_raw_content(blocks: &mut Vec<Value>, chunk: Value) {
-    match chunk {
-        Value::Array(items) => {
-            for item in items {
-                collect_raw_content(blocks, item);
-            }
-        }
-        Value::Object(object) => collect_raw_content_object(blocks, object),
-        _ => {}
-    }
-}
-
-fn collect_raw_content_object(blocks: &mut Vec<Value>, object: serde_json::Map<String, Value>) {
-    let chunk_type = object
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    match chunk_type {
-        "thinking_delta" => {
-            let index = find_or_create_raw_block(
-                blocks,
-                "thinking",
-                &[("thinking", ""), ("signature", "")],
-            );
-            append_raw_block_string(blocks, index, "thinking", object.get("thinking"));
-        }
-        "signature_delta" => {
-            let index = find_or_create_raw_block(
-                blocks,
-                "thinking",
-                &[("thinking", ""), ("signature", "")],
-            );
-            append_raw_block_string(blocks, index, "signature", object.get("signature"));
-        }
-        "text_delta" => {
-            let index = find_or_create_raw_block(blocks, "text", &[("text", "")]);
-            append_raw_block_string(blocks, index, "text", object.get("text"));
-        }
-        "input_json_delta" => {}
-        "thinking" | "text" | "tool_use" => {
-            if !raw_block_exists(blocks, &object) {
-                blocks.push(Value::Object(object));
-            }
-        }
-        _ => blocks.push(Value::Object(object)),
-    }
-}
-
-fn find_or_create_raw_block(
-    blocks: &mut Vec<Value>,
-    block_type: &str,
-    defaults: &[(&str, &str)],
-) -> usize {
-    if let Some(index) = blocks.iter().position(|block| {
-        block
-            .get("type")
-            .and_then(Value::as_str)
-            .is_some_and(|candidate| candidate == block_type)
-    }) {
-        return index;
-    }
-
-    let mut block = serde_json::Map::new();
-    block.insert("type".to_string(), Value::String(block_type.to_string()));
-    for (key, value) in defaults {
-        block.insert((*key).to_string(), Value::String((*value).to_string()));
-    }
-    blocks.push(Value::Object(block));
-    blocks.len() - 1
-}
-
-fn append_raw_block_string(
-    blocks: &mut [Value],
-    index: usize,
-    key: &str,
-    addition: Option<&Value>,
-) {
-    let addition = addition.and_then(Value::as_str).unwrap_or_default();
-    let Some(block) = blocks.get_mut(index).and_then(Value::as_object_mut) else {
-        return;
-    };
-    let mut value = block
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    value.push_str(addition);
-    block.insert(key.to_string(), Value::String(value));
-}
-
-fn raw_block_exists(blocks: &[Value], candidate: &serde_json::Map<String, Value>) -> bool {
-    let candidate_type = candidate.get("type");
-    let candidate_id = candidate.get("id");
-    blocks.iter().any(|block| {
-        let Some(block) = block.as_object() else {
-            return false;
-        };
-        if block.get("type") != candidate_type {
-            return false;
-        }
-        if let Some(candidate_id) = candidate_id {
-            return block.get("id") == Some(candidate_id);
-        }
-        block == candidate
-    })
-}
-
-fn emit_stream_event(stream_callback: &Option<LlmStreamCallback>, event: BTreeMap<String, Value>) {
-    if let Some(callback) = stream_callback {
-        callback(&event);
-    }
-}
-
-fn emit_tool_stream_event(
-    stream_callback: &Option<LlmStreamCallback>,
-    event_name: &str,
-    default_tool_call_index: usize,
-    tool_call: &StreamingToolCallParts,
-) {
-    let tool_call_index = tool_call.index.unwrap_or(default_tool_call_index);
-    emit_stream_event(
-        stream_callback,
-        BTreeMap::from([
-            ("event".to_string(), Value::String(event_name.to_string())),
-            (
-                "tool_call_id".to_string(),
-                Value::String(tool_call.id.clone()),
-            ),
-            (
-                "tool_call_index".to_string(),
-                Value::from(tool_call_index as u64),
-            ),
-            (
-                "function_name".to_string(),
-                Value::String(tool_call.name.clone()),
-            ),
-            (
-                "arguments_chars".to_string(),
-                Value::from(tool_call.arguments.chars().count() as u64),
-            ),
-            (
-                "estimated_tokens".to_string(),
-                Value::from(estimate_stream_tokens(tool_call.arguments.chars().count()) as u64),
-            ),
-        ]),
-    );
-}
-
-fn estimate_stream_tokens(char_count: usize) -> usize {
-    if char_count == 0 {
-        0
-    } else {
-        char_count.div_ceil(4)
-    }
 }

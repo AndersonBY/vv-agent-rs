@@ -1044,6 +1044,9 @@ fn tools_module_is_split_into_handler_files() {
         "llm/vv_llm_client/request.rs",
         "llm/vv_llm_client/response.rs",
         "llm/vv_llm_client/streaming.rs",
+        "llm/vv_llm_client/streaming/events.rs",
+        "llm/vv_llm_client/streaming/raw_content.rs",
+        "llm/vv_llm_client/streaming/tool_calls.rs",
         "workspace/mod.rs",
         "workspace/base.rs",
         "workspace/local.rs",
@@ -1350,6 +1353,19 @@ fn anthropic_prompt_cache_root_stays_focused_on_public_api() {
     assert!(
         line_count <= 120,
         "llm/anthropic_prompt_cache.rs should delegate block normalization, cache breakpoint planning, token estimation, model thresholds, and section parsing to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn vv_llm_streaming_root_stays_focused_on_stream_collection() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let streaming = manifest_dir.join("src/llm/vv_llm_client/streaming.rs");
+    let content = std::fs::read_to_string(&streaming).expect("read vv-llm streaming module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 200,
+        "llm/vv_llm_client/streaming.rs should collect the provider stream and delegate raw content normalization, tool-call delta state, and callback event formatting to submodules; found {line_count} lines"
     );
 }
 
