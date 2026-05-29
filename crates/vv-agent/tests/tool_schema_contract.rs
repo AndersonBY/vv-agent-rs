@@ -1151,6 +1151,11 @@ fn tools_module_is_split_into_handler_files() {
         "sdk/client/task/inline.rs",
         "sdk/client/task/metadata.rs",
         "sdk/client/task/named.rs",
+        "sdk/types.rs",
+        "sdk/types/definition.rs",
+        "sdk/types/options.rs",
+        "sdk/types/query.rs",
+        "sdk/types/run.rs",
         "cli.rs",
         "cli/args.rs",
         "cli/logging.rs",
@@ -1472,6 +1477,19 @@ fn sdk_resources_root_stays_focused_on_public_exports() {
     assert!(
         line_count <= 80,
         "sdk/resources.rs should delegate discovery, path resolution, and JSON parsing to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn sdk_types_root_stays_focused_on_public_exports() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sdk_types = manifest_dir.join("src/sdk/types.rs");
+    let content = std::fs::read_to_string(&sdk_types).expect("read sdk types module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 70,
+        "sdk/types.rs should re-export the SDK public type surface while delegating agent definitions, SDK options, run payloads, and query helpers to focused submodules; found {line_count} lines"
     );
 }
 
