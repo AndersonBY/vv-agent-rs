@@ -962,6 +962,10 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/engine/helpers.rs",
         "runtime/engine/logging.rs",
         "runtime/engine/memory.rs",
+        "runtime/engine/memory/callbacks.rs",
+        "runtime/engine/memory/metadata.rs",
+        "runtime/engine/memory/session.rs",
+        "runtime/engine/memory/token_limits.rs",
         "runtime/hooks.rs",
         "runtime/processes.rs",
         "runtime/results.rs",
@@ -1232,6 +1236,19 @@ fn background_sessions_root_stays_focused_on_manager_orchestration() {
     assert!(
         line_count <= 260,
         "runtime/background_sessions.rs should delegate options, session state, listener notification, subscription cleanup, and tests to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn runtime_engine_memory_root_stays_focused_on_manager_construction() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let memory = manifest_dir.join("src/runtime/engine/memory.rs");
+    let content = std::fs::read_to_string(&memory).expect("read runtime engine memory module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 160,
+        "runtime/engine/memory.rs should keep build_memory_manager as the entrypoint and delegate metadata parsing, callbacks, token-limit lookup, and session-memory setup to submodules; found {line_count} lines"
     );
 }
 
