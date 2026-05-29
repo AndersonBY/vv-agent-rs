@@ -937,7 +937,12 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/hooks.rs",
         "runtime/processes.rs",
         "runtime/results.rs",
-        "runtime/shell.rs",
+        "runtime/shell/mod.rs",
+        "runtime/shell/command.rs",
+        "runtime/shell/metadata.rs",
+        "runtime/shell/path.rs",
+        "runtime/shell/platform.rs",
+        "runtime/shell/windows.rs",
         "runtime/sub_agents/mod.rs",
         "runtime/sub_agents/events.rs",
         "runtime/sub_agents/runner.rs",
@@ -1055,6 +1060,10 @@ fn tools_module_is_split_into_handler_files() {
         (
             "runtime/engine.rs",
             "runtime/engine.rs should be split into src/runtime/engine/ modules",
+        ),
+        (
+            "runtime/shell.rs",
+            "runtime shell helpers should be split into src/runtime/shell/ modules",
         ),
         (
             "memory.rs",
