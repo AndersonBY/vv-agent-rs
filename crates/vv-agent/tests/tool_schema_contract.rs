@@ -1014,6 +1014,12 @@ fn tools_module_is_split_into_handler_files() {
         "llm/mod.rs",
         "llm/base.rs",
         "llm/scripted.rs",
+        "llm/anthropic_prompt_cache.rs",
+        "llm/anthropic_prompt_cache/blocks.rs",
+        "llm/anthropic_prompt_cache/breakpoints.rs",
+        "llm/anthropic_prompt_cache/estimate.rs",
+        "llm/anthropic_prompt_cache/model.rs",
+        "llm/anthropic_prompt_cache/sections.rs",
         "llm/vv_llm_client/mod.rs",
         "llm/vv_llm_client/endpoints.rs",
         "llm/vv_llm_client/model_rules.rs",
@@ -1283,6 +1289,19 @@ fn sdk_resources_root_stays_focused_on_public_exports() {
     assert!(
         line_count <= 80,
         "sdk/resources.rs should delegate discovery, path resolution, and JSON parsing to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn anthropic_prompt_cache_root_stays_focused_on_public_api() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cache = manifest_dir.join("src/llm/anthropic_prompt_cache.rs");
+    let content = std::fs::read_to_string(&cache).expect("read prompt cache module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 120,
+        "llm/anthropic_prompt_cache.rs should delegate block normalization, cache breakpoint planning, token estimation, model thresholds, and section parsing to submodules; found {line_count} lines"
     );
 }
 
