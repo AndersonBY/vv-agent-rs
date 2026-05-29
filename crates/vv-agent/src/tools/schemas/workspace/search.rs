@@ -51,7 +51,7 @@ pub(in crate::tools::schemas) fn workspace_grep_schema() -> Value {
                     "glob": {"type": "string", "description": "Optional file glob filter such as `**/*.rs` or `docs/**/*.md`. Use it to narrow by filename, path segment, or extension before running broad regex searches. Default **/*."},
                     "include_hidden": {"type": "boolean", "description": "Whether hidden files and dotfiles are included. Default false; set true only when explicitly searching hidden project files such as .env.example, .github, or dot-directories."},
                     "include_ignored": {"type": "boolean", "description": "When searching workspace root, include files under common dependency/cache directories. Default false; set true only when explicitly inspecting generated, dependency, cache, or build-output paths."},
-                    "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"], "description": "Search output mode. Default is 'content'."},
+                    "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"], "description": "Search output mode. `content` returns matching lines for inspection, `files_with_matches` returns matching paths for a follow-up read/search, and `count` returns per-file match counts. Default is 'content'."},
                     "b": {"type": "integer", "description": "Lines before each match. Only used in content mode."},
                     "a": {"type": "integer", "description": "Lines after each match. Only used in content mode."},
                     "c": {"type": "integer", "description": "Context lines before and after each match. Overrides b/a."},
@@ -60,7 +60,7 @@ pub(in crate::tools::schemas) fn workspace_grep_schema() -> Value {
                     "type": {"type": "string", "description": "File type shortcut (e.g. py/js/ts/md/json). Unsupported or unknown shortcuts return a structured error listing supported values."},
                     "head_limit": {"type": "integer", "minimum": 1, "description": "Cap output to the first N rows or entries. Use this for broad searches, then run a narrower follow-up query if matches are truncated."},
                     "multiline": {"type": "boolean", "description": "Enable multiline regex mode."},
-                    "case_sensitive": {"type": "boolean", "description": "Explicitly override smart-case behavior and `i`."},
+                    "case_sensitive": {"type": "boolean", "description": "Explicitly override smart-case behavior and `i`. Set true when literal casing matters, false when you need forced case-insensitive matching."},
                     "max_results": {"type": "integer", "minimum": 1, "description": "Same behavior as `head_limit`; cap output rows or entries before planning a narrower follow-up search."}
                 },
                 "required": ["pattern"]

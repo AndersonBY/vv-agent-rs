@@ -25,7 +25,7 @@ pub(super) fn read_image_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Image path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled) or http(s) image URL."}
+                    "path": {"type": "string", "description": "Image path or URL to attach. Workspace files may be PNG, JPEG, WEBP, or BMP; workspace-relative paths are preferred unless outside-workspace access is enabled. HTTP URLs are passed through without downloading."}
                 },
                 "required": ["path"]
             }

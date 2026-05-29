@@ -18,7 +18,7 @@ pub(super) fn create_sub_task_schema() -> Value {
                         "items": {
                             "type": "object",
                             "properties": {
-                                "task_description": {"type": "string", "description": "Task description for one sub-task."},
+                                "task_description": {"type": "string", "description": "Task description for one independent sub-task. Give a concrete objective, relevant constraints, and the evidence or deliverable expected by the parent Agent."},
                                 "output_requirements": {"type": "string", "description": "Optional output constraints for one sub-task. State success criteria, expected format, and concrete deliverables."}
                             },
                             "required": ["task_description"]

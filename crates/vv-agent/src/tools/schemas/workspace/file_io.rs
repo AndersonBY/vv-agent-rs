@@ -108,7 +108,7 @@ pub(in crate::tools::schemas) fn write_file_schema() -> Value {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
-                    "content": {"type": "string", "description": "The content to write to the file."},
+                    "content": {"type": "string", "description": "The complete file body for overwrite mode, or the exact block to append when `append=true`. When overwriting, preserve existing content yourself; use `append=true` only when the existing file should remain intact."},
                     "append": {"type": "boolean", "description": "Set true to append instead of overwrite. Default is false (overwrite). Use append only when existing content must be preserved."},
                     "leading_newline": {"type": "boolean", "description": "Add a leading newline when appending. Default is false. Use as a separator from existing content when needed."},
                     "trailing_newline": {"type": "boolean", "description": "Add a trailing newline when appending. Default is false. Use to preserve a line boundary before the next append or shell read."}

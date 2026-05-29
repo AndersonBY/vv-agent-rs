@@ -123,7 +123,7 @@ fn default_tool_schema_wording_is_preserved() {
         &registry,
         "write_file",
         "content",
-        &["The content to write to the file."],
+        &["The complete file body for overwrite mode"],
     );
     assert_property_contains(
         &registry,
@@ -188,7 +188,7 @@ fn default_tool_schema_wording_is_preserved() {
         &registry,
         "workspace_grep",
         "output_mode",
-        &["Search output mode. Default is 'content'."],
+        &["`files_with_matches` returns matching paths"],
     );
     assert_property_contains(
         &registry,
@@ -212,7 +212,7 @@ fn default_tool_schema_wording_is_preserved() {
         &registry,
         "file_str_replace",
         "max_replacements",
-        &["Optional cap when replace_all=false. Default 1."],
+        &["avoid accidental broad edits"],
     );
 
     assert_description_contains(
@@ -1293,6 +1293,58 @@ fn high_impact_tool_parameters_include_operational_guidance() {
             );
         }
     }
+}
+
+#[test]
+fn tool_parameter_descriptions_are_operational_not_terse_labels() {
+    let registry = build_default_registry();
+
+    assert_property_contains(
+        &registry,
+        "write_file",
+        "content",
+        &[
+            "complete file body",
+            "append=true",
+            "preserve existing content",
+        ],
+    );
+    assert_property_contains(
+        &registry,
+        "workspace_grep",
+        "output_mode",
+        &["content", "files_with_matches", "count", "follow-up"],
+    );
+    assert_property_contains(
+        &registry,
+        "workspace_grep",
+        "case_sensitive",
+        &["smart-case", "literal casing"],
+    );
+    assert_property_contains(
+        &registry,
+        "file_str_replace",
+        "replace_all",
+        &["confirming every match", "Default false"],
+    );
+    assert_property_contains(
+        &registry,
+        "file_str_replace",
+        "max_replacements",
+        &["replace_all=false", "avoid accidental broad edits"],
+    );
+    assert_nested_property_contains(
+        &registry,
+        "create_sub_task",
+        &["tasks", "items", "task_description"],
+        &["independent", "concrete objective"],
+    );
+    assert_property_contains(
+        &registry,
+        "read_image",
+        "path",
+        &["PNG, JPEG, WEBP, or BMP", "HTTP URLs are passed through"],
+    );
 }
 
 #[test]

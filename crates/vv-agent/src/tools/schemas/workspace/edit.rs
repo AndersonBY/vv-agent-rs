@@ -29,8 +29,8 @@ pub(in crate::tools::schemas) fn file_str_replace_schema() -> Value {
                     "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
                     "old_str": {"type": "string", "description": "The source text to replace. This must be the exact source text, with enough context to make the match unique."},
                     "new_str": {"type": "string", "description": "Replacement text. Preserve intended indentation, line endings, surrounding whitespace, and unchanged context from the `read_file` snippet."},
-                    "replace_all": {"type": "boolean", "description": "Replace all matches when true. Default false."},
-                    "max_replacements": {"type": "integer", "minimum": 1, "description": "Optional cap when replace_all=false. Default 1."}
+                    "replace_all": {"type": "boolean", "description": "Replace all matches when true after confirming every match is intended. Default false to keep focused edits narrow."},
+                    "max_replacements": {"type": "integer", "minimum": 1, "description": "Optional cap when replace_all=false. Default 1; raise only to avoid accidental broad edits after reading the target context."}
                 },
                 "required": ["path", "old_str", "new_str"]
             }
