@@ -1,3 +1,4 @@
+mod events;
 mod helpers;
 mod manager;
 mod record;

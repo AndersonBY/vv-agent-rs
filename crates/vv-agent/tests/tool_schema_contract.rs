@@ -951,6 +951,7 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/sub_agents/task.rs",
         "runtime/sub_agents/types.rs",
         "runtime/sub_task_manager/mod.rs",
+        "runtime/sub_task_manager/events.rs",
         "runtime/sub_task_manager/helpers.rs",
         "runtime/sub_task_manager/manager.rs",
         "runtime/sub_task_manager/record.rs",
@@ -1159,6 +1160,19 @@ fn runtime_engine_root_stays_focused_on_loop_orchestration() {
     assert!(
         line_count <= 650,
         "runtime/engine/mod.rs should delegate focused responsibilities to engine submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn sub_task_manager_root_stays_focused_on_lifecycle_orchestration() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manager = manifest_dir.join("src/runtime/sub_task_manager/manager.rs");
+    let content = std::fs::read_to_string(&manager).expect("read sub-task manager module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 500,
+        "runtime/sub_task_manager/manager.rs should delegate event projection and record details to submodules; found {line_count} lines"
     );
 }
 
