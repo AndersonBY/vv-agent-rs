@@ -157,8 +157,8 @@ fn public_doc_forbidden_terms() -> Vec<String> {
         forbidden_phrase(&[TERM_LANGUAGE, b" `vv_agent` package"]),
         forbidden_phrase(&[b"runtime ", TERM_EQUALITY]),
         forbidden_phrase(&[TERM_EQUALITY]),
-        "implementation-history".to_string(),
-        "implementation history".to_string(),
+        join_words("implementation", "-history"),
+        join_words("implementation", " history"),
         forbidden_phrase(&[TERM_TRANSITION, b"-history"]),
         forbidden_phrase(&[TERM_TRANSITION]),
         forbidden_phrase(&[TERM_LANGUAGE, b" project"]),
@@ -205,6 +205,10 @@ fn contains_forbidden_term(haystack: &str, forbidden: &str) -> bool {
     haystack
         .to_ascii_lowercase()
         .contains(&forbidden.to_ascii_lowercase())
+}
+
+fn join_words(first: &str, rest: &str) -> String {
+    format!("{first}{rest}")
 }
 
 #[test]

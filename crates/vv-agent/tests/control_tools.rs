@@ -494,6 +494,7 @@ description: Demo skill description
 allowed-tools: read_file, write_file
 metadata:
   owner: agent
+compatibility: rust>=1.80
 ---
 Use this skill body during execution.
 "#,
@@ -530,8 +531,9 @@ Use this skill body during execution.
     );
     assert_eq!(payload["description"], "Demo skill description");
     assert_eq!(payload["allowed_tools"], "read_file, write_file");
-    assert_eq!(payload["metadata"]["owner"], "agent");
     assert_eq!(payload["reason"], "Need demo behavior");
+    assert!(payload.get("metadata").is_none());
+    assert!(payload.get("compatibility").is_none());
     assert_eq!(context.shared_state["active_skills"], json!(["demo-skill"]));
     assert_eq!(
         context.shared_state["skill_activation_log"][0]["cycle_index"],
@@ -666,8 +668,8 @@ fn activate_skill_coerces_scalar_arguments_and_inline_fields() {
     assert_eq!(payload["skill_name"], "123");
     assert_eq!(payload["description"], "456");
     assert_eq!(payload["instructions"], "789");
-    assert_eq!(payload["metadata"]["priority"], "5");
     assert_eq!(payload["reason"], "True");
+    assert!(payload.get("metadata").is_none());
     assert!(
         payload.get("x_internal_note").is_none(),
         "activate_skill result is model-visible and should not expose internal fields"

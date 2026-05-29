@@ -2,7 +2,7 @@ mod state;
 
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::skills::normalize_skill_list;
 use crate::tools::base::{ToolContext, ToolSpec};
@@ -88,9 +88,6 @@ pub(crate) fn activate_skill_tool() -> ToolSpec {
             }
             if let Some(allowed_tools) = entry.allowed_tools {
                 payload.insert("allowed_tools".to_string(), Value::String(allowed_tools));
-            }
-            if !entry.metadata.is_empty() {
-                payload.insert("metadata".to_string(), json!(entry.metadata));
             }
             if !reason.is_empty() {
                 payload.insert("reason".to_string(), Value::String(reason));
