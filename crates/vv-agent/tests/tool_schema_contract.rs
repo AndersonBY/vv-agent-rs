@@ -997,6 +997,10 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/sub_agents/events.rs",
         "runtime/sub_agents/runner.rs",
         "runtime/sub_agents/session.rs",
+        "runtime/sub_agents/session/events.rs",
+        "runtime/sub_agents/session/execution.rs",
+        "runtime/sub_agents/session/state.rs",
+        "runtime/sub_agents/session/subscription.rs",
         "runtime/sub_agents/task.rs",
         "runtime/sub_agents/types.rs",
         "runtime/sub_task_manager/mod.rs",
@@ -1590,6 +1594,19 @@ fn sub_agent_handler_root_stays_focused_on_tool_entrypoint() {
     assert!(
         line_count <= 120,
         "tools/handlers/sub_agents.rs should delegate request parsing, async dispatch, batch execution, and response formatting to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn sub_agent_session_root_stays_focused_on_session_contract() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let session = manifest_dir.join("src/runtime/sub_agents/session.rs");
+    let content = std::fs::read_to_string(&session).expect("read sub-agent session module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 150,
+        "runtime/sub_agents/session.rs should keep the session type, constructor, and SubAgentSession trait contract while delegating run execution, event forwarding, state sanitization, and subscription cleanup to session submodules; found {line_count} lines"
     );
 }
 
