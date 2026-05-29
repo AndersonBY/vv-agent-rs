@@ -1051,7 +1051,9 @@ fn tools_module_is_split_into_handler_files() {
         "llm/anthropic_prompt_cache/model.rs",
         "llm/anthropic_prompt_cache/sections.rs",
         "llm/vv_llm_client/mod.rs",
+        "llm/vv_llm_client/construction.rs",
         "llm/vv_llm_client/endpoints.rs",
+        "llm/vv_llm_client/execution.rs",
         "llm/vv_llm_client/model_rules.rs",
         "llm/vv_llm_client/prompt_cache.rs",
         "llm/vv_llm_client/request.rs",
@@ -1404,6 +1406,19 @@ fn anthropic_prompt_cache_root_stays_focused_on_public_api() {
     assert!(
         line_count <= 120,
         "llm/anthropic_prompt_cache.rs should delegate block normalization, cache breakpoint planning, token estimation, model thresholds, and section parsing to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn vv_llm_client_root_stays_focused_on_public_client_contract() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let client = manifest_dir.join("src/llm/vv_llm_client/mod.rs");
+    let content = std::fs::read_to_string(&client).expect("read vv-llm client module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 170,
+        "llm/vv_llm_client/mod.rs should keep the client type, retry/failover trait entrypoint, and public debug surface while delegating construction, endpoint execution, request conversion, response conversion, streaming, endpoint bookkeeping, and prompt cache handling to submodules; found {line_count} lines"
     );
 }
 
