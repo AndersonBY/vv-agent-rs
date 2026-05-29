@@ -25,12 +25,6 @@ impl SkillProperties {
         if let Some(license) = &self.license {
             payload.insert("license".to_string(), Value::String(license.clone()));
         }
-        if let Some(compatibility) = &self.compatibility {
-            payload.insert(
-                "compatibility".to_string(),
-                Value::String(compatibility.clone()),
-            );
-        }
         if let Some(allowed_tools) = &self.allowed_tools {
             payload.insert(
                 "allowed-tools".to_string(),

@@ -226,7 +226,7 @@ Use these instructions.
 }
 
 #[test]
-fn skills_public_api_accepts_skill_compatibility_without_prompt_exposure() {
+fn skills_public_api_accepts_skill_compatibility_without_public_payload_exposure() {
     let workspace = tempfile::tempdir().expect("workspace");
     let skill_dir = workspace.path().join("skills/runtime-ready");
     fs::create_dir_all(&skill_dir).expect("skill dir");
@@ -266,13 +266,20 @@ Use these instructions.
 
     let properties = read_properties(&skill_dir).expect("properties");
     assert_eq!(properties.compatibility.as_deref(), Some("rust>=1.80"));
-    assert_eq!(properties.to_value()["compatibility"], "rust>=1.80");
+    assert!(
+        !properties
+            .to_value()
+            .as_object()
+            .expect("properties payload")
+            .contains_key("compatibility"),
+        "serialized skill payloads should stay focused on execution guidance"
+    );
 
     let entries = normalize_skill_list(Some(&json!(["skills"])), Some(workspace.path()), false);
     assert_eq!(entries.len(), 1);
     assert!(
         !format!("{:?}", entries[0]).contains("rust>=1.80"),
-        "normalized skill entries feed Agent-visible prompts/results and should not carry runtime compatibility metadata"
+        "normalized skill entries feed Agent-visible prompts/results and should not carry runtime requirement metadata"
     );
 
     let xml = render_skills_xml(&entries, 8000);
