@@ -18,10 +18,10 @@ pub mod types;
 pub mod workspace;
 
 pub use config::{
-    apply_resolved_model_limits, build_openai_llm_from_local_settings,
-    build_vv_llm_from_local_settings, build_vv_llm_settings, decode_api_key,
-    load_llm_settings_from_file, load_memory_summary_defaults_from_file, resolve_model_endpoint,
-    ConfigError, EndpointConfig, EndpointOption, MemorySummaryDefaults, ResolvedModelConfig,
+    apply_resolved_model_limits, build_vv_llm_from_local_settings, build_vv_llm_settings,
+    decode_api_key, load_llm_settings_from_file, load_memory_summary_defaults_from_file,
+    resolve_model_endpoint, ConfigError, EndpointConfig, EndpointOption, MemorySummaryDefaults,
+    ResolvedModelConfig,
 };
 pub use llm::{
     EndpointTarget, LLMClient, LlmClient, LlmError, LlmRequest, LlmStreamCallback, ScriptStep,

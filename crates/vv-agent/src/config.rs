@@ -12,8 +12,7 @@ mod settings_literal;
 
 pub use api_keys::decode_api_key;
 pub use model_resolution::{
-    build_openai_llm_from_local_settings, build_vv_llm_from_local_settings, build_vv_llm_settings,
-    resolve_model_endpoint,
+    build_vv_llm_from_local_settings, build_vv_llm_settings, resolve_model_endpoint,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

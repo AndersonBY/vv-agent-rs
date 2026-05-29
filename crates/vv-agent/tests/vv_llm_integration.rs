@@ -2,9 +2,8 @@ use std::io::Write;
 use std::path::Path;
 
 use vv_agent::{
-    build_openai_llm_from_local_settings, build_vv_llm_from_local_settings, build_vv_llm_settings,
-    decode_api_key, load_llm_settings_from_file, load_memory_summary_defaults_from_file,
-    resolve_model_endpoint,
+    build_vv_llm_from_local_settings, build_vv_llm_settings, decode_api_key,
+    load_llm_settings_from_file, load_memory_summary_defaults_from_file, resolve_model_endpoint,
 };
 
 #[test]
@@ -93,46 +92,27 @@ fn vv_agent_does_not_embed_provider_protocol_clients() {
 }
 
 #[test]
-fn openai_named_builder_delegates_to_vv_llm_builder() {
-    let mut settings_file = tempfile::NamedTempFile::new().expect("settings file");
-    write!(
-        settings_file,
-        r#"{{
-          "VERSION": "2",
-          "endpoints": [
-            {{
-              "id": "deepseek-default",
-              "api_base": "https://api.deepseek.com",
-              "api_key": "sk-test"
-            }}
-          ],
-          "backends": {{
-            "deepseek": {{
-              "models": {{
-                "deepseek-v4-pro": {{
-                  "id": "deepseek-v4-pro",
-                  "endpoints": ["deepseek-default"]
-                }}
-              }}
-            }}
-          }},
-          "embedding_backends": {{}},
-          "rerank_backends": {{}}
-        }}"#
-    )
-    .expect("write settings");
+fn vv_llm_builder_api_stays_vv_llm_focused() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = std::fs::read_to_string(manifest_dir.join("src/config/model_resolution.rs"))
+        .expect("read model resolution source");
 
-    let (client, resolved) = build_openai_llm_from_local_settings(
-        settings_file.path(),
-        "deepseek",
-        "deepseek-v4-pro",
-        90.0,
-    )
-    .expect("build client");
-
-    assert_eq!(resolved.backend, "deepseek");
-    assert_eq!(resolved.model_id, "deepseek-v4-pro");
-    assert_eq!(client.provider_name(), "openai-compatible");
+    assert!(
+        !source.contains("build_openai_llm_from_local_settings"),
+        "vv-agent should expose the vv-llm builder name, not the legacy openai alias"
+    );
+    assert!(
+        !std::fs::read_to_string(manifest_dir.join("src/config.rs"))
+            .expect("read config module")
+            .contains("build_openai_llm_from_local_settings"),
+        "config module should not re-export the legacy openai builder alias"
+    );
+    assert!(
+        !std::fs::read_to_string(manifest_dir.join("src/lib.rs"))
+            .expect("read library module")
+            .contains("build_openai_llm_from_local_settings"),
+        "public lib exports should not surface the legacy openai builder alias"
+    );
 }
 
 #[test]

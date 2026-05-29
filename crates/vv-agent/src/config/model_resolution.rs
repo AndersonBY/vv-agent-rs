@@ -62,15 +62,6 @@ pub fn build_vv_llm_from_local_settings(
     Ok((llm, resolved))
 }
 
-pub fn build_openai_llm_from_local_settings(
-    settings_path: impl AsRef<Path>,
-    backend: &str,
-    model: &str,
-    timeout_seconds: f64,
-) -> Result<(VvLlmClient, ResolvedModelConfig), ConfigError> {
-    build_vv_llm_from_local_settings(settings_path, backend, model, timeout_seconds)
-}
-
 pub fn build_vv_llm_settings(
     settings: &Value,
     backend: &str,
