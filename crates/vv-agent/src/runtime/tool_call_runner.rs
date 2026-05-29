@@ -198,7 +198,7 @@ pub(crate) fn skipped_tool_result(
         content: serde_json::json!({
             "ok": false,
             "error": message,
-            "skipped_tool": call.name,
+            "error_code": error_code,
         })
         .to_string(),
         status: ToolResultStatus::Error,

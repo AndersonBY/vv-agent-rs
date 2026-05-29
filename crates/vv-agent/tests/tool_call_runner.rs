@@ -71,5 +71,18 @@ fn tool_call_runner_skips_remaining_calls_after_finish() {
         Some("skipped_due_to_finish")
     );
     assert_eq!(cycle.tool_results[1].status, ToolResultStatus::Error);
+    let skipped_payload: serde_json::Value =
+        serde_json::from_str(&cycle.tool_results[1].content).expect("skipped payload json");
+    assert_eq!(
+        skipped_payload,
+        json!({
+            "ok": false,
+            "error": "Tool skipped because a previous tool finished the task.",
+            "error_code": "skipped_due_to_finish",
+        })
+    );
+    let skipped_message_payload: serde_json::Value =
+        serde_json::from_str(&messages[1].content).expect("skipped message payload json");
+    assert_eq!(skipped_message_payload, skipped_payload);
     assert_eq!(messages.len(), 2);
 }
