@@ -217,6 +217,7 @@ impl AgentResourceLoader {
         }
 
         let mut hook_files = Vec::new();
+        let mut nested_hook_files = Vec::new();
         if let Ok(entries) = std::fs::read_dir(&hooks_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -225,12 +226,14 @@ impl AgentResourceLoader {
                 } else if path.is_dir() {
                     let index_file = path.join("index.py");
                     if index_file.is_file() {
-                        hook_files.push(index_file);
+                        nested_hook_files.push(index_file);
                     }
                 }
             }
         }
         hook_files.sort();
+        nested_hook_files.sort();
+        hook_files.extend(nested_hook_files);
 
         for hook_file in hook_files {
             let hook_file = hook_file.canonicalize().unwrap_or(hook_file);

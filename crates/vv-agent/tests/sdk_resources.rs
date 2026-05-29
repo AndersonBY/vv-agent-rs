@@ -485,7 +485,7 @@ fn resource_loader_tracks_agent_hook_files_for_sdk_runtime_hooks() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     std::fs::create_dir_all(resource_root.join("hooks/nested")).expect("hooks");
-    std::fs::write(resource_root.join("hooks/noop.py"), "HOOK = object()").expect("hook");
+    std::fs::write(resource_root.join("hooks/z.py"), "HOOK = object()").expect("hook");
     std::fs::write(
         resource_root.join("hooks/nested/index.py"),
         "HOOK = object()",
@@ -501,14 +501,19 @@ fn resource_loader_tracks_agent_hook_files_for_sdk_runtime_hooks() {
 
     assert_eq!(discovered.hook_files.len(), 2);
     assert_eq!(discovered.hooks, discovered.hook_files);
-    assert!(discovered
-        .hook_files
-        .iter()
-        .any(|path| path.ends_with("hooks/noop.py")));
-    assert!(discovered
-        .hook_files
-        .iter()
-        .any(|path| path.ends_with("hooks/nested/index.py")));
+    assert_eq!(
+        discovered
+            .hook_files
+            .iter()
+            .map(|path| {
+                std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(path.as_str())
+            })
+            .collect::<Vec<_>>(),
+        vec!["z.py", "index.py"]
+    );
     assert!(discovered.diagnostics.is_empty());
 }
 
