@@ -5,11 +5,10 @@ mod helpers;
 mod logging;
 mod memory;
 mod planning;
+mod run_setup;
 mod state;
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::sync::Arc;
 
 use serde_json::Value;
 
@@ -17,7 +16,6 @@ use crate::llm::{LlmClient, LlmError, LlmRequest};
 use crate::memory::CompactionExhaustedError;
 use crate::tools::ToolContext;
 use crate::types::{AgentResult, AgentStatus, AgentTask, ToolDirective, ToolExecutionResult};
-use crate::workspace::LocalWorkspaceBackend;
 
 use super::cancellation::CancellationToken;
 
@@ -27,12 +25,11 @@ use super::tool_call_runner::{execute_tool_result, needs_tool_call_id, skipped_t
 
 use self::completion::{handle_directive_result, handle_no_tool_response, NoToolResponseRequest};
 use self::helpers::{
-    build_initial_messages, cancelled_agent_result, collect_interruption_messages,
-    controls_cancelled, drain_steering_queue, failed_agent_result,
-    image_notification_from_tool_result, previous_cycle_memory_usage,
-    seed_skill_state_from_task_metadata,
+    cancelled_agent_result, collect_interruption_messages, controls_cancelled,
+    drain_steering_queue, failed_agent_result, image_notification_from_tool_result,
+    previous_cycle_memory_usage,
 };
-use self::memory::build_memory_manager;
+use self::run_setup::{prepare_run_setup, PreparedRun};
 pub use self::state::AgentRuntime;
 
 pub use crate::runtime::sub_agent_sessions::{
@@ -54,50 +51,17 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         task: AgentTask,
         controls: RuntimeRunControls,
     ) -> Result<AgentResult, LlmError> {
-        let mut task = task;
-        let messages = build_initial_messages(&task);
-        super::tool_planner::freeze_dynamic_tool_schema_hints(&mut task);
-
-        let cycles = Vec::new();
-        let mut shared_state = task.initial_shared_state.clone();
-        shared_state
-            .entry("todo_list".to_string())
-            .or_insert_with(|| Value::Array(Vec::new()));
-        seed_skill_state_from_task_metadata(&mut shared_state, &task.metadata);
-        let workspace_path = self
-            .default_workspace
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("./workspace"));
-        let workspace_path = controls.workspace.clone().unwrap_or(workspace_path);
-        let workspace_backend = controls.workspace_backend.clone().unwrap_or_else(|| {
-            if controls.workspace.is_some() {
-                Arc::new(LocalWorkspaceBackend::new(workspace_path.clone()))
-            } else {
-                self.workspace_backend.clone()
-            }
-        });
-        let sub_task_manager = controls.sub_task_manager.clone().unwrap_or_default();
-        self.emit_log(
-            &controls,
-            "run_started",
-            BTreeMap::from([
-                ("task_id".to_string(), Value::String(task.task_id.clone())),
-                ("model".to_string(), Value::String(task.model.clone())),
-                (
-                    "workspace".to_string(),
-                    Value::String(workspace_path.display().to_string()),
-                ),
-                ("max_cycles".to_string(), Value::from(task.max_cycles)),
-            ]),
-        );
-
-        let mut memory_manager = build_memory_manager(
-            &task,
-            workspace_path.clone(),
-            Some(self.llm_client.clone()),
-            self.settings_file.as_deref(),
-            self.default_backend.as_deref(),
-        );
+        let PreparedRun {
+            task,
+            messages,
+            cycles,
+            shared_state,
+            workspace_path,
+            workspace_backend,
+            sub_task_manager,
+            mut memory_manager,
+        } = prepare_run_setup(self, task, &controls);
+        self.emit_run_started(&controls, &task, &workspace_path);
 
         if controls_cancelled(&controls) {
             self.emit_log(
@@ -548,23 +512,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             return Err(error);
         }
         if result.status == AgentStatus::MaxCycles {
-            self.emit_log(
-                &controls,
-                "run_max_cycles",
-                BTreeMap::from([
-                    ("cycle".to_string(), Value::from(result.cycles.len())),
-                    (
-                        "final_answer".to_string(),
-                        Value::String(
-                            self.preview_text(&result.final_answer.clone().unwrap_or_default()),
-                        ),
-                    ),
-                    (
-                        "error".to_string(),
-                        Value::String(self.preview_text(&result.error.clone().unwrap_or_default())),
-                    ),
-                ]),
-            );
+            self.emit_run_max_cycles(&controls, &result);
         }
         Ok(result)
     }

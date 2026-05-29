@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use crate::llm::LlmClient;
-use crate::types::{CycleRecord, ToolCall, ToolExecutionResult};
+use std::path::Path;
+
+use crate::types::{AgentResult, AgentTask, CycleRecord, ToolCall, ToolExecutionResult};
 
 use super::{AgentRuntime, RuntimeRunControls};
 
@@ -67,6 +69,47 @@ impl<C: LlmClient> AgentRuntime<C> {
                 (
                     "token_usage".to_string(),
                     serde_json::to_value(&cycle.token_usage).unwrap_or(Value::Null),
+                ),
+            ]),
+        );
+    }
+
+    pub(super) fn emit_run_started(
+        &self,
+        controls: &RuntimeRunControls,
+        task: &AgentTask,
+        workspace_path: &Path,
+    ) {
+        self.emit_log(
+            controls,
+            "run_started",
+            BTreeMap::from([
+                ("task_id".to_string(), Value::String(task.task_id.clone())),
+                ("model".to_string(), Value::String(task.model.clone())),
+                (
+                    "workspace".to_string(),
+                    Value::String(workspace_path.display().to_string()),
+                ),
+                ("max_cycles".to_string(), Value::from(task.max_cycles)),
+            ]),
+        );
+    }
+
+    pub(super) fn emit_run_max_cycles(&self, controls: &RuntimeRunControls, result: &AgentResult) {
+        self.emit_log(
+            controls,
+            "run_max_cycles",
+            BTreeMap::from([
+                ("cycle".to_string(), Value::from(result.cycles.len())),
+                (
+                    "final_answer".to_string(),
+                    Value::String(
+                        self.preview_text(&result.final_answer.clone().unwrap_or_default()),
+                    ),
+                ),
+                (
+                    "error".to_string(),
+                    Value::String(self.preview_text(&result.error.clone().unwrap_or_default())),
                 ),
             ]),
         );

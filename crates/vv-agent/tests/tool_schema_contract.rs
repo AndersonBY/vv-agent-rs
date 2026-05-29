@@ -977,6 +977,7 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/engine/planning.rs",
         "runtime/engine/memory/session.rs",
         "runtime/engine/memory/token_limits.rs",
+        "runtime/engine/run_setup.rs",
         "runtime/engine/state.rs",
         "runtime/hooks.rs",
         "runtime/processes.rs",
@@ -1264,8 +1265,8 @@ fn runtime_engine_root_stays_focused_on_loop_orchestration() {
     let line_count = content.lines().count();
 
     assert!(
-        line_count <= 580,
-        "runtime/engine/mod.rs should keep the run loop focused while delegating construction, planning, logging, memory, controls, and completion helpers to engine submodules; found {line_count} lines"
+        line_count <= 520,
+        "runtime/engine/mod.rs should keep the run loop focused while delegating construction, planning, logging, memory, run setup, controls, and completion helpers to engine submodules; found {line_count} lines"
     );
 }
 
