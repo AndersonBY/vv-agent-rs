@@ -164,17 +164,20 @@ pub fn build_default_registry() -> ToolRegistry {
         .register(ask_user_tool())
         .expect("default ask_user registration");
     registry
+        .register(activate_skill_tool())
+        .expect("default activate_skill registration");
+    registry
         .register(todo_write_tool())
         .expect("default todo_write registration");
     registry
         .register(compress_memory_tool())
         .expect("default compress_memory registration");
     registry
-        .register(activate_skill_tool())
-        .expect("default activate_skill registration");
-    registry
         .register(list_files_tool())
         .expect("default list_files registration");
+    registry
+        .register(file_info_tool())
+        .expect("default file_info registration");
     registry
         .register(read_file_tool())
         .expect("default read_file registration");
@@ -188,11 +191,11 @@ pub fn build_default_registry() -> ToolRegistry {
         .register(workspace_grep_tool())
         .expect("default workspace_grep registration");
     registry
-        .register(file_info_tool())
-        .expect("default file_info registration");
+        .register(bash_tool())
+        .expect("default bash registration");
     registry
-        .register(read_image_tool())
-        .expect("default read_image registration");
+        .register(check_background_command_tool())
+        .expect("default check_background_command registration");
     registry
         .register(create_sub_task_tool())
         .expect("default create_sub_task registration");
@@ -200,10 +203,7 @@ pub fn build_default_registry() -> ToolRegistry {
         .register(sub_task_status_tool())
         .expect("default sub_task_status registration");
     registry
-        .register(bash_tool())
-        .expect("default bash registration");
-    registry
-        .register(check_background_command_tool())
-        .expect("default check_background_command registration");
+        .register(read_image_tool())
+        .expect("default read_image registration");
     registry
 }

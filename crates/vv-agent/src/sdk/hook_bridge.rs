@@ -137,7 +137,7 @@ impl HookRunner {
             program: "uv".to_string(),
             args: vec!["run".to_string(), "python".to_string()],
             current_dir: Some(project_dir.clone()),
-            label: format!("uv run python in {}", project_dir.display()),
+            label: format!("uv run hook bridge in {}", project_dir.display()),
         }
     }
 
@@ -165,8 +165,8 @@ fn resolve_hook_runner() -> Result<HookRunner, String> {
         }
     }
 
-    if let Some(v_agent_dir) = find_reference_project_dir() {
-        let runner = HookRunner::uv(v_agent_dir);
+    if let Some(hook_project_dir) = find_hook_runtime_project_dir() {
+        let runner = HookRunner::uv(hook_project_dir);
         if runner_supports_hooks(&runner) {
             return Ok(runner);
         }
@@ -199,7 +199,7 @@ fn runner_supports_hooks(runner: &HookRunner) -> bool {
         .unwrap_or(false)
 }
 
-fn find_reference_project_dir() -> Option<PathBuf> {
+fn find_hook_runtime_project_dir() -> Option<PathBuf> {
     let current = env::current_dir().ok()?;
     for parent in std::iter::once(current.as_path()).chain(current.ancestors()) {
         for candidate in [parent.join("v-agent"), parent.join("../v-agent")] {

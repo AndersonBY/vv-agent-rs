@@ -74,6 +74,44 @@ fn default_tool_schemas_include_actionable_descriptions() {
 }
 
 #[test]
+fn default_tool_schema_order_matches_builtin_runtime_contract() {
+    let registry = build_default_registry();
+    let names = registry
+        .list_openai_schemas(None)
+        .expect("default schemas")
+        .into_iter()
+        .map(|schema| {
+            schema["function"]["name"]
+                .as_str()
+                .expect("schema name")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        names,
+        vec![
+            "task_finish",
+            "ask_user",
+            "activate_skill",
+            "todo_write",
+            "compress_memory",
+            "list_files",
+            "file_info",
+            "read_file",
+            "write_file",
+            "file_str_replace",
+            "workspace_grep",
+            "bash",
+            "check_background_command",
+            "create_sub_task",
+            "sub_task_status",
+            "read_image",
+        ]
+    );
+}
+
+#[test]
 fn default_tool_schema_wording_is_preserved() {
     let registry = build_default_registry();
 
