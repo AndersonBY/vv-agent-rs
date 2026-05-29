@@ -9,7 +9,7 @@ pub mod skills;
 pub mod sub_agents;
 pub mod sub_task_status;
 pub mod todo;
-pub mod workspace_io;
+pub mod workspace;
 
 pub use background::check_background_command;
 pub use bash::run_bash_command;
@@ -21,4 +21,4 @@ pub use skills::activate_skill;
 pub use sub_agents::create_sub_task;
 pub use sub_task_status::sub_task_status;
 pub use todo::{todo_read, todo_write};
-pub use workspace_io::{file_info, file_str_replace, list_files, read_file, write_file};
+pub use workspace::{file_info, file_str_replace, list_files, read_file, write_file};

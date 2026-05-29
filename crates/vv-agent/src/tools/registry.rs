@@ -14,8 +14,9 @@ use super::handlers::{
     sub_agents::create_sub_task_tool,
     sub_task_status::sub_task_status_tool,
     todo::todo_write_tool,
-    workspace_io::{
-        file_info_tool, file_str_replace_tool, list_files_tool, read_file_tool, write_file_tool,
+    workspace::{
+        edit::file_str_replace_tool, file_io::file_info_tool, file_io::read_file_tool,
+        file_io::write_file_tool, listing::list_files_tool,
     },
 };
 use crate::types::{AgentTask, ToolCall, ToolExecutionResult};

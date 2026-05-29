@@ -74,6 +74,42 @@ fn default_tool_schemas_include_actionable_descriptions() {
 }
 
 #[test]
+fn default_tool_specs_keep_full_schema_descriptions() {
+    let registry = build_default_registry();
+
+    for tool_name in [
+        "task_finish",
+        "ask_user",
+        "activate_skill",
+        "todo_write",
+        "compress_memory",
+        "list_files",
+        "file_info",
+        "read_file",
+        "write_file",
+        "file_str_replace",
+        "workspace_grep",
+        "bash",
+        "check_background_command",
+        "create_sub_task",
+        "sub_task_status",
+        "read_image",
+    ] {
+        let spec = registry.get(tool_name).expect("tool spec");
+        let schema_description = description(&registry, tool_name);
+
+        assert_eq!(
+            spec.description, schema_description,
+            "{tool_name} ToolSpec.description should not keep a terse placeholder after schema registration"
+        );
+        assert!(
+            spec.description.lines().count() >= 4,
+            "{tool_name} ToolSpec.description should carry operational guidance"
+        );
+    }
+}
+
+#[test]
 fn default_tool_schema_order_matches_builtin_runtime_contract() {
     let registry = build_default_registry();
     let names = registry
@@ -853,7 +889,10 @@ fn tools_module_is_split_into_handler_files() {
         "tools/schemas/workspace/search.rs",
         "tools/handlers/control.rs",
         "tools/handlers/todo.rs",
-        "tools/handlers/workspace_io.rs",
+        "tools/handlers/workspace/mod.rs",
+        "tools/handlers/workspace/edit.rs",
+        "tools/handlers/workspace/file_io.rs",
+        "tools/handlers/workspace/listing.rs",
         "tools/handlers/search.rs",
         "tools/handlers/bash.rs",
         "tools/handlers/image.rs",

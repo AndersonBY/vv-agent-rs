@@ -442,11 +442,11 @@ fn tools_handlers_module_reexports_agent_handler_functions() {
     assert_handler(vv_agent::tools::handlers::skills::activate_skill);
     assert_handler(vv_agent::tools::handlers::sub_agents::create_sub_task);
     assert_handler(vv_agent::tools::handlers::sub_task_status::sub_task_status);
-    assert_handler(vv_agent::tools::handlers::workspace_io::file_info);
-    assert_handler(vv_agent::tools::handlers::workspace_io::file_str_replace);
-    assert_handler(vv_agent::tools::handlers::workspace_io::list_files);
-    assert_handler(vv_agent::tools::handlers::workspace_io::read_file);
-    assert_handler(vv_agent::tools::handlers::workspace_io::write_file);
+    assert_handler(vv_agent::tools::handlers::workspace::edit::file_str_replace);
+    assert_handler(vv_agent::tools::handlers::workspace::file_io::file_info);
+    assert_handler(vv_agent::tools::handlers::workspace::file_io::read_file);
+    assert_handler(vv_agent::tools::handlers::workspace::file_io::write_file);
+    assert_handler(vv_agent::tools::handlers::workspace::listing::list_files);
 }
 
 #[test]

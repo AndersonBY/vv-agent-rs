@@ -173,17 +173,21 @@ impl ToolSpec {
         handler: ToolHandler,
     ) -> Self {
         let name = name.into();
-        let description = description.into();
+        let fallback_description = description.into();
         let schema = super::schemas::schema_for(&name).unwrap_or_else(|| {
             json!({
                 "type": "function",
                 "function": {
                     "name": name,
-                    "description": description,
+                    "description": fallback_description,
                     "parameters": {"type": "object", "properties": {}, "required": []},
                 }
             })
         });
+        let description = schema["function"]["description"]
+            .as_str()
+            .unwrap_or(&fallback_description)
+            .to_string();
         Self {
             schema,
             name,
