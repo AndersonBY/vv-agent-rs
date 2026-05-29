@@ -957,6 +957,7 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/cancellation.rs",
         "runtime/cycle_runner.rs",
         "runtime/engine/completion.rs",
+        "runtime/engine/construction.rs",
         "runtime/engine/mod.rs",
         "runtime/engine/controls.rs",
         "runtime/engine/helpers.rs",
@@ -964,8 +965,10 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/engine/memory.rs",
         "runtime/engine/memory/callbacks.rs",
         "runtime/engine/memory/metadata.rs",
+        "runtime/engine/planning.rs",
         "runtime/engine/memory/session.rs",
         "runtime/engine/memory/token_limits.rs",
+        "runtime/engine/state.rs",
         "runtime/hooks.rs",
         "runtime/processes.rs",
         "runtime/results.rs",
@@ -1233,8 +1236,8 @@ fn runtime_engine_root_stays_focused_on_loop_orchestration() {
     let line_count = content.lines().count();
 
     assert!(
-        line_count <= 650,
-        "runtime/engine/mod.rs should delegate focused responsibilities to engine submodules; found {line_count} lines"
+        line_count <= 580,
+        "runtime/engine/mod.rs should keep the run loop focused while delegating construction, planning, logging, memory, controls, and completion helpers to engine submodules; found {line_count} lines"
     );
 }
 

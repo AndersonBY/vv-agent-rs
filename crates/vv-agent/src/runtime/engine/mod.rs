@@ -1,8 +1,11 @@
 mod completion;
+mod construction;
 mod controls;
 mod helpers;
 mod logging;
 mod memory;
+mod planning;
+mod state;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -12,14 +15,12 @@ use serde_json::Value;
 
 use crate::llm::{LlmClient, LlmError, LlmRequest};
 use crate::memory::CompactionExhaustedError;
-use crate::tools::{build_default_registry, ToolContext, ToolRegistry};
+use crate::tools::ToolContext;
 use crate::types::{AgentResult, AgentStatus, AgentTask, ToolDirective, ToolExecutionResult};
-use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
+use crate::workspace::LocalWorkspaceBackend;
 
 use super::cancellation::CancellationToken;
-use super::hooks::{RuntimeHook, RuntimeHookManager};
 
-use super::backends::RuntimeExecutionBackend;
 use super::cycle_runner::{is_prompt_too_long_error, MAX_PROMPT_TOO_LONG_RETRIES};
 use super::results::assistant_message_from_response;
 use super::tool_call_runner::{execute_tool_result, needs_tool_call_id, skipped_tool_result};
@@ -32,6 +33,7 @@ use self::helpers::{
     seed_skill_state_from_task_metadata,
 };
 use self::memory::build_memory_manager;
+pub use self::state::AgentRuntime;
 
 pub use crate::runtime::sub_agent_sessions::{
     _register_sub_agent_session, _unregister_sub_agent_session, get_sub_agent_session,
@@ -41,71 +43,6 @@ pub use controls::{
     BeforeCycleMessageProvider, InterruptionMessageProvider, RuntimeEventHandler,
     RuntimeLogCallback, RuntimeLogHandler, RuntimeRunControls,
 };
-
-pub struct AgentRuntime<C: LlmClient> {
-    pub llm_client: C,
-    pub tool_registry: ToolRegistry,
-    pub default_workspace: Option<PathBuf>,
-    pub log_handler: Option<RuntimeLogHandler>,
-    pub log_preview_chars: Option<usize>,
-    pub workspace_backend: Arc<dyn WorkspaceBackend>,
-    pub hooks: Vec<Arc<dyn RuntimeHook>>,
-    pub execution_backend: RuntimeExecutionBackend,
-    pub settings_file: Option<PathBuf>,
-    pub default_backend: Option<String>,
-    pub sub_agent_timeout_seconds: f64,
-}
-
-impl<C: LlmClient> AgentRuntime<C> {
-    pub fn new(llm_client: C) -> Self {
-        Self {
-            llm_client,
-            tool_registry: build_default_registry(),
-            default_workspace: None,
-            log_handler: None,
-            log_preview_chars: None,
-            workspace_backend: Arc::new(LocalWorkspaceBackend::new(PathBuf::from("./workspace"))),
-            hooks: Vec::new(),
-            execution_backend: RuntimeExecutionBackend::default(),
-            settings_file: None,
-            default_backend: None,
-            sub_agent_timeout_seconds: 90.0,
-        }
-    }
-
-    pub fn with_tool_registry(mut self, tool_registry: ToolRegistry) -> Self {
-        self.tool_registry = tool_registry;
-        self
-    }
-
-    pub fn with_execution_backend(
-        mut self,
-        execution_backend: impl Into<RuntimeExecutionBackend>,
-    ) -> Self {
-        self.execution_backend = execution_backend.into();
-        self
-    }
-
-    pub fn with_settings_file(mut self, settings_file: impl Into<PathBuf>) -> Self {
-        self.settings_file = Some(settings_file.into());
-        self
-    }
-
-    pub fn with_default_backend(mut self, default_backend: impl Into<String>) -> Self {
-        self.default_backend = Some(default_backend.into());
-        self
-    }
-
-    pub fn with_log_preview_chars(mut self, log_preview_chars: usize) -> Self {
-        self.log_preview_chars = Some(log_preview_chars);
-        self
-    }
-
-    pub fn with_sub_agent_timeout_seconds(mut self, timeout_seconds: f64) -> Self {
-        self.sub_agent_timeout_seconds = timeout_seconds.max(1.0);
-        self
-    }
-}
 
 impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
     pub fn run(&self, task: AgentTask) -> Result<AgentResult, LlmError> {
@@ -630,13 +567,5 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             );
         }
         Ok(result)
-    }
-
-    fn planned_tool_schemas(&self, task: &AgentTask) -> Vec<Value> {
-        self.tool_registry.planned_openai_schemas(task)
-    }
-
-    fn hook_manager(&self) -> RuntimeHookManager {
-        RuntimeHookManager::new(self.hooks.clone())
     }
 }
