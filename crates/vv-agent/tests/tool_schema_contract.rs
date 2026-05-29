@@ -1002,7 +1002,13 @@ fn tools_module_is_split_into_handler_files() {
         "sdk/mod.rs",
         "sdk/types.rs",
         "sdk/resources.rs",
-        "sdk/session.rs",
+        "sdk/session/mod.rs",
+        "sdk/session/events.rs",
+        "sdk/session/handles.rs",
+        "sdk/session/run.rs",
+        "sdk/session/state.rs",
+        "sdk/session/util.rs",
+        "sdk/session/watchers.rs",
         "sdk/client/mod.rs",
         "sdk/client/agents.rs",
         "sdk/client/queries.rs",
@@ -1075,6 +1081,10 @@ fn tools_module_is_split_into_handler_files() {
         (
             "sdk/client.rs",
             "SDK client facade should be split into src/sdk/client/ modules",
+        ),
+        (
+            "sdk/session.rs",
+            "SDK session runtime should be split into src/sdk/session/ modules",
         ),
         (
             "tools/schemas.rs",
