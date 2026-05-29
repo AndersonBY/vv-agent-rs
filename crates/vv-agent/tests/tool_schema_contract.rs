@@ -972,8 +972,12 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/sub_task_manager/mod.rs",
         "runtime/sub_task_manager/events.rs",
         "runtime/sub_task_manager/helpers.rs",
+        "runtime/sub_task_manager/identity.rs",
         "runtime/sub_task_manager/manager.rs",
         "runtime/sub_task_manager/record.rs",
+        "runtime/sub_task_manager/sessions.rs",
+        "runtime/sub_task_manager/status.rs",
+        "runtime/sub_task_manager/submission.rs",
         "runtime/sub_task_manager/types.rs",
         "runtime/token_usage.rs",
         "runtime/tool_call_runner.rs",
@@ -1221,8 +1225,8 @@ fn sub_task_manager_root_stays_focused_on_lifecycle_orchestration() {
     let line_count = content.lines().count();
 
     assert!(
-        line_count <= 500,
-        "runtime/sub_task_manager/manager.rs should delegate event projection and record details to submodules; found {line_count} lines"
+        line_count <= 120,
+        "runtime/sub_task_manager/manager.rs should only own the manager type; delegate identity generation, submission, session continuation, status, event projection, and record details to submodules; found {line_count} lines"
     );
 }
 
