@@ -1,3 +1,4 @@
+mod completion;
 mod controls;
 mod helpers;
 mod logging;
@@ -17,13 +18,13 @@ use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
 use super::cancellation::CancellationToken;
 use super::hooks::{RuntimeHook, RuntimeHookManager};
-use super::token_usage::summarize_task_token_usage;
 
 use super::backends::RuntimeExecutionBackend;
 use super::cycle_runner::{is_prompt_too_long_error, MAX_PROMPT_TOO_LONG_RETRIES};
-use super::results::{assistant_message_from_response, extract_final_message, extract_wait_reason};
+use super::results::assistant_message_from_response;
 use super::tool_call_runner::{execute_tool_result, needs_tool_call_id, skipped_tool_result};
 
+use self::completion::{handle_directive_result, handle_no_tool_response, NoToolResponseRequest};
 use self::helpers::{
     build_initial_messages, cancelled_agent_result, collect_interruption_messages,
     controls_cancelled, drain_steering_queue, failed_agent_result,
@@ -378,62 +379,20 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 self.emit_cycle_llm_response(&controls, &cycle);
 
                 if response.tool_calls.is_empty() {
-                    cycles.push(cycle);
-                    match task.no_tool_policy {
-                        crate::types::NoToolPolicy::Finish => {
-                            self.emit_log(
-                                &controls,
-                                "run_completed",
-                                BTreeMap::from([
-                                    ("cycle".to_string(), Value::from(cycle_index)),
-                                    (
-                                        "final_answer".to_string(),
-                                        Value::String(self.preview_text(&response.content)),
-                                    ),
-                                ]),
-                            );
-                            return Some(AgentResult::completed_with_shared_state(
-                                messages.clone(),
-                                cycles.clone(),
-                                response.content.clone(),
-                                shared_state.clone(),
-                            ));
-                        }
-                        crate::types::NoToolPolicy::WaitUser => {
-                            let wait_reason = if response.content.is_empty() {
-                                "No tool call and runtime is waiting for user.".to_string()
-                            } else {
-                                response.content.clone()
-                            };
-                            self.emit_log(
-                                &controls,
-                                "run_wait_user",
-                                BTreeMap::from([
-                                    ("cycle".to_string(), Value::from(cycle_index)),
-                                    (
-                                        "wait_reason".to_string(),
-                                        Value::String(self.preview_text(&wait_reason)),
-                                    ),
-                                ]),
-                            );
-                            return Some(AgentResult {
-                                status: AgentStatus::WaitUser,
-                                messages: messages.clone(),
-                                cycles: cycles.clone(),
-                                final_answer: None,
-                                wait_reason: Some(wait_reason),
-                                error: None,
-                                shared_state: shared_state.clone(),
-                                token_usage: summarize_task_token_usage(cycles),
-                            });
-                        }
-                        crate::types::NoToolPolicy::Continue => {
-                            messages.push(crate::types::Message::user(
-                                "Continue. If the task is complete, call task_finish.",
-                            ));
-                            return None;
-                        }
+                    if let Some(result) = handle_no_tool_response(NoToolResponseRequest {
+                        runtime: self,
+                        controls: &controls,
+                        task: &task,
+                        cycle_index,
+                        response: &response,
+                        messages,
+                        cycles,
+                        cycle,
+                        shared_state,
+                    }) {
+                        return Some(result);
                     }
+                    return None;
                 }
 
                 let sub_task_runner = self.build_sub_task_runner(
@@ -630,53 +589,17 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 *shared_state = context.shared_state.clone();
 
                 cycles.push(cycle);
-                if let Some(result) = directive_result {
-                    match result.directive {
-                        ToolDirective::Finish => {
-                            let final_message = extract_final_message(&result);
-                            self.emit_log(
-                                &controls,
-                                "run_completed",
-                                BTreeMap::from([
-                                    ("cycle".to_string(), Value::from(cycle_index)),
-                                    (
-                                        "final_answer".to_string(),
-                                        Value::String(self.preview_text(&final_message)),
-                                    ),
-                                ]),
-                            );
-                            return Some(AgentResult::completed_with_shared_state(
-                                messages.clone(),
-                                cycles.clone(),
-                                final_message,
-                                shared_state.clone(),
-                            ));
-                        }
-                        ToolDirective::WaitUser => {
-                            let wait_reason = extract_wait_reason(&result);
-                            self.emit_log(
-                                &controls,
-                                "run_wait_user",
-                                BTreeMap::from([
-                                    ("cycle".to_string(), Value::from(cycle_index)),
-                                    (
-                                        "wait_reason".to_string(),
-                                        Value::String(self.preview_text(&wait_reason)),
-                                    ),
-                                ]),
-                            );
-                            return Some(AgentResult {
-                                status: AgentStatus::WaitUser,
-                                messages: messages.clone(),
-                                cycles: cycles.clone(),
-                                final_answer: None,
-                                wait_reason: Some(wait_reason),
-                                error: None,
-                                shared_state: shared_state.clone(),
-                                token_usage: summarize_task_token_usage(cycles),
-                            });
-                        }
-                        ToolDirective::Continue => {}
+                if let Some(directive_result) = directive_result.as_ref() {
+                    if let Some(result) = handle_directive_result(
+                        self,
+                        &controls,
+                        cycle_index,
+                        directive_result,
+                        messages,
+                        cycles,
+                        shared_state,
+                    ) {
+                        return Some(result);
                     }
                 }
                 None

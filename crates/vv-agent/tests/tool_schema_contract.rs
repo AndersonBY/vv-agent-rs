@@ -929,6 +929,7 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/backends/celery_tasks.rs",
         "runtime/cancellation.rs",
         "runtime/cycle_runner.rs",
+        "runtime/engine/completion.rs",
         "runtime/engine/mod.rs",
         "runtime/engine/controls.rs",
         "runtime/engine/helpers.rs",
@@ -1146,6 +1147,19 @@ fn tools_module_is_split_into_handler_files() {
     ] {
         assert!(!root.join(relative).exists(), "{message}");
     }
+}
+
+#[test]
+fn runtime_engine_root_stays_focused_on_loop_orchestration() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let runtime_engine = manifest_dir.join("src/runtime/engine/mod.rs");
+    let content = std::fs::read_to_string(&runtime_engine).expect("read runtime engine module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 650,
+        "runtime/engine/mod.rs should delegate focused responsibilities to engine submodules; found {line_count} lines"
+    );
 }
 
 #[test]
