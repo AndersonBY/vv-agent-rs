@@ -6,6 +6,7 @@ use std::process::{Command, Stdio};
 
 use serde_json::{json, Value};
 
+use crate::runtime::normalize_token_usage;
 use crate::runtime::{
     AfterLlmEvent, AfterToolCallEvent, BeforeLlmEvent, BeforeLlmPatch, BeforeMemoryCompactEvent,
     BeforeToolCallEvent, BeforeToolCallPatch, RuntimeHook,
@@ -345,7 +346,22 @@ fn parse_llm_response(value: Value) -> Option<LLMResponse> {
                 .ok()
         })
         .unwrap_or_default();
-    Some(LLMResponse::with_tool_calls(content, tool_calls))
+    let raw = object
+        .get("raw")
+        .and_then(Value::as_object)
+        .map(|raw| raw.clone().into_iter().collect::<BTreeMap<_, _>>())
+        .unwrap_or_default();
+    let token_usage = object
+        .get("token_usage")
+        .and_then(|value| serde_json::from_value::<TokenUsage>(value.clone()).ok())
+        .filter(TokenUsage::has_usage)
+        .unwrap_or_else(|| normalize_token_usage(raw.get("usage").unwrap_or(&Value::Null)));
+    Some(LLMResponse {
+        content,
+        tool_calls,
+        raw,
+        token_usage,
+    })
 }
 
 fn parse_before_tool_call_patch(value: Value) -> Option<BeforeToolCallPatch> {
