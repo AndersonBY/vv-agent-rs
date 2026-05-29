@@ -953,7 +953,12 @@ fn tools_module_is_split_into_handler_files() {
         "memory/artifacts.rs",
         "memory/microcompact.rs",
         "memory/mod.rs",
-        "memory/manager.rs",
+        "memory/manager/mod.rs",
+        "memory/manager/compaction.rs",
+        "memory/manager/config.rs",
+        "memory/manager/helpers.rs",
+        "memory/manager/normalization.rs",
+        "memory/manager/prompts.rs",
         "memory/session.rs",
         "memory/summary.rs",
         "memory/token_utils.rs",
@@ -1035,6 +1040,10 @@ fn tools_module_is_split_into_handler_files() {
         (
             "memory.rs",
             "memory.rs should be split into src/memory/ modules",
+        ),
+        (
+            "memory/manager.rs",
+            "memory manager should be split into src/memory/manager/ modules",
         ),
         (
             "prompt.rs",
