@@ -960,6 +960,8 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/background_sessions/subscription.rs",
         "runtime/background_sessions/tests.rs",
         "runtime/backends/celery.rs",
+        "runtime/backends/celery/checkpoint.rs",
+        "runtime/backends/celery/dispatch.rs",
         "runtime/backends/celery_tasks.rs",
         "runtime/cancellation.rs",
         "runtime/cycle_runner.rs",
@@ -1434,6 +1436,19 @@ fn runtime_backends_root_stays_focused_on_public_exports() {
     assert!(
         line_count <= 90,
         "runtime/backends/mod.rs should declare backend modules and re-export the public backend surface while delegating the backend enum, runtime recipe, and cycle-loop result helpers to focused submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn celery_backend_root_stays_focused_on_backend_execution() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let celery = manifest_dir.join("src/runtime/backends/celery.rs");
+    let content = std::fs::read_to_string(&celery).expect("read celery backend module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 250,
+        "runtime/backends/celery.rs should keep CeleryBackend construction and execution orchestration while delegating dispatch payloads and checkpoint snapshot helpers to submodules; found {line_count} lines"
     );
 }
 

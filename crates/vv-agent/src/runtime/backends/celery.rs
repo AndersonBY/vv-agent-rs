@@ -1,69 +1,16 @@
+mod checkpoint;
+mod dispatch;
+
 use std::sync::Arc;
 
 use crate::runtime::state::{Checkpoint, StateStore};
 use crate::runtime::token_usage::summarize_task_token_usage;
 use crate::runtime::CancellationToken;
 use crate::types::{AgentResult, AgentStatus, AgentTask, CycleRecord, Message, Metadata};
-use serde_json::Value;
 
 use super::{cancelled_backend_result, execute_cycle_loop, failed_backend_result, RuntimeRecipe};
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct CycleTaskDispatchResult {
-    pub finished: bool,
-    pub result: Option<AgentResult>,
-}
-
-impl CycleTaskDispatchResult {
-    pub fn unfinished() -> Self {
-        Self {
-            finished: false,
-            result: None,
-        }
-    }
-
-    pub fn finished(result: AgentResult) -> Self {
-        Self {
-            finished: true,
-            result: Some(result),
-        }
-    }
-
-    pub fn to_dict(&self) -> Value {
-        let mut payload =
-            serde_json::Map::from_iter([("finished".to_string(), Value::Bool(self.finished))]);
-        if let Some(result) = &self.result {
-            payload.insert("result".to_string(), result.to_dict());
-        }
-        Value::Object(payload)
-    }
-
-    pub fn from_dict(data: &Value) -> Result<Self, String> {
-        let object = data
-            .as_object()
-            .ok_or_else(|| "CycleTaskDispatchResult payload must be an object".to_string())?;
-        let finished = object
-            .get("finished")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let result = object
-            .get("result")
-            .filter(|value| !value.is_null())
-            .map(AgentResult::from_dict)
-            .transpose()?;
-        Ok(Self { finished, result })
-    }
-}
-
-pub trait CycleTaskDispatcher: Send + Sync {
-    fn dispatch_cycle(
-        &self,
-        task: &AgentTask,
-        recipe: &RuntimeRecipe,
-        cycle_task_name: &str,
-        cycle_index: u32,
-    ) -> Result<CycleTaskDispatchResult, String>;
-}
+use checkpoint::checkpoint_snapshot;
+pub use dispatch::{CycleTaskDispatchResult, CycleTaskDispatcher};
 
 #[derive(Clone)]
 pub struct CeleryBackend {
@@ -295,19 +242,5 @@ impl CeleryBackend {
         F: Fn(T) -> R,
     {
         items.into_iter().map(function).collect()
-    }
-}
-
-fn checkpoint_snapshot(
-    state_store: &Arc<dyn StateStore>,
-    task_id: &str,
-) -> (Vec<Message>, Vec<CycleRecord>, Metadata) {
-    match state_store.load_checkpoint(task_id) {
-        Ok(Some(checkpoint)) => (
-            checkpoint.messages,
-            checkpoint.cycles,
-            checkpoint.shared_state,
-        ),
-        Ok(None) | Err(_) => (Vec::new(), Vec::new(), Metadata::new()),
     }
 }
