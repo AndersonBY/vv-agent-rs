@@ -185,7 +185,7 @@ fn hook_bridge_error_text_stays_runtime_focused() {
 
     assert!(
         !contains_forbidden_term(&source, &source_language_hook),
-        "runtime hook error strings should describe the failing runtime hook without source-language history"
+        "runtime hook error strings should describe the failing runtime hook directly"
     );
 }
 
