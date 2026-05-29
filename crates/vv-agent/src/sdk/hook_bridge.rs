@@ -465,59 +465,6 @@ def _context_from_dict(data):
     )
 
 
-def _event(method, payload):
-    if method == "before_memory_compact":
-        from vv_agent.runtime import BeforeMemoryCompactEvent
-
-        return BeforeMemoryCompactEvent(
-            task=_task_from_dict(payload["task"]),
-            cycle_index=int(payload.get("cycle_index") or 0),
-            messages=[_message_from_dict(item) for item in payload.get("messages") or []],
-            shared_state=payload.get("shared_state") or {},
-        )
-    if method == "before_llm":
-        from vv_agent.runtime import BeforeLLMEvent
-
-        return BeforeLLMEvent(
-            task=_task_from_dict(payload["task"]),
-            cycle_index=int(payload.get("cycle_index") or 0),
-            messages=[_message_from_dict(item) for item in payload.get("messages") or []],
-            tool_schemas=payload.get("tool_schemas") or [],
-            shared_state=payload.get("shared_state") or {},
-        )
-    if method == "after_llm":
-        from vv_agent.runtime import AfterLLMEvent
-
-        return AfterLLMEvent(
-            task=_task_from_dict(payload["task"]),
-            cycle_index=int(payload.get("cycle_index") or 0),
-            messages=[_message_from_dict(item) for item in payload.get("messages") or []],
-            tool_schemas=payload.get("tool_schemas") or [],
-            response=_llm_response_from_dict(payload.get("response") or {}),
-            shared_state=payload.get("shared_state") or {},
-        )
-    if method == "before_tool_call":
-        from vv_agent.runtime import BeforeToolCallEvent
-
-        return BeforeToolCallEvent(
-            task=_task_from_dict(payload["task"]),
-            cycle_index=int(payload.get("cycle_index") or 0),
-            call=_tool_call_from_dict(payload.get("call") or {}),
-            context=_context_from_dict(payload.get("context") or {}),
-        )
-    if method == "after_tool_call":
-        from vv_agent.runtime import AfterToolCallEvent
-
-        return AfterToolCallEvent(
-            task=_task_from_dict(payload["task"]),
-            cycle_index=int(payload.get("cycle_index") or 0),
-            call=_tool_call_from_dict(payload.get("call") or {}),
-            context=_context_from_dict(payload.get("context") or {}),
-            result=_tool_result_from_dict(payload.get("result") or {}),
-        )
-    raise ValueError(f"unknown hook method: {method}")
-
-
 def _load_hooks(path):
     module_name = f"vv_agent_user_hook_bridge_{abs(hash(path))}"
     spec = importlib.util.spec_from_file_location(module_name, path)
@@ -577,18 +524,163 @@ def _value_to_json(value):
     return {"kind": "json", "value": value}
 
 
+def _apply_hooks(method, payload):
+    hooks = _load_hooks(hook_path)
+    if not hooks:
+        return None
+
+    task = _task_from_dict(payload["task"])
+    cycle_index = int(payload.get("cycle_index") or 0)
+    shared_state = payload.get("shared_state") or {}
+
+    if method == "before_memory_compact":
+        from vv_agent.runtime import BeforeMemoryCompactEvent
+
+        current_messages = [_message_from_dict(item) for item in payload.get("messages") or []]
+        changed = False
+        for hook in hooks:
+            handler = getattr(hook, method, None)
+            if not callable(handler):
+                continue
+            value = handler(BeforeMemoryCompactEvent(
+                task=task,
+                cycle_index=cycle_index,
+                messages=list(current_messages),
+                shared_state=shared_state,
+            ))
+            if value is not None:
+                current_messages = list(value)
+                changed = True
+        return current_messages if changed else None
+
+    if method == "before_llm":
+        from vv_agent.runtime import BeforeLLMEvent, BeforeLLMPatch
+
+        current_messages = [_message_from_dict(item) for item in payload.get("messages") or []]
+        current_tool_schemas = list(payload.get("tool_schemas") or [])
+        messages_changed = False
+        schemas_changed = False
+        for hook in hooks:
+            handler = getattr(hook, method, None)
+            if not callable(handler):
+                continue
+            value = handler(BeforeLLMEvent(
+                task=task,
+                cycle_index=cycle_index,
+                messages=list(current_messages),
+                tool_schemas=list(current_tool_schemas),
+                shared_state=shared_state,
+            ))
+            if value is None:
+                continue
+            if value.messages is not None:
+                current_messages = list(value.messages)
+                messages_changed = True
+            if value.tool_schemas is not None:
+                current_tool_schemas = list(value.tool_schemas)
+                schemas_changed = True
+        if not messages_changed and not schemas_changed:
+            return None
+        return BeforeLLMPatch(
+            messages=current_messages if messages_changed else None,
+            tool_schemas=current_tool_schemas if schemas_changed else None,
+        )
+
+    if method == "after_llm":
+        from vv_agent.runtime import AfterLLMEvent
+
+        current_response = _llm_response_from_dict(payload.get("response") or {})
+        changed = False
+        messages = [_message_from_dict(item) for item in payload.get("messages") or []]
+        tool_schemas = list(payload.get("tool_schemas") or [])
+        for hook in hooks:
+            handler = getattr(hook, method, None)
+            if not callable(handler):
+                continue
+            value = handler(AfterLLMEvent(
+                task=task,
+                cycle_index=cycle_index,
+                messages=list(messages),
+                tool_schemas=list(tool_schemas),
+                response=current_response,
+                shared_state=shared_state,
+            ))
+            if value is not None:
+                current_response = value
+                changed = True
+        return current_response if changed else None
+
+    if method == "before_tool_call":
+        from vv_agent.runtime import BeforeToolCallEvent, BeforeToolCallPatch
+        from vv_agent.types import ToolCall, ToolExecutionResult
+
+        current_call = _tool_call_from_dict(payload.get("call") or {})
+        context = _context_from_dict(payload.get("context") or {})
+        call_changed = False
+        short_circuit = None
+        for hook in hooks:
+            handler = getattr(hook, method, None)
+            if not callable(handler):
+                continue
+            value = handler(BeforeToolCallEvent(
+                task=task,
+                cycle_index=cycle_index,
+                call=current_call,
+                context=context,
+            ))
+            if value is None:
+                continue
+            if isinstance(value, ToolExecutionResult):
+                short_circuit = value
+                break
+            if isinstance(value, ToolCall):
+                current_call = value
+                call_changed = True
+                continue
+            if isinstance(value, BeforeToolCallPatch):
+                if value.call is not None:
+                    current_call = value.call
+                    call_changed = True
+                if value.result is not None:
+                    short_circuit = value.result
+                    break
+        if short_circuit is not None:
+            if call_changed:
+                return BeforeToolCallPatch(call=current_call, result=short_circuit)
+            return short_circuit
+        if call_changed:
+            return current_call
+        return None
+
+    if method == "after_tool_call":
+        from vv_agent.runtime import AfterToolCallEvent
+
+        call = _tool_call_from_dict(payload.get("call") or {})
+        context = _context_from_dict(payload.get("context") or {})
+        current_result = _tool_result_from_dict(payload.get("result") or {})
+        changed = False
+        for hook in hooks:
+            handler = getattr(hook, method, None)
+            if not callable(handler):
+                continue
+            value = handler(AfterToolCallEvent(
+                task=task,
+                cycle_index=cycle_index,
+                call=call,
+                context=context,
+                result=current_result,
+            ))
+            if value is not None:
+                current_result = value
+                changed = True
+        return current_result if changed else None
+
+    raise ValueError(f"unknown hook method: {method}")
+
+
 hook_path = sys.argv[1]
 method = sys.argv[2]
 payload = json.load(sys.stdin)
-event = _event(method, payload)
-current = None
-for hook in _load_hooks(hook_path):
-    handler = getattr(hook, method, None)
-    if not callable(handler):
-        continue
-    value = handler(event)
-    if value is not None:
-        current = value
-result = _value_to_json(current)
+result = _value_to_json(_apply_hooks(method, payload))
 json.dump(result, sys.stdout, ensure_ascii=False, separators=(",", ":"))
 "#;
