@@ -1063,6 +1063,10 @@ fn tools_module_is_split_into_handler_files() {
         "sdk/client/runtime.rs",
         "sdk/client/runs.rs",
         "sdk/client/sessions.rs",
+        "sdk/client/sessions/base.rs",
+        "sdk/client/sessions/defaults.rs",
+        "sdk/client/sessions/named.rs",
+        "sdk/client/sessions/run.rs",
         "sdk/client/task.rs",
         "sdk/client/task/build.rs",
         "sdk/client/task/ids.rs",
@@ -1279,6 +1283,19 @@ fn sdk_resources_root_stays_focused_on_public_exports() {
     assert!(
         line_count <= 80,
         "sdk/resources.rs should delegate discovery, path resolution, and JSON parsing to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn sdk_client_sessions_root_stays_focused_on_public_entrypoints() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sessions = manifest_dir.join("src/sdk/client/sessions.rs");
+    let content = std::fs::read_to_string(&sessions).expect("read sdk client sessions module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 120,
+        "sdk/client/sessions.rs should delegate run closure construction, default-agent session helpers, and named-agent session helpers to submodules; found {line_count} lines"
     );
 }
 
