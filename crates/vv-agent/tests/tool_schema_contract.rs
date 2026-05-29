@@ -990,7 +990,10 @@ fn tools_module_is_split_into_handler_files() {
         "sdk/resources.rs",
         "sdk/session.rs",
         "sdk/client/mod.rs",
+        "sdk/client/agents.rs",
+        "sdk/client/queries.rs",
         "sdk/client/runtime.rs",
+        "sdk/client/runs.rs",
         "sdk/client/sessions.rs",
         "sdk/client/task.rs",
     ] {
