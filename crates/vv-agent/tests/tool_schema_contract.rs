@@ -980,6 +980,11 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/shell/path.rs",
         "runtime/shell/platform.rs",
         "runtime/shell/windows.rs",
+        "runtime/shell/windows/discovery.rs",
+        "runtime/shell/windows/priority.rs",
+        "runtime/shell/windows/programs.rs",
+        "runtime/shell/windows/resolve.rs",
+        "runtime/shell/windows/tests.rs",
         "runtime/sub_agents/mod.rs",
         "runtime/sub_agents/events.rs",
         "runtime/sub_agents/runner.rs",
@@ -1266,6 +1271,19 @@ fn background_sessions_root_stays_focused_on_manager_orchestration() {
     assert!(
         line_count <= 260,
         "runtime/background_sessions.rs should delegate options, session state, listener notification, subscription cleanup, and tests to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn windows_shell_root_stays_focused_on_public_entrypoint() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let windows = manifest_dir.join("src/runtime/shell/windows.rs");
+    let content = std::fs::read_to_string(&windows).expect("read windows shell module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 90,
+        "runtime/shell/windows.rs should expose the Windows shell resolution entrypoint while delegating discovery, priority normalization, executable probing, and entry resolution to submodules; found {line_count} lines"
     );
 }
 
