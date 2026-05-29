@@ -1007,9 +1007,14 @@ fn tools_module_is_split_into_handler_files() {
         "memory/manager/mod.rs",
         "memory/manager/compaction.rs",
         "memory/manager/config.rs",
+        "memory/manager/emergency.rs",
         "memory/manager/helpers.rs",
+        "memory/manager/limits.rs",
+        "memory/manager/microcompact.rs",
         "memory/manager/normalization.rs",
         "memory/manager/prompts.rs",
+        "memory/manager/session_context.rs",
+        "memory/manager/warnings.rs",
         "memory/session/mod.rs",
         "memory/session/config.rs",
         "memory/session/entry.rs",
@@ -1254,6 +1259,19 @@ fn runtime_engine_memory_root_stays_focused_on_manager_construction() {
     assert!(
         line_count <= 160,
         "runtime/engine/memory.rs should keep build_memory_manager as the entrypoint and delegate metadata parsing, callbacks, token-limit lookup, and session-memory setup to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn memory_manager_root_stays_focused_on_compaction_orchestration() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manager = manifest_dir.join("src/memory/manager/mod.rs");
+    let content = std::fs::read_to_string(&manager).expect("read memory manager module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 170,
+        "memory/manager/mod.rs should keep MemoryManager construction and compact orchestration at the root while delegating limits, warnings, microcompact, emergency compaction, and session context helpers to submodules; found {line_count} lines"
     );
 }
 
