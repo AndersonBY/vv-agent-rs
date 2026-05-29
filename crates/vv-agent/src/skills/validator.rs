@@ -92,15 +92,23 @@ pub fn validate_metadata_with_diagnostics(
         );
     }
 
-    match metadata.get("name").and_then(Value::as_str) {
-        Some(name) => merge_diagnostics(&mut diagnostics, validate_name(name, mode, skill_dir)),
+    match metadata.get("name") {
+        Some(Value::String(name)) => {
+            merge_diagnostics(&mut diagnostics, validate_name(name, mode, skill_dir))
+        }
+        Some(_) => diagnostics
+            .errors
+            .push("Field 'name' must be a non-empty string".to_string()),
         None => diagnostics
             .errors
             .push("Missing required field in frontmatter: name".to_string()),
     }
 
-    match metadata.get("description").and_then(Value::as_str) {
-        Some(description) => validate_description(description, &mut diagnostics),
+    match metadata.get("description") {
+        Some(Value::String(description)) => validate_description(description, &mut diagnostics),
+        Some(_) => diagnostics
+            .errors
+            .push("Field 'description' must be a non-empty string".to_string()),
         None => diagnostics
             .errors
             .push("Missing required field in frontmatter: description".to_string()),

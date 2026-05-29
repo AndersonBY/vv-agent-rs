@@ -51,6 +51,19 @@ fn skills_public_api_validates_metadata() {
         .iter()
         .any(|error| error.contains("invalid characters")));
 
+    let typed_metadata = BTreeMap::from([
+        ("name".to_string(), json!(123)),
+        ("description".to_string(), json!(false)),
+    ]);
+    let typed_errors =
+        validate_metadata(&typed_metadata, None, Some("strict")).expect("typed validation");
+    assert!(typed_errors
+        .iter()
+        .any(|error| error == "Field 'name' must be a non-empty string"));
+    assert!(typed_errors
+        .iter()
+        .any(|error| error == "Field 'description' must be a non-empty string"));
+
     let i18n_uppercase = BTreeMap::from([
         ("name".to_string(), Value::String("Мой-навык".to_string())),
         (
@@ -189,6 +202,27 @@ Use these instructions.
     assert!(xml.contains("<available_skills>"));
     assert!(xml.contains("review-code"));
     assert!(xml.contains("SKILL.md"));
+}
+
+#[test]
+fn skills_public_api_reads_only_canonical_frontmatter_tool_field() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let skill_dir = workspace.path().join("skills/review-code");
+    fs::create_dir_all(&skill_dir).expect("skill dir");
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        r#"---
+name: review-code
+description: Review code safely
+allowed_tools: read_file
+---
+Use these instructions.
+"#,
+    )
+    .expect("write skill");
+
+    let properties = read_properties(&skill_dir).expect("properties");
+    assert_eq!(properties.allowed_tools, None);
 }
 
 #[test]
