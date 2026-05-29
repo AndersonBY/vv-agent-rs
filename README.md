@@ -82,8 +82,12 @@ The current Rust implementation includes:
   filtering, and optional trusted outside-workspace access.
 - SDK flows for named agent discovery, task preparation, one-shot runs,
   query helpers, long-lived sessions, workspace overrides, shared state,
-  runtime hooks, event listeners, streaming callbacks, cancellation, steering,
-  follow-up prompts, and session reuse across turns.
+  Rust-native runtime hooks supplied by the embedding application, event
+  listeners, streaming callbacks, cancellation, steering, follow-up prompts,
+  and session reuse across turns.
+- Resource discovery for agent profiles, prompt templates, and skill
+  directories. Runtime hooks are explicit Rust `RuntimeHook` implementations
+  and are not loaded from external script files by default.
 - Runtime-backed sub-agents with synchronous or background execution,
   batched task submission, status snapshots, steering, continuation of
   completed sessions, duplicate-running-task protection, and inherited stream

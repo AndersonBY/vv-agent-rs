@@ -481,7 +481,7 @@ fn resource_loader_reports_invalid_agent_profiles() {
 }
 
 #[test]
-fn resource_loader_tracks_agent_hook_files_for_sdk_runtime_hooks() {
+fn resource_loader_ignores_python_hook_files_for_rust_runtime() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     std::fs::create_dir_all(resource_root.join("hooks/nested")).expect("hooks");
@@ -499,48 +499,58 @@ fn resource_loader_tracks_agent_hook_files_for_sdk_runtime_hooks() {
     );
     let discovered = loader.discover();
 
-    assert_eq!(discovered.hook_files.len(), 2);
-    assert_eq!(discovered.hooks, discovered.hook_files);
-    assert_eq!(
-        discovered
-            .hook_files
-            .iter()
-            .map(|path| {
-                std::path::Path::new(path)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or(path.as_str())
-            })
-            .collect::<Vec<_>>(),
-        vec!["z.py", "index.py"]
-    );
+    let debug = format!("{discovered:?}");
+    assert!(!debug.contains("z.py"));
+    assert!(!debug.contains("index.py"));
     assert!(discovered.diagnostics.is_empty());
 }
 
 #[test]
-fn resource_loader_canonicalizes_hook_file_paths() {
+fn agent_sdk_does_not_autoload_python_hook_files_from_resources() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
-    let noncanonical_resource_root = workspace.path().join("nested/../.vv-agent");
-    std::fs::create_dir_all(workspace.path().join("nested")).expect("nested");
     std::fs::create_dir_all(resource_root.join("hooks")).expect("hooks");
-    std::fs::write(resource_root.join("hooks/noop.py"), "HOOK = object()").expect("hook");
+    std::fs::write(
+        resource_root.join("hooks/force_finish.py"),
+        r#"raise RuntimeError("Python hook files must not be executed by vv-agent-rs")"#,
+    )
+    .expect("hook");
+    let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
+        let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![LLMResponse::new(
+            "plain response",
+        )]));
+        Ok((
+            llm,
+            ResolvedModelConfig::new(
+                backend.to_string(),
+                model.to_string(),
+                model.to_string(),
+                model.to_string(),
+                Vec::new(),
+            ),
+        ))
+    });
 
-    let mut loader = AgentResourceLoader::with_resource_dirs(
-        workspace.path(),
-        &noncanonical_resource_root,
-        workspace.path().join(".none"),
-    );
-    let discovered = loader.discover();
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        workspace: workspace.path().to_path_buf(),
+        resource_loader: Some(AgentResourceLoader::with_resource_dirs(
+            workspace.path(),
+            &resource_root,
+            workspace.path().join(".none"),
+        )),
+        llm_builder: Some(builder),
+        ..AgentSDKOptions::default()
+    });
 
-    assert_eq!(
-        discovered.hook_files,
-        vec![resource_root
-            .join("hooks/noop.py")
-            .to_string_lossy()
-            .to_string()]
-    );
-    assert!(!discovered.hook_files[0].contains(".."));
+    let mut agent = AgentDefinition::default_for_model("demo-model");
+    agent.no_tool_policy = NoToolPolicy::Finish;
+    let run = client
+        .run_with_agent(agent, "ignore python hook files")
+        .expect("run without executing Python hook file");
+
+    assert_eq!(run.result.status, AgentStatus::Completed);
+    assert_eq!(run.result.final_answer.as_deref(), Some("plain response"));
+    assert!(client.options.runtime_hooks.is_empty());
 }
 
 #[test]
@@ -1826,196 +1836,6 @@ fn sdk_options_runtime_hooks_patch_llm_response() {
 
     assert_eq!(run.result.status, AgentStatus::Completed);
     assert_eq!(run.result.final_answer.as_deref(), Some("hook-finish"));
-}
-
-#[test]
-fn sdk_client_loads_runtime_hooks_from_resource_loader() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let resource_root = workspace.path().join(".vv-agent");
-    std::fs::create_dir_all(resource_root.join("hooks")).expect("hooks");
-    std::fs::write(
-        resource_root.join("hooks/force_finish.py"),
-        r#"from vv_agent.constants import TASK_FINISH_TOOL_NAME
-from vv_agent.runtime import AfterLLMEvent, BaseRuntimeHook
-from vv_agent.types import LLMResponse, ToolCall
-
-class ForceFinishHook(BaseRuntimeHook):
-    def after_llm(self, event: AfterLLMEvent):
-        return LLMResponse(
-            content=event.response.content,
-            tool_calls=[ToolCall(id="h1", name=TASK_FINISH_TOOL_NAME, arguments={"message": "hook-finish"})],
-        )
-
-HOOK = ForceFinishHook()
-"#,
-    )
-    .expect("hook file");
-    let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
-        let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![LLMResponse::new(
-            "plain response",
-        )]));
-        Ok((
-            llm,
-            ResolvedModelConfig::new(
-                backend.to_string(),
-                model.to_string(),
-                model.to_string(),
-                model.to_string(),
-                Vec::new(),
-            ),
-        ))
-    });
-    let client = AgentSDKClient::new(AgentSDKOptions {
-        resource_loader: Some(AgentResourceLoader::with_resource_dirs(
-            workspace.path(),
-            &resource_root,
-            workspace.path().join(".none"),
-        )),
-        llm_builder: Some(builder),
-        ..AgentSDKOptions::default()
-    });
-
-    let run = client
-        .run_with_agent(
-            AgentDefinition::default_for_model("demo-model"),
-            "use discovered hook",
-        )
-        .expect("run through discovered hook");
-
-    assert_eq!(run.result.status, AgentStatus::Completed);
-    assert_eq!(run.result.final_answer.as_deref(), Some("hook-finish"));
-    assert!(
-        client.resource_diagnostics().is_empty(),
-        "runtime hook loading should not require Rust-side runtime_hooks diagnostics"
-    );
-}
-
-#[test]
-fn sdk_resource_hook_file_composes_multiple_hook_objects_in_order() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let resource_root = workspace.path().join(".vv-agent");
-    std::fs::create_dir_all(resource_root.join("hooks")).expect("hooks");
-    std::fs::write(
-        resource_root.join("hooks/chain.py"),
-        r#"from vv_agent.constants import TASK_FINISH_TOOL_NAME
-from vv_agent.runtime import AfterLLMEvent, BaseRuntimeHook
-from vv_agent.types import LLMResponse, ToolCall
-
-class PrefixHook(BaseRuntimeHook):
-    def after_llm(self, event: AfterLLMEvent):
-        return LLMResponse(content="prefix:" + event.response.content, tool_calls=[])
-
-class FinishHook(BaseRuntimeHook):
-    def after_llm(self, event: AfterLLMEvent):
-        return LLMResponse(
-            content=event.response.content,
-            tool_calls=[ToolCall(id="h1", name=TASK_FINISH_TOOL_NAME, arguments={"message": "final:" + event.response.content})],
-        )
-
-HOOKS = [PrefixHook(), FinishHook()]
-"#,
-    )
-    .expect("hook file");
-    let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
-        let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![LLMResponse::new(
-            "plain response",
-        )]));
-        Ok((
-            llm,
-            ResolvedModelConfig::new(
-                backend.to_string(),
-                model.to_string(),
-                model.to_string(),
-                model.to_string(),
-                Vec::new(),
-            ),
-        ))
-    });
-    let client = AgentSDKClient::new(AgentSDKOptions {
-        workspace: workspace.path().to_path_buf(),
-        resource_loader: Some(AgentResourceLoader::with_resource_dirs(
-            workspace.path(),
-            &resource_root,
-            workspace.path().join(".none"),
-        )),
-        llm_builder: Some(builder),
-        ..AgentSDKOptions::default()
-    });
-
-    let run = client
-        .run_with_agent(
-            AgentDefinition::default_for_model("demo-model"),
-            "use composed resource hooks",
-        )
-        .expect("run through composed hooks");
-
-    assert_eq!(run.result.status, AgentStatus::Completed);
-    assert_eq!(
-        run.result.final_answer.as_deref(),
-        Some("final:prefix:plain response")
-    );
-}
-
-#[test]
-fn sdk_resource_after_llm_hook_preserves_raw_usage_metadata() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let resource_root = workspace.path().join(".vv-agent");
-    std::fs::create_dir_all(resource_root.join("hooks")).expect("hooks");
-    std::fs::write(
-        resource_root.join("hooks/usage.py"),
-        r#"from vv_agent.runtime import AfterLLMEvent, BaseRuntimeHook
-from vv_agent.types import LLMResponse
-
-class UsageHook(BaseRuntimeHook):
-    def after_llm(self, event: AfterLLMEvent):
-        return LLMResponse(
-            content=event.response.content,
-            raw={"usage": {"prompt_tokens": 7, "completion_tokens": 4, "total_tokens": 11}},
-        )
-
-HOOK = UsageHook()
-"#,
-    )
-    .expect("hook file");
-    let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
-        let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![LLMResponse::new(
-            "plain response",
-        )]));
-        Ok((
-            llm,
-            ResolvedModelConfig::new(
-                backend.to_string(),
-                model.to_string(),
-                model.to_string(),
-                model.to_string(),
-                Vec::new(),
-            ),
-        ))
-    });
-    let mut agent = AgentDefinition::default_for_model("demo-model");
-    agent.no_tool_policy = NoToolPolicy::Finish;
-    let client = AgentSDKClient::new(AgentSDKOptions {
-        workspace: workspace.path().to_path_buf(),
-        resource_loader: Some(AgentResourceLoader::with_resource_dirs(
-            workspace.path(),
-            &resource_root,
-            workspace.path().join(".none"),
-        )),
-        llm_builder: Some(builder),
-        ..AgentSDKOptions::default()
-    });
-
-    let run = client
-        .run_with_agent(agent, "use resource hook usage")
-        .expect("run through usage hook");
-
-    assert_eq!(run.result.status, AgentStatus::Completed);
-    assert_eq!(run.result.cycles[0].token_usage.prompt_tokens, 7);
-    assert_eq!(run.result.cycles[0].token_usage.completion_tokens, 4);
-    assert_eq!(run.result.cycles[0].token_usage.total_tokens, 11);
-    assert_eq!(run.result.token_usage.prompt_tokens, 7);
-    assert_eq!(run.result.token_usage.completion_tokens, 4);
-    assert_eq!(run.result.token_usage.total_tokens, 11);
 }
 
 #[test]

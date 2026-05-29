@@ -117,7 +117,7 @@ fn source_rustdoc_comments_stay_capability_focused() {
 }
 
 #[test]
-fn runtime_hook_bridge_stays_internal_to_sdk() {
+fn sdk_does_not_include_python_hook_bridge() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let sdk_mod =
         std::fs::read_to_string(manifest_dir.join("src/sdk/mod.rs")).expect("read SDK module");
@@ -128,7 +128,15 @@ fn runtime_hook_bridge_stays_internal_to_sdk() {
 
     assert!(
         !sdk_mod.contains(&implementation_module_export),
-        "SDK public modules should expose Rust agent capabilities, not hook bridge internals"
+        "SDK public modules should expose Rust agent capabilities, not external hook bridge internals"
+    );
+    assert!(
+        !sdk_mod.contains("mod hook_bridge;"),
+        "SDK should not compile a Python hook bridge into the Rust crate"
+    );
+    assert!(
+        !manifest_dir.join("src/sdk/hook_bridge.rs").exists(),
+        "Rust SDK should use native RuntimeHook implementations instead of a Python hook bridge"
     );
 }
 
@@ -149,7 +157,6 @@ fn internal_bridge_module_names_stay_runtime_focused() {
         !config_mod.contains(&format!("mod {source_language}_settings;")),
         "config internals should name settings parsing by purpose"
     );
-    assert!(sdk_mod.contains("mod hook_bridge;"));
     assert!(config_mod.contains("mod settings_literal;"));
 }
 
@@ -174,19 +181,30 @@ fn config_internals_are_split_by_runtime_responsibility() {
 }
 
 #[test]
-fn hook_bridge_error_text_stays_runtime_focused() {
+fn sdk_sources_do_not_spawn_python_hook_runner() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let source = std::fs::read_to_string(manifest_dir.join("src/sdk/hook_bridge.rs"))
-        .expect("read hook bridge source");
-    let source_language_hook = format!(
-        "{} hook",
-        forbidden_phrase(&[TERM_LANGUAGE]).to_ascii_lowercase()
-    );
+    let source_files = collect_rust_files(&manifest_dir.join("src/sdk"));
+    let forbidden = [
+        "HOOK_BRIDGE_SHIM",
+        "VV_AGENT_HOOK_RUNNER",
+        "uv run hook bridge",
+        "find_hook_runtime_project_dir",
+        "RuntimeHookBridge",
+        "hook_files",
+        "load_hooks",
+    ];
 
-    assert!(
-        !contains_forbidden_term(&source, &source_language_hook),
-        "runtime hook error strings should describe the failing runtime hook directly"
-    );
+    let mut violations = Vec::new();
+    for path in source_files {
+        let content = std::fs::read_to_string(&path).expect("read SDK source file");
+        for phrase in forbidden {
+            if content.contains(phrase) {
+                violations.push(format!("{} contains {phrase}", path.display()));
+            }
+        }
+    }
+
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
 }
 
 fn public_doc_forbidden_terms() -> Vec<String> {
