@@ -1054,6 +1054,10 @@ fn tools_module_is_split_into_handler_files() {
         "memory/session/state.rs",
         "memory/session/storage.rs",
         "memory/summary.rs",
+        "memory/summary/events.rs",
+        "memory/summary/files.rs",
+        "memory/summary/original.rs",
+        "memory/summary/text.rs",
         "memory/token_utils.rs",
         "prompt/mod.rs",
         "prompt/builder.rs",
@@ -1377,6 +1381,19 @@ fn memory_manager_root_stays_focused_on_compaction_orchestration() {
     assert!(
         line_count <= 170,
         "memory/manager/mod.rs should keep MemoryManager construction and compact orchestration at the root while delegating limits, warnings, microcompact, emergency compaction, and session context helpers to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn memory_summary_root_stays_focused_on_summary_model() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let summary = manifest_dir.join("src/memory/summary.rs");
+    let content = std::fs::read_to_string(&summary).expect("read memory summary module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 90,
+        "memory/summary.rs should keep the public summary data model and delegate original-message extraction, file-action projection, progress/error events, and text helpers to summary submodules; found {line_count} lines"
     );
 }
 
