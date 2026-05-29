@@ -1,64 +1,20 @@
+mod diagnostics;
+mod mode;
+mod rules;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_json::Value;
-use unicode_normalization::UnicodeNormalization;
 
+pub use self::diagnostics::ValidationDiagnostics;
+use self::diagnostics::{append_issue, merge_diagnostics, IssueSeverity};
+pub use self::mode::{
+    normalize_validation_mode, ValidationMode, DEFAULT_VALIDATION_MODE, VALIDATION_MODES,
+};
+use self::rules::{validate_description, validate_name, ALLOWED_FIELDS};
 use super::errors::SkillValidationError;
 use super::parser::{find_skill_md, parse_frontmatter};
-
-const MAX_SKILL_NAME_LENGTH: usize = 64;
-const MAX_DESCRIPTION_LENGTH: usize = 1024;
-const ALLOWED_FIELDS: &[&str] = &[
-    "name",
-    "description",
-    "license",
-    "allowed-tools",
-    "metadata",
-];
-pub const DEFAULT_VALIDATION_MODE: &str = "strict";
-pub const VALIDATION_MODES: [&str; 3] = ["strict", "relaxed", "minimal"];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValidationMode {
-    Strict,
-    Relaxed,
-    Minimal,
-}
-
-impl ValidationMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Strict => "strict",
-            Self::Relaxed => "relaxed",
-            Self::Minimal => "minimal",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ValidationDiagnostics {
-    pub errors: Vec<String>,
-    pub warnings: Vec<String>,
-}
-
-pub fn normalize_validation_mode(
-    validation_mode: Option<&str>,
-) -> Result<ValidationMode, SkillValidationError> {
-    match validation_mode
-        .unwrap_or(DEFAULT_VALIDATION_MODE)
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "strict" => Ok(ValidationMode::Strict),
-        "relaxed" => Ok(ValidationMode::Relaxed),
-        "minimal" => Ok(ValidationMode::Minimal),
-        other => Err(SkillValidationError::new(format!(
-            "Unsupported validation mode '{other}'. Expected one of [strict, relaxed, minimal]."
-        ))),
-    }
-}
 
 pub fn validate_metadata_with_diagnostics(
     metadata: &BTreeMap<String, Value>,
@@ -166,114 +122,6 @@ pub fn validate(
     validation_mode: Option<&str>,
 ) -> Result<Vec<String>, SkillValidationError> {
     Ok(validate_with_diagnostics(skill_dir, validation_mode)?.errors)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IssueSeverity {
-    Error,
-    Warning,
-}
-
-fn append_issue(
-    diagnostics: &mut ValidationDiagnostics,
-    message: impl Into<String>,
-    severity: IssueSeverity,
-) {
-    match severity {
-        IssueSeverity::Error => diagnostics.errors.push(message.into()),
-        IssueSeverity::Warning => diagnostics.warnings.push(message.into()),
-    }
-}
-
-fn merge_diagnostics(base: &mut ValidationDiagnostics, incoming: ValidationDiagnostics) {
-    base.errors.extend(incoming.errors);
-    base.warnings.extend(incoming.warnings);
-}
-
-fn validate_name(
-    name: &str,
-    mode: ValidationMode,
-    skill_dir: Option<&Path>,
-) -> ValidationDiagnostics {
-    let mut diagnostics = ValidationDiagnostics::default();
-    let normalized = name.trim().nfkc().collect::<String>();
-    if normalized.is_empty() {
-        diagnostics
-            .errors
-            .push("Field 'name' must be a non-empty string".to_string());
-        return diagnostics;
-    }
-    if normalized.chars().count() > MAX_SKILL_NAME_LENGTH {
-        diagnostics.errors.push(format!(
-            "Skill name '{normalized}' exceeds {MAX_SKILL_NAME_LENGTH} character limit"
-        ));
-    }
-    if !normalized
-        .chars()
-        .all(|ch| ch.is_alphanumeric() || ch == '-')
-    {
-        diagnostics.errors.push(format!(
-            "Skill name '{normalized}' contains invalid characters. Only letters, digits, and hyphens are allowed."
-        ));
-    }
-
-    let naming_severity = if mode == ValidationMode::Minimal {
-        IssueSeverity::Warning
-    } else {
-        IssueSeverity::Error
-    };
-    if normalized != normalized.to_lowercase() {
-        append_issue(
-            &mut diagnostics,
-            format!("Skill name '{normalized}' must be lowercase"),
-            naming_severity,
-        );
-    }
-    if normalized.starts_with('-') || normalized.ends_with('-') {
-        append_issue(
-            &mut diagnostics,
-            "Skill name cannot start or end with a hyphen",
-            naming_severity,
-        );
-    }
-    if normalized.contains("--") {
-        append_issue(
-            &mut diagnostics,
-            "Skill name cannot contain consecutive hyphens",
-            naming_severity,
-        );
-    }
-
-    if let Some(skill_dir) = skill_dir {
-        if let Some(raw_dir_name) = skill_dir.file_name().and_then(|name| name.to_str()) {
-            let dir_name = raw_dir_name.nfkc().collect::<String>();
-            if dir_name != normalized {
-                append_issue(
-                    &mut diagnostics,
-                    format!("Directory name '{raw_dir_name}' must match skill name '{normalized}'"),
-                    if mode == ValidationMode::Strict {
-                        IssueSeverity::Error
-                    } else {
-                        IssueSeverity::Warning
-                    },
-                );
-            }
-        }
-    }
-    diagnostics
-}
-
-fn validate_description(description: &str, diagnostics: &mut ValidationDiagnostics) {
-    if description.trim().is_empty() {
-        diagnostics
-            .errors
-            .push("Field 'description' must be a non-empty string".to_string());
-    }
-    if description.chars().count() > MAX_DESCRIPTION_LENGTH {
-        diagnostics.errors.push(format!(
-            "Description exceeds {MAX_DESCRIPTION_LENGTH} character limit"
-        ));
-    }
 }
 
 fn read_utf8_lossy(path: &Path) -> Result<String, std::io::Error> {

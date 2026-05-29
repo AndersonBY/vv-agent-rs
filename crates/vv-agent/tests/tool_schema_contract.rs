@@ -1021,6 +1021,9 @@ fn tools_module_is_split_into_handler_files() {
         "skills/parser.rs",
         "skills/prompt.rs",
         "skills/validator.rs",
+        "skills/validator/diagnostics.rs",
+        "skills/validator/mode.rs",
+        "skills/validator/rules.rs",
         "memory/artifacts.rs",
         "memory/microcompact.rs",
         "memory/mod.rs",
@@ -1282,6 +1285,19 @@ fn skills_normalize_root_stays_focused_on_entry_orchestration() {
     assert!(
         line_count <= 190,
         "skills/normalize.rs should orchestrate skill entry normalization while delegating path resolution and JSON value stringification helpers to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn skills_validator_root_stays_focused_on_validation_orchestration() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let validator = manifest_dir.join("src/skills/validator.rs");
+    let content = std::fs::read_to_string(&validator).expect("read skills validator module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 170,
+        "skills/validator.rs should orchestrate directory and metadata validation while delegating validation modes, diagnostics, and field rules to submodules; found {line_count} lines"
     );
 }
 
