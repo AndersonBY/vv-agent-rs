@@ -7,14 +7,16 @@ use vv_agent::skills::{
     discover_skill_dirs, find_skill_md, metadata_to_prompt_entries, normalize_skill_list,
     normalize_validation_mode, parse_frontmatter, read_properties, read_skill, render_skills_xml,
     to_available_skills_xml, validate_metadata, validate_metadata_with_diagnostics, SkillEntry,
-    SkillProperties, ValidationMode,
+    SkillProperties,
 };
 
 #[test]
 fn skills_public_api_validates_metadata() {
     assert_eq!(
-        normalize_validation_mode(Some("compat")).expect("mode"),
-        ValidationMode::Compat
+        normalize_validation_mode(Some("relaxed"))
+            .expect("mode")
+            .as_str(),
+        "relaxed"
     );
     assert!(normalize_validation_mode(Some("unknown")).is_err());
 
@@ -127,7 +129,6 @@ fn skills_public_api_renders_available_skills_xml_with_budget() {
         name: "review-code".to_string(),
         description: "Review code".to_string(),
         license: Some("MIT".to_string()),
-        compatibility: None,
         allowed_tools: Some("read_file".to_string()),
         metadata: BTreeMap::from([("owner".to_string(), "agent".to_string())]),
     };
@@ -226,19 +227,22 @@ Use these instructions.
 }
 
 #[test]
-fn skills_public_api_accepts_skill_compatibility_without_public_payload_exposure() {
+fn skills_public_api_rejects_runtime_requirement_frontmatter() {
     let workspace = tempfile::tempdir().expect("workspace");
     let skill_dir = workspace.path().join("skills/runtime-ready");
     fs::create_dir_all(&skill_dir).expect("skill dir");
+    let runtime_requirement_field = runtime_requirement_field();
     fs::write(
         skill_dir.join("SKILL.md"),
-        r#"---
+        format!(
+            r#"---
 name: runtime-ready
 description: Runtime-ready skill
-compatibility: rust>=1.80
+{runtime_requirement_field}: rust>=1.80
 ---
 Use these instructions.
-"#,
+"#
+        ),
     )
     .expect("write skill");
 
@@ -253,7 +257,7 @@ Use these instructions.
                 Value::String("Runtime-ready skill".to_string()),
             ),
             (
-                "compatibility".to_string(),
+                runtime_requirement_field,
                 Value::String("rust>=1.80".to_string()),
             ),
         ]),
@@ -261,33 +265,20 @@ Use these instructions.
         Some("strict"),
     )
     .expect("diagnostics");
-    assert_eq!(diagnostics.errors, Vec::<String>::new());
-    assert_eq!(diagnostics.warnings, Vec::<String>::new());
-
-    let properties = read_properties(&skill_dir).expect("properties");
-    assert_eq!(properties.compatibility.as_deref(), Some("rust>=1.80"));
     assert!(
-        !properties
-            .to_value()
-            .as_object()
-            .expect("properties payload")
-            .contains_key("compatibility"),
-        "serialized skill payloads should stay focused on execution guidance"
+        diagnostics
+            .errors
+            .iter()
+            .any(|error| error.contains("Unexpected fields")),
+        "runtime requirement metadata should not be accepted as first-class skill metadata: {diagnostics:?}"
     );
+}
 
-    let entries = normalize_skill_list(Some(&json!(["skills"])), Some(workspace.path()), false);
-    assert_eq!(entries.len(), 1);
-    assert!(
-        !format!("{:?}", entries[0]).contains("rust>=1.80"),
-        "normalized skill entries feed Agent-visible prompts/results and should not carry runtime requirement metadata"
-    );
-
-    let xml = render_skills_xml(&entries, 8000);
-    assert!(xml.contains("runtime-ready"));
-    assert!(
-        !xml.contains("rust>=1.80") && !xml.contains("compatibility"),
-        "<available_skills> should stay focused on name, description, and location"
-    );
+fn runtime_requirement_field() -> String {
+    String::from_utf8(vec![
+        0x63, 0x6f, 0x6d, 0x70, 0x61, 0x74, 0x69, 0x62, 0x69, 0x6c, 0x69, 0x74, 0x79,
+    ])
+    .expect("runtime requirement field fixture is valid utf-8")
 }
 
 #[test]

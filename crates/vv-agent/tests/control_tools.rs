@@ -494,7 +494,6 @@ description: Demo skill description
 allowed-tools: read_file, write_file
 metadata:
   owner: agent
-compatibility: rust>=1.80
 ---
 Use this skill body during execution.
 "#,
@@ -533,7 +532,6 @@ Use this skill body during execution.
     assert_eq!(payload["allowed_tools"], "read_file, write_file");
     assert_eq!(payload["reason"], "Need demo behavior");
     assert!(payload.get("metadata").is_none());
-    assert!(payload.get("compatibility").is_none());
     assert_eq!(context.shared_state["active_skills"], json!(["demo-skill"]));
     assert_eq!(
         context.shared_state["skill_activation_log"][0]["cycle_index"],

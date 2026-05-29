@@ -9,22 +9,20 @@ use super::parser::{find_skill_md, parse_frontmatter};
 
 const MAX_SKILL_NAME_LENGTH: usize = 64;
 const MAX_DESCRIPTION_LENGTH: usize = 1024;
-const MAX_COMPATIBILITY_LENGTH: usize = 500;
 const ALLOWED_FIELDS: &[&str] = &[
     "name",
     "description",
     "license",
-    "compatibility",
     "allowed-tools",
     "metadata",
 ];
 pub const DEFAULT_VALIDATION_MODE: &str = "strict";
-pub const VALIDATION_MODES: [&str; 3] = ["strict", "compat", "minimal"];
+pub const VALIDATION_MODES: [&str; 3] = ["strict", "relaxed", "minimal"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationMode {
     Strict,
-    Compat,
+    Relaxed,
     Minimal,
 }
 
@@ -32,7 +30,7 @@ impl ValidationMode {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Strict => "strict",
-            Self::Compat => "compat",
+            Self::Relaxed => "relaxed",
             Self::Minimal => "minimal",
         }
     }
@@ -54,10 +52,10 @@ pub fn normalize_validation_mode(
         .as_str()
     {
         "strict" => Ok(ValidationMode::Strict),
-        "compat" => Ok(ValidationMode::Compat),
+        "relaxed" => Ok(ValidationMode::Relaxed),
         "minimal" => Ok(ValidationMode::Minimal),
         other => Err(SkillValidationError::new(format!(
-            "Unsupported validation mode '{other}'. Expected one of [strict, compat, minimal]."
+            "Unsupported validation mode '{other}'. Expected one of [strict, relaxed, minimal]."
         ))),
     }
 }
@@ -113,8 +111,6 @@ pub fn validate_metadata_with_diagnostics(
             .errors
             .push("Missing required field in frontmatter: description".to_string()),
     }
-
-    validate_compatibility(metadata.get("compatibility"), mode, &mut diagnostics);
 
     Ok(diagnostics)
 }
@@ -277,39 +273,6 @@ fn validate_description(description: &str, diagnostics: &mut ValidationDiagnosti
         diagnostics.errors.push(format!(
             "Description exceeds {MAX_DESCRIPTION_LENGTH} character limit"
         ));
-    }
-}
-
-fn validate_compatibility(
-    compatibility: Option<&Value>,
-    mode: ValidationMode,
-    diagnostics: &mut ValidationDiagnostics,
-) {
-    let Some(compatibility) = compatibility else {
-        return;
-    };
-    let severity = if mode == ValidationMode::Minimal {
-        IssueSeverity::Warning
-    } else {
-        IssueSeverity::Error
-    };
-    let Some(text) = compatibility.as_str() else {
-        append_issue(
-            diagnostics,
-            "Field 'compatibility' must be a string",
-            severity,
-        );
-        return;
-    };
-    let length = text.chars().count();
-    if length > MAX_COMPATIBILITY_LENGTH {
-        append_issue(
-            diagnostics,
-            format!(
-                "Compatibility exceeds {MAX_COMPATIBILITY_LENGTH} character limit ({length} chars)"
-            ),
-            severity,
-        );
     }
 }
 
