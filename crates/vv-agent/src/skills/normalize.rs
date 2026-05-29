@@ -1,8 +1,12 @@
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+mod path;
+mod value;
+
+use std::path::Path;
 
 use serde_json::Value;
 
+use self::path::{path_exists, relative_location, resolve_skill_path};
+use self::value::{string_map_from_json_object, truthy_trimmed_string, truthy_value_string};
 use super::models::SkillEntry;
 use super::parser::{discover_skill_dirs, find_skill_md, read_properties, read_skill};
 
@@ -126,70 +130,6 @@ fn entries_from_object(
     }]
 }
 
-fn truthy_trimmed_string(value: Option<&Value>) -> String {
-    truthy_string(value).trim().to_string()
-}
-
-fn truthy_string(value: Option<&Value>) -> String {
-    let Some(value) = value.filter(|value| json_value_is_truthy(value)) else {
-        return String::new();
-    };
-    stringify_json_value(value)
-}
-
-fn truthy_value_string(value: &Value) -> String {
-    if json_value_is_truthy(value) {
-        stringify_json_value(value)
-    } else {
-        String::new()
-    }
-}
-
-fn json_value_is_truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(value) => *value,
-        Value::Number(number) => number.as_f64().is_some_and(|value| value != 0.0),
-        Value::String(value) => !value.is_empty(),
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(object) => !object.is_empty(),
-    }
-}
-
-fn stringify_json_value(value: &Value) -> String {
-    match value {
-        Value::Null => "None".to_string(),
-        Value::Bool(true) => "True".to_string(),
-        Value::Bool(false) => "False".to_string(),
-        Value::Number(number) => number.to_string(),
-        Value::String(value) => value.clone(),
-        Value::Array(_) | Value::Object(_) => json_value_repr(value),
-    }
-}
-
-fn json_value_repr(value: &Value) -> String {
-    match value {
-        Value::Null => "None".to_string(),
-        Value::Bool(true) => "True".to_string(),
-        Value::Bool(false) => "False".to_string(),
-        Value::Number(number) => number.to_string(),
-        Value::String(value) => format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'")),
-        Value::Array(items) => {
-            let values = items.iter().map(json_value_repr).collect::<Vec<_>>();
-            format!("[{}]", values.join(", "))
-        }
-        Value::Object(object) => {
-            let values = object
-                .iter()
-                .map(|(key, value)| {
-                    format!("'{}': {}", key.replace('\'', "\\'"), json_value_repr(value))
-                })
-                .collect::<Vec<_>>();
-            format!("{{{}}}", values.join(", "))
-        }
-    }
-}
-
 fn load_entry(skill_dir: &Path, workspace: Option<&Path>, load_instructions: bool) -> SkillEntry {
     if load_instructions {
         match read_skill(skill_dir, Some("strict")) {
@@ -238,71 +178,4 @@ fn load_error_entry(skill_dir: &Path, error: String) -> SkillEntry {
         load_error: Some(error),
         ..SkillEntry::default()
     }
-}
-
-fn path_exists(raw_path: &str, workspace: Option<&Path>) -> bool {
-    let path = expand_user(raw_path);
-    if path.exists() {
-        return true;
-    }
-    if let Some(workspace) = workspace {
-        if !path.is_absolute() {
-            return workspace.join(&path).exists();
-        }
-    }
-    false
-}
-
-fn resolve_skill_path(raw_path: &str, workspace: Option<&Path>) -> PathBuf {
-    let path = expand_user(raw_path);
-    let path = if path.is_absolute() {
-        path
-    } else if let Some(workspace) = workspace {
-        workspace.join(path)
-    } else {
-        path
-    };
-    let path = path.canonicalize().unwrap_or(path);
-    if path.is_file()
-        && path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("skill.md"))
-    {
-        return path.parent().map(Path::to_path_buf).unwrap_or(path);
-    }
-    path
-}
-
-fn relative_location(skill_md: &Path, workspace: Option<&Path>) -> String {
-    let normalized_skill_md = skill_md
-        .canonicalize()
-        .unwrap_or_else(|_| skill_md.to_path_buf());
-    if let Some(workspace) = workspace {
-        let normalized_workspace = workspace
-            .canonicalize()
-            .unwrap_or_else(|_| workspace.to_path_buf());
-        if let Ok(relative) = normalized_skill_md.strip_prefix(normalized_workspace) {
-            return relative.to_string_lossy().replace('\\', "/");
-        }
-    }
-    normalized_skill_md.to_string_lossy().replace('\\', "/")
-}
-
-fn expand_user(raw_path: &str) -> PathBuf {
-    if let Some(rest) = raw_path.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(rest);
-        }
-    }
-    PathBuf::from(raw_path)
-}
-
-fn string_map_from_json_object(
-    object: &serde_json::Map<String, Value>,
-) -> BTreeMap<String, String> {
-    object
-        .iter()
-        .map(|(key, value)| (key.clone(), stringify_json_value(value)))
-        .collect()
 }

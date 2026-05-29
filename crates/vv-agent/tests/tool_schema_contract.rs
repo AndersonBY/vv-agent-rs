@@ -1016,6 +1016,8 @@ fn tools_module_is_split_into_handler_files() {
         "skills/errors.rs",
         "skills/models.rs",
         "skills/normalize.rs",
+        "skills/normalize/path.rs",
+        "skills/normalize/value.rs",
         "skills/parser.rs",
         "skills/prompt.rs",
         "skills/validator.rs",
@@ -1267,6 +1269,19 @@ fn runtime_engine_root_stays_focused_on_loop_orchestration() {
     assert!(
         line_count <= 520,
         "runtime/engine/mod.rs should keep the run loop focused while delegating construction, planning, logging, memory, run setup, controls, and completion helpers to engine submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn skills_normalize_root_stays_focused_on_entry_orchestration() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let normalize = manifest_dir.join("src/skills/normalize.rs");
+    let content = std::fs::read_to_string(&normalize).expect("read skills normalize module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 190,
+        "skills/normalize.rs should orchestrate skill entry normalization while delegating path resolution and JSON value stringification helpers to submodules; found {line_count} lines"
     );
 }
 
