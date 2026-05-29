@@ -1083,6 +1083,11 @@ fn tools_module_is_split_into_handler_files() {
         "types/dict/records.rs",
         "types/dict/token_usage.rs",
         "types/dict/tools.rs",
+        "prompt/builder/hash.rs",
+        "prompt/builder/options.rs",
+        "prompt/builder/section.rs",
+        "prompt/builder/system.rs",
+        "prompt/builder/system_builder.rs",
         "sdk/mod.rs",
         "sdk/types.rs",
         "sdk/resources.rs",
@@ -1339,6 +1344,19 @@ fn sdk_client_task_root_stays_focused_on_prepare_api() {
     assert!(
         line_count <= 120,
         "sdk/client/task.rs should keep shared task preparation helpers at the root while delegating named-agent, inline-agent, default-agent, task id generation, prompt construction, and metadata expansion to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn prompt_builder_root_stays_focused_on_public_exports() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let builder = manifest_dir.join("src/prompt/builder.rs");
+    let content = std::fs::read_to_string(&builder).expect("read prompt builder module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 80,
+        "prompt/builder.rs should re-export public prompt builder APIs while delegating section storage, options, system prompt composition, and hashing to submodules; found {line_count} lines"
     );
 }
 
