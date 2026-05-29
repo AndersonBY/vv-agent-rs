@@ -1,0 +1,139 @@
+use std::collections::BTreeMap;
+
+use serde_json::Value;
+
+use crate::llm::LlmClient;
+use crate::types::{CycleRecord, ToolCall, ToolExecutionResult};
+
+use super::{AgentRuntime, RuntimeRunControls};
+
+impl<C: LlmClient> AgentRuntime<C> {
+    pub(super) fn emit_log(
+        &self,
+        controls: &RuntimeRunControls,
+        event: &str,
+        payload: BTreeMap<String, Value>,
+    ) {
+        if let Some(handler) = &self.log_handler {
+            if let Ok(mut handler) = handler.lock() {
+                (handler)(event, &payload);
+            }
+        }
+        if let Some(handler) = &controls.log_handler {
+            handler(event, &payload);
+        }
+    }
+
+    pub(super) fn emit_cycle_llm_response(
+        &self,
+        controls: &RuntimeRunControls,
+        cycle: &CycleRecord,
+    ) {
+        self.emit_log(
+            controls,
+            "cycle_llm_response",
+            BTreeMap::from([
+                ("cycle".to_string(), Value::from(cycle.index)),
+                (
+                    "assistant_message".to_string(),
+                    Value::String(cycle.assistant_message.clone()),
+                ),
+                (
+                    "assistant_preview".to_string(),
+                    Value::String(self.preview_text(&cycle.assistant_message)),
+                ),
+                (
+                    "tool_calls".to_string(),
+                    serde_json::to_value(&cycle.tool_calls).unwrap_or(Value::Null),
+                ),
+                (
+                    "tool_call_names".to_string(),
+                    Value::Array(
+                        cycle
+                            .tool_calls
+                            .iter()
+                            .map(|call| Value::String(call.name.clone()))
+                            .collect(),
+                    ),
+                ),
+                (
+                    "tool_call_count".to_string(),
+                    Value::from(cycle.tool_calls.len()),
+                ),
+                (
+                    "memory_compacted".to_string(),
+                    Value::Bool(cycle.memory_compacted),
+                ),
+                (
+                    "token_usage".to_string(),
+                    serde_json::to_value(&cycle.token_usage).unwrap_or(Value::Null),
+                ),
+            ]),
+        );
+    }
+
+    pub(super) fn emit_tool_result(
+        &self,
+        controls: &RuntimeRunControls,
+        cycle_index: u32,
+        call: &ToolCall,
+        result: &ToolExecutionResult,
+    ) {
+        self.emit_log(
+            controls,
+            "tool_result",
+            BTreeMap::from([
+                ("cycle".to_string(), Value::from(cycle_index)),
+                ("tool_name".to_string(), Value::String(call.name.clone())),
+                (
+                    "tool_arguments".to_string(),
+                    Value::Object(call.arguments.clone().into_iter().collect()),
+                ),
+                (
+                    "tool_call_id".to_string(),
+                    Value::String(result.tool_call_id.clone()),
+                ),
+                (
+                    "status".to_string(),
+                    serde_json::to_value(result.status).unwrap_or(Value::Null),
+                ),
+                (
+                    "directive".to_string(),
+                    serde_json::to_value(result.directive).unwrap_or(Value::Null),
+                ),
+                (
+                    "error_code".to_string(),
+                    result
+                        .error_code
+                        .clone()
+                        .map(Value::String)
+                        .unwrap_or(Value::Null),
+                ),
+                ("content".to_string(), Value::String(result.content.clone())),
+                (
+                    "content_preview".to_string(),
+                    Value::String(self.preview_text(&result.content)),
+                ),
+                (
+                    "metadata".to_string(),
+                    Value::Object(result.metadata.clone().into_iter().collect()),
+                ),
+            ]),
+        );
+    }
+
+    pub(super) fn preview_text(&self, text: &str) -> String {
+        let cleaned = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let Some(limit) = self.log_preview_chars.map(|limit| limit.max(40)) else {
+            return cleaned;
+        };
+        if cleaned.chars().count() <= limit {
+            return cleaned;
+        }
+        let prefix = cleaned
+            .chars()
+            .take(limit.saturating_sub(3))
+            .collect::<String>();
+        format!("{prefix}...")
+    }
+}

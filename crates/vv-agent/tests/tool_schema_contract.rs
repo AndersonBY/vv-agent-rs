@@ -21,6 +21,18 @@ fn default_tool_schemas_include_actionable_descriptions() {
     );
     assert!(property_description(&registry, "workspace_grep", "path")
         .contains("single file path searches that file directly"));
+    assert!(property_description(&registry, "workspace_grep", "b")
+        .contains("Use when each match needs leading context"));
+    assert!(property_description(&registry, "workspace_grep", "a")
+        .contains("Use when each match needs following context"));
+    assert!(property_description(&registry, "workspace_grep", "c")
+        .contains("Use this instead of separate b/a values"));
+    assert!(property_description(&registry, "workspace_grep", "i")
+        .contains("Use only when smart-case is not enough"));
+    assert!(
+        property_description(&registry, "workspace_grep", "multiline")
+            .contains("Use for patterns that intentionally span line breaks")
+    );
 
     let bash = description(&registry, "bash");
     assert!(bash.contains("Guidelines:"));
@@ -57,6 +69,10 @@ fn default_tool_schemas_include_actionable_descriptions() {
     assert!(
         property_description(&registry, "sub_task_status", "wait_for_response")
             .contains("wait until the task finishes processing")
+    );
+    assert!(
+        property_description(&registry, "sub_task_status", "wait_for_response")
+            .contains("Use true after sending `message`")
     );
 
     let todo_write = description(&registry, "todo_write");
@@ -913,7 +929,11 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/backends/celery_tasks.rs",
         "runtime/cancellation.rs",
         "runtime/cycle_runner.rs",
-        "runtime/engine.rs",
+        "runtime/engine/mod.rs",
+        "runtime/engine/controls.rs",
+        "runtime/engine/helpers.rs",
+        "runtime/engine/logging.rs",
+        "runtime/engine/memory.rs",
         "runtime/hooks.rs",
         "runtime/processes.rs",
         "runtime/results.rs",
@@ -1004,6 +1024,10 @@ fn tools_module_is_split_into_handler_files() {
         (
             "runtime/backends.rs",
             "runtime/backends.rs should be split into src/runtime/backends/ modules",
+        ),
+        (
+            "runtime/engine.rs",
+            "runtime/engine.rs should be split into src/runtime/engine/ modules",
         ),
         (
             "memory.rs",

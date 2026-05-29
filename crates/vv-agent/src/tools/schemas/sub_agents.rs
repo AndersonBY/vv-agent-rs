@@ -47,7 +47,7 @@ pub(super) fn sub_task_status_schema() -> Value {
                     "message": {"type": "string", "description": "Optional follow-up or steering message for the first task id. Can steer a running task or continue a completed one."},
                     "detail_level": {"type": "string", "enum": ["basic", "snapshot"], "description": "Status response detail level. `snapshot` includes recent activity, latest tool call, and workspace files."},
                     "workspace_file_limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum number of workspace files returned per task in snapshot mode. Default 20. Lower this when file lists add noise; raise it only when files are needed to assess progress."},
-                    "wait_for_response": {"type": "boolean", "description": "When `message` is provided, wait until the task finishes processing that message."}
+                    "wait_for_response": {"type": "boolean", "description": "When `message` is provided, wait until the task finishes processing that message. Use true after sending `message` when the parent Agent needs the follow-up result before continuing; keep false for lightweight steering of a still-running child."}
                 },
                 "required": ["task_ids"]
             }
