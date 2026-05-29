@@ -55,7 +55,7 @@ pub struct AgentDefinition {
 impl AgentDefinition {
     pub fn default_for_model(model: impl Into<String>) -> Self {
         Self {
-            description: "Rust vv-agent profile".to_string(),
+            description: "General-purpose VectorVein agent profile".to_string(),
             model: model.into(),
             backend: None,
             language: "zh-CN".to_string(),

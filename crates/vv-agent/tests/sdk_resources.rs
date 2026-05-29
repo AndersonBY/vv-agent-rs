@@ -661,6 +661,32 @@ fn sdk_client_new_with_agent_prepares_default_task() {
 }
 
 #[test]
+fn sdk_default_agent_definition_stays_capability_focused_in_prompt() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let client = AgentSDKClient::new_with_agent(
+        AgentSDKOptions {
+            workspace: workspace.path().to_path_buf(),
+            auto_discover_resources: false,
+            ..AgentSDKOptions::default()
+        },
+        AgentDefinition::default_for_model("demo-model"),
+    );
+
+    let task = client
+        .prepare_task("preview default", "demo-model-resolved")
+        .expect("prepare default task");
+
+    assert!(task
+        .system_prompt
+        .contains("General-purpose VectorVein agent profile"));
+    assert!(
+        !task.system_prompt.to_ascii_lowercase().contains("rust"),
+        "Agent-visible default prompt should not mention implementation language:\n{}",
+        task.system_prompt
+    );
+}
+
+#[test]
 fn sdk_client_new_with_agents_resolves_only_agent() {
     let workspace = tempfile::tempdir().expect("workspace");
     let client = AgentSDKClient::new_with_agents(
