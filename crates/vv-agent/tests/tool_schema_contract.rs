@@ -1139,6 +1139,11 @@ fn tools_module_is_split_into_handler_files() {
         "sdk/client/task/inline.rs",
         "sdk/client/task/metadata.rs",
         "sdk/client/task/named.rs",
+        "cli.rs",
+        "cli/args.rs",
+        "cli/logging.rs",
+        "cli/output.rs",
+        "cli/task.rs",
     ] {
         assert!(root.join(relative).is_file(), "missing {relative}");
     }
@@ -1298,6 +1303,19 @@ fn skills_validator_root_stays_focused_on_validation_orchestration() {
     assert!(
         line_count <= 170,
         "skills/validator.rs should orchestrate directory and metadata validation while delegating validation modes, diagnostics, and field rules to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn cli_root_stays_focused_on_entrypoint_orchestration() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let cli = manifest_dir.join("src/cli.rs");
+    let content = std::fs::read_to_string(&cli).expect("read cli module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 115,
+        "cli.rs should keep the binary entrypoint orchestration while delegating argument parsing, task construction, output payloads, and verbose logging to cli submodules; found {line_count} lines"
     );
 }
 
