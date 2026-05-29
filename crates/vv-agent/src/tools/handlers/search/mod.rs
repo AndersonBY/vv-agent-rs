@@ -1,21 +1,22 @@
+mod error;
 mod format;
 mod local_rg;
+mod request;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use regex::RegexBuilder;
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{
-    coerce_truthy_arg, grep_text, is_hidden_path, is_ignored_root, is_supported_file_type,
-    matches_file_type, parse_integer_arg, path_escapes_workspace_error, stringify_tool_arg,
-    supported_file_types_message, GrepTextOptions,
+    grep_text, is_hidden_path, is_ignored_root, matches_file_type, path_escapes_workspace_error,
+    GrepTextOptions,
 };
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
-use crate::workspace::{normalized_glob_pattern, LocalWorkspaceBackend};
+use crate::workspace::LocalWorkspaceBackend;
 
+use error::grep_error;
 use format::{
     cap_file_counts, cap_file_paths, cap_match_rows, render_grep_content, truncate_result_text,
     MAX_STRUCTURED_CHARS, MAX_STRUCTURED_ITEMS,
@@ -23,6 +24,7 @@ use format::{
 use local_rg::{
     is_workspace_root_path, resolve_rg_executable, workspace_grep_local_rg, RgWorkspaceGrepRequest,
 };
+use request::{parse_workspace_grep_request, WorkspaceGrepRequest};
 
 pub fn workspace_grep(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
     let spec = workspace_grep_tool();
@@ -34,96 +36,26 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
         "workspace_grep",
         "Search workspace files with grep-style semantics.",
         Arc::new(|context, arguments| {
-            let pattern = stringify_tool_arg(arguments.get("pattern"), "")
-                .trim()
-                .to_string();
-            if pattern.is_empty() {
-                return grep_error("Search pattern is required");
-            }
-            let output_mode = stringify_tool_arg(arguments.get("output_mode"), "content");
-            if !matches!(
-                output_mode.as_str(),
-                "content" | "files_with_matches" | "count"
-            ) {
-                return grep_error(format!(
-                    "Invalid `output_mode`: {output_mode}. Supported: content, count, files_with_matches"
-                ));
-            }
-            let file_type = arguments
-                .get("type")
-                .map(|value| stringify_tool_arg(Some(value), ""))
-                .map(|value| value.trim().to_ascii_lowercase())
-                .filter(|value| !value.is_empty());
-            if let Some(file_type) = &file_type {
-                if !is_supported_file_type(file_type) {
-                    return grep_error(format!(
-                        "Unsupported file type: {file_type}. Supported types: {}",
-                        supported_file_types_message()
-                    ));
-                }
-            }
-            let path = stringify_tool_arg(arguments.get("path"), ".");
-            let glob = stringify_tool_arg(arguments.get("glob"), "**/*");
-            let glob_pattern = normalized_glob_pattern(&glob);
-            let include_hidden = coerce_truthy_arg(arguments.get("include_hidden"), false);
-            let include_ignored = coerce_truthy_arg(arguments.get("include_ignored"), false);
-            let multiline = coerce_truthy_arg(arguments.get("multiline"), false);
-            let show_line_numbers = coerce_truthy_arg(arguments.get("n"), true);
-            let parse_optional_usize =
-                |name: &str, min_value: i64| -> Result<Option<usize>, String> {
-                    match arguments.get(name) {
-                        Some(value) => parse_integer_arg(value)
-                            .map(|parsed| Some(parsed.max(min_value) as usize))
-                            .map_err(|_| format!("`{name}` must be an integer")),
-                        None => Ok(None),
-                    }
-                };
-            let context_lines = match parse_optional_usize("c", 0) {
-                Ok(value) => value,
+            let request = match parse_workspace_grep_request(arguments) {
+                Ok(request) => request,
                 Err(error) => return grep_error(error),
             };
-            let before_context = match context_lines {
-                Some(value) => value,
-                None => match parse_optional_usize("b", 0) {
-                    Ok(value) => value.unwrap_or(0),
-                    Err(error) => return grep_error(error),
-                },
-            };
-            let after_context = match context_lines {
-                Some(value) => value,
-                None => match parse_optional_usize("a", 0) {
-                    Ok(value) => value.unwrap_or(0),
-                    Err(error) => return grep_error(error),
-                },
-            };
-            let head_limit_raw = arguments
-                .get("head_limit")
-                .or_else(|| arguments.get("max_results"));
-            let head_limit = match head_limit_raw {
-                Some(value) => match parse_integer_arg(value) {
-                    Ok(parsed) => Some(parsed.max(1) as usize),
-                    Err(_) => return grep_error("`head_limit` must be an integer"),
-                },
-                None => None,
-            };
-            let case_insensitive = if arguments.contains_key("case_sensitive") {
-                !coerce_truthy_arg(arguments.get("case_sensitive"), false)
-            } else if arguments.contains_key("i") {
-                coerce_truthy_arg(arguments.get("i"), false)
-            } else {
-                !pattern.chars().any(char::is_uppercase)
-            };
-            let regex = match RegexBuilder::new(&pattern)
-                .case_insensitive(case_insensitive)
-                .multi_line(multiline)
-                .dot_matches_new_line(multiline)
-                .build()
-            {
-                Ok(regex) => regex,
-                Err(error) => {
-                    return grep_error(format!("Invalid regular expression: {error}"));
-                }
-            };
+            let WorkspaceGrepRequest {
+                pattern,
+                output_mode,
+                file_type,
+                path,
+                glob_pattern,
+                include_hidden,
+                include_ignored,
+                multiline,
+                show_line_numbers,
+                before_context,
+                after_context,
+                head_limit,
+                case_insensitive,
+                regex,
+            } = request;
 
             if let Err(error) = context.resolve_workspace_path(&path) {
                 return path_escapes_workspace_error(error);
@@ -335,18 +267,4 @@ pub(crate) fn workspace_grep_tool() -> ToolSpec {
         spec.schema = schema;
     }
     spec
-}
-
-fn grep_error(message: impl Into<String>) -> ToolExecutionResult {
-    let message = message.into();
-    ToolExecutionResult {
-        tool_call_id: String::new(),
-        content: message.clone(),
-        status: ToolResultStatus::Error,
-        directive: ToolDirective::Continue,
-        error_code: None,
-        metadata: BTreeMap::from([("error".to_string(), Value::String(message))]),
-        image_url: None,
-        image_path: None,
-    }
 }

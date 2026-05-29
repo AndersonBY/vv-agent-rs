@@ -923,11 +923,13 @@ fn tools_module_is_split_into_handler_files() {
         "tools/handlers/workspace/listing/response.rs",
         "tools/handlers/workspace/listing/types.rs",
         "tools/handlers/search/mod.rs",
+        "tools/handlers/search/error.rs",
         "tools/handlers/search/format.rs",
         "tools/handlers/search/local_rg.rs",
         "tools/handlers/search/local_rg/command.rs",
         "tools/handlers/search/local_rg/parse.rs",
         "tools/handlers/search/local_rg/paths.rs",
+        "tools/handlers/search/request.rs",
         "tools/handlers/search/local_rg/tests.rs",
         "tools/handlers/search/local_rg/types.rs",
         "tools/handlers/bash.rs",
@@ -1434,6 +1436,19 @@ fn workspace_list_files_handler_root_stays_focused_on_tool_entrypoint() {
     assert!(
         line_count <= 120,
         "tools/handlers/workspace/listing.rs should delegate argument parsing, rg scanning, backend fallback, and response rendering to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn workspace_grep_handler_root_stays_focused_on_tool_entrypoint() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let handler = manifest_dir.join("src/tools/handlers/search/mod.rs");
+    let content = std::fs::read_to_string(&handler).expect("read workspace grep handler module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 280,
+        "tools/handlers/search/mod.rs should keep workspace_grep orchestration at the root while delegating argument parsing, rg scanning, fallback scanning, and response rendering to submodules; found {line_count} lines"
     );
 }
 
