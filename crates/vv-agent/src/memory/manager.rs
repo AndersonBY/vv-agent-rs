@@ -316,8 +316,18 @@ impl MemoryManager {
         }
         let mut summary_source = self.strip_session_memory_context(&working_messages);
         if !force {
+            let (microcompacted, cleared) =
+                self.microcompact_messages(&working_messages, cycle_index);
+            if cleared > 0 {
+                if self.calculate_effective_length(&microcompacted, None, None)
+                    <= self.autocompact_threshold()
+                {
+                    return (microcompacted, true);
+                }
+                summary_source = microcompacted;
+            }
             let (image_compacted, image_changed) =
-                compact_processed_image_messages(&working_messages);
+                compact_processed_image_messages(&summary_source);
             let (artifact_compacted, artifact_changed) =
                 self.compact_large_tool_results(&image_compacted);
             if (image_changed || artifact_changed)

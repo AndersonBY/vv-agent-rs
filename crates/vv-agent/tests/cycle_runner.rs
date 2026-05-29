@@ -1,7 +1,9 @@
+use std::sync::{Arc, Mutex};
+
 use serde_json::json;
 use vv_agent::{
     build_default_registry, CycleRunRequest, CycleRunner, LLMResponse, MemoryManager,
-    MemoryManagerConfig, Message, ScriptedLlmClient,
+    MemoryManagerConfig, Message, ScriptStep, ScriptedLlmClient, ToolCall,
 };
 
 #[test]
@@ -36,5 +38,84 @@ fn cycle_runner_public_api_builds_assistant_message() {
             .reasoning_content
             .as_deref(),
         Some("cycle reasoning")
+    );
+}
+
+#[test]
+fn cycle_runner_microcompacts_before_full_compaction_when_previous_prompt_tokens_are_high() {
+    let captured_requests = Arc::new(Mutex::new(Vec::<Vec<Message>>::new()));
+    let captured_for_step = Arc::clone(&captured_requests);
+    let runner = CycleRunner::new(
+        ScriptedLlmClient::from_steps(vec![ScriptStep::callback(move |request| {
+            captured_for_step
+                .lock()
+                .expect("capture")
+                .push(request.messages.clone());
+            Ok(LLMResponse::new("done"))
+        })]),
+        build_default_registry(),
+    );
+    let task = vv_agent::AgentTask::new("cycle_microcompact", "demo", "system", "prompt");
+    let mut memory_manager = MemoryManager::new(MemoryManagerConfig {
+        model: "demo".to_string(),
+        model_context_window: 800,
+        reserved_output_tokens: 50,
+        autocompact_buffer_tokens: 50,
+        summary_callback: Some(Arc::new(|_, _, _| {
+            Some(
+                json!({
+                    "summary_version": 1,
+                    "progress": ["summarized"],
+                    "key_facts": [],
+                    "open_issues": [],
+                    "next_steps": []
+                })
+                .to_string(),
+            )
+        })),
+        tool_result_compact_threshold: 10_000,
+        microcompact_trigger_ratio: 0.2,
+        microcompact_keep_recent_cycles: 0,
+        microcompact_min_result_length: 200,
+        ..MemoryManagerConfig::default()
+    });
+
+    let mut assistant = Message::assistant("old tool call");
+    assistant
+        .tool_calls
+        .push(ToolCall::new("call_old", "read_file", Default::default()));
+    let messages = vec![
+        Message::system("system"),
+        Message::user("original request"),
+        assistant,
+        Message::tool("x".repeat(2_000), "call_old"),
+        Message::user("latest request"),
+    ];
+
+    let (_messages, cycle) = runner
+        .run_cycle(
+            CycleRunRequest::new(&task, messages, 3, &mut memory_manager)
+                .with_previous_prompt_tokens(Some(5_000)),
+        )
+        .expect("cycle");
+
+    assert!(cycle.memory_compacted);
+    let captured = captured_requests.lock().expect("captured");
+    let request_messages = captured.first().expect("llm request");
+    assert!(
+        request_messages.iter().any(|message| {
+            message.content == vv_agent::memory::CLEARED_MARKER
+                && message
+                    .metadata
+                    .get("microcompacted")
+                    .is_some_and(|value| value == true)
+        }),
+        "previous prompt token pressure should first clear old compactable tool output: {request_messages:#?}"
+    );
+    assert!(
+        request_messages
+            .iter()
+            .all(|message| !message.content.contains("<Compressed Agent Memory>")),
+        "microcompact should avoid full summary when the reduced request fits: {request_messages:#?}"
     );
 }
