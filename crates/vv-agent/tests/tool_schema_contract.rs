@@ -1033,6 +1033,10 @@ fn tools_module_is_split_into_handler_files() {
         "sdk/mod.rs",
         "sdk/types.rs",
         "sdk/resources.rs",
+        "sdk/resources/loader.rs",
+        "sdk/resources/models.rs",
+        "sdk/resources/parse.rs",
+        "sdk/resources/paths.rs",
         "sdk/session/mod.rs",
         "sdk/session/events.rs",
         "sdk/session/handles.rs",
@@ -1249,6 +1253,19 @@ fn sdk_client_task_root_stays_focused_on_prepare_api() {
     assert!(
         line_count <= 360,
         "sdk/client/task.rs should delegate task id generation, prompt construction, and metadata expansion to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn sdk_resources_root_stays_focused_on_public_exports() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let resources = manifest_dir.join("src/sdk/resources.rs");
+    let content = std::fs::read_to_string(&resources).expect("read sdk resources module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 80,
+        "sdk/resources.rs should delegate discovery, path resolution, and JSON parsing to submodules; found {line_count} lines"
     );
 }
 
