@@ -1042,6 +1042,9 @@ fn tools_module_is_split_into_handler_files() {
         "sdk/client/runs.rs",
         "sdk/client/sessions.rs",
         "sdk/client/task.rs",
+        "sdk/client/task/build.rs",
+        "sdk/client/task/ids.rs",
+        "sdk/client/task/metadata.rs",
     ] {
         assert!(root.join(relative).is_file(), "missing {relative}");
     }
@@ -1214,6 +1217,19 @@ fn workspace_grep_local_rg_root_stays_focused_on_command_orchestration() {
     assert!(
         line_count <= 260,
         "tools/handlers/search/local_rg.rs should delegate rg parsing, path helpers, command helpers, and tests to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn sdk_client_task_root_stays_focused_on_prepare_api() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let task = manifest_dir.join("src/sdk/client/task.rs");
+    let content = std::fs::read_to_string(&task).expect("read sdk client task module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 360,
+        "sdk/client/task.rs should delegate task id generation, prompt construction, and metadata expansion to submodules; found {line_count} lines"
     );
 }
 
