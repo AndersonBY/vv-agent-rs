@@ -19,12 +19,12 @@ mod execution;
 mod state;
 mod subscription;
 
-pub(super) struct RuntimeSubAgentSession {
+pub(in crate::runtime::sub_agents) struct RuntimeSubAgentSession {
     llm_client: Arc<dyn LlmClient>,
     tool_registry: ToolRegistry,
     workspace_path: PathBuf,
     workspace_backend: Arc<dyn WorkspaceBackend>,
-    pub(super) task_template: AgentTask,
+    pub(in crate::runtime::sub_agents) task_template: AgentTask,
     task_id: String,
     agent_name: String,
     session_id: String,
@@ -40,7 +40,7 @@ pub(super) struct RuntimeSubAgentSession {
 }
 
 impl RuntimeSubAgentSession {
-    pub(super) fn new(parts: RuntimeSubAgentSessionParts) -> Self {
+    pub(in crate::runtime::sub_agents) fn new(parts: RuntimeSubAgentSessionParts) -> Self {
         let task_id = parts.task_template.task_id.clone();
         Self {
             llm_client: parts.llm_client,

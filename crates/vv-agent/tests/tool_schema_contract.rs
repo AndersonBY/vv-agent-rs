@@ -996,6 +996,10 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/sub_agents/mod.rs",
         "runtime/sub_agents/events.rs",
         "runtime/sub_agents/runner.rs",
+        "runtime/sub_agents/runner/identity.rs",
+        "runtime/sub_agents/runner/model.rs",
+        "runtime/sub_agents/runner/outcome.rs",
+        "runtime/sub_agents/runner/session.rs",
         "runtime/sub_agents/session.rs",
         "runtime/sub_agents/session/events.rs",
         "runtime/sub_agents/session/execution.rs",
@@ -1607,6 +1611,19 @@ fn sub_agent_session_root_stays_focused_on_session_contract() {
     assert!(
         line_count <= 150,
         "runtime/sub_agents/session.rs should keep the session type, constructor, and SubAgentSession trait contract while delegating run execution, event forwarding, state sanitization, and subscription cleanup to session submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn sub_agent_runner_root_stays_focused_on_sub_task_orchestration() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let runner = manifest_dir.join("src/runtime/sub_agents/runner.rs");
+    let content = std::fs::read_to_string(&runner).expect("read sub-agent runner module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 150,
+        "runtime/sub_agents/runner.rs should build the runner and orchestrate sub-task flow while delegating identity resolution, model client resolution, failure outcomes, and attached session execution to runner submodules; found {line_count} lines"
     );
 }
 
