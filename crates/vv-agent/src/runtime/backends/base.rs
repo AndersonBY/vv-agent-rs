@@ -1,3 +1,99 @@
-//! Base runtime backend re-export.
+use super::celery::CeleryBackend;
+use super::inline::InlineBackend;
+use super::thread::ThreadBackend;
+use crate::runtime::CancellationToken;
+use crate::types::{AgentResult, AgentTask, CycleRecord, Message, Metadata};
 
-pub use super::RuntimeExecutionBackend as ExecutionBackend;
+pub type ExecutionBackend = RuntimeExecutionBackend;
+
+#[derive(Debug, Clone)]
+pub enum RuntimeExecutionBackend {
+    Inline(InlineBackend),
+    Thread(ThreadBackend),
+    Celery(CeleryBackend),
+}
+
+impl Default for RuntimeExecutionBackend {
+    fn default() -> Self {
+        Self::Inline(InlineBackend)
+    }
+}
+
+impl From<InlineBackend> for RuntimeExecutionBackend {
+    fn from(backend: InlineBackend) -> Self {
+        Self::Inline(backend)
+    }
+}
+
+impl From<ThreadBackend> for RuntimeExecutionBackend {
+    fn from(backend: ThreadBackend) -> Self {
+        Self::Thread(backend)
+    }
+}
+
+impl From<CeleryBackend> for RuntimeExecutionBackend {
+    fn from(backend: CeleryBackend) -> Self {
+        Self::Celery(backend)
+    }
+}
+
+impl RuntimeExecutionBackend {
+    pub fn execute<F>(
+        &self,
+        task: &AgentTask,
+        initial_messages: Vec<Message>,
+        shared_state: Metadata,
+        cycle_executor: F,
+        cancellation_token: Option<&CancellationToken>,
+        max_cycles: u32,
+    ) -> AgentResult
+    where
+        F: FnMut(
+            u32,
+            &mut Vec<Message>,
+            &mut Vec<CycleRecord>,
+            &mut Metadata,
+            Option<&CancellationToken>,
+        ) -> Option<AgentResult>,
+    {
+        match self {
+            Self::Inline(backend) => backend.execute(
+                task,
+                initial_messages,
+                shared_state,
+                cycle_executor,
+                cancellation_token,
+                max_cycles,
+            ),
+            Self::Thread(backend) => backend.execute(
+                task,
+                initial_messages,
+                shared_state,
+                cycle_executor,
+                cancellation_token,
+                max_cycles,
+            ),
+            Self::Celery(backend) => backend.execute(
+                task,
+                initial_messages,
+                shared_state,
+                cycle_executor,
+                cancellation_token,
+                max_cycles,
+            ),
+        }
+    }
+
+    pub fn parallel_map<T, R, F>(&self, function: F, items: Vec<T>) -> Vec<R>
+    where
+        T: Send + 'static,
+        R: Send + 'static,
+        F: Fn(T) -> R + Send + Sync + 'static,
+    {
+        match self {
+            Self::Inline(backend) => backend.parallel_map(function, items),
+            Self::Thread(backend) => backend.parallel_map(function, items),
+            Self::Celery(backend) => backend.parallel_map(function, items),
+        }
+    }
+}

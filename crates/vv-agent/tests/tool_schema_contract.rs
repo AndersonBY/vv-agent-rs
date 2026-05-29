@@ -950,6 +950,8 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/mod.rs",
         "runtime/backends/mod.rs",
         "runtime/backends/inline.rs",
+        "runtime/backends/recipe.rs",
+        "runtime/backends/results.rs",
         "runtime/backends/thread.rs",
         "runtime/background_sessions.rs",
         "runtime/background_sessions/listeners.rs",
@@ -1419,6 +1421,19 @@ fn vv_llm_client_root_stays_focused_on_public_client_contract() {
     assert!(
         line_count <= 170,
         "llm/vv_llm_client/mod.rs should keep the client type, retry/failover trait entrypoint, and public debug surface while delegating construction, endpoint execution, request conversion, response conversion, streaming, endpoint bookkeeping, and prompt cache handling to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn runtime_backends_root_stays_focused_on_public_exports() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let backends = manifest_dir.join("src/runtime/backends/mod.rs");
+    let content = std::fs::read_to_string(&backends).expect("read runtime backends module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 90,
+        "runtime/backends/mod.rs should declare backend modules and re-export the public backend surface while delegating the backend enum, runtime recipe, and cycle-loop result helpers to focused submodules; found {line_count} lines"
     );
 }
 
