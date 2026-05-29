@@ -975,7 +975,13 @@ fn tools_module_is_split_into_handler_files() {
         "memory/manager/helpers.rs",
         "memory/manager/normalization.rs",
         "memory/manager/prompts.rs",
-        "memory/session.rs",
+        "memory/session/mod.rs",
+        "memory/session/config.rs",
+        "memory/session/entry.rs",
+        "memory/session/parse.rs",
+        "memory/session/prompt.rs",
+        "memory/session/state.rs",
+        "memory/session/storage.rs",
         "memory/summary.rs",
         "memory/token_utils.rs",
         "prompt/mod.rs",
@@ -1084,6 +1090,10 @@ fn tools_module_is_split_into_handler_files() {
             "memory manager should be split into src/memory/manager/ modules",
         ),
         (
+            "memory/session.rs",
+            "session memory should be split into src/memory/session/ modules",
+        ),
+        (
             "prompt.rs",
             "prompt.rs should be split into src/prompt/ modules",
         ),
@@ -1173,6 +1183,19 @@ fn sub_task_manager_root_stays_focused_on_lifecycle_orchestration() {
     assert!(
         line_count <= 500,
         "runtime/sub_task_manager/manager.rs should delegate event projection and record details to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn session_memory_root_stays_focused_on_orchestration() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let session = manifest_dir.join("src/memory/session/mod.rs");
+    let content = std::fs::read_to_string(&session).expect("read session memory module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 320,
+        "memory/session/mod.rs should delegate config, parsing, prompt, and storage helpers to submodules; found {line_count} lines"
     );
 }
 
