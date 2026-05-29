@@ -1109,8 +1109,11 @@ fn tools_module_is_split_into_handler_files() {
         "sdk/client/sessions/run.rs",
         "sdk/client/task.rs",
         "sdk/client/task/build.rs",
+        "sdk/client/task/defaults.rs",
         "sdk/client/task/ids.rs",
+        "sdk/client/task/inline.rs",
         "sdk/client/task/metadata.rs",
+        "sdk/client/task/named.rs",
     ] {
         assert!(root.join(relative).is_file(), "missing {relative}");
     }
@@ -1334,8 +1337,8 @@ fn sdk_client_task_root_stays_focused_on_prepare_api() {
     let line_count = content.lines().count();
 
     assert!(
-        line_count <= 360,
-        "sdk/client/task.rs should delegate task id generation, prompt construction, and metadata expansion to submodules; found {line_count} lines"
+        line_count <= 120,
+        "sdk/client/task.rs should keep shared task preparation helpers at the root while delegating named-agent, inline-agent, default-agent, task id generation, prompt construction, and metadata expansion to submodules; found {line_count} lines"
     );
 }
 
