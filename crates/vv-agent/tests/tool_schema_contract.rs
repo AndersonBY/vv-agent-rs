@@ -889,6 +889,14 @@ fn tools_module_is_split_into_handler_files() {
     assert!(root.join("tools").join("mod.rs").is_file());
     for relative in [
         "tools/base.rs",
+        "tools/common.rs",
+        "tools/common/args.rs",
+        "tools/common/edit.rs",
+        "tools/common/file_types.rs",
+        "tools/common/grep.rs",
+        "tools/common/paths.rs",
+        "tools/common/process.rs",
+        "tools/common/result.rs",
         "tools/dispatcher.rs",
         "tools/registry.rs",
         "tools/schemas/mod.rs",
@@ -1302,6 +1310,19 @@ fn anthropic_prompt_cache_root_stays_focused_on_public_api() {
     assert!(
         line_count <= 120,
         "llm/anthropic_prompt_cache.rs should delegate block normalization, cache breakpoint planning, token estimation, model thresholds, and section parsing to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn tools_common_root_stays_focused_on_shared_exports() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let common = manifest_dir.join("src/tools/common.rs");
+    let content = std::fs::read_to_string(&common).expect("read tools common module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 100,
+        "tools/common.rs should delegate argument coercion, command execution, result construction, grep text matching, path helpers, edit helpers, and file-type checks to submodules; found {line_count} lines"
     );
 }
 
