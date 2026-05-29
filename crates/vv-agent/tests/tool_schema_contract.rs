@@ -930,6 +930,11 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/backends/inline.rs",
         "runtime/backends/thread.rs",
         "runtime/background_sessions.rs",
+        "runtime/background_sessions/listeners.rs",
+        "runtime/background_sessions/options.rs",
+        "runtime/background_sessions/session.rs",
+        "runtime/background_sessions/subscription.rs",
+        "runtime/background_sessions/tests.rs",
         "runtime/backends/celery.rs",
         "runtime/backends/celery_tasks.rs",
         "runtime/cancellation.rs",
@@ -1178,6 +1183,20 @@ fn runtime_engine_root_stays_focused_on_loop_orchestration() {
     assert!(
         line_count <= 650,
         "runtime/engine/mod.rs should delegate focused responsibilities to engine submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn background_sessions_root_stays_focused_on_manager_orchestration() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let background_sessions = manifest_dir.join("src/runtime/background_sessions.rs");
+    let content =
+        std::fs::read_to_string(&background_sessions).expect("read background sessions module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 260,
+        "runtime/background_sessions.rs should delegate options, session state, listener notification, subscription cleanup, and tests to submodules; found {line_count} lines"
     );
 }
 
