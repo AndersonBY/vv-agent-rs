@@ -925,3 +925,52 @@ fn memory_manager_compact_directly_applies_session_memory_context() {
     assert!(updated[0].content.contains("<Session Memory>"));
     assert!(updated[0].content.contains("keep the Rust API small"));
 }
+
+#[test]
+fn memory_manager_extracts_session_memory_before_returning_small_requests() {
+    let calls = Arc::new(Mutex::new(0usize));
+    let calls_for_callback = Arc::clone(&calls);
+    let session_memory = SessionMemory::new(SessionMemoryConfig {
+        min_tokens_before_extraction: 1,
+        min_text_messages: 1,
+        extraction_callback: Some(Arc::new(move |_, _, _| {
+            *calls_for_callback.lock().expect("calls poisoned") += 1;
+            Some(
+                json!([{
+                    "category": "key_fact",
+                    "content": "small request fact",
+                    "importance": 9
+                }])
+                .to_string(),
+            )
+        })),
+        token_model: "demo".to_string(),
+        ..SessionMemoryConfig::default()
+    });
+    let mut manager = MemoryManager::new(MemoryManagerConfig {
+        compact_threshold: 10_000,
+        model_context_window: 10_000,
+        reserved_output_tokens: 0,
+        autocompact_buffer_tokens: 0,
+        model: "demo".to_string(),
+        session_memory: Some(session_memory),
+        ..MemoryManagerConfig::default()
+    });
+
+    let (messages, _changed) = manager.compact_for_cycle_with_usage(
+        &[Message::system("system"), Message::user("remember alpha")],
+        2,
+        false,
+        None,
+        None,
+    );
+
+    assert_eq!(*calls.lock().expect("calls poisoned"), 1);
+    assert!(
+        messages
+            .first()
+            .is_some_and(|message| message.content.contains("<Session Memory>")
+                && message.content.contains("small request fact")),
+        "session memory should be extracted and injected before returning: {messages:#?}"
+    );
+}

@@ -284,9 +284,25 @@ impl MemoryManager {
                 .iter()
                 .zip(messages.iter())
                 .any(|(left, right)| left != right);
-        let working_messages = self.apply_session_memory_context(&sanitized);
-        let message_length =
+        let mut working_messages = self.apply_session_memory_context(&sanitized);
+        let mut message_length =
             self.calculate_effective_length(&working_messages, total_tokens, recent_tool_call_ids);
+        if let Some(session_memory) = self.session_memory.as_mut() {
+            let text_messages = working_messages
+                .iter()
+                .filter(|message| {
+                    !matches!(message.role, MessageRole::System | MessageRole::Tool)
+                        && !message.content.trim().is_empty()
+                })
+                .count();
+            if session_memory.should_extract(message_length, text_messages)
+                && session_memory.extract(&working_messages, cycle_index as i32, message_length) > 0
+            {
+                working_messages = self.apply_session_memory_context(&sanitized);
+                message_length =
+                    self.calculate_effective_length(&working_messages, None, recent_tool_call_ids);
+            }
+        }
         if !force && message_length <= self.autocompact_threshold() {
             let (warned, warning_inserted) =
                 self.maybe_append_memory_warning(&working_messages, message_length);
@@ -301,18 +317,6 @@ impl MemoryManager {
                 }
             }
             return (working_messages, changed_by_sanitize);
-        }
-        if let Some(session_memory) = self.session_memory.as_mut() {
-            let text_messages = working_messages
-                .iter()
-                .filter(|message| {
-                    !matches!(message.role, MessageRole::System | MessageRole::Tool)
-                        && !message.content.trim().is_empty()
-                })
-                .count();
-            if session_memory.should_extract(message_length, text_messages) {
-                session_memory.extract(&working_messages, 0, message_length);
-            }
         }
         let mut summary_source = self.strip_session_memory_context(&working_messages);
         if !force {

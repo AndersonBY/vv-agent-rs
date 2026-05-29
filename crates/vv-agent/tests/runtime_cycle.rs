@@ -2234,7 +2234,7 @@ fn runtime_extracts_session_memory_with_default_llm_callback() {
     let result = runtime.run(task).expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
-    assert_eq!(inspector.extraction_prompt_count(), 1);
+    assert_eq!(inspector.extraction_prompt_count(), 2);
     let second_request = inspector.second_request_messages();
     assert!(
         second_request
