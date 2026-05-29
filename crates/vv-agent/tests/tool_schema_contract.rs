@@ -933,6 +933,9 @@ fn tools_module_is_split_into_handler_files() {
         "tools/handlers/search/local_rg/tests.rs",
         "tools/handlers/search/local_rg/types.rs",
         "tools/handlers/bash.rs",
+        "tools/handlers/bash/env.rs",
+        "tools/handlers/bash/execution.rs",
+        "tools/handlers/bash/shell_defaults.rs",
         "tools/handlers/image.rs",
         "tools/handlers/memory.rs",
         "tools/handlers/skills/mod.rs",
@@ -1427,6 +1430,19 @@ fn tools_common_root_stays_focused_on_shared_exports() {
     assert!(
         line_count <= 100,
         "tools/common.rs should delegate argument coercion, command execution, result construction, grep text matching, path helpers, edit helpers, and file-type checks to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn bash_handler_root_stays_focused_on_tool_registration() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let bash = manifest_dir.join("src/tools/handlers/bash.rs");
+    let content = std::fs::read_to_string(&bash).expect("read bash handler module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 80,
+        "tools/handlers/bash.rs should register the bash tool and delegate command execution, shell default parsing, process env construction, and tests to submodules; found {line_count} lines"
     );
 }
 
