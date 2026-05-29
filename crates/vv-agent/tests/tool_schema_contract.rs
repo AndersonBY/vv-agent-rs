@@ -1062,6 +1062,10 @@ fn tools_module_is_split_into_handler_files() {
         "config/settings_literal/identifiers.rs",
         "config/settings_literal/json.rs",
         "config/settings_literal/strings.rs",
+        "config/model_resolution/aliases.rs",
+        "config/model_resolution/backend.rs",
+        "config/model_resolution/endpoints.rs",
+        "config/model_resolution/settings.rs",
         "constants/mod.rs",
         "constants/tool_names.rs",
         "constants/workspace.rs",
@@ -1397,6 +1401,19 @@ fn config_settings_literal_root_stays_focused_on_public_api() {
     assert!(
         line_count <= 90,
         "config/settings_literal.rs should expose settings parsing entrypoints and delegate assignment extraction, identifier parsing, JSON normalization, and string escapes to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn config_model_resolution_root_stays_focused_on_public_entrypoints() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let model_resolution = manifest_dir.join("src/config/model_resolution.rs");
+    let content = std::fs::read_to_string(&model_resolution).expect("read model resolution module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 140,
+        "config/model_resolution.rs should keep public vv-llm resolution entrypoints at the root while delegating settings normalization, backend mapping, model aliases, and endpoint client construction to submodules; found {line_count} lines"
     );
 }
 
