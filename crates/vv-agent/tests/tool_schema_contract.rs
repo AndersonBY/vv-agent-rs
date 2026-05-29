@@ -998,6 +998,14 @@ fn tools_module_is_split_into_handler_files() {
         "constants/mod.rs",
         "constants/tool_names.rs",
         "constants/workspace.rs",
+        "types/mod.rs",
+        "types/metadata.rs",
+        "types/status.rs",
+        "types/messages.rs",
+        "types/tool_calls.rs",
+        "types/token_usage.rs",
+        "types/tasks.rs",
+        "types/records.rs",
         "types/dict/mod.rs",
         "types/dict/common.rs",
         "types/dict/messages.rs",
@@ -1130,6 +1138,10 @@ fn tools_module_is_split_into_handler_files() {
         (
             "types/dict.rs",
             "dictionary conversions should be split into src/types/dict/ modules",
+        ),
+        (
+            "types.rs",
+            "core public types should be split into src/types/ modules",
         ),
     ] {
         assert!(!root.join(relative).exists(), "{message}");
