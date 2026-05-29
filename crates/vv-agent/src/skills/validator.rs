@@ -8,10 +8,12 @@ use super::parser::{find_skill_md, parse_frontmatter};
 
 const MAX_SKILL_NAME_LENGTH: usize = 64;
 const MAX_DESCRIPTION_LENGTH: usize = 1024;
+const MAX_COMPATIBILITY_LENGTH: usize = 500;
 const ALLOWED_FIELDS: &[&str] = &[
     "name",
     "description",
     "license",
+    "compatibility",
     "allowed-tools",
     "metadata",
 ];
@@ -102,6 +104,8 @@ pub fn validate_metadata_with_diagnostics(
             .errors
             .push("Missing required field in frontmatter: description".to_string()),
     }
+
+    validate_compatibility(metadata.get("compatibility"), mode, &mut diagnostics);
 
     Ok(diagnostics)
 }
@@ -263,6 +267,39 @@ fn validate_description(description: &str, diagnostics: &mut ValidationDiagnosti
         diagnostics.errors.push(format!(
             "Description exceeds {MAX_DESCRIPTION_LENGTH} character limit"
         ));
+    }
+}
+
+fn validate_compatibility(
+    compatibility: Option<&Value>,
+    mode: ValidationMode,
+    diagnostics: &mut ValidationDiagnostics,
+) {
+    let Some(compatibility) = compatibility else {
+        return;
+    };
+    let severity = if mode == ValidationMode::Minimal {
+        IssueSeverity::Warning
+    } else {
+        IssueSeverity::Error
+    };
+    let Some(text) = compatibility.as_str() else {
+        append_issue(
+            diagnostics,
+            "Field 'compatibility' must be a string",
+            severity,
+        );
+        return;
+    };
+    let length = text.chars().count();
+    if length > MAX_COMPATIBILITY_LENGTH {
+        append_issue(
+            diagnostics,
+            format!(
+                "Compatibility exceeds {MAX_COMPATIBILITY_LENGTH} character limit ({length} chars)"
+            ),
+            severity,
+        );
     }
 }
 

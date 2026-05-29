@@ -94,6 +94,7 @@ fn skills_public_api_renders_available_skills_xml_with_budget() {
         name: "review-code".to_string(),
         description: "Review code".to_string(),
         license: Some("MIT".to_string()),
+        compatibility: None,
         allowed_tools: Some("read_file".to_string()),
         metadata: BTreeMap::from([("owner".to_string(), "agent".to_string())]),
     };
@@ -168,6 +169,64 @@ Use these instructions.
     assert!(xml.contains("<available_skills>"));
     assert!(xml.contains("review-code"));
     assert!(xml.contains("SKILL.md"));
+}
+
+#[test]
+fn skills_public_api_accepts_skill_compatibility_without_prompt_exposure() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let skill_dir = workspace.path().join("skills/runtime-ready");
+    fs::create_dir_all(&skill_dir).expect("skill dir");
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        r#"---
+name: runtime-ready
+description: Runtime-ready skill
+compatibility: rust>=1.80
+---
+Use these instructions.
+"#,
+    )
+    .expect("write skill");
+
+    let diagnostics = validate_metadata_with_diagnostics(
+        &BTreeMap::from([
+            (
+                "name".to_string(),
+                Value::String("runtime-ready".to_string()),
+            ),
+            (
+                "description".to_string(),
+                Value::String("Runtime-ready skill".to_string()),
+            ),
+            (
+                "compatibility".to_string(),
+                Value::String("rust>=1.80".to_string()),
+            ),
+        ]),
+        Some(&skill_dir),
+        Some("strict"),
+    )
+    .expect("diagnostics");
+    assert_eq!(diagnostics.errors, Vec::<String>::new());
+    assert_eq!(diagnostics.warnings, Vec::<String>::new());
+
+    let properties = read_properties(&skill_dir).expect("properties");
+    assert_eq!(properties.compatibility.as_deref(), Some("rust>=1.80"));
+    assert_eq!(properties.to_value()["compatibility"], "rust>=1.80");
+
+    let entries = normalize_skill_list(Some(&json!(["skills"])), Some(workspace.path()), false);
+    assert_eq!(entries.len(), 1);
+    assert!(
+        !format!("{:?}", entries[0]).contains("rust>=1.80"),
+        "normalized skill entries feed Agent-visible prompts/results and should not carry runtime compatibility metadata"
+    );
+
+    let xml = render_skills_xml(&entries, 8000);
+    assert!(xml.contains("runtime-ready"));
+    assert!(
+        !xml.contains("rust>=1.80") && !xml.contains("compatibility"),
+        "<available_skills> should stay focused on name, description, and location"
+    );
 }
 
 #[test]
