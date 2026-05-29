@@ -912,6 +912,11 @@ fn tools_module_is_split_into_handler_files() {
         "tools/handlers/search/mod.rs",
         "tools/handlers/search/format.rs",
         "tools/handlers/search/local_rg.rs",
+        "tools/handlers/search/local_rg/command.rs",
+        "tools/handlers/search/local_rg/parse.rs",
+        "tools/handlers/search/local_rg/paths.rs",
+        "tools/handlers/search/local_rg/tests.rs",
+        "tools/handlers/search/local_rg/types.rs",
         "tools/handlers/bash.rs",
         "tools/handlers/image.rs",
         "tools/handlers/memory.rs",
@@ -1196,6 +1201,19 @@ fn session_memory_root_stays_focused_on_orchestration() {
     assert!(
         line_count <= 320,
         "memory/session/mod.rs should delegate config, parsing, prompt, and storage helpers to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn workspace_grep_local_rg_root_stays_focused_on_command_orchestration() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let local_rg = manifest_dir.join("src/tools/handlers/search/local_rg.rs");
+    let content = std::fs::read_to_string(&local_rg).expect("read local rg module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 260,
+        "tools/handlers/search/local_rg.rs should delegate rg parsing, path helpers, command helpers, and tests to submodules; found {line_count} lines"
     );
 }
 
