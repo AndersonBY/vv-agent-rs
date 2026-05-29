@@ -94,12 +94,22 @@ impl ToolCallRunner {
                 call.clone(),
                 request.context,
             );
-            let mut result = short_circuit_result.unwrap_or_else(|| {
-                execute_tool_result(&self.tool_registry, &patched_call, request.context)
-            });
-            if needs_tool_call_id(&result.tool_call_id) {
-                result.tool_call_id = patched_call.id.clone();
-            }
+            let mut result = match short_circuit_result {
+                Some(mut result) => {
+                    if needs_tool_call_id(&result.tool_call_id) {
+                        result.tool_call_id = call.id.clone();
+                    }
+                    result
+                }
+                None => {
+                    let mut result =
+                        execute_tool_result(&self.tool_registry, &patched_call, request.context);
+                    if needs_tool_call_id(&result.tool_call_id) {
+                        result.tool_call_id = patched_call.id.clone();
+                    }
+                    result
+                }
+            };
             result = self.hook_manager.apply_after_tool_call(
                 request.task,
                 request.context.cycle_index,

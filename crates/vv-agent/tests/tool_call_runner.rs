@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use serde_json::json;
 use vv_agent::{
-    ToolCall, ToolCallRunner, ToolContext, ToolDirective, ToolExecutionResult, ToolRegistry,
+    BeforeToolCallEvent, BeforeToolCallPatch, RuntimeHook, RuntimeHookManager, ToolCall,
+    ToolCallRunner, ToolContext, ToolDirective, ToolExecutionResult, ToolRegistry,
     ToolResultStatus, ToolRunRequest, ToolSpec,
 };
 
@@ -85,4 +86,62 @@ fn tool_call_runner_skips_remaining_calls_after_finish() {
         serde_json::from_str(&messages[1].content).expect("skipped message payload json");
     assert_eq!(skipped_message_payload, skipped_payload);
     assert_eq!(messages.len(), 2);
+}
+
+#[test]
+fn tool_call_runner_short_circuit_result_keeps_original_tool_call_id_after_call_patch() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = ToolRegistry::new();
+    let runner =
+        ToolCallRunner::new(registry).with_hook_manager(RuntimeHookManager::new(vec![Arc::new(
+            PatchedCallAndBlankResultHook,
+        )]));
+    let task = vv_agent::AgentTask::new("tool_runner_hook", "demo", "system", "prompt");
+    let mut context = ToolContext::new(workspace.path());
+    let tool_calls = vec![ToolCall::new(
+        "original_call",
+        "_patched_by_hook",
+        BTreeMap::new(),
+    )];
+    let mut messages = Vec::new();
+    let mut cycle = vv_agent::CycleRecord {
+        index: 1,
+        assistant_message: String::new(),
+        tool_calls: tool_calls.clone(),
+        tool_results: Vec::new(),
+        memory_compacted: false,
+        token_usage: vv_agent::TokenUsage::default(),
+    };
+
+    runner
+        .run(ToolRunRequest::new(
+            &task,
+            tool_calls,
+            &mut context,
+            &mut messages,
+            &mut cycle,
+        ))
+        .expect("tool run");
+
+    assert_eq!(cycle.tool_results.len(), 1);
+    assert_eq!(cycle.tool_results[0].tool_call_id, "original_call");
+    assert_eq!(
+        messages[0].tool_call_id.as_deref(),
+        Some("original_call"),
+        "tool messages must answer the model's original tool call id even when a hook patches the call"
+    );
+}
+
+struct PatchedCallAndBlankResultHook;
+
+impl RuntimeHook for PatchedCallAndBlankResultHook {
+    fn before_tool_call(&self, event: BeforeToolCallEvent<'_>) -> Option<BeforeToolCallPatch> {
+        let mut patched = event.call.clone();
+        patched.id = "patched_call".to_string();
+        let result = ToolExecutionResult::success("", json!({"ok": true}).to_string());
+        Some(BeforeToolCallPatch {
+            call: Some(patched),
+            result: Some(result),
+        })
+    }
 }

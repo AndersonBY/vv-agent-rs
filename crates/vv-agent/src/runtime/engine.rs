@@ -527,14 +527,24 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         &context,
                     );
                     let mut result = match short_circuit_result {
-                        Some(result) => result,
+                        Some(mut result) => {
+                            if needs_tool_call_id(&result.tool_call_id) {
+                                result.tool_call_id = call.id.clone();
+                            }
+                            result
+                        }
                         None => {
-                            execute_tool_result(&self.tool_registry, &patched_call, &mut context)
+                            let mut result = execute_tool_result(
+                                &self.tool_registry,
+                                &patched_call,
+                                &mut context,
+                            );
+                            if needs_tool_call_id(&result.tool_call_id) {
+                                result.tool_call_id = patched_call.id.clone();
+                            }
+                            result
                         }
                     };
-                    if needs_tool_call_id(&result.tool_call_id) {
-                        result.tool_call_id = patched_call.id.clone();
-                    }
                     result = hook_manager.apply_after_tool_call(
                         &task,
                         cycle_index,

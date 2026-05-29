@@ -1125,6 +1125,44 @@ fn before_tool_call_patch_accepts_direct_result_and_call_conversions() {
 }
 
 #[test]
+fn runtime_short_circuit_tool_result_keeps_original_tool_call_id_after_call_patch() {
+    let hook = Arc::new(PatchedCallAndBlankFinishHook);
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+        "finish through patched short circuit",
+        vec![ToolCall::new(
+            "runtime_original_call",
+            "task_finish",
+            BTreeMap::from([("message".to_string(), json!("original"))]),
+        )],
+    )]);
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.hooks.push(hook);
+
+    let result = runtime
+        .run(AgentTask::new(
+            "patched_short_circuit_task",
+            "demo",
+            "system",
+            "go",
+        ))
+        .expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(
+        result.final_answer.as_deref(),
+        Some("finished by patched short circuit")
+    );
+    assert_eq!(
+        result.cycles[0].tool_results[0].tool_call_id,
+        "runtime_original_call"
+    );
+    assert!(result.messages.iter().any(|message| {
+        message.tool_call_id.as_deref() == Some("runtime_original_call")
+            && message.content.contains("patched short circuit")
+    }));
+}
+
+#[test]
 fn runtime_emits_lifecycle_log_events() {
     let mut finish_args = BTreeMap::new();
     finish_args.insert("message".to_string(), json!("logged finish"));
@@ -2777,6 +2815,31 @@ impl RuntimeHook for PatchCallBeforeToolHook {
             json!("finished by patched call hook"),
         );
         Some(patched.into())
+    }
+}
+
+struct PatchedCallAndBlankFinishHook;
+
+impl RuntimeHook for PatchedCallAndBlankFinishHook {
+    fn before_tool_call(
+        &self,
+        event: vv_agent::BeforeToolCallEvent<'_>,
+    ) -> Option<BeforeToolCallPatch> {
+        let mut patched = event.call.clone();
+        patched.id = "runtime_patched_call".to_string();
+        let mut result = ToolExecutionResult::success(
+            "",
+            json!({"message": "finished by patched short circuit"}).to_string(),
+        );
+        result.directive = ToolDirective::Finish;
+        result.metadata.insert(
+            "final_message".to_string(),
+            json!("finished by patched short circuit"),
+        );
+        Some(BeforeToolCallPatch {
+            call: Some(patched),
+            result: Some(result),
+        })
     }
 }
 
