@@ -50,6 +50,26 @@ fn skills_public_api_validates_metadata() {
     assert!(minimal_errors
         .iter()
         .any(|error| error.contains("invalid characters")));
+
+    let i18n_uppercase = BTreeMap::from([
+        ("name".to_string(), Value::String("Мой-навык".to_string())),
+        (
+            "description".to_string(),
+            Value::String("Useful skill".to_string()),
+        ),
+    ]);
+    let i18n_errors = validate_metadata(
+        &i18n_uppercase,
+        Some(Path::new("Мой-навык")),
+        Some("strict"),
+    )
+    .expect("i18n validation");
+    assert!(
+        i18n_errors
+            .iter()
+            .any(|error| error.contains("must be lowercase")),
+        "non-ASCII uppercase names should be validated with Unicode lowercase semantics"
+    );
 }
 
 #[test]

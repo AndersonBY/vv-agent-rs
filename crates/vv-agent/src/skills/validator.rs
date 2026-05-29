@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_json::Value;
+use unicode_normalization::UnicodeNormalization;
 
 use super::errors::SkillValidationError;
 use super::parser::{find_skill_md, parse_frontmatter};
@@ -191,7 +192,7 @@ fn validate_name(
     skill_dir: Option<&Path>,
 ) -> ValidationDiagnostics {
     let mut diagnostics = ValidationDiagnostics::default();
-    let normalized = name.trim();
+    let normalized = name.trim().nfkc().collect::<String>();
     if normalized.is_empty() {
         diagnostics
             .errors
@@ -217,7 +218,7 @@ fn validate_name(
     } else {
         IssueSeverity::Error
     };
-    if normalized != normalized.to_ascii_lowercase() {
+    if normalized != normalized.to_lowercase() {
         append_issue(
             &mut diagnostics,
             format!("Skill name '{normalized}' must be lowercase"),
@@ -240,11 +241,12 @@ fn validate_name(
     }
 
     if let Some(skill_dir) = skill_dir {
-        if let Some(dir_name) = skill_dir.file_name().and_then(|name| name.to_str()) {
+        if let Some(raw_dir_name) = skill_dir.file_name().and_then(|name| name.to_str()) {
+            let dir_name = raw_dir_name.nfkc().collect::<String>();
             if dir_name != normalized {
                 append_issue(
                     &mut diagnostics,
-                    format!("Directory name '{dir_name}' must match skill name '{normalized}'"),
+                    format!("Directory name '{raw_dir_name}' must match skill name '{normalized}'"),
                     if mode == ValidationMode::Strict {
                         IssueSeverity::Error
                     } else {
