@@ -1044,6 +1044,11 @@ fn tools_module_is_split_into_handler_files() {
         "workspace/local.rs",
         "workspace/memory.rs",
         "workspace/s3.rs",
+        "config/settings_literal.rs",
+        "config/settings_literal/assignment.rs",
+        "config/settings_literal/identifiers.rs",
+        "config/settings_literal/json.rs",
+        "config/settings_literal/strings.rs",
         "constants/mod.rs",
         "constants/tool_names.rs",
         "constants/workspace.rs",
@@ -1340,6 +1345,19 @@ fn tools_common_root_stays_focused_on_shared_exports() {
     assert!(
         line_count <= 100,
         "tools/common.rs should delegate argument coercion, command execution, result construction, grep text matching, path helpers, edit helpers, and file-type checks to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn config_settings_literal_root_stays_focused_on_public_api() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let settings_literal = manifest_dir.join("src/config/settings_literal.rs");
+    let content = std::fs::read_to_string(&settings_literal).expect("read settings literal module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 90,
+        "config/settings_literal.rs should expose settings parsing entrypoints and delegate assignment extraction, identifier parsing, JSON normalization, and string escapes to submodules; found {line_count} lines"
     );
 }
 
