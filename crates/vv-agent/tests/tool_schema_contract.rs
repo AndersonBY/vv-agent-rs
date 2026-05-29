@@ -957,7 +957,10 @@ fn tools_module_is_split_into_handler_files() {
         "sdk/types.rs",
         "sdk/resources.rs",
         "sdk/session.rs",
-        "sdk/client.rs",
+        "sdk/client/mod.rs",
+        "sdk/client/runtime.rs",
+        "sdk/client/sessions.rs",
+        "sdk/client/task.rs",
     ] {
         assert!(root.join(relative).is_file(), "missing {relative}");
     }
@@ -1004,6 +1007,10 @@ fn tools_module_is_split_into_handler_files() {
             "workspace.rs should be split into src/workspace/ modules",
         ),
         ("sdk.rs", "sdk.rs should be split into src/sdk/ modules"),
+        (
+            "sdk/client.rs",
+            "SDK client facade should be split into src/sdk/client/ modules",
+        ),
         (
             "tools/schemas.rs",
             "schemas.rs should be split into src/tools/schemas/ domain modules",
