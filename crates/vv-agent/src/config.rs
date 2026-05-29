@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::llm::{NamedEndpointClientSpec, VvLlmClient};
 use crate::types::AgentTask;
 
-mod python_settings;
+mod settings_literal;
 
 const MODEL_ALIAS_MAP: &[(&str, &str)] = &[("kimi-k2.5", "kimi-k2-thinking")];
 
@@ -119,7 +119,7 @@ pub fn load_memory_summary_defaults_from_file(path: &Path) -> MemorySummaryDefau
         return MemorySummaryDefaults::default();
     };
     MemorySummaryDefaults {
-        backend: python_settings::parse_string_assignment(
+        backend: settings_literal::parse_string_assignment(
             &source,
             &[
                 "DEFAULT_USER_MEMORY_SUMMARIZE_BACKEND",
@@ -127,7 +127,7 @@ pub fn load_memory_summary_defaults_from_file(path: &Path) -> MemorySummaryDefau
                 "VV_AGENT_MEMORY_SUMMARY_BACKEND",
             ],
         ),
-        model: python_settings::parse_string_assignment(
+        model: settings_literal::parse_string_assignment(
             &source,
             &[
                 "DEFAULT_USER_MEMORY_SUMMARIZE_MODEL",
@@ -172,7 +172,7 @@ pub fn load_llm_settings_from_file(path: impl AsRef<Path>) -> Result<Value, Conf
     })?;
 
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("py") => python_settings::parse_llm_settings_source(&content).map_err(|source| {
+        Some("py") => settings_literal::parse_llm_settings_source(&content).map_err(|source| {
             ConfigError::Parse {
                 path: path.display().to_string(),
                 source: Box::new(source),

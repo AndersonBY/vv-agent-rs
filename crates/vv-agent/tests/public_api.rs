@@ -133,9 +133,30 @@ fn runtime_hook_bridge_stays_internal_to_sdk() {
 }
 
 #[test]
+fn internal_bridge_module_names_stay_runtime_focused() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sdk_mod =
+        std::fs::read_to_string(manifest_dir.join("src/sdk/mod.rs")).expect("read SDK module");
+    let config_mod =
+        std::fs::read_to_string(manifest_dir.join("src/config.rs")).expect("read config module");
+    let source_language = forbidden_phrase(&[TERM_LANGUAGE]).to_ascii_lowercase();
+
+    assert!(
+        !sdk_mod.contains(&format!("mod {source_language}_hooks;")),
+        "SDK internals should name the hook bridge by runtime purpose"
+    );
+    assert!(
+        !config_mod.contains(&format!("mod {source_language}_settings;")),
+        "config internals should name settings parsing by purpose"
+    );
+    assert!(sdk_mod.contains("mod hook_bridge;"));
+    assert!(config_mod.contains("mod settings_literal;"));
+}
+
+#[test]
 fn hook_bridge_error_text_stays_runtime_focused() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let source = std::fs::read_to_string(manifest_dir.join("src/sdk/python_hooks.rs"))
+    let source = std::fs::read_to_string(manifest_dir.join("src/sdk/hook_bridge.rs"))
         .expect("read hook bridge source");
     let source_language_hook = format!(
         "{} hook",

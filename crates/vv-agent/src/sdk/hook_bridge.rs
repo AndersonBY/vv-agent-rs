@@ -14,11 +14,11 @@ use crate::tools::ToolContext;
 use crate::types::{LLMResponse, Message, TokenUsage, ToolCall, ToolExecutionResult};
 
 #[derive(Debug)]
-pub struct PythonRuntimeHook {
+pub struct RuntimeHookBridge {
     hook_file: PathBuf,
 }
 
-impl PythonRuntimeHook {
+impl RuntimeHookBridge {
     pub fn new(hook_file: impl Into<PathBuf>) -> Self {
         Self {
             hook_file: hook_file.into(),
@@ -31,7 +31,7 @@ impl PythonRuntimeHook {
     }
 }
 
-impl RuntimeHook for PythonRuntimeHook {
+impl RuntimeHook for RuntimeHookBridge {
     fn before_memory_compact(&self, event: BeforeMemoryCompactEvent<'_>) -> Option<Vec<Message>> {
         let output = self.invoke("before_memory_compact", before_memory_compact_event(event))?;
         parse_messages(output)
@@ -63,11 +63,11 @@ fn invoke_agent_hook(
     method: &str,
     event: Value,
 ) -> Result<Option<Value>, String> {
-    let runner = resolve_agent_hook_runner()?;
+    let runner = resolve_hook_runner()?;
     let mut child = runner
         .command()
         .arg("-c")
-        .arg(PYTHON_HOOK_SHIM)
+        .arg(HOOK_BRIDGE_SHIM)
         .arg(hook_file)
         .arg(method)
         .stdin(Stdio::piped())
@@ -113,14 +113,14 @@ fn invoke_agent_hook(
 }
 
 #[derive(Debug, Clone)]
-struct PythonHookRunner {
+struct HookRunner {
     program: String,
     args: Vec<String>,
     current_dir: Option<PathBuf>,
     label: String,
 }
 
-impl PythonHookRunner {
+impl HookRunner {
     fn new(program: impl Into<String>) -> Self {
         let program = program.into();
         Self {
@@ -151,42 +151,42 @@ impl PythonHookRunner {
     }
 }
 
-fn resolve_agent_hook_runner() -> Result<PythonHookRunner, String> {
-    if let Ok(program) = env::var("VV_AGENT_PYTHON_HOOK_PYTHON") {
+fn resolve_hook_runner() -> Result<HookRunner, String> {
+    if let Ok(program) = env::var("VV_AGENT_HOOK_RUNNER") {
         let program = program.trim();
         if !program.is_empty() {
-            let runner = PythonHookRunner::new(program);
-            if runner_supports_v_agent(&runner) {
+            let runner = HookRunner::new(program);
+            if runner_supports_hooks(&runner) {
                 return Ok(runner);
             }
             return Err(format!(
-                "VV_AGENT_PYTHON_HOOK_PYTHON points to {program}, but it is not interpreter >= 3.12"
+                "VV_AGENT_HOOK_RUNNER points to {program}, but it is not an interpreter >= 3.12"
             ));
         }
     }
 
-    if let Some(v_agent_dir) = find_v_agent_project_dir() {
-        let runner = PythonHookRunner::uv(v_agent_dir);
-        if runner_supports_v_agent(&runner) {
+    if let Some(v_agent_dir) = find_reference_project_dir() {
+        let runner = HookRunner::uv(v_agent_dir);
+        if runner_supports_hooks(&runner) {
             return Ok(runner);
         }
     }
 
     let mut errors = Vec::new();
     for program in ["python3.12", "python3.13", "python", "python3"] {
-        let runner = PythonHookRunner::new(program);
-        if runner_supports_v_agent(&runner) {
+        let runner = HookRunner::new(program);
+        if runner_supports_hooks(&runner) {
             return Ok(runner);
         }
         errors.push(program);
     }
     Err(format!(
-        "could not find a interpreter for runtime hooks; tried {}. Set VV_AGENT_PYTHON_HOOK_PYTHON to an explicit interpreter path.",
+        "could not find an interpreter for runtime hooks; tried {}. Set VV_AGENT_HOOK_RUNNER to an explicit interpreter path.",
         errors.join(", ")
     ))
 }
 
-fn runner_supports_v_agent(runner: &PythonHookRunner) -> bool {
+fn runner_supports_hooks(runner: &HookRunner) -> bool {
     runner
         .command()
         .arg("-c")
@@ -199,7 +199,7 @@ fn runner_supports_v_agent(runner: &PythonHookRunner) -> bool {
         .unwrap_or(false)
 }
 
-fn find_v_agent_project_dir() -> Option<PathBuf> {
+fn find_reference_project_dir() -> Option<PathBuf> {
     let current = env::current_dir().ok()?;
     for parent in std::iter::once(current.as_path()).chain(current.ancestors()) {
         for candidate in [parent.join("v-agent"), parent.join("../v-agent")] {
@@ -388,7 +388,7 @@ fn parse_before_tool_call_patch(value: Value) -> Option<BeforeToolCallPatch> {
     }
 }
 
-const PYTHON_HOOK_SHIM: &str = r#"
+const HOOK_BRIDGE_SHIM: &str = r#"
 from __future__ import annotations
 
 import contextlib

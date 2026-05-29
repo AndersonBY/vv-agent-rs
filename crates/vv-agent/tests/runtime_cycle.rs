@@ -929,6 +929,7 @@ fn runtime_can_poll_async_configured_sub_agent_status() {
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm);
     let mut task = AgentTask::new("parent_async", "demo", "parent system", "delegate async");
+    task.max_cycles = 50;
     task.sub_agents.insert(
         "researcher".to_string(),
         SubAgentConfig::new("demo", "research profile"),
@@ -972,6 +973,7 @@ fn runtime_can_continue_completed_async_sub_agent_session() {
         "parent system",
         "delegate async",
     );
+    task.max_cycles = 50;
     task.sub_agents.insert(
         "researcher".to_string(),
         SubAgentConfig::new("demo", "research profile"),

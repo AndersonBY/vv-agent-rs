@@ -17,7 +17,7 @@ use crate::runtime::{AgentRuntime, ExecutionContext, RuntimeRunControls};
 use crate::types::{AgentTask, Metadata};
 use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
-use super::python_hooks::PythonRuntimeHook;
+use super::hook_bridge::RuntimeHookBridge;
 use super::resources::AgentResourceLoader;
 use super::session::{AgentSession, AgentSessionRunRequest};
 use super::types::{query_text_from_run, AgentDefinition, AgentRun, AgentSDKOptions, SdkLlmClient};
@@ -323,7 +323,7 @@ impl AgentSDKClient {
             for hook_file in discovered.hook_files {
                 options
                     .runtime_hooks
-                    .push(Arc::new(PythonRuntimeHook::new(hook_file)));
+                    .push(Arc::new(RuntimeHookBridge::new(hook_file)));
             }
         }
 
