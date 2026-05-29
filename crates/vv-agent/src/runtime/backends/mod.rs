@@ -120,7 +120,6 @@ pub struct RuntimeRecipe {
     pub model: String,
     pub workspace: String,
     pub timeout_seconds: f64,
-    pub hook_class_paths: Vec<String>,
     pub log_preview_chars: Option<usize>,
 }
 
@@ -137,7 +136,6 @@ impl RuntimeRecipe {
             model: model.into(),
             workspace: workspace.into(),
             timeout_seconds: 90.0,
-            hook_class_paths: Vec::new(),
             log_preview_chars: None,
         }
     }
@@ -149,7 +147,6 @@ impl RuntimeRecipe {
             "model": self.model,
             "workspace": self.workspace,
             "timeout_seconds": self.timeout_seconds,
-            "hook_class_paths": self.hook_class_paths,
             "log_preview_chars": self.log_preview_chars,
         })
     }
@@ -167,17 +164,6 @@ impl RuntimeRecipe {
                 .get("timeout_seconds")
                 .and_then(Value::as_f64)
                 .unwrap_or(90.0),
-            hook_class_paths: object
-                .get("hook_class_paths")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_string)
-                        .collect()
-                })
-                .unwrap_or_default(),
             log_preview_chars: object
                 .get("log_preview_chars")
                 .filter(|value| !value.is_null())

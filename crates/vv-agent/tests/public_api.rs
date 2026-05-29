@@ -207,6 +207,25 @@ fn sdk_sources_do_not_spawn_python_hook_runner() {
     assert!(violations.is_empty(), "{}", violations.join("\n"));
 }
 
+#[test]
+fn runtime_recipe_does_not_expose_external_hook_class_paths() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let runtime_backends =
+        std::fs::read_to_string(manifest_dir.join("src/runtime/backends/mod.rs"))
+            .expect("read runtime backends module");
+    assert!(
+        !runtime_backends.contains("hook_class_paths"),
+        "RuntimeRecipe should stay Rust-native; runtime hooks are injected as RuntimeHook values, not serialized external class paths"
+    );
+
+    let recipe = RuntimeRecipe::new("settings.py", "deepseek", "deepseek-v4-pro", ".");
+    let payload = recipe.to_dict();
+    assert!(
+        payload.get("hook_class_paths").is_none(),
+        "RuntimeRecipe payload should not advertise unsupported external hook loading"
+    );
+}
+
 fn public_doc_forbidden_terms() -> Vec<String> {
     [
         forbidden_phrase(&[TERM_LANGUAGE]),
