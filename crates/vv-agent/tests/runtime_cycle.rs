@@ -302,6 +302,48 @@ fn runtime_keeps_tool_results_adjacent_before_image_notifications() {
 }
 
 #[test]
+fn runtime_skips_custom_image_notifications_when_multimodal_disabled() {
+    let mut registry = vv_agent::tools::build_default_registry();
+    registry
+        .register_tool(
+            "_demo_image",
+            "demo image",
+            Arc::new(|_context, _arguments| {
+                let mut result = ToolExecutionResult::success("", r#"{"ok":true}"#);
+                result.image_url = Some("data:image/png;base64,AAAA".to_string());
+                result
+            }),
+        )
+        .expect("register image tool");
+
+    let finish_args = BTreeMap::from([("message".to_string(), json!("ok"))]);
+    let llm = MessageOrderInspectingLlmClient::new(
+        LLMResponse::with_tool_calls(
+            "capture",
+            vec![ToolCall::new("img1", "_demo_image", BTreeMap::new())],
+        ),
+        LLMResponse::with_tool_calls(
+            "done",
+            vec![ToolCall::new("finish_no_image", "task_finish", finish_args)],
+        ),
+    );
+    let inspector = llm.clone();
+    let runtime = AgentRuntime::new(llm).with_tool_registry(registry);
+    let mut task = AgentTask::new("task_no_multimodal", "demo", "system", "go");
+    task.max_cycles = 4;
+    task.extra_tool_names = vec!["_demo_image".to_string()];
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(result.final_answer.as_deref(), Some("ok"));
+    let second_request = inspector.second_request_messages();
+    assert!(!second_request
+        .iter()
+        .any(|message| message.role == vv_agent::MessageRole::User && message.image_url.is_some()));
+}
+
+#[test]
 fn runtime_tool_context_uses_execution_context_metadata() {
     let workspace = tempfile::tempdir().expect("workspace");
     let outside = tempfile::tempdir().expect("outside");
@@ -1192,6 +1234,57 @@ fn runtime_log_events_include_agent_previews() {
     assert_eq!(
         completed_event.1["final_answer"],
         preview_text_for_test(&final_text, Some(10))
+    );
+}
+
+#[test]
+fn runtime_tool_result_event_keeps_full_content_by_default() {
+    let long_title = "x".repeat(500);
+    let todo_args = BTreeMap::from([(
+        "todos".to_string(),
+        json!([{"title": long_title, "status": "completed", "priority": "medium"}]),
+    )]);
+    let finish_args = BTreeMap::from([("message".to_string(), json!("ok"))]);
+    let llm = ScriptedLlmClient::new(vec![
+        LLMResponse::with_tool_calls(
+            "write todo",
+            vec![ToolCall::new("todo_long", "todo_write", todo_args)],
+        ),
+        LLMResponse::with_tool_calls(
+            "done",
+            vec![ToolCall::new("finish_long", "task_finish", finish_args)],
+        ),
+    ]);
+    let events = Arc::new(Mutex::new(Vec::<(
+        String,
+        BTreeMap<String, serde_json::Value>,
+    )>::new()));
+    let sink = events.clone();
+    let mut runtime = AgentRuntime::new(llm);
+    runtime.log_handler = Some(Arc::new(Mutex::new(Box::new(
+        move |event: &str, payload: &BTreeMap<String, serde_json::Value>| {
+            sink.lock()
+                .expect("events poisoned")
+                .push((event.to_string(), payload.clone()));
+        },
+    ))));
+
+    let mut task = AgentTask::new("task_long_tool_result", "demo", "system", "go");
+    task.max_cycles = 4;
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let events = events.lock().expect("events poisoned").clone();
+    let tool_event = events
+        .iter()
+        .find(|(event, _)| event == "tool_result")
+        .expect("tool result");
+    let full_content = tool_event.1["content"].as_str().expect("content");
+    assert!(full_content.contains(&long_title));
+    assert!(full_content.len() > 220);
+    assert_eq!(
+        tool_event.1["content_preview"].as_str().expect("preview"),
+        full_content
     );
 }
 

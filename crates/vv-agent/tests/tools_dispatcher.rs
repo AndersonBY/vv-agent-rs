@@ -69,6 +69,30 @@ fn dispatcher_normalizes_tool_call_id_and_wait_response_status() {
     assert_eq!(result.tool_call_id, "call_pending");
     assert_eq!(result.status, ToolResultStatus::Success);
 
+    registry
+        .register(ToolSpec::new(
+            "blank_id",
+            "returns a blank tool call id",
+            Arc::new(|_context, _arguments| ToolExecutionResult {
+                tool_call_id: "   ".to_string(),
+                content: json!({"ok": true}).to_string(),
+                status: ToolResultStatus::Success,
+                directive: ToolDirective::Continue,
+                error_code: None,
+                metadata: BTreeMap::new(),
+                image_url: None,
+                image_path: None,
+            }),
+        ))
+        .expect("register blank id tool");
+    let result = dispatch_tool_call(
+        &registry,
+        &mut context,
+        &ToolCall::new("call_blank", "blank_id", BTreeMap::new()),
+    );
+    assert_eq!(result.tool_call_id, "call_blank");
+    assert_eq!(result.status, ToolResultStatus::Success);
+
     let wait_call = ToolCall::from_raw_arguments(
         "ask",
         "ask_user",
