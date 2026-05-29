@@ -612,12 +612,7 @@ fn runtime_module_exports_agent_runtime_public_types() {
 fn runtime_modules_are_not_flattened_at_crate_root() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
 
-    for module in [
-        "background_sessions",
-        "processes",
-        "sub_agent_sessions",
-        "sub_task_manager",
-    ] {
+    for module in ["background_sessions", "processes", "sub_agent_sessions"] {
         assert!(
             root.join("runtime").join(format!("{module}.rs")).is_file(),
             "runtime/{module}.rs should stay in the runtime domain module"
@@ -627,6 +622,14 @@ fn runtime_modules_are_not_flattened_at_crate_root() {
             "{module}.rs should not be flattened at the crate root"
         );
     }
+    assert!(
+        root.join("runtime/sub_task_manager/mod.rs").is_file(),
+        "runtime/sub_task_manager should stay in the runtime domain module"
+    );
+    assert!(
+        !root.join("sub_task_manager.rs").exists(),
+        "sub_task_manager.rs should not be flattened at the crate root"
+    );
 }
 
 #[test]

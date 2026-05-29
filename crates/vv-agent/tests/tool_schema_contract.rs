@@ -939,7 +939,11 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/results.rs",
         "runtime/shell.rs",
         "runtime/sub_agents.rs",
-        "runtime/sub_task_manager.rs",
+        "runtime/sub_task_manager/mod.rs",
+        "runtime/sub_task_manager/helpers.rs",
+        "runtime/sub_task_manager/manager.rs",
+        "runtime/sub_task_manager/record.rs",
+        "runtime/sub_task_manager/types.rs",
         "runtime/token_usage.rs",
         "runtime/tool_call_runner.rs",
         "runtime/tool_planner.rs",
@@ -1027,7 +1031,7 @@ fn tools_module_is_split_into_handler_files() {
         ),
         (
             "sub_task_manager.rs",
-            "sub-task manager should live under src/runtime/",
+            "sub-task manager should live under src/runtime/sub_task_manager/ modules",
         ),
         (
             "runtime/backends.rs",
