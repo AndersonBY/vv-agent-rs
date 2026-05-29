@@ -923,6 +923,10 @@ fn tools_module_is_split_into_handler_files() {
         "tools/handlers/skills/mod.rs",
         "tools/handlers/skills/state.rs",
         "tools/handlers/sub_agents.rs",
+        "tools/handlers/sub_agents/async_mode.rs",
+        "tools/handlers/sub_agents/batch.rs",
+        "tools/handlers/sub_agents/request.rs",
+        "tools/handlers/sub_agents/response.rs",
         "tools/handlers/sub_task_status.rs",
         "tools/handlers/background.rs",
         "runtime/mod.rs",
@@ -1266,6 +1270,19 @@ fn sdk_resources_root_stays_focused_on_public_exports() {
     assert!(
         line_count <= 80,
         "sdk/resources.rs should delegate discovery, path resolution, and JSON parsing to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn sub_agent_handler_root_stays_focused_on_tool_entrypoint() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let handler = manifest_dir.join("src/tools/handlers/sub_agents.rs");
+    let content = std::fs::read_to_string(&handler).expect("read sub-agent handler module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 120,
+        "tools/handlers/sub_agents.rs should delegate request parsing, async dispatch, batch execution, and response formatting to submodules; found {line_count} lines"
     );
 }
 
