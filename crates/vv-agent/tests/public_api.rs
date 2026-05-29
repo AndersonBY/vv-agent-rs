@@ -154,6 +154,26 @@ fn internal_bridge_module_names_stay_runtime_focused() {
 }
 
 #[test]
+fn config_internals_are_split_by_runtime_responsibility() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let config_mod =
+        std::fs::read_to_string(manifest_dir.join("src/config.rs")).expect("read config module");
+
+    for module in ["api_keys", "model_resolution", "settings_literal"] {
+        assert!(
+            config_mod.contains(&format!("mod {module};")),
+            "config internals should keep {module} in a focused submodule"
+        );
+        assert!(
+            manifest_dir
+                .join(format!("src/config/{module}.rs"))
+                .is_file(),
+            "expected config/{module}.rs to exist"
+        );
+    }
+}
+
+#[test]
 fn hook_bridge_error_text_stays_runtime_focused() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = std::fs::read_to_string(manifest_dir.join("src/sdk/hook_bridge.rs"))

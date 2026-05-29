@@ -12,6 +12,7 @@ When to use:
 Completion protocol:
 - Do not call this tool if work is partially complete, blocked, waiting for user input, or still needs verification.
 - If `todo_write` has pending or in-progress work, the runtime rejects premature finish by default.
+- `require_all_todos_completed=false` can bypass the TODO guard only when the user explicitly accepts unfinished TODOs or the remaining items are intentionally deferred.
 - The message should include concise outcome, important verification evidence, and any remaining caveats."#;
 
 const ASK_USER_DESCRIPTION: &str = r#"Pause execution and ask the user for required clarification or decision.
@@ -35,6 +36,10 @@ pub(super) fn task_finish_schema() -> Value {
                     "message": {
                         "type": "string",
                         "description": "Final response shown to user. Include the result, important verification evidence, and any remaining caveats."
+                    },
+                    "require_all_todos_completed": {
+                        "type": "boolean",
+                        "description": "Default true. When true, finish is rejected while TODO items remain pending or in_progress. Set false only when intentionally finishing with remaining TODOs, such as when the user explicitly accepts deferred work."
                     },
                     "exposed_files": {
                         "type": "array",

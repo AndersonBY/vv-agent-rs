@@ -365,6 +365,15 @@ fn default_tool_schema_wording_is_preserved() {
         "message",
         &["Final response shown to user."],
     );
+    assert_property_contains(
+        &registry,
+        "task_finish",
+        "require_all_todos_completed",
+        &[
+            "Default true",
+            "Set false only when intentionally finishing with remaining TODOs",
+        ],
+    );
 
     assert_description_contains(
         &registry,
@@ -539,7 +548,10 @@ fn builtin_tool_properties_and_enums_match_agent_schema_contract() {
                 "wait_for_response",
             ],
         ),
-        ("task_finish", vec!["message", "exposed_files"]),
+        (
+            "task_finish",
+            vec!["message", "require_all_todos_completed", "exposed_files"],
+        ),
         ("todo_write", vec!["todos"]),
         (
             "workspace_grep",
@@ -687,6 +699,7 @@ fn builtin_tool_property_types_match_agent_schema_contract() {
         ("sub_task_status", "workspace_file_limit", "integer"),
         ("sub_task_status", "wait_for_response", "boolean"),
         ("task_finish", "message", "string"),
+        ("task_finish", "require_all_todos_completed", "boolean"),
         ("task_finish", "exposed_files", "array"),
         ("todo_write", "todos", "array"),
         ("workspace_grep", "pattern", "string"),
