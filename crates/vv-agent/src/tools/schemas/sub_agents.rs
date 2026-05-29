@@ -9,8 +9,8 @@ pub(super) fn create_sub_task_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "agent_id": {"type": "string", "description": "Sub-agent identifier from configured sub_agents mapping."},
-                    "task_description": {"type": "string", "description": "Single-task description. Mutually exclusive with `tasks`."},
+                    "agent_id": {"type": "string", "description": "Exact sub-agent identifier from the configured `sub_agents` mapping. Do not pass a display name, model name, or inferred label."},
+                    "task_description": {"type": "string", "description": "Single-task description for one self-contained objective. Mutually exclusive with `tasks`; give a concrete objective, constraints, and the evidence or deliverable expected by the parent Agent."},
                     "output_requirements": {"type": "string", "description": "Optional output constraints for single-task mode. State success criteria, expected format, and concrete deliverables the parent Agent needs."},
                     "tasks": {
                         "type": "array",
@@ -43,7 +43,7 @@ pub(super) fn sub_task_status_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "task_ids": {"type": "array", "description": "Sub-task ids to query. When `message` is provided, only the first id is used as the target.", "items": {"type": "string"}},
+                    "task_ids": {"type": "array", "description": "Sub-task ids to query. Use the ids returned by `create_sub_task`; duplicate ids are deduplicated. When `message` is provided, only the first id is used as the target.", "items": {"type": "string"}},
                     "message": {"type": "string", "description": "Optional follow-up or steering message for the first task id. Can steer a running task or continue a completed one."},
                     "detail_level": {"type": "string", "enum": ["basic", "snapshot"], "description": "Status response detail level. `snapshot` includes recent activity, latest tool call, and workspace files."},
                     "workspace_file_limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum number of workspace files returned per task in snapshot mode. Default 20. Lower this when file lists add noise; raise it only when files are needed to assess progress."},

@@ -309,7 +309,11 @@ fn default_tool_schema_wording_is_preserved() {
         &registry,
         "create_sub_task",
         "agent_id",
-        &["Sub-agent identifier from configured sub_agents mapping."],
+        &[
+            "Exact sub-agent identifier",
+            "configured `sub_agents` mapping",
+            "Do not pass a display name",
+        ],
     );
     assert_property_contains(
         &registry,
@@ -1301,6 +1305,24 @@ fn tool_parameter_descriptions_are_operational_not_terse_labels() {
 
     assert_property_contains(
         &registry,
+        "task_finish",
+        "exposed_files",
+        &["workspace-relative", "created or modified", "deliverables"],
+    );
+    assert_property_contains(
+        &registry,
+        "create_sub_task",
+        "agent_id",
+        &["Exact", "configured `sub_agents`", "Do not pass"],
+    );
+    assert_property_contains(
+        &registry,
+        "create_sub_task",
+        "task_description",
+        &["self-contained", "concrete objective", "evidence"],
+    );
+    assert_property_contains(
+        &registry,
         "write_file",
         "content",
         &[
@@ -1344,6 +1366,12 @@ fn tool_parameter_descriptions_are_operational_not_terse_labels() {
         "read_image",
         "path",
         &["PNG, JPEG, WEBP, or BMP", "HTTP URLs are passed through"],
+    );
+    assert_property_contains(
+        &registry,
+        "sub_task_status",
+        "task_ids",
+        &["returned by `create_sub_task`", "deduplicated", "first id"],
     );
 }
 

@@ -39,7 +39,7 @@ pub(super) fn task_finish_schema() -> Value {
                     "exposed_files": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional output file paths that should be exposed as final deliverables."
+                        "description": "Optional workspace-relative paths for created or modified deliverables the user should inspect. Include concrete artifact paths, not transient logs, prose descriptions, or unrelated files."
                     }
                 },
                 "required": []
