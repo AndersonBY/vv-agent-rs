@@ -390,6 +390,42 @@ fn memory_manager_persists_large_tool_results_as_artifacts() {
 }
 
 #[test]
+fn memory_manager_does_not_persist_microcompacted_tool_results_as_artifacts() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut manager = MemoryManager::new(MemoryManagerConfig {
+        compact_threshold: 10,
+        model_context_window: 80,
+        reserved_output_tokens: 10,
+        autocompact_buffer_tokens: 0,
+        tool_result_compact_threshold: 1,
+        tool_result_keep_last: 0,
+        workspace: Some(workspace.path().to_path_buf()),
+        ..MemoryManagerConfig::default()
+    });
+    let messages = vec![
+        Message::system("system"),
+        Message::user("continue from compacted output"),
+        Message {
+            tool_calls: vec![ToolCall::new("call_old", "read_file", BTreeMap::new())],
+            ..Message::assistant("reading")
+        },
+        Message::tool(CLEARED_MARKER, "call_old"),
+        Message::assistant("continue"),
+    ];
+
+    let (compacted, changed) = manager.compact(&messages, false);
+
+    assert!(changed);
+    assert!(!workspace
+        .path()
+        .join(".memory/tool_results/call_old.txt")
+        .exists());
+    assert!(compacted
+        .iter()
+        .all(|message| !message.content.contains("<Persisted Artifacts>")));
+}
+
+#[test]
 fn memory_manager_restores_key_file_context_after_compaction() {
     let workspace = tempfile::tempdir().expect("workspace");
     std::fs::write(workspace.path().join("demo.py"), "print('restored')\n").expect("demo");

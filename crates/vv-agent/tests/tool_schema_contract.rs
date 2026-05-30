@@ -1066,6 +1066,11 @@ fn tools_module_is_split_into_handler_files() {
         "skills/validator/mode.rs",
         "skills/validator/rules.rs",
         "memory/artifacts.rs",
+        "memory/artifacts/config.rs",
+        "memory/artifacts/content.rs",
+        "memory/artifacts/info.rs",
+        "memory/artifacts/persist.rs",
+        "memory/artifacts/render.rs",
         "memory/microcompact.rs",
         "memory/mod.rs",
         "memory/manager/mod.rs",
@@ -1478,6 +1483,19 @@ fn memory_manager_root_stays_focused_on_compaction_orchestration() {
     assert!(
         line_count <= 170,
         "memory/manager/mod.rs should keep MemoryManager construction and compact orchestration at the root while delegating limits, warnings, microcompact, emergency compaction, and session context helpers to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn memory_artifacts_root_stays_focused_on_public_entrypoints() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let artifacts = manifest_dir.join("src/memory/artifacts.rs");
+    let content = std::fs::read_to_string(&artifacts).expect("read memory artifacts module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 90,
+        "memory/artifacts.rs should keep only public artifact compaction entrypoints while delegating config, compacted content rendering, tool-call metadata, persistence, and persisted-section rendering to submodules; found {line_count} lines"
     );
 }
 
