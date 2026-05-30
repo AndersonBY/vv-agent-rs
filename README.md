@@ -88,7 +88,7 @@ The current Rust implementation includes:
   and session reuse across turns.
 - Resource discovery for agent profiles, prompt templates, and skill
   directories. Runtime hooks are explicit Rust `RuntimeHook` implementations
-  and are not loaded from external script files by default.
+  supplied by the embedding application.
 - Runtime-backed sub-agents with synchronous or background execution,
   batched task submission, status snapshots, steering, continuation of
   completed sessions, duplicate-running-task protection, and inherited stream

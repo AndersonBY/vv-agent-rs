@@ -54,7 +54,7 @@ cargo test --test live_deepseek -- --ignored
 - 高信息量内置工具 schema 和 handler，覆盖任务完成、向用户提问、TODO 管理、文件列表、文件元数据、文本读取、写入、字符串替换、grep、图片读取、memory note、前台/后台 shell 命令、skill 激活、子任务创建和子任务状态/续跑。
 - 工作区安全策略和后端，支持本地文件、内存文件、S3-compatible object store、稳定路径输出、glob 列表、append、metadata lookup、缺失文件错误、隐藏/忽略过滤，以及可信任务显式访问工作区外路径。
 - SDK 流程，支持命名 Agent 发现、任务预览、one-shot run、query helper、长会话、workspace override、shared state、由宿主程序显式传入的 Rust 原生 runtime hook、事件 listener、stream callback、取消、steering、follow-up prompt 和跨 turn session 复用。
-- Resource discovery 覆盖 Agent profile、prompt template 和 skill directory。Runtime hook 是显式传入的 Rust `RuntimeHook` 实现，默认不会从外部脚本文件加载。
+- Resource discovery 覆盖 Agent profile、prompt template 和 skill directory。Runtime hook 是使用方显式传入的 Rust `RuntimeHook` 实现。
 - Runtime-backed 子 Agent，支持同步或后台执行、批量任务提交、状态 snapshot、steering、已完成 session 续跑、重复运行任务保护和继承父级 stream callback。
 - Skill 发现、frontmatter 解析、metadata 归一化、校验、带预算限制的 `<available_skills>` prompt 渲染、激活状态和激活历史。
 - 覆盖 SDK/session API、runtime hooks、自定义工具、子 Agent pipeline、skills、streaming、cancellation、state stores、execution backends、workspace backends 和临时工具注入的 checked examples。
