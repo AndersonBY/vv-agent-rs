@@ -256,7 +256,7 @@ fn live_deepseek_v4_pro_polls_async_sub_agent_status() {
     let mut agent = AgentDefinition::default_for_model("deepseek-v4-pro");
     agent.backend = Some("deepseek".to_string());
     agent.language = "en-US".to_string();
-    agent.max_cycles = 12;
+    agent.max_cycles = 16;
     agent.no_tool_policy = NoToolPolicy::WaitUser;
     agent.allow_interruption = false;
     agent.enable_todo_management = false;
@@ -273,8 +273,12 @@ fn live_deepseek_v4_pro_polls_async_sub_agent_status() {
          and `wait_for_completion=false`.\n\
          2. After `create_sub_task` returns a `task_id`, call `sub_task_status` \
          with `task_ids` containing exactly that task_id and `detail_level` exactly `snapshot`.\n\
-         3. If the status is not completed yet, call `sub_task_status` again with the same task_id.\n\
-         4. After `sub_task_status` returns a completed task whose `final_answer` is \
+         3. Call `sub_task_status` at least twice with the same task_id, even if the \
+         first status response mentions the required final answer inside task_description \
+         or output requirements.\n\
+         4. The phrase inside task_description or output requirements does not count. \
+         Only a task object with `status` exactly `completed` and a `final_answer` field counts.\n\
+         5. After `sub_task_status` returns a completed task whose `final_answer` is \
          `async sub-agent live result`, call `task_finish` with message exactly \
          `async sub-agent status observed`.\n\
          Do not answer in plain text before finishing."
@@ -290,16 +294,24 @@ fn live_deepseek_v4_pro_polls_async_sub_agent_status() {
         .iter()
         .flat_map(|cycle| cycle.tool_calls.iter().map(|call| call.name.clone()))
         .collect::<Vec<_>>();
-    let status_payload = run
+    let status_payloads = run
         .result
         .cycles
         .iter()
         .flat_map(|cycle| cycle.tool_results.iter())
-        .find(|result| {
-            result.content.contains("async sub-agent live result")
-                && result.content.contains("\"detail_level\":\"snapshot\"")
+        .filter(|result| result.content.contains("\"detail_level\":\"snapshot\""))
+        .map(|result| {
+            serde_json::from_str::<serde_json::Value>(&result.content).expect("status result JSON")
         })
-        .map(|result| result.content.clone());
+        .collect::<Vec<_>>();
+    let completed_status_payload = status_payloads.iter().find(|payload| {
+        payload["tasks"].as_array().is_some_and(|tasks| {
+            tasks.iter().any(|task| {
+                task["status"] == "completed"
+                    && task["final_answer"] == "async sub-agent live result"
+            })
+        })
+    });
 
     assert_eq!(run.resolved.backend, "deepseek");
     assert_eq!(run.resolved.requested_model, "deepseek-v4-pro");
@@ -321,11 +333,8 @@ fn live_deepseek_v4_pro_polls_async_sub_agent_status() {
             .any(|name| name == SUB_TASK_STATUS_TOOL_NAME),
         "expected live model to call sub_task_status, got {tool_names:?}"
     );
-    let status_payload =
-        status_payload.expect("sub_task_status result should include async final answer");
     assert!(
-        status_payload.contains("\"status\":\"completed\"")
-            || status_payload.contains("\"status\":\"Completed\""),
-        "unexpected async status payload: {status_payload}"
+        completed_status_payload.is_some(),
+        "expected completed async status payload, got {status_payloads:?}"
     );
 }
