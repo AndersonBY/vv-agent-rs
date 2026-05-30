@@ -132,7 +132,7 @@ fn next_value(values: &[String], index: &mut usize, flag: &str) -> Result<String
     Ok(value.clone())
 }
 
-fn help_text() -> String {
+pub(crate) fn help_text() -> String {
     [
         "Run a vv-agent task against a configured LLM endpoint.",
         "",

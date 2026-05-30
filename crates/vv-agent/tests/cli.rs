@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::process::Command;
 
 use vv_agent::cli::{
     build_cli_task, build_cli_task_from_resolved, parse_cli_args_from_with_default_settings,
@@ -54,6 +55,24 @@ fn cli_help_uses_json_settings_defaults() {
     assert!(error.contains("local_settings.json"));
     assert!(!error.contains("default: V_AGENT_LOCAL_SETTINGS"));
     assert!(!error.contains("local_settings.py"));
+}
+
+#[test]
+fn cli_help_exits_successfully() {
+    let output = Command::new(env!("CARGO_BIN_EXE_vv-agent"))
+        .arg("--help")
+        .output()
+        .expect("run vv-agent --help");
+
+    assert!(
+        output.status.success(),
+        "vv-agent --help exited with {:?}: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout)
+        .contains("Run a vv-agent task against a configured LLM endpoint."));
+    assert!(String::from_utf8_lossy(&output.stderr).trim().is_empty());
 }
 
 #[test]

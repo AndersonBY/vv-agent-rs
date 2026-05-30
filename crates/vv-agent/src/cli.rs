@@ -17,7 +17,16 @@ use self::task::generate_task_id;
 pub use self::task::{build_cli_task, build_cli_task_from_resolved};
 
 pub fn main() -> Result<(), String> {
-    let args = parse_cli_args_from(env::args())?;
+    let raw_args = env::args().collect::<Vec<_>>();
+    if raw_args
+        .iter()
+        .skip(1)
+        .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
+    {
+        println!("{}", args::help_text());
+        return Ok(());
+    }
+    let args = parse_cli_args_from(raw_args)?;
     let (llm, resolved) =
         build_vv_llm_from_local_settings(&args.settings_file, &args.backend, &args.model, 90.0)
             .map_err(|err| err.to_string())?;
