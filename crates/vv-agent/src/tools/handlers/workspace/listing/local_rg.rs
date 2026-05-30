@@ -1,35 +1,20 @@
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod command;
+mod paths;
+mod scan;
+#[cfg(all(test, unix))]
+mod tests;
+mod types;
+
+use std::path::Path;
 
 use crate::tools::base::ToolContext;
-use crate::tools::common::{
-    command_output_with_executable_busy_retry, is_ignored_root, workspace_relative_path_or_absolute,
-};
-use crate::workspace::{glob_match, normalized_glob_pattern};
 
 use super::request::ListFilesRequest;
 use super::types::ListFilesOutcome;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RgListFilesResult {
-    files: Vec<String>,
-    total_count: usize,
-    truncated: bool,
-    scan_limited: bool,
-}
-
-struct RgListFilesRequest<'a> {
-    context: &'a ToolContext,
-    base_path: &'a Path,
-    base_is_workspace_root: bool,
-    glob: &'a str,
-    include_hidden: bool,
-    include_ignored: bool,
-    ignored_root_names: &'a [String],
-    max_results: usize,
-    scan_limit: usize,
-    rg_executable: &'a Path,
-}
+use command::resolve_rg_executable;
+use paths::local_ignored_root_names;
+use scan::list_files_local_rg;
+use types::RgListFilesRequest;
 
 pub(super) fn list_files_with_rg(
     context: &ToolContext,
@@ -65,207 +50,4 @@ pub(super) fn list_files_with_rg(
         result.scan_limited,
         ignored_root_names,
     ))
-}
-
-fn resolve_rg_executable() -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for directory in std::env::split_paths(&path) {
-        let candidate = directory.join(if cfg!(windows) { "rg.exe" } else { "rg" });
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        if cfg!(windows) {
-            let candidate = directory.join("rg.cmd");
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-fn list_files_local_rg(request: RgListFilesRequest<'_>) -> Option<RgListFilesResult> {
-    let RgListFilesRequest {
-        context,
-        base_path,
-        base_is_workspace_root,
-        glob,
-        include_hidden,
-        include_ignored,
-        ignored_root_names,
-        max_results,
-        scan_limit,
-        rg_executable,
-    } = request;
-
-    let mut command = Command::new(rg_executable);
-    command
-        .arg("--files")
-        .arg("--null")
-        .arg("--no-messages")
-        .arg("--no-ignore")
-        .arg("--no-ignore-vcs");
-    if include_hidden {
-        command.arg("--hidden");
-    }
-    if !glob.trim().is_empty() && glob != "**/*" {
-        command.arg("--glob").arg(glob);
-    }
-    if base_is_workspace_root && !include_ignored {
-        for root in ignored_root_names {
-            command.arg("--glob").arg(format!("!{root}/**"));
-        }
-    }
-    let output =
-        command_output_with_executable_busy_retry(command.arg(".").current_dir(base_path)).ok()?;
-    if !matches!(output.status.code(), Some(0) | Some(1)) {
-        return None;
-    }
-
-    let glob_pattern = normalized_glob_pattern(glob);
-    let mut files = Vec::new();
-    let mut matched_count = 0usize;
-    let mut scanned_count = 0usize;
-    let mut scan_limited = false;
-
-    for raw_entry in output.stdout.split(|byte| *byte == b'\0') {
-        if raw_entry.is_empty() {
-            continue;
-        }
-        scanned_count += 1;
-        if scanned_count > scan_limit {
-            scan_limited = true;
-            break;
-        }
-        let rel_from_base = normalize_rg_relative_path(String::from_utf8_lossy(raw_entry));
-        if rel_from_base.is_empty() || !glob_match(&rel_from_base, &glob_pattern) {
-            continue;
-        }
-        matched_count += 1;
-        if files.len() < max_results {
-            let output_path = workspace_relative_path_or_absolute(
-                &context.workspace,
-                &base_path.join(&rel_from_base),
-            );
-            files.push(output_path);
-        }
-    }
-
-    files.sort();
-    let truncated = matched_count > files.len() || scan_limited;
-    Some(RgListFilesResult {
-        files,
-        total_count: matched_count,
-        truncated,
-        scan_limited,
-    })
-}
-
-fn normalize_rg_relative_path(path: std::borrow::Cow<'_, str>) -> String {
-    let normalized = path.replace('\\', "/");
-    normalized
-        .strip_prefix("./")
-        .unwrap_or(&normalized)
-        .trim_start_matches('/')
-        .to_string()
-}
-
-fn local_ignored_root_names(base_path: &Path) -> Vec<String> {
-    let mut roots = std::fs::read_dir(base_path)
-        .ok()
-        .into_iter()
-        .flat_map(|entries| entries.filter_map(Result::ok))
-        .filter_map(|entry| {
-            let file_type = entry.file_type().ok()?;
-            if !file_type.is_dir() {
-                return None;
-            }
-            let name = entry.file_name().to_string_lossy().to_string();
-            is_ignored_root(&name).then_some(name)
-        })
-        .collect::<Vec<_>>();
-    roots.sort();
-    roots
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::tools::base::ToolContext;
-
-    #[cfg(unix)]
-    fn write_fake_rg(workspace: &Path, script: &str) -> PathBuf {
-        use std::io::Write as _;
-        use std::os::unix::fs::PermissionsExt;
-
-        let fake_rg = workspace.join("fake-rg");
-        let mut file = std::fs::File::create(&fake_rg).expect("fake rg");
-        file.write_all(script.as_bytes()).expect("fake rg body");
-        file.sync_all().expect("fake rg sync");
-        drop(file);
-        let mut permissions = std::fs::metadata(&fake_rg).expect("metadata").permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&fake_rg, permissions).expect("chmod");
-        fake_rg
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn list_files_rg_fast_path_normalizes_dot_slash_glob_matches() {
-        let workspace = tempfile::tempdir().expect("workspace");
-        let fake_rg = write_fake_rg(
-            workspace.path(),
-            "#!/bin/sh\nprintf './doc.md\\0./nested/inner.md\\0note.txt\\0'\n",
-        );
-
-        let context = ToolContext::new(workspace.path());
-        let result = list_files_local_rg(RgListFilesRequest {
-            context: &context,
-            base_path: workspace.path(),
-            base_is_workspace_root: true,
-            glob: "*.md",
-            include_hidden: false,
-            include_ignored: false,
-            ignored_root_names: &[],
-            max_results: 10,
-            scan_limit: 100,
-            rg_executable: &fake_rg,
-        })
-        .expect("rg result");
-
-        assert_eq!(result.files, vec!["doc.md"]);
-        assert_eq!(result.total_count, 1);
-        assert!(!result.truncated);
-        assert!(!result.scan_limited);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn list_files_rg_scan_limited_count_reports_matched_items() {
-        let workspace = tempfile::tempdir().expect("workspace");
-        let fake_rg = write_fake_rg(
-            workspace.path(),
-            "#!/bin/sh\nprintf 'a.txt\\0b.txt\\0doc.md\\0late.md\\0'\n",
-        );
-
-        let context = ToolContext::new(workspace.path());
-        let result = list_files_local_rg(RgListFilesRequest {
-            context: &context,
-            base_path: workspace.path(),
-            base_is_workspace_root: true,
-            glob: "*.md",
-            include_hidden: false,
-            include_ignored: false,
-            ignored_root_names: &[],
-            max_results: 10,
-            scan_limit: 3,
-            rg_executable: &fake_rg,
-        })
-        .expect("rg result");
-
-        assert_eq!(result.files, vec!["doc.md"]);
-        assert_eq!(result.total_count, 1);
-        assert!(result.truncated);
-        assert!(result.scan_limited);
-    }
 }

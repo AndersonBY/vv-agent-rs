@@ -919,6 +919,11 @@ fn tools_module_is_split_into_handler_files() {
         "tools/handlers/workspace/listing.rs",
         "tools/handlers/workspace/listing/fallback.rs",
         "tools/handlers/workspace/listing/local_rg.rs",
+        "tools/handlers/workspace/listing/local_rg/command.rs",
+        "tools/handlers/workspace/listing/local_rg/paths.rs",
+        "tools/handlers/workspace/listing/local_rg/scan.rs",
+        "tools/handlers/workspace/listing/local_rg/tests.rs",
+        "tools/handlers/workspace/listing/local_rg/types.rs",
         "tools/handlers/workspace/listing/request.rs",
         "tools/handlers/workspace/listing/response.rs",
         "tools/handlers/workspace/listing/types.rs",
@@ -1727,6 +1732,19 @@ fn workspace_list_files_handler_root_stays_focused_on_tool_entrypoint() {
     assert!(
         line_count <= 120,
         "tools/handlers/workspace/listing.rs should delegate argument parsing, rg scanning, backend fallback, and response rendering to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn workspace_list_files_local_rg_root_stays_focused_on_command_orchestration() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let local_rg = manifest_dir.join("src/tools/handlers/workspace/listing/local_rg.rs");
+    let content = std::fs::read_to_string(&local_rg).expect("read list-files local rg module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 90,
+        "tools/handlers/workspace/listing/local_rg.rs should keep only rg list-files orchestration while delegating executable discovery, output scanning, path helpers, and tests to submodules; found {line_count} lines"
     );
 }
 
