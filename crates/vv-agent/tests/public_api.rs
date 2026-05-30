@@ -117,7 +117,7 @@ fn source_rustdoc_comments_stay_capability_focused() {
 }
 
 #[test]
-fn sdk_does_not_include_python_hook_bridge() {
+fn sdk_does_not_include_external_hook_bridge() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let sdk_mod =
         std::fs::read_to_string(manifest_dir.join("src/sdk/mod.rs")).expect("read SDK module");
@@ -132,11 +132,11 @@ fn sdk_does_not_include_python_hook_bridge() {
     );
     assert!(
         !sdk_mod.contains("mod hook_bridge;"),
-        "SDK should not compile a Python hook bridge into the Rust crate"
+        "SDK should not compile an external hook bridge into the Rust crate"
     );
     assert!(
         !manifest_dir.join("src/sdk/hook_bridge.rs").exists(),
-        "Rust SDK should use native RuntimeHook implementations instead of a Python hook bridge"
+        "Rust SDK should use native RuntimeHook implementations instead of an external hook bridge"
     );
 }
 
@@ -181,7 +181,7 @@ fn config_internals_are_split_by_runtime_responsibility() {
 }
 
 #[test]
-fn sdk_sources_do_not_spawn_python_hook_runner() {
+fn sdk_sources_do_not_spawn_external_hook_runner() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source_files = collect_rust_files(&manifest_dir.join("src/sdk"));
     let forbidden = [

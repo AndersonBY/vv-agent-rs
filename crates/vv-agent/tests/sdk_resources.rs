@@ -481,7 +481,7 @@ fn resource_loader_reports_invalid_agent_profiles() {
 }
 
 #[test]
-fn resource_loader_ignores_python_hook_files_for_rust_runtime() {
+fn resource_loader_ignores_external_hook_files_for_rust_runtime() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     std::fs::create_dir_all(resource_root.join("hooks/nested")).expect("hooks");
@@ -506,13 +506,13 @@ fn resource_loader_ignores_python_hook_files_for_rust_runtime() {
 }
 
 #[test]
-fn agent_sdk_does_not_autoload_python_hook_files_from_resources() {
+fn agent_sdk_does_not_autoload_external_hook_files_from_resources() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
     std::fs::create_dir_all(resource_root.join("hooks")).expect("hooks");
     std::fs::write(
         resource_root.join("hooks/force_finish.py"),
-        r#"raise RuntimeError("Python hook files must not be executed by vv-agent-rs")"#,
+        r#"raise RuntimeError("external hook files must not be executed by vv-agent-rs")"#,
     )
     .expect("hook");
     let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
@@ -545,8 +545,8 @@ fn agent_sdk_does_not_autoload_python_hook_files_from_resources() {
     let mut agent = AgentDefinition::default_for_model("demo-model");
     agent.no_tool_policy = NoToolPolicy::Finish;
     let run = client
-        .run_with_agent(agent, "ignore python hook files")
-        .expect("run without executing Python hook file");
+        .run_with_agent(agent, "ignore external hook files")
+        .expect("run without executing external hook file");
 
     assert_eq!(run.result.status, AgentStatus::Completed);
     assert_eq!(run.result.final_answer.as_deref(), Some("plain response"));
