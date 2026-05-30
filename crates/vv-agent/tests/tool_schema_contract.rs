@@ -1116,6 +1116,10 @@ fn tools_module_is_split_into_handler_files() {
         "workspace/local.rs",
         "workspace/memory.rs",
         "workspace/s3.rs",
+        "workspace/s3/backend.rs",
+        "workspace/s3/config.rs",
+        "workspace/s3/paths.rs",
+        "workspace/s3/runtime.rs",
         "config/settings_literal.rs",
         "config/settings_literal/assignment.rs",
         "config/settings_literal/identifiers.rs",
@@ -1325,6 +1329,19 @@ fn runtime_engine_root_stays_focused_on_loop_orchestration() {
     assert!(
         line_count <= 520,
         "runtime/engine/mod.rs should keep the run loop focused while delegating construction, planning, logging, memory, run setup, controls, and completion helpers to engine submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn workspace_s3_root_stays_focused_on_public_exports() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let s3 = manifest_dir.join("src/workspace/s3.rs");
+    let content = std::fs::read_to_string(&s3).expect("read workspace s3 module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 60,
+        "workspace/s3.rs should keep only S3 module wiring and public exports while delegating backend operations, configuration, key mapping, and async runtime bridging to focused submodules; found {line_count} lines"
     );
 }
 
