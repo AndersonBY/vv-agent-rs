@@ -47,6 +47,9 @@ fn default_tool_schemas_include_actionable_descriptions() {
 
     let create_sub_task = description(&registry, "create_sub_task");
     assert!(create_sub_task.contains("Modes:"));
+    assert!(create_sub_task.contains("Delegation rules:"));
+    assert!(create_sub_task.contains("Do not use batch mode"));
+    assert!(create_sub_task.contains("Result handling:"));
     assert!(create_sub_task.contains("wait_for_completion=true"));
     assert!(create_sub_task.contains("multiple independent tasks"));
     assert!(create_sub_task.contains("same sub-agent"));
@@ -57,13 +60,21 @@ fn default_tool_schemas_include_actionable_descriptions() {
         property_description(&registry, "create_sub_task", "wait_for_completion")
             .contains("background")
     );
+    assert!(nested_property_description(
+        &registry,
+        "create_sub_task",
+        &["tasks", "items", "output_requirements"]
+    )
+    .contains("verification evidence"));
 
     let sub_task_status = description(&registry, "sub_task_status");
     assert!(sub_task_status.contains("Capabilities:"));
+    assert!(sub_task_status.contains("Continuation rules:"));
     assert!(sub_task_status.contains("detail_level=snapshot"));
     assert!(sub_task_status.contains("first task id"));
     assert!(sub_task_status.contains("continue a completed one"));
     assert!(sub_task_status.contains("max_cycles"));
+    assert!(sub_task_status.contains("Do not continue a child task stopped at `max_cycles`"));
     assert!(
         property_description(&registry, "sub_task_status", "message")
             .contains("running task or continue a completed one")
@@ -906,7 +917,9 @@ fn tools_module_is_split_into_handler_files() {
         "tools/schemas/control.rs",
         "tools/schemas/media.rs",
         "tools/schemas/memory.rs",
-        "tools/schemas/sub_agents.rs",
+        "tools/schemas/sub_agents/mod.rs",
+        "tools/schemas/sub_agents/create.rs",
+        "tools/schemas/sub_agents/status.rs",
         "tools/schemas/todo.rs",
         "tools/schemas/workspace/mod.rs",
         "tools/schemas/workspace/edit.rs",
@@ -1309,6 +1322,10 @@ fn tools_module_is_split_into_handler_files() {
         (
             "tools/schemas.rs",
             "schemas.rs should be split into src/tools/schemas/ domain modules",
+        ),
+        (
+            "tools/schemas/sub_agents.rs",
+            "sub-agent schemas should be split into create/status modules",
         ),
         (
             "tools/schemas/workspace.rs",
