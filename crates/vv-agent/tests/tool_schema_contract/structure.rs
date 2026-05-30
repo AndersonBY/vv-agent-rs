@@ -8,7 +8,10 @@ fn tools_module_is_split_into_handler_files() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     assert!(root.join("tools").join("mod.rs").is_file());
     for relative in [
-        "tools/base.rs",
+        "tools/base/mod.rs",
+        "tools/base/context.rs",
+        "tools/base/paths.rs",
+        "tools/base/spec.rs",
         "tools/common.rs",
         "tools/common/args.rs",
         "tools/common/edit.rs",
@@ -356,6 +359,10 @@ fn tools_module_is_split_into_handler_files() {
         (
             "tools.rs",
             "tools.rs should be split into src/tools/ modules",
+        ),
+        (
+            "tools/base.rs",
+            "tools base should be split into src/tools/base/ modules",
         ),
         (
             "tools/registry.rs",

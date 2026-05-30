@@ -1,17 +1,12 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
-use crate::types::{ToolArguments, ToolExecutionResult};
+use super::paths::resolve_workspace_path_checked;
+use super::SubTaskRunner;
 use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
-
-pub type ToolHandler =
-    Arc<dyn Fn(&mut ToolContext, &ToolArguments) -> ToolExecutionResult + Send + Sync + 'static>;
-pub type SubTaskRunner = Arc<
-    dyn Fn(crate::types::SubTaskRequest) -> crate::types::SubTaskOutcome + Send + Sync + 'static,
->;
 
 #[derive(Clone)]
 pub struct ToolContext {
@@ -96,27 +91,6 @@ impl ToolContext {
     }
 }
 
-pub(crate) fn resolve_workspace_path_checked(
-    workspace: &Path,
-    raw_path: &str,
-    allow_outside_workspace_paths: bool,
-) -> Result<PathBuf, String> {
-    let base = workspace
-        .canonicalize()
-        .unwrap_or_else(|_| absolutize_without_canonicalizing(workspace));
-    let candidate = crate::workspace::expand_home_path(raw_path);
-    let target = if candidate.is_absolute() {
-        absolutize_without_canonicalizing(&candidate)
-    } else {
-        absolutize_without_canonicalizing(&base.join(&candidate))
-    };
-    let normalized = normalize_path(target);
-    if !allow_outside_workspace_paths && normalized != base && !normalized.starts_with(&base) {
-        return Err(format!("Path escapes workspace: {raw_path}"));
-    }
-    Ok(normalized)
-}
-
 fn parse_bool(value: Option<&Value>) -> Option<bool> {
     match value {
         Some(Value::Bool(value)) => Some(*value),
@@ -133,70 +107,3 @@ fn parse_bool(value: Option<&Value>) -> Option<bool> {
         _ => None,
     }
 }
-
-fn absolutize_without_canonicalizing(path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(path)
-    }
-}
-
-fn normalize_path(path: PathBuf) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-    normalized
-}
-
-#[derive(Clone)]
-pub struct ToolSpec {
-    pub name: String,
-    pub handler: ToolHandler,
-    pub description: String,
-    pub schema: Value,
-}
-
-impl ToolSpec {
-    pub fn new(
-        name: impl Into<String>,
-        description: impl Into<String>,
-        handler: ToolHandler,
-    ) -> Self {
-        let name = name.into();
-        let fallback_description = description.into();
-        let schema = super::schemas::schema_for(&name).unwrap_or_else(|| {
-            json!({
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": fallback_description,
-                    "parameters": {"type": "object", "properties": {}, "required": []},
-                }
-            })
-        });
-        let description = schema["function"]["description"]
-            .as_str()
-            .unwrap_or(&fallback_description)
-            .to_string();
-        Self {
-            schema,
-            name,
-            handler,
-            description,
-        }
-    }
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-#[error("tool not found: {0}")]
-pub struct ToolNotFoundError(pub String);
