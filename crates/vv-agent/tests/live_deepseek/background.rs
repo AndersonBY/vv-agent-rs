@@ -131,3 +131,85 @@ fn live_deepseek_v4_pro_observes_background_timeout_handoff() {
         "{event_summary}"
     );
 }
+
+#[test]
+#[ignore = "live API call; run with VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored"]
+fn live_deepseek_v4_pro_checks_background_command_explicitly() {
+    if !live_enabled() {
+        eprintln!("Live tests are disabled. Set VV_AGENT_RUN_LIVE_TESTS=1 to run.");
+        return;
+    }
+
+    let settings_path = live_settings_path();
+    assert!(
+        settings_path.exists(),
+        "live settings file is missing: {}",
+        settings_path.display()
+    );
+
+    let workspace = tempfile::tempdir().expect("workspace");
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        settings_file: settings_path,
+        default_backend: "deepseek".to_string(),
+        workspace: workspace.path().to_path_buf(),
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("deepseek-v4-pro");
+    agent.backend = Some("deepseek".to_string());
+    agent.language = "en-US".to_string();
+    agent.max_cycles = 10;
+    agent.no_tool_policy = NoToolPolicy::Continue;
+    agent.allow_interruption = true;
+    agent.use_workspace = false;
+    agent.enable_todo_management = false;
+    agent.agent_type = Some("computer".to_string());
+    agent.exclude_tools = vec![ASK_USER_TOOL_NAME.to_string()];
+    agent.system_prompt = Some(
+        "You are running a deterministic integration test for explicit background polling.\n\
+         Follow this protocol exactly.\n\
+         1. On your first action, call `bash` exactly once with \
+         `command=\"sleep 0.5 && echo BG_CHECK\"`, `timeout=5`, and \
+         `run_in_background=true`.\n\
+         2. After you receive the returned `session_id`, call \
+         `check_background_command` with that exact `session_id`.\n\
+         3. If the response status is still running, call `check_background_command` \
+         again with the same session_id.\n\
+         4. When the response is completed and output contains `BG_CHECK`, call \
+         `task_finish` with message exactly `background check observed`.\n\
+         Do not call `task_finish` before the completed background result arrives."
+            .to_string(),
+    );
+
+    let run = client
+        .run_with_agent(
+            agent,
+            "Execute the explicit background polling protocol now.",
+        )
+        .expect("run live explicit background check test");
+    let tool_names = run
+        .result
+        .cycles
+        .iter()
+        .flat_map(|cycle| cycle.tool_calls.iter().map(|call| call.name.clone()))
+        .collect::<Vec<_>>();
+
+    assert_eq!(run.resolved.backend, "deepseek");
+    assert_eq!(run.resolved.requested_model, "deepseek-v4-pro");
+    assert_eq!(run.result.status, AgentStatus::Completed, "{tool_names:?}");
+    assert_eq!(
+        run.result.final_answer.as_deref(),
+        Some("background check observed"),
+        "{tool_names:?}"
+    );
+    assert!(
+        tool_names.iter().any(|name| name == BASH_TOOL_NAME),
+        "expected live model to call bash, got {tool_names:?}"
+    );
+    assert!(
+        tool_names
+            .iter()
+            .any(|name| name == CHECK_BACKGROUND_COMMAND_TOOL_NAME),
+        "expected live model to call check_background_command, got {tool_names:?}"
+    );
+}

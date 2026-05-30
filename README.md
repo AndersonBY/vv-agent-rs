@@ -38,7 +38,7 @@ without printing credentials. The live suite verifies direct runtime finish,
 SDK finish, `ask_user` wait flow, `todo_write` progress updates,
 `compress_memory` notes, `activate_skill` loading, workspace `write_file`/`read_file`,
 `file_str_replace`, `list_files`, `workspace_grep`, and `file_info` tool use,
-background command handoff, plus configured sub-agent delegation through
+background command handoff and explicit polling, plus configured sub-agent delegation through
 `create_sub_task`:
 
 ```bash
