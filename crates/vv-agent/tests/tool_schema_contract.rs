@@ -1023,6 +1023,10 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/sub_task_manager/types.rs",
         "runtime/token_usage.rs",
         "runtime/tool_call_runner.rs",
+        "runtime/tool_call_runner/outcome.rs",
+        "runtime/tool_call_runner/request.rs",
+        "runtime/tool_call_runner/results.rs",
+        "runtime/tool_call_runner/runner.rs",
         "runtime/tool_planner.rs",
         "skills/mod.rs",
         "skills/errors.rs",
@@ -1564,6 +1568,19 @@ fn runtime_hooks_root_stays_focused_on_public_hook_contract() {
     assert!(
         line_count <= 70,
         "runtime/hooks.rs should keep only hook module wiring and public re-exports while delegating event payloads, patch helpers, the RuntimeHook trait, and manager application flow to focused submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn tool_call_runner_root_stays_focused_on_public_runner_contract() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let runner = manifest_dir.join("src/runtime/tool_call_runner.rs");
+    let content = std::fs::read_to_string(&runner).expect("read tool call runner module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 80,
+        "runtime/tool_call_runner.rs should keep only public runner exports while delegating request construction, run outcomes, tool result helpers, and execution flow to focused submodules; found {line_count} lines"
     );
 }
 
