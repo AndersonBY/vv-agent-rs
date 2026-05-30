@@ -32,7 +32,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 ```
 
 真实 DeepSeek smoke test 默认关闭，会使用本地 vv-llm 配置文件，且不会打印凭据。当前
-live 套件会验证直接 runtime 完成、SDK 完成、workspace `write_file`/`read_file` 工具调用、后台命令 handoff，以及通过 `create_sub_task` 调用配置好的子 Agent：
+live 套件会验证直接 runtime 完成、SDK 完成、workspace `write_file`/`read_file` 和 `file_str_replace` 工具调用、后台命令 handoff，以及通过 `create_sub_task` 调用配置好的子 Agent：
 
 ```bash
 VV_AGENT_RUN_LIVE_TESTS=1 \

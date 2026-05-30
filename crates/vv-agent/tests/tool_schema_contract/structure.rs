@@ -18,7 +18,8 @@ fn tools_module_is_split_into_handler_files() {
         "tools/common/process.rs",
         "tools/common/result.rs",
         "tools/dispatcher.rs",
-        "tools/registry.rs",
+        "tools/registry/mod.rs",
+        "tools/registry/defaults.rs",
         "tools/schemas/mod.rs",
         "tools/schemas/command.rs",
         "tools/schemas/control.rs",
@@ -355,6 +356,10 @@ fn tools_module_is_split_into_handler_files() {
         (
             "tools.rs",
             "tools.rs should be split into src/tools/ modules",
+        ),
+        (
+            "tools/registry.rs",
+            "tools registry should be split into src/tools/registry/ modules",
         ),
         (
             "runtime.rs",
