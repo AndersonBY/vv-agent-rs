@@ -20,6 +20,7 @@ pub const TOOL_RESULT_COMPACT_MARKER: &str = "<Tool Result Compact>";
 pub fn compact_tool_results(
     messages: &[Message],
     config: &ToolResultArtifactConfig,
+    cycle_index: Option<u32>,
 ) -> (Vec<Message>, Vec<PersistedArtifact>, bool) {
     if config.compact_threshold == 0 {
         return (messages.to_vec(), Vec::new(), false);
@@ -40,8 +41,12 @@ pub fn compact_tool_results(
             .tool_call_id
             .as_deref()
             .and_then(|tool_call_id| tool_info.get(tool_call_id));
-        let artifact_path =
-            persist_tool_content(&message.content, message.tool_call_id.as_deref(), config);
+        let artifact_path = persist_tool_content(
+            &message.content,
+            message.tool_call_id.as_deref(),
+            config,
+            cycle_index,
+        );
         let content = build_compacted_tool_content(
             &message.content,
             artifact_path.as_deref(),

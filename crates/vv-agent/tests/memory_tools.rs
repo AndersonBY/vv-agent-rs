@@ -268,8 +268,11 @@ fn memory_manager_recomputes_length_after_tool_artifact_compaction() {
         .any(|message| message.content.contains("<Tool Result Compact>")));
     assert!(workspace
         .path()
-        .join(".memory/tool_results/call_1.txt")
+        .join(".memory/tool_results/cycle_2/call_1.txt")
         .exists());
+    assert!(compacted.iter().any(|message| message
+        .content
+        .contains(".memory/tool_results/cycle_2/call_1.txt")));
 }
 
 #[test]
@@ -365,10 +368,12 @@ fn memory_manager_persists_large_tool_results_as_artifacts() {
         Message::assistant("continue"),
     ];
 
-    let (compacted, changed) = manager.compact(&messages, false);
+    let (compacted, changed) = manager.compact_for_cycle(&messages, 3, false);
 
     assert!(changed);
-    let artifact = workspace.path().join(".memory/tool_results/call_1.txt");
+    let artifact = workspace
+        .path()
+        .join(".memory/tool_results/cycle_3/call_1.txt");
     assert!(
         artifact.is_file(),
         "missing artifact at {}",
@@ -381,7 +386,7 @@ fn memory_manager_persists_large_tool_results_as_artifacts() {
     assert!(compacted[1].content.contains("<Persisted Artifacts>"));
     assert!(compacted[1]
         .content
-        .contains(".memory/tool_results/call_1.txt"));
+        .contains(".memory/tool_results/cycle_3/call_1.txt"));
     assert!(compacted[1].content.contains("tool: read_file"));
     assert!(compacted[1].content.contains("<Tool Result Compact>"));
     assert!(compacted[1]

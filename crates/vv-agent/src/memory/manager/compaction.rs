@@ -13,7 +13,11 @@ use super::prompts;
 use super::MemoryManager;
 
 impl MemoryManager {
-    pub(super) fn compact_large_tool_results(&self, messages: &[Message]) -> (Vec<Message>, bool) {
+    pub(super) fn compact_large_tool_results(
+        &self,
+        messages: &[Message],
+        cycle_index: Option<u32>,
+    ) -> (Vec<Message>, bool) {
         let (compacted, _artifacts, changed) = compact_tool_results(
             messages,
             &ToolResultArtifactConfig {
@@ -24,11 +28,16 @@ impl MemoryManager {
                 excerpt_head: self.config.tool_result_excerpt_head,
                 excerpt_tail: self.config.tool_result_excerpt_tail,
             },
+            cycle_index,
         );
         (compacted, changed)
     }
 
-    pub(super) fn compress_memory(&self, messages: &[Message]) -> (Vec<Message>, bool) {
+    pub(super) fn compress_memory(
+        &self,
+        messages: &[Message],
+        cycle_index: Option<u32>,
+    ) -> (Vec<Message>, bool) {
         let messages = self.strip_session_memory_context(messages);
         if messages.len() <= 2 {
             return (messages, false);
@@ -48,6 +57,7 @@ impl MemoryManager {
                 excerpt_head: self.config.tool_result_excerpt_head,
                 excerpt_tail: self.config.tool_result_excerpt_tail,
             },
+            cycle_index,
         );
         let original_request = extract_original_user_request(&messages).unwrap_or_default();
         let summary_prompt = self.build_compress_memory_prompt(&messages_for_summary);

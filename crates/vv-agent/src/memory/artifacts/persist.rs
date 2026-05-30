@@ -6,9 +6,10 @@ pub(super) fn persist_tool_content(
     content: &str,
     tool_call_id: Option<&str>,
     config: &ToolResultArtifactConfig,
+    cycle_index: Option<u32>,
 ) -> Option<String> {
     let workspace = config.workspace.as_ref()?;
-    let artifact_path = build_tool_artifact_path(tool_call_id, &config.artifact_dir);
+    let artifact_path = build_tool_artifact_path(tool_call_id, &config.artifact_dir, cycle_index);
     let target = workspace.join(&artifact_path);
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).ok()?;
@@ -17,9 +18,19 @@ pub(super) fn persist_tool_content(
     Some(path_to_string(&artifact_path))
 }
 
-fn build_tool_artifact_path(tool_call_id: Option<&str>, artifact_dir: &Path) -> PathBuf {
+fn build_tool_artifact_path(
+    tool_call_id: Option<&str>,
+    artifact_dir: &Path,
+    cycle_index: Option<u32>,
+) -> PathBuf {
     let safe_id = sanitize_tool_call_id(tool_call_id.unwrap_or("tool_result"));
-    artifact_dir.join(format!("{safe_id}.txt"))
+    let filename = format!("{safe_id}.txt");
+    match cycle_index {
+        Some(cycle_index) => artifact_dir
+            .join(format!("cycle_{cycle_index}"))
+            .join(filename),
+        None => artifact_dir.join(filename),
+    }
 }
 
 fn sanitize_tool_call_id(value: &str) -> String {

@@ -38,7 +38,7 @@ impl MemoryManager {
     }
 
     pub fn compact(&mut self, messages: &[Message], force: bool) -> (Vec<Message>, bool) {
-        self.compact_for_cycle_with_usage(messages, 0, force, None, None)
+        self.compact_for_cycle_with_usage_inner(messages, 0, None, force, None, None)
     }
 
     pub fn compact_for_cycle(
@@ -47,13 +47,39 @@ impl MemoryManager {
         cycle_index: u32,
         force: bool,
     ) -> (Vec<Message>, bool) {
-        self.compact_for_cycle_with_usage(messages, cycle_index, force, None, None)
+        self.compact_for_cycle_with_usage_inner(
+            messages,
+            cycle_index,
+            Some(cycle_index),
+            force,
+            None,
+            None,
+        )
     }
 
     pub fn compact_for_cycle_with_usage(
         &mut self,
         messages: &[Message],
         cycle_index: u32,
+        force: bool,
+        total_tokens: Option<u64>,
+        recent_tool_call_ids: Option<&BTreeSet<String>>,
+    ) -> (Vec<Message>, bool) {
+        self.compact_for_cycle_with_usage_inner(
+            messages,
+            cycle_index,
+            Some(cycle_index),
+            force,
+            total_tokens,
+            recent_tool_call_ids,
+        )
+    }
+
+    fn compact_for_cycle_with_usage_inner(
+        &mut self,
+        messages: &[Message],
+        cycle_index: u32,
+        artifact_cycle_index: Option<u32>,
         force: bool,
         total_tokens: Option<u64>,
         recent_tool_call_ids: Option<&BTreeSet<String>>,
@@ -118,7 +144,7 @@ impl MemoryManager {
             let (image_compacted, image_changed) =
                 compact_processed_image_messages(&summary_source);
             let (artifact_compacted, artifact_changed) =
-                self.compact_large_tool_results(&image_compacted);
+                self.compact_large_tool_results(&image_compacted, artifact_cycle_index);
             if (image_changed || artifact_changed)
                 && count_messages_tokens(&artifact_compacted, &self.config.model)
                     <= self.autocompact_threshold()
@@ -129,7 +155,7 @@ impl MemoryManager {
                 summary_source = image_compacted;
             }
         }
-        let (compacted, changed) = self.compress_memory(&summary_source);
+        let (compacted, changed) = self.compress_memory(&summary_source, artifact_cycle_index);
         if changed {
             if let Some(session_memory) = self.session_memory.as_mut() {
                 session_memory
