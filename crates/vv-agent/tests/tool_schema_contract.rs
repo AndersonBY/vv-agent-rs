@@ -1158,6 +1158,9 @@ fn tools_module_is_split_into_handler_files() {
         "types/records.rs",
         "types/dict/mod.rs",
         "types/dict/common.rs",
+        "types/dict/common/enums.rs",
+        "types/dict/common/fields.rs",
+        "types/dict/common/values.rs",
         "types/dict/messages.rs",
         "types/dict/records.rs",
         "types/dict/records/cycle.rs",
@@ -1652,6 +1655,19 @@ fn anthropic_prompt_cache_root_stays_focused_on_public_api() {
     assert!(
         line_count <= 120,
         "llm/anthropic_prompt_cache.rs should delegate block normalization, cache breakpoint planning, token estimation, model thresholds, and section parsing to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn types_dict_common_root_stays_focused_on_shared_exports() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let common = manifest_dir.join("src/types/dict/common.rs");
+    let content = std::fs::read_to_string(&common).expect("read types dict common module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 30,
+        "types/dict/common.rs should only re-export shared dict helpers while delegating field readers, value writers, and enum string mappings to focused submodules; found {line_count} lines"
     );
 }
 
