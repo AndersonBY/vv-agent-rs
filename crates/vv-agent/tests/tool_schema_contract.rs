@@ -968,8 +968,11 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/background_sessions/subscription.rs",
         "runtime/background_sessions/tests.rs",
         "runtime/backends/celery.rs",
+        "runtime/backends/celery/backend.rs",
         "runtime/backends/celery/checkpoint.rs",
         "runtime/backends/celery/dispatch.rs",
+        "runtime/backends/celery/distributed.rs",
+        "runtime/backends/celery/execution.rs",
         "runtime/backends/celery_tasks.rs",
         "runtime/cancellation.rs",
         "runtime/cycle_runner.rs",
@@ -1656,8 +1659,8 @@ fn celery_backend_root_stays_focused_on_backend_execution() {
     let line_count = content.lines().count();
 
     assert!(
-        line_count <= 250,
-        "runtime/backends/celery.rs should keep CeleryBackend construction and execution orchestration while delegating dispatch payloads and checkpoint snapshot helpers to submodules; found {line_count} lines"
+        line_count <= 70,
+        "runtime/backends/celery.rs should keep only Celery backend module wiring and public exports while delegating backend construction, execution dispatch, distributed checkpoint loops, dispatch payloads, and checkpoint snapshot helpers to focused submodules; found {line_count} lines"
     );
 }
 
