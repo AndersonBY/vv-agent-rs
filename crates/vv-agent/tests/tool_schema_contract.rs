@@ -984,6 +984,7 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/engine/construction.rs",
         "runtime/engine/mod.rs",
         "runtime/engine/controls.rs",
+        "runtime/engine/cycle_inputs.rs",
         "runtime/engine/helpers.rs",
         "runtime/engine/logging.rs",
         "runtime/engine/memory.rs",
@@ -1341,8 +1342,8 @@ fn runtime_engine_root_stays_focused_on_loop_orchestration() {
     let line_count = content.lines().count();
 
     assert!(
-        line_count <= 520,
-        "runtime/engine/mod.rs should keep the run loop focused while delegating construction, planning, logging, memory, run setup, controls, and completion helpers to engine submodules; found {line_count} lines"
+        line_count <= 470,
+        "runtime/engine/mod.rs should keep the run loop focused while delegating construction, planning, logging, memory, run setup, controls, cycle input injection, and completion helpers to engine submodules; found {line_count} lines"
     );
 }
 

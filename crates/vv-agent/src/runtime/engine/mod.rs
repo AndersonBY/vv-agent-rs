@@ -1,6 +1,7 @@
 mod completion;
 mod construction;
 mod controls;
+mod cycle_inputs;
 mod helpers;
 mod logging;
 mod memory;
@@ -103,59 +104,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         shared_state.clone(),
                     ));
                 }
-                let before_cycle_messages = controls
-                    .before_cycle_messages
-                    .as_ref()
-                    .map(|provider| provider(cycle_index, messages, shared_state))
-                    .unwrap_or_default();
-                if !before_cycle_messages.is_empty() {
-                    let message_count = before_cycle_messages.len();
-                    messages.extend(before_cycle_messages);
-                    self.emit_log(
-                        &controls,
-                        "cycle_injected_messages",
-                        BTreeMap::from([
-                            ("cycle".to_string(), Value::from(cycle_index)),
-                            (
-                                "reason".to_string(),
-                                Value::String("before_cycle_messages".to_string()),
-                            ),
-                            (
-                                "message_count".to_string(),
-                                Value::from(message_count as u64),
-                            ),
-                        ]),
-                    );
-                }
-                let cycle_steering_prompts = drain_steering_queue(&controls);
-                if !cycle_steering_prompts.is_empty() {
-                    for prompt in &cycle_steering_prompts {
-                        messages.push(crate::types::Message::user(prompt.clone()));
-                        self.emit_log(
-                            &controls,
-                            "session_steer_dequeued",
-                            BTreeMap::from([
-                                ("cycle".to_string(), Value::from(cycle_index)),
-                                ("prompt".to_string(), Value::String(prompt.clone())),
-                            ]),
-                        );
-                    }
-                    self.emit_log(
-                        &controls,
-                        "cycle_injected_messages",
-                        BTreeMap::from([
-                            ("cycle".to_string(), Value::from(cycle_index)),
-                            (
-                                "reason".to_string(),
-                                Value::String("session_steering".to_string()),
-                            ),
-                            (
-                                "message_count".to_string(),
-                                Value::from(cycle_steering_prompts.len() as u64),
-                            ),
-                        ]),
-                    );
-                }
+                self.apply_cycle_inputs(&controls, cycle_index, messages, shared_state);
                 self.emit_log(
                     &controls,
                     "cycle_started",
