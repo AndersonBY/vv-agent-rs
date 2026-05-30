@@ -29,6 +29,7 @@ Run from `vv-agent-rs/`:
 ```bash
 cargo fmt --check
 cargo test
+cargo check --examples
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
