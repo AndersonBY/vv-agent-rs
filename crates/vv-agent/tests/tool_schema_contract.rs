@@ -916,6 +916,9 @@ fn tools_module_is_split_into_handler_files() {
         "tools/handlers/workspace/mod.rs",
         "tools/handlers/workspace/edit.rs",
         "tools/handlers/workspace/file_io.rs",
+        "tools/handlers/workspace/file_io/info.rs",
+        "tools/handlers/workspace/file_io/read.rs",
+        "tools/handlers/workspace/file_io/write.rs",
         "tools/handlers/workspace/listing.rs",
         "tools/handlers/workspace/listing/fallback.rs",
         "tools/handlers/workspace/listing/local_rg.rs",
@@ -1540,6 +1543,19 @@ fn workspace_grep_rg_parse_stays_split_by_json_event_responsibility() {
     assert!(
         line_count <= 90,
         "tools/handlers/search/local_rg/parse.rs should keep only rg JSON parse orchestration while delegating field decoding, event normalization, path handling, and output accumulation to focused submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn workspace_file_io_root_stays_focused_on_tool_exports() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let file_io = manifest_dir.join("src/tools/handlers/workspace/file_io.rs");
+    let content = std::fs::read_to_string(&file_io).expect("read workspace file_io module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 40,
+        "tools/handlers/workspace/file_io.rs should only wire file_info/read_file/write_file exports while each workspace file tool owns its own handler module; found {line_count} lines"
     );
 }
 
