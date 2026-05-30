@@ -24,6 +24,8 @@ jobs:
     name: Publish vv-agent to crates.io
     runs-on: ubuntu-latest
     environment: crates-io
+    env:
+      VV_AGENT_RUN_LIVE_TESTS: "0"
 
     steps:
       - name: Checkout

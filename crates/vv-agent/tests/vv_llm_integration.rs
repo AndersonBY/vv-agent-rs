@@ -583,8 +583,8 @@ settings: SettingsDict = {{
 }
 
 #[test]
-fn settings_loader_accepts_vv_llm_dev_settings_json_fixture() {
-    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dev_settings.json");
+fn settings_loader_accepts_checked_in_dev_settings_example_json_fixture() {
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dev_settings.example.json");
 
     let settings = load_llm_settings_from_file(&example).expect("load vv-llm fixture settings");
     let resolved =
