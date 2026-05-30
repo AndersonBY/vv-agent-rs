@@ -980,6 +980,10 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/engine/run_setup.rs",
         "runtime/engine/state.rs",
         "runtime/hooks.rs",
+        "runtime/hooks/events.rs",
+        "runtime/hooks/manager.rs",
+        "runtime/hooks/patches.rs",
+        "runtime/hooks/traits.rs",
         "runtime/processes.rs",
         "runtime/results.rs",
         "runtime/shell/mod.rs",
@@ -1547,6 +1551,19 @@ fn runtime_backends_root_stays_focused_on_public_exports() {
     assert!(
         line_count <= 90,
         "runtime/backends/mod.rs should declare backend modules and re-export the public backend surface while delegating the backend enum, runtime recipe, and cycle-loop result helpers to focused submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn runtime_hooks_root_stays_focused_on_public_hook_contract() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let hooks = manifest_dir.join("src/runtime/hooks.rs");
+    let content = std::fs::read_to_string(&hooks).expect("read runtime hooks module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 70,
+        "runtime/hooks.rs should keep only hook module wiring and public re-exports while delegating event payloads, patch helpers, the RuntimeHook trait, and manager application flow to focused submodules; found {line_count} lines"
     );
 }
 
