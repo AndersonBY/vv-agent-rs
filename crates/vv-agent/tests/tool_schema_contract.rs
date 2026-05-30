@@ -1043,6 +1043,12 @@ fn tools_module_is_split_into_handler_files() {
         "skills/normalize/path.rs",
         "skills/normalize/value.rs",
         "skills/parser.rs",
+        "skills/parser/discovery.rs",
+        "skills/parser/frontmatter.rs",
+        "skills/parser/io.rs",
+        "skills/parser/properties.rs",
+        "skills/parser/read.rs",
+        "skills/parser/value.rs",
         "skills/prompt.rs",
         "skills/validator.rs",
         "skills/validator/diagnostics.rs",
@@ -1345,6 +1351,19 @@ fn skills_validator_root_stays_focused_on_validation_orchestration() {
     assert!(
         line_count <= 170,
         "skills/validator.rs should orchestrate directory and metadata validation while delegating validation modes, diagnostics, and field rules to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn skills_parser_root_stays_focused_on_public_parser_exports() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let parser = manifest_dir.join("src/skills/parser.rs");
+    let content = std::fs::read_to_string(&parser).expect("read skills parser module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 70,
+        "skills/parser.rs should keep only parser module wiring and public exports while delegating discovery, frontmatter parsing, properties, file reads, and value normalization to focused submodules; found {line_count} lines"
     );
 }
 
