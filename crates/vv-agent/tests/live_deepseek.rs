@@ -4,6 +4,8 @@ mod background;
 mod common;
 #[path = "live_deepseek/control.rs"]
 mod control;
+#[path = "live_deepseek/media.rs"]
+mod media;
 #[path = "live_deepseek/memory.rs"]
 mod memory;
 #[path = "live_deepseek/skills.rs"]

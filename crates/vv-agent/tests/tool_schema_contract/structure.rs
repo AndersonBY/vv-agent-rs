@@ -562,6 +562,7 @@ fn live_deepseek_tests_are_split_by_runtime_capability() {
         "background",
         "common",
         "control",
+        "media",
         "memory",
         "skills",
         "sub_agents",
