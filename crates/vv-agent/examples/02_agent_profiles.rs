@@ -6,7 +6,7 @@ use vv_agent::{AgentDefinition, AgentSDKClient, AgentSDKOptions};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let settings_file = PathBuf::from(
-        env::var("V_AGENT_LOCAL_SETTINGS").unwrap_or_else(|_| "local_settings.py".to_string()),
+        env::var("VV_AGENT_LOCAL_SETTINGS").unwrap_or_else(|_| "local_settings.json".to_string()),
     );
     let workspace = PathBuf::from(
         env::var("V_AGENT_EXAMPLE_WORKSPACE").unwrap_or_else(|_| "./workspace".to_string()),

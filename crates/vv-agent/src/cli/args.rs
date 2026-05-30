@@ -20,7 +20,7 @@ where
     S: Into<String>,
 {
     let default_settings =
-        env::var("V_AGENT_LOCAL_SETTINGS").unwrap_or_else(|_| "local_settings.py".to_string());
+        env::var("VV_AGENT_LOCAL_SETTINGS").unwrap_or_else(|_| "local_settings.json".to_string());
     parse_cli_args_from_with_default_settings(args, default_settings)
 }
 
@@ -142,7 +142,7 @@ fn help_text() -> String {
         "Options:",
         "  --backend <key>        Provider backend key in LLM_SETTINGS (default: moonshot)",
         "  --model <key>          Model key in provider models (default: kimi-k2.5)",
-        "  --settings-file <path> Path to local settings (default: V_AGENT_LOCAL_SETTINGS or local_settings.py)",
+        "  --settings-file <path> Path to local settings (default: VV_AGENT_LOCAL_SETTINGS or local_settings.json)",
         "  --workspace <path>     Workspace directory (default: ./workspace)",
         "  --max-cycles <n>       Max runtime cycles (default: 80)",
         "  --language <locale>    System prompt language (default: zh-CN)",

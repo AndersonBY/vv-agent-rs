@@ -157,13 +157,14 @@ fn runtime_scopes_session_memory_by_session_id_metadata() {
 #[test]
 fn runtime_uses_memory_summary_metadata_model_for_session_extraction() {
     let workspace = tempfile::tempdir().expect("workspace");
-    let settings_file = workspace.path().join("local_settings.py");
+    let settings_file = workspace.path().join("local_settings.json");
     fs::write(
         &settings_file,
-        r#"
-DEFAULT_USER_MEMORY_SUMMARIZE_BACKEND = "settings-backend"
-DEFAULT_USER_MEMORY_SUMMARIZE_MODEL = "settings-model"
-"#,
+        json!({
+            "VV_AGENT_MEMORY_SUMMARY_BACKEND": "settings-backend",
+            "VV_AGENT_MEMORY_SUMMARY_MODEL": "settings-model"
+        })
+        .to_string(),
     )
     .expect("settings file");
     let llm = SummaryModelInspectingLlmClient::default();
@@ -206,7 +207,7 @@ DEFAULT_USER_MEMORY_SUMMARIZE_MODEL = "settings-model"
 #[test]
 fn runtime_uses_local_memory_summary_model_defaults() {
     let workspace = tempfile::tempdir().expect("workspace");
-    let settings_file = workspace.path().join("local_settings.py");
+    let settings_file = workspace.path().join("local_settings.json");
     fs::write(
         &settings_file,
         r#"

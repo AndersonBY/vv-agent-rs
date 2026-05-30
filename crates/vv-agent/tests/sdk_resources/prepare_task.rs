@@ -290,7 +290,7 @@ fn sdk_client_uses_llm_builder_when_runtime_is_not_injected() {
         })
     };
     let client = AgentSDKClient::new(AgentSDKOptions {
-        settings_file: "settings.py".into(),
+        settings_file: "settings.json".into(),
         default_backend: "deepseek".to_string(),
         timeout_seconds: 12.5,
         auto_discover_resources: false,
@@ -312,7 +312,7 @@ fn sdk_client_uses_llm_builder_when_runtime_is_not_injected() {
     assert_eq!(
         *calls.lock().expect("calls"),
         vec![(
-            "settings.py".to_string(),
+            "settings.json".to_string(),
             "custom-backend".to_string(),
             "demo-model".to_string(),
             12.5,

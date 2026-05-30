@@ -23,7 +23,10 @@ pub struct ExampleConfig {
 impl ExampleConfig {
     pub fn load() -> Self {
         Self {
-            settings_file: PathBuf::from(env_string("V_AGENT_LOCAL_SETTINGS", "local_settings.py")),
+            settings_file: PathBuf::from(env_string(
+                "VV_AGENT_LOCAL_SETTINGS",
+                "local_settings.json",
+            )),
             backend: env_string("V_AGENT_EXAMPLE_BACKEND", "moonshot"),
             model: env_string("V_AGENT_EXAMPLE_MODEL", "kimi-k2.5"),
             workspace: PathBuf::from(env_string("V_AGENT_EXAMPLE_WORKSPACE", "./workspace")),

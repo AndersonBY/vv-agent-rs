@@ -474,13 +474,14 @@ settings: SettingsDict = {{
 }
 
 #[test]
-fn settings_loader_accepts_current_agent_project_example() {
-    let example =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../v-agent/local_settings.example.py");
+fn settings_loader_accepts_vv_llm_dev_settings_json_fixture() {
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../../third_party_service/vv-llm-rs/crates/vv-llm/tests/fixtures/dev_settings.json",
+    );
 
-    let settings = load_llm_settings_from_file(&example).expect("load project example settings");
+    let settings = load_llm_settings_from_file(&example).expect("load vv-llm fixture settings");
     let resolved =
-        resolve_model_endpoint(&settings, "moonshot", "kimi-k2.6").expect("resolve project model");
+        resolve_model_endpoint(&settings, "moonshot", "kimi-k2.6").expect("resolve fixture model");
 
     assert_eq!(resolved.backend, "moonshot");
     assert_eq!(resolved.model_id, "kimi-k2.6");
@@ -489,15 +490,26 @@ fn settings_loader_accepts_current_agent_project_example() {
         .unwrap()
         .api_base
         .starts_with("https://"));
-    assert!(resolved
-        .endpoint()
-        .unwrap()
-        .api_key
-        .starts_with("REPLACE_WITH"));
+    assert!(!resolved.endpoint().unwrap().api_key.trim().is_empty());
+}
 
-    let summary_defaults = load_memory_summary_defaults_from_file(&example);
-    assert_eq!(summary_defaults.backend.as_deref(), Some("moonshot"));
-    assert_eq!(summary_defaults.model.as_deref(), Some("kimi-k2.6"));
+#[test]
+fn memory_summary_defaults_load_from_json_settings_file() {
+    let mut settings_file = tempfile::NamedTempFile::new().expect("settings file");
+    write!(
+        settings_file,
+        r#"{{
+          "VV_AGENT_MEMORY_SUMMARY_BACKEND": "settings-backend",
+          "VV_AGENT_MEMORY_SUMMARY_MODEL": "settings-model"
+        }}"#
+    )
+    .expect("write settings");
+    let summary_defaults = load_memory_summary_defaults_from_file(settings_file.path());
+    assert_eq!(
+        summary_defaults.backend.as_deref(),
+        Some("settings-backend")
+    );
+    assert_eq!(summary_defaults.model.as_deref(), Some("settings-model"));
 }
 
 fn rust_source_files(root: &Path) -> Vec<std::path::PathBuf> {

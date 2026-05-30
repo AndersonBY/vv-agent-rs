@@ -122,23 +122,46 @@ pub fn load_memory_summary_defaults_from_file(path: &Path) -> MemorySummaryDefau
         return MemorySummaryDefaults::default();
     };
     MemorySummaryDefaults {
-        backend: settings_literal::parse_string_assignment(
+        backend: parse_string_setting(
             &source,
             &[
                 "DEFAULT_USER_MEMORY_SUMMARIZE_BACKEND",
                 "DEFAULT_MEMORY_SUMMARIZE_BACKEND",
                 "VV_AGENT_MEMORY_SUMMARY_BACKEND",
+                "memory_summary_backend",
+                "compress_memory_summary_backend",
             ],
         ),
-        model: settings_literal::parse_string_assignment(
+        model: parse_string_setting(
             &source,
             &[
                 "DEFAULT_USER_MEMORY_SUMMARIZE_MODEL",
                 "DEFAULT_MEMORY_SUMMARIZE_MODEL",
                 "VV_AGENT_MEMORY_SUMMARY_MODEL",
+                "memory_summary_model",
+                "compress_memory_summary_model",
             ],
         ),
     }
+}
+
+fn parse_string_setting(source: &str, targets: &[&str]) -> Option<String> {
+    parse_json_string_setting(source, targets)
+        .or_else(|| settings_literal::parse_string_assignment(source, targets))
+}
+
+fn parse_json_string_setting(source: &str, targets: &[&str]) -> Option<String> {
+    let value = serde_json::from_str::<Value>(source).ok()?;
+    for target in targets {
+        let Some(raw) = value.get(*target).and_then(Value::as_str) else {
+            continue;
+        };
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
 }
 
 #[derive(Debug, Error)]

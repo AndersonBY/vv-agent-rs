@@ -72,7 +72,7 @@ impl std::fmt::Debug for AgentSDKOptions {
 impl Default for AgentSDKOptions {
     fn default() -> Self {
         Self {
-            settings_file: PathBuf::from("local_settings.py"),
+            settings_file: PathBuf::from("local_settings.json"),
             default_backend: "moonshot".to_string(),
             workspace: PathBuf::from("./workspace"),
             timeout_seconds: 90.0,

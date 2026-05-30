@@ -29,7 +29,7 @@ fn cli_parser_matches_entrypoint_flags() {
             "computer",
             "--verbose",
         ],
-        "local_settings.py",
+        "local_settings.json",
     )
     .expect("parse args");
 
@@ -42,6 +42,18 @@ fn cli_parser_matches_entrypoint_flags() {
     assert_eq!(args.language, "en-US");
     assert_eq!(args.agent_type.as_deref(), Some("computer"));
     assert!(args.verbose);
+}
+
+#[test]
+fn cli_help_uses_json_settings_defaults() {
+    let error =
+        parse_cli_args_from_with_default_settings(["vv-agent", "--help"], "local_settings.json")
+            .expect_err("help text");
+
+    assert!(error.contains("VV_AGENT_LOCAL_SETTINGS"));
+    assert!(error.contains("local_settings.json"));
+    assert!(!error.contains("default: V_AGENT_LOCAL_SETTINGS"));
+    assert!(!error.contains("local_settings.py"));
 }
 
 #[test]

@@ -40,7 +40,7 @@ fn thread_backend_submit_and_parallel_map_preserve_order() {
 #[test]
 fn runtime_recipe_round_trips_through_json() {
     let recipe = RuntimeRecipe {
-        settings_file: "/tmp/settings.py".to_string(),
+        settings_file: "/tmp/settings.json".to_string(),
         backend: "deepseek".to_string(),
         model: "deepseek-v4-pro".to_string(),
         workspace: "/tmp/workspace".to_string(),
@@ -76,14 +76,14 @@ fn runtime_recipe_round_trips_through_json() {
 #[test]
 fn runtime_recipe_matches_dict_and_default_checkpoint_path() {
     let recipe = RuntimeRecipe::new(
-        "/tmp/settings.py",
+        "/tmp/settings.json",
         "deepseek",
         "deepseek-v4-pro",
         "/tmp/vv-agent-workspace",
     );
 
     let payload = recipe.to_dict();
-    assert_eq!(payload["settings_file"], json!("/tmp/settings.py"));
+    assert_eq!(payload["settings_file"], json!("/tmp/settings.json"));
     assert_eq!(payload["timeout_seconds"], json!(90.0));
 
     let restored = RuntimeRecipe::from_dict(&payload).expect("runtime recipe from dict");
@@ -253,7 +253,7 @@ fn celery_backend_inline_execute_matches_inline_fallback() {
 #[test]
 fn celery_backend_distributed_requires_store_and_dispatcher() {
     let backend = CeleryBackend::distributed(RuntimeRecipe::new(
-        "settings.py",
+        "settings.json",
         "deepseek",
         "deepseek-v4-pro",
         ".",
@@ -341,7 +341,7 @@ impl CycleTaskDispatcher for RecordingDispatcher {
 
 #[test]
 fn celery_backend_distributed_dispatches_cycles_through_checkpoint_store() {
-    let recipe = RuntimeRecipe::new("settings.py", "deepseek", "deepseek-v4-pro", ".");
+    let recipe = RuntimeRecipe::new("settings.json", "deepseek", "deepseek-v4-pro", ".");
     let store = Arc::new(InMemoryStateStore::new());
     let calls = Arc::new(Mutex::new(Vec::new()));
     let dispatcher = Arc::new(RecordingDispatcher {
@@ -382,7 +382,7 @@ fn celery_backend_distributed_dispatches_cycles_through_checkpoint_store() {
 
 #[test]
 fn runtime_delegates_cycle_execution_to_configured_backend() {
-    let recipe = RuntimeRecipe::new("settings.py", "deepseek", "deepseek-v4-pro", ".");
+    let recipe = RuntimeRecipe::new("settings.json", "deepseek", "deepseek-v4-pro", ".");
     let store = Arc::new(InMemoryStateStore::new());
     let calls = Arc::new(Mutex::new(Vec::new()));
     let dispatcher = Arc::new(RecordingDispatcher {
@@ -445,7 +445,7 @@ impl CycleTaskDispatcher for MetadataSnapshotDispatcher {
 
 #[test]
 fn runtime_freezes_dynamic_tool_schema_hints_before_distributed_dispatch() {
-    let recipe = RuntimeRecipe::new("settings.py", "deepseek", "deepseek-v4-pro", ".");
+    let recipe = RuntimeRecipe::new("settings.json", "deepseek", "deepseek-v4-pro", ".");
     let store = Arc::new(InMemoryStateStore::new());
     let seen_bash_hint = Arc::new(Mutex::new(None));
     let dispatcher = Arc::new(MetadataSnapshotDispatcher {
@@ -489,7 +489,7 @@ impl CycleTaskDispatcher for FailingDispatcher {
 
 #[test]
 fn celery_backend_distributed_returns_checkpointed_failure_and_cleans_up() {
-    let recipe = RuntimeRecipe::new("settings.py", "deepseek", "deepseek-v4-pro", ".");
+    let recipe = RuntimeRecipe::new("settings.json", "deepseek", "deepseek-v4-pro", ".");
     let store = Arc::new(InMemoryStateStore::new());
     let backend = CeleryBackend::distributed_with_dispatcher(
         recipe,
@@ -553,7 +553,7 @@ impl CycleTaskDispatcher for AdvancingDispatcher {
 
 #[test]
 fn celery_backend_distributed_returns_checkpointed_max_cycles_and_cleans_up() {
-    let recipe = RuntimeRecipe::new("settings.py", "deepseek", "deepseek-v4-pro", ".");
+    let recipe = RuntimeRecipe::new("settings.json", "deepseek", "deepseek-v4-pro", ".");
     let store = Arc::new(InMemoryStateStore::new());
     let dispatcher = Arc::new(AdvancingDispatcher {
         store: store.clone(),

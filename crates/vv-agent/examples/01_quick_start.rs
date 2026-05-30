@@ -12,7 +12,7 @@ use vv_agent::{
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let settings_file =
-        env::var("V_AGENT_LOCAL_SETTINGS").unwrap_or_else(|_| "local_settings.py".to_string());
+        env::var("VV_AGENT_LOCAL_SETTINGS").unwrap_or_else(|_| "local_settings.json".to_string());
     let backend = env::var("V_AGENT_EXAMPLE_BACKEND").unwrap_or_else(|_| "moonshot".to_string());
     let model = env::var("V_AGENT_EXAMPLE_MODEL").unwrap_or_else(|_| "kimi-k2.5".to_string());
     let workspace = PathBuf::from(

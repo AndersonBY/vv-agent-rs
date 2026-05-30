@@ -248,7 +248,7 @@ fn top_level_types_are_constructible() {
     let _definition = AgentDefinition::default_for_model("mini");
     let _task = AgentTask::new("task_1", "mini", "system", "user");
     let _runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new("done")]))
-        .with_settings_file("settings.py")
+        .with_settings_file("settings.json")
         .with_default_backend("deepseek")
         .with_sub_agent_timeout_seconds(30.0);
     let _token = CancellationToken::default();
@@ -258,7 +258,7 @@ fn top_level_types_are_constructible() {
     let _execution_backend = RuntimeExecutionBackend::default();
     let _execution_backend_alias = ExecutionBackend::default();
     let _thread_backend = ThreadBackend::default();
-    let _recipe = RuntimeRecipe::new("settings.py", "backend", "model", ".");
+    let _recipe = RuntimeRecipe::new("settings.json", "backend", "model", ".");
     let _celery_backend = CeleryBackend::inline_fallback();
     let _checkpoint = Checkpoint {
         task_id: "task".to_string(),
