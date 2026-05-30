@@ -1352,6 +1352,33 @@ fn tools_module_is_split_into_handler_files() {
 }
 
 #[test]
+fn rust_source_files_stay_under_reasonable_size_limit() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source_files = collect_rust_files(&manifest_dir.join("src"));
+    let oversized = source_files
+        .into_iter()
+        .filter_map(|path| {
+            let content = std::fs::read_to_string(&path).expect("read source file");
+            let line_count = content.lines().count();
+            (line_count > MAX_REASONABLE_SOURCE_LINES).then(|| {
+                let relative = path
+                    .strip_prefix(manifest_dir)
+                    .unwrap_or(path.as_path())
+                    .display()
+                    .to_string();
+                format!("{relative}: {line_count} lines")
+            })
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        oversized.is_empty(),
+        "Rust source files over {MAX_REASONABLE_SOURCE_LINES} lines should be split:\n{}",
+        oversized.join("\n")
+    );
+}
+
+#[test]
 fn runtime_engine_root_stays_focused_on_loop_orchestration() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let runtime_engine = manifest_dir.join("src/runtime/engine/mod.rs");
@@ -1380,579 +1407,6 @@ fn runtime_engine_root_stays_focused_on_loop_orchestration() {
             "runtime/engine/mod.rs should delegate {module} responsibilities to a focused submodule"
         );
     }
-}
-
-#[test]
-fn workspace_s3_root_stays_focused_on_public_exports() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let s3 = manifest_dir.join("src/workspace/s3.rs");
-    let content = std::fs::read_to_string(&s3).expect("read workspace s3 module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "workspace/s3.rs should keep only S3 module wiring and public exports while delegating backend operations, configuration, key mapping, and async runtime bridging to focused submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn types_dict_records_root_stays_focused_on_record_exports() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let records = manifest_dir.join("src/types/dict/records.rs");
-    let content = std::fs::read_to_string(&records).expect("read types dict records module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "types/dict/records.rs should keep only record conversion module wiring while delegating CycleRecord, AgentTask, and AgentResult dictionary contracts to focused submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn skills_normalize_root_stays_focused_on_entry_orchestration() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let normalize = manifest_dir.join("src/skills/normalize.rs");
-    let content = std::fs::read_to_string(&normalize).expect("read skills normalize module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "skills/normalize.rs should orchestrate skill entry normalization while delegating path resolution and JSON value stringification helpers to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn skills_validator_root_stays_focused_on_validation_orchestration() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let validator = manifest_dir.join("src/skills/validator.rs");
-    let content = std::fs::read_to_string(&validator).expect("read skills validator module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "skills/validator.rs should orchestrate directory and metadata validation while delegating validation modes, diagnostics, and field rules to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn skills_parser_root_stays_focused_on_public_parser_exports() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let parser = manifest_dir.join("src/skills/parser.rs");
-    let content = std::fs::read_to_string(&parser).expect("read skills parser module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "skills/parser.rs should keep only parser module wiring and public exports while delegating discovery, frontmatter parsing, properties, file reads, and value normalization to focused submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn cli_root_stays_focused_on_entrypoint_orchestration() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let cli = manifest_dir.join("src/cli.rs");
-    let content = std::fs::read_to_string(&cli).expect("read cli module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "cli.rs should keep the binary entrypoint orchestration while delegating argument parsing, task construction, output payloads, and verbose logging to cli submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn background_sessions_root_stays_focused_on_manager_orchestration() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let background_sessions = manifest_dir.join("src/runtime/background_sessions.rs");
-    let content =
-        std::fs::read_to_string(&background_sessions).expect("read background sessions module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "runtime/background_sessions.rs should delegate options, session state, listener notification, subscription cleanup, and tests to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn windows_shell_root_stays_focused_on_public_entrypoint() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let windows = manifest_dir.join("src/runtime/shell/windows.rs");
-    let content = std::fs::read_to_string(&windows).expect("read windows shell module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "runtime/shell/windows.rs should expose the Windows shell resolution entrypoint while delegating discovery, priority normalization, executable probing, and entry resolution to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn runtime_engine_memory_root_stays_focused_on_manager_construction() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let memory = manifest_dir.join("src/runtime/engine/memory.rs");
-    let content = std::fs::read_to_string(&memory).expect("read runtime engine memory module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "runtime/engine/memory.rs should keep build_memory_manager as the entrypoint and delegate metadata parsing, callbacks, token-limit lookup, and session-memory setup to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn memory_manager_root_stays_focused_on_compaction_orchestration() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let manager = manifest_dir.join("src/memory/manager/mod.rs");
-    let content = std::fs::read_to_string(&manager).expect("read memory manager module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "memory/manager/mod.rs should keep MemoryManager construction and compact orchestration at the root while delegating limits, warnings, microcompact, emergency compaction, and session context helpers to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn memory_artifacts_root_stays_focused_on_public_entrypoints() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let artifacts = manifest_dir.join("src/memory/artifacts.rs");
-    let content = std::fs::read_to_string(&artifacts).expect("read memory artifacts module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "memory/artifacts.rs should keep only public artifact compaction entrypoints while delegating config, compacted content rendering, tool-call metadata, persistence, and persisted-section rendering to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn memory_summary_root_stays_focused_on_summary_model() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let summary = manifest_dir.join("src/memory/summary.rs");
-    let content = std::fs::read_to_string(&summary).expect("read memory summary module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "memory/summary.rs should keep the public summary data model and delegate original-message extraction, file-action projection, progress/error events, and text helpers to summary submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn sub_task_manager_root_stays_focused_on_lifecycle_orchestration() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let manager = manifest_dir.join("src/runtime/sub_task_manager/manager.rs");
-    let content = std::fs::read_to_string(&manager).expect("read sub-task manager module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "runtime/sub_task_manager/manager.rs should only own the manager type; delegate identity generation, submission, session continuation, status, event projection, and record details to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn session_memory_root_stays_focused_on_orchestration() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let session = manifest_dir.join("src/memory/session/mod.rs");
-    let content = std::fs::read_to_string(&session).expect("read session memory module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "memory/session/mod.rs should delegate config, parsing, prompt, and storage helpers to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn workspace_grep_local_rg_root_stays_focused_on_command_orchestration() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let local_rg = manifest_dir.join("src/tools/handlers/search/local_rg.rs");
-    let content = std::fs::read_to_string(&local_rg).expect("read local rg module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "tools/handlers/search/local_rg.rs should delegate rg parsing, path helpers, command helpers, and tests to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn workspace_grep_rg_parse_stays_split_by_json_event_responsibility() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let parse = manifest_dir.join("src/tools/handlers/search/local_rg/parse.rs");
-    let content = std::fs::read_to_string(&parse).expect("read local rg parse module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "tools/handlers/search/local_rg/parse.rs should keep only rg JSON parse orchestration while delegating field decoding, event normalization, path handling, and output accumulation to focused submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn workspace_file_io_root_stays_focused_on_tool_exports() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let file_io = manifest_dir.join("src/tools/handlers/workspace/file_io.rs");
-    let content = std::fs::read_to_string(&file_io).expect("read workspace file_io module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "tools/handlers/workspace/file_io.rs should only wire file_info/read_file/write_file exports while each workspace file tool owns its own handler module; found {line_count} lines"
-    );
-}
-
-#[test]
-fn sdk_client_task_root_stays_focused_on_prepare_api() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let task = manifest_dir.join("src/sdk/client/task.rs");
-    let content = std::fs::read_to_string(&task).expect("read sdk client task module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "sdk/client/task.rs should keep shared task preparation helpers at the root while delegating named-agent, inline-agent, default-agent, task id generation, prompt construction, and metadata expansion to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn sdk_client_runtime_root_stays_focused_on_public_runtime_exports() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let runtime = manifest_dir.join("src/sdk/client/runtime.rs");
-    let content = std::fs::read_to_string(&runtime).expect("read sdk client runtime module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "sdk/client/runtime.rs should keep only SDK runtime module wiring and public exports while delegating run-control construction, LLM construction, runtime option application, and RunAgent implementations to focused submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn prompt_builder_root_stays_focused_on_public_exports() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let builder = manifest_dir.join("src/prompt/builder.rs");
-    let content = std::fs::read_to_string(&builder).expect("read prompt builder module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "prompt/builder.rs should re-export public prompt builder APIs while delegating section storage, options, system prompt composition, and hashing to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn sdk_resources_root_stays_focused_on_public_exports() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let resources = manifest_dir.join("src/sdk/resources.rs");
-    let content = std::fs::read_to_string(&resources).expect("read sdk resources module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "sdk/resources.rs should delegate discovery, path resolution, and JSON parsing to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn sdk_types_root_stays_focused_on_public_exports() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let sdk_types = manifest_dir.join("src/sdk/types.rs");
-    let content = std::fs::read_to_string(&sdk_types).expect("read sdk types module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "sdk/types.rs should re-export the SDK public type surface while delegating agent definitions, SDK options, run payloads, and query helpers to focused submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn anthropic_prompt_cache_root_stays_focused_on_public_api() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let cache = manifest_dir.join("src/llm/anthropic_prompt_cache.rs");
-    let content = std::fs::read_to_string(&cache).expect("read prompt cache module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "llm/anthropic_prompt_cache.rs should delegate block normalization, cache breakpoint planning, token estimation, model thresholds, and section parsing to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn types_dict_common_root_stays_focused_on_shared_exports() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let common = manifest_dir.join("src/types/dict/common.rs");
-    let content = std::fs::read_to_string(&common).expect("read types dict common module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "types/dict/common.rs should only re-export shared dict helpers while delegating field readers, value writers, and enum string mappings to focused submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn vv_llm_client_root_stays_focused_on_public_client_contract() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let client = manifest_dir.join("src/llm/vv_llm_client/mod.rs");
-    let content = std::fs::read_to_string(&client).expect("read vv-llm client module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "llm/vv_llm_client/mod.rs should keep the client type, retry/failover trait entrypoint, and public debug surface while delegating construction, endpoint execution, request conversion, response conversion, streaming, endpoint bookkeeping, and prompt cache handling to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn vv_llm_prompt_cache_root_stays_focused_on_public_entrypoints() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let prompt_cache = manifest_dir.join("src/llm/vv_llm_client/prompt_cache.rs");
-    let content = std::fs::read_to_string(&prompt_cache).expect("read vv-llm prompt cache module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "llm/vv_llm_client/prompt_cache.rs should keep only the prompt-cache entrypoints while delegating endpoint normalization, request metadata extraction, cache JSON serialization, and planned cache application to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn runtime_backends_root_stays_focused_on_public_exports() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let backends = manifest_dir.join("src/runtime/backends/mod.rs");
-    let content = std::fs::read_to_string(&backends).expect("read runtime backends module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "runtime/backends/mod.rs should declare backend modules and re-export the public backend surface while delegating the backend enum, runtime recipe, and cycle-loop result helpers to focused submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn runtime_hooks_root_stays_focused_on_public_hook_contract() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let hooks = manifest_dir.join("src/runtime/hooks.rs");
-    let content = std::fs::read_to_string(&hooks).expect("read runtime hooks module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "runtime/hooks.rs should keep only hook module wiring and public re-exports while delegating event payloads, patch helpers, the RuntimeHook trait, and manager application flow to focused submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn tool_call_runner_root_stays_focused_on_public_runner_contract() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let runner = manifest_dir.join("src/runtime/tool_call_runner.rs");
-    let content = std::fs::read_to_string(&runner).expect("read tool call runner module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "runtime/tool_call_runner.rs should keep only public runner exports while delegating request construction, run outcomes, tool result helpers, and execution flow to focused submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn celery_backend_root_stays_focused_on_backend_execution() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let celery = manifest_dir.join("src/runtime/backends/celery.rs");
-    let content = std::fs::read_to_string(&celery).expect("read celery backend module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "runtime/backends/celery.rs should keep only Celery backend module wiring and public exports while delegating backend construction, execution dispatch, distributed checkpoint loops, dispatch payloads, and checkpoint snapshot helpers to focused submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn vv_llm_streaming_root_stays_focused_on_stream_collection() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let streaming = manifest_dir.join("src/llm/vv_llm_client/streaming.rs");
-    let content = std::fs::read_to_string(&streaming).expect("read vv-llm streaming module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "llm/vv_llm_client/streaming.rs should collect the provider stream and delegate raw content normalization, tool-call delta state, and callback event formatting to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn tools_common_root_stays_focused_on_shared_exports() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let common = manifest_dir.join("src/tools/common.rs");
-    let content = std::fs::read_to_string(&common).expect("read tools common module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "tools/common.rs should delegate argument coercion, command execution, result construction, grep text matching, path helpers, edit helpers, and file-type checks to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn bash_handler_root_stays_focused_on_tool_registration() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let bash = manifest_dir.join("src/tools/handlers/bash.rs");
-    let content = std::fs::read_to_string(&bash).expect("read bash handler module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "tools/handlers/bash.rs should register the bash tool and delegate command execution, shell default parsing, process env construction, and tests to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn config_settings_literal_root_stays_focused_on_public_api() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let settings_literal = manifest_dir.join("src/config/settings_literal.rs");
-    let content = std::fs::read_to_string(&settings_literal).expect("read settings literal module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "config/settings_literal.rs should expose settings parsing entrypoints and delegate assignment extraction, identifier parsing, JSON normalization, and string escapes to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn config_model_resolution_root_stays_focused_on_public_entrypoints() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let model_resolution = manifest_dir.join("src/config/model_resolution.rs");
-    let content = std::fs::read_to_string(&model_resolution).expect("read model resolution module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "config/model_resolution.rs should keep public vv-llm resolution entrypoints at the root while delegating settings normalization, backend mapping, model aliases, and endpoint client construction to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn sdk_client_sessions_root_stays_focused_on_public_entrypoints() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let sessions = manifest_dir.join("src/sdk/client/sessions.rs");
-    let content = std::fs::read_to_string(&sessions).expect("read sdk client sessions module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "sdk/client/sessions.rs should delegate run closure construction, default-agent session helpers, and named-agent session helpers to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn runtime_processes_root_stays_focused_on_public_exports() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let processes = manifest_dir.join("src/runtime/processes.rs");
-    let content = std::fs::read_to_string(&processes).expect("read runtime processes module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "runtime/processes.rs should only expose captured-process APIs while delegating process startup, output files, platform process-group setup, and termination to focused submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn sdk_session_run_root_stays_focused_on_session_run_exports() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let run = manifest_dir.join("src/sdk/session/run.rs");
-    let content = std::fs::read_to_string(&run).expect("read sdk session run module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "sdk/session/run.rs should wire session run submodules while delegating prompt handling, queue controls, query helpers, and runtime execution assembly to focused files; found {line_count} lines"
-    );
-}
-
-#[test]
-fn sub_agent_handler_root_stays_focused_on_tool_entrypoint() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let handler = manifest_dir.join("src/tools/handlers/sub_agents.rs");
-    let content = std::fs::read_to_string(&handler).expect("read sub-agent handler module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "tools/handlers/sub_agents.rs should delegate request parsing, async dispatch, batch execution, and response formatting to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn sub_agent_session_root_stays_focused_on_session_contract() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let session = manifest_dir.join("src/runtime/sub_agents/session.rs");
-    let content = std::fs::read_to_string(&session).expect("read sub-agent session module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "runtime/sub_agents/session.rs should keep the session type, constructor, and SubAgentSession trait contract while delegating run execution, event forwarding, state sanitization, and subscription cleanup to session submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn sub_agent_runner_root_stays_focused_on_sub_task_orchestration() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let runner = manifest_dir.join("src/runtime/sub_agents/runner.rs");
-    let content = std::fs::read_to_string(&runner).expect("read sub-agent runner module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "runtime/sub_agents/runner.rs should build the runner and orchestrate sub-task flow while delegating identity resolution, model client resolution, failure outcomes, and attached session execution to runner submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn workspace_list_files_handler_root_stays_focused_on_tool_entrypoint() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let handler = manifest_dir.join("src/tools/handlers/workspace/listing.rs");
-    let content = std::fs::read_to_string(&handler).expect("read list-files handler module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "tools/handlers/workspace/listing.rs should delegate argument parsing, rg scanning, backend fallback, and response rendering to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn workspace_list_files_local_rg_root_stays_focused_on_command_orchestration() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let local_rg = manifest_dir.join("src/tools/handlers/workspace/listing/local_rg.rs");
-    let content = std::fs::read_to_string(&local_rg).expect("read list-files local rg module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "tools/handlers/workspace/listing/local_rg.rs should keep only rg list-files orchestration while delegating executable discovery, output scanning, path helpers, and tests to submodules; found {line_count} lines"
-    );
-}
-
-#[test]
-fn workspace_grep_handler_root_stays_focused_on_tool_entrypoint() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let handler = manifest_dir.join("src/tools/handlers/search/mod.rs");
-    let content = std::fs::read_to_string(&handler).expect("read workspace grep handler module");
-    let line_count = content.lines().count();
-
-    assert!(
-        line_count <= MAX_REASONABLE_SOURCE_LINES,
-        "tools/handlers/search/mod.rs should keep workspace_grep orchestration at the root while delegating argument parsing, rg scanning, fallback scanning, and response rendering to submodules; found {line_count} lines"
-    );
 }
 
 #[test]
@@ -2558,6 +2012,29 @@ fn sorted(values: Vec<&str>) -> Vec<&str> {
     let mut sorted = values;
     sorted.sort_unstable();
     sorted
+}
+
+fn collect_rust_files(root: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if metadata.is_file() {
+            if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                files.push(path);
+            }
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            stack.push(entry.path());
+        }
+    }
+    files
 }
 
 fn assert_description_contains(

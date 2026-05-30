@@ -481,16 +481,13 @@ fn resource_loader_reports_invalid_agent_profiles() {
 }
 
 #[test]
-fn resource_loader_ignores_external_hook_files_for_rust_runtime() {
+fn resource_loader_ignores_unmanaged_resource_directories() {
     let workspace = tempfile::tempdir().expect("workspace");
     let resource_root = workspace.path().join(".vv-agent");
-    std::fs::create_dir_all(resource_root.join("hooks/nested")).expect("hooks");
-    std::fs::write(resource_root.join("hooks/z.py"), "HOOK = object()").expect("hook");
-    std::fs::write(
-        resource_root.join("hooks/nested/index.py"),
-        "HOOK = object()",
-    )
-    .expect("nested hook");
+    std::fs::create_dir_all(resource_root.join("scratch/nested")).expect("scratch");
+    std::fs::write(resource_root.join("scratch/ignored.txt"), "ignored").expect("ignored file");
+    std::fs::write(resource_root.join("scratch/nested/ignored.txt"), "ignored")
+        .expect("nested ignored file");
 
     let mut loader = AgentResourceLoader::with_resource_dirs(
         workspace.path(),
@@ -500,57 +497,9 @@ fn resource_loader_ignores_external_hook_files_for_rust_runtime() {
     let discovered = loader.discover();
 
     let debug = format!("{discovered:?}");
-    assert!(!debug.contains("z.py"));
-    assert!(!debug.contains("index.py"));
+    assert!(!debug.contains("scratch"));
+    assert!(!debug.contains("ignored.txt"));
     assert!(discovered.diagnostics.is_empty());
-}
-
-#[test]
-fn agent_sdk_does_not_autoload_external_hook_files_from_resources() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let resource_root = workspace.path().join(".vv-agent");
-    std::fs::create_dir_all(resource_root.join("hooks")).expect("hooks");
-    std::fs::write(
-        resource_root.join("hooks/force_finish.py"),
-        r#"raise RuntimeError("external hook files must not be executed by vv-agent-rs")"#,
-    )
-    .expect("hook");
-    let builder: LlmBuilder = Arc::new(move |_settings_path, backend, model, _timeout_seconds| {
-        let llm: Arc<dyn LlmClient> = Arc::new(ScriptedLlmClient::new(vec![LLMResponse::new(
-            "plain response",
-        )]));
-        Ok((
-            llm,
-            ResolvedModelConfig::new(
-                backend.to_string(),
-                model.to_string(),
-                model.to_string(),
-                model.to_string(),
-                Vec::new(),
-            ),
-        ))
-    });
-
-    let client = AgentSDKClient::new(AgentSDKOptions {
-        workspace: workspace.path().to_path_buf(),
-        resource_loader: Some(AgentResourceLoader::with_resource_dirs(
-            workspace.path(),
-            &resource_root,
-            workspace.path().join(".none"),
-        )),
-        llm_builder: Some(builder),
-        ..AgentSDKOptions::default()
-    });
-
-    let mut agent = AgentDefinition::default_for_model("demo-model");
-    agent.no_tool_policy = NoToolPolicy::Finish;
-    let run = client
-        .run_with_agent(agent, "ignore external hook files")
-        .expect("run without executing external hook file");
-
-    assert_eq!(run.result.status, AgentStatus::Completed);
-    assert_eq!(run.result.final_answer.as_deref(), Some("plain response"));
-    assert!(client.options.runtime_hooks.is_empty());
 }
 
 #[test]

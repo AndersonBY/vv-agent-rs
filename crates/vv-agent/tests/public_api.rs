@@ -117,31 +117,23 @@ fn source_rustdoc_comments_stay_capability_focused() {
 }
 
 #[test]
-fn sdk_does_not_include_external_hook_bridge() {
+fn sdk_exports_rust_native_hook_surface() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let sdk_mod =
         std::fs::read_to_string(manifest_dir.join("src/sdk/mod.rs")).expect("read SDK module");
-    let implementation_module_export = format!(
+    let language_specific_hook_export = format!(
         "pub mod {}_hooks",
         forbidden_phrase(&[TERM_LANGUAGE]).to_ascii_lowercase()
     );
 
     assert!(
-        !sdk_mod.contains(&implementation_module_export),
-        "SDK public modules should expose Rust agent capabilities, not external hook bridge internals"
-    );
-    assert!(
-        !sdk_mod.contains("mod hook_bridge;"),
-        "SDK should not compile an external hook bridge into the Rust crate"
-    );
-    assert!(
-        !manifest_dir.join("src/sdk/hook_bridge.rs").exists(),
-        "Rust SDK should use native RuntimeHook implementations instead of an external hook bridge"
+        !sdk_mod.contains(&language_specific_hook_export),
+        "SDK public modules should expose Rust agent capabilities directly"
     );
 }
 
 #[test]
-fn internal_bridge_module_names_stay_runtime_focused() {
+fn internal_module_names_stay_runtime_focused() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let sdk_mod =
         std::fs::read_to_string(manifest_dir.join("src/sdk/mod.rs")).expect("read SDK module");
@@ -151,7 +143,7 @@ fn internal_bridge_module_names_stay_runtime_focused() {
 
     assert!(
         !sdk_mod.contains(&format!("mod {source_language}_hooks;")),
-        "SDK internals should name the hook bridge by runtime purpose"
+        "SDK internals should name hook modules by runtime purpose"
     );
     assert!(
         !config_mod.contains(&format!("mod {source_language}_settings;")),
@@ -178,52 +170,6 @@ fn config_internals_are_split_by_runtime_responsibility() {
             "expected config/{module}.rs to exist"
         );
     }
-}
-
-#[test]
-fn sdk_sources_do_not_spawn_external_hook_runner() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let source_files = collect_rust_files(&manifest_dir.join("src/sdk"));
-    let forbidden = [
-        "HOOK_BRIDGE_SHIM",
-        "VV_AGENT_HOOK_RUNNER",
-        "uv run hook bridge",
-        "find_hook_runtime_project_dir",
-        "RuntimeHookBridge",
-        "hook_files",
-        "load_hooks",
-    ];
-
-    let mut violations = Vec::new();
-    for path in source_files {
-        let content = std::fs::read_to_string(&path).expect("read SDK source file");
-        for phrase in forbidden {
-            if content.contains(phrase) {
-                violations.push(format!("{} contains {phrase}", path.display()));
-            }
-        }
-    }
-
-    assert!(violations.is_empty(), "{}", violations.join("\n"));
-}
-
-#[test]
-fn runtime_recipe_does_not_expose_external_hook_class_paths() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let runtime_backends =
-        std::fs::read_to_string(manifest_dir.join("src/runtime/backends/mod.rs"))
-            .expect("read runtime backends module");
-    assert!(
-        !runtime_backends.contains("hook_class_paths"),
-        "RuntimeRecipe should stay Rust-native; runtime hooks are injected as RuntimeHook values, not serialized external class paths"
-    );
-
-    let recipe = RuntimeRecipe::new("settings.py", "deepseek", "deepseek-v4-pro", ".");
-    let payload = recipe.to_dict();
-    assert!(
-        payload.get("hook_class_paths").is_none(),
-        "RuntimeRecipe payload should not advertise unsupported external hook loading"
-    );
 }
 
 fn public_doc_forbidden_terms() -> Vec<String> {

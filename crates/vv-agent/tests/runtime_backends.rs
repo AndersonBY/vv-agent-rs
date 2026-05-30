@@ -50,7 +50,24 @@ fn runtime_recipe_round_trips_through_json() {
 
     let payload = serde_json::to_value(&recipe).expect("serialize");
     assert_eq!(payload["backend"], json!("deepseek"));
-    assert!(payload.get("hook_class_paths").is_none());
+    let mut keys = payload
+        .as_object()
+        .expect("recipe payload object")
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        vec![
+            "backend",
+            "log_preview_chars",
+            "model",
+            "settings_file",
+            "timeout_seconds",
+            "workspace"
+        ]
+    );
 
     let restored: RuntimeRecipe = serde_json::from_value(payload).expect("deserialize");
     assert_eq!(restored, recipe);
