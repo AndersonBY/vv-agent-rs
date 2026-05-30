@@ -31,7 +31,6 @@ const REASONING_CHAIN_MODELS: &[&str] = &[
     "deepseek-r1-tools",
     "deepseek-v4-flash",
     "deepseek-v4-pro",
-    "kimi-k2-thinking",
     "kimi-k2.5",
     "kimi-k2.6",
     "minimax-m2.1",

@@ -6,12 +6,10 @@ use crate::llm::VvLlmClient;
 
 use super::{load_llm_settings_from_file, ConfigError, ResolvedModelConfig};
 
-mod aliases;
 mod backend;
 mod endpoints;
 mod settings;
 
-use aliases::select_model_alias;
 use backend::backend_type_from_str;
 use endpoints::{build_endpoint_chat_clients, endpoint_options_from_vv_llm};
 use settings::normalize_llm_settings;
@@ -25,16 +23,11 @@ pub fn resolve_model_endpoint(
 ) -> Result<ResolvedModelConfig, ConfigError> {
     let settings = normalize_llm_settings(settings)?;
     let backend_type = backend_type_from_str(backend)?;
-    let selected_model = select_model_alias(&settings, backend, model);
     let resolved = settings
-        .resolve_chat_model(backend_type, &selected_model)
+        .resolve_chat_model(backend_type, model)
         .map_err(|error| ConfigError::InvalidSettings(error.to_string()))?;
     Ok(resolved_from_vv_llm(
-        backend,
-        model,
-        &selected_model,
-        resolved,
-        &settings,
+        backend, model, model, resolved, &settings,
     ))
 }
 
@@ -47,17 +40,10 @@ pub fn build_vv_llm_from_local_settings(
     let settings_value = load_llm_settings_from_file(settings_path)?;
     let settings = normalize_llm_settings(&settings_value)?;
     let backend_type = backend_type_from_str(backend)?;
-    let selected_model = select_model_alias(&settings, backend, model);
     let vv_resolved = settings
-        .resolve_chat_model(backend_type, &selected_model)
+        .resolve_chat_model(backend_type, model)
         .map_err(|error| ConfigError::InvalidSettings(error.to_string()))?;
-    let resolved = resolved_from_vv_llm(
-        backend,
-        model,
-        &selected_model,
-        vv_resolved.clone(),
-        &settings,
-    );
+    let resolved = resolved_from_vv_llm(backend, model, model, vv_resolved.clone(), &settings);
     let endpoint_clients = build_endpoint_chat_clients(&vv_resolved, &settings)?;
     let llm = VvLlmClient::new_with_named_endpoint_clients(
         backend,

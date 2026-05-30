@@ -3,37 +3,37 @@ use std::sync::Arc;
 use crate::runtime::state::StateStore;
 
 use super::super::RuntimeRecipe;
-use super::dispatch::CycleTaskDispatcher;
+use super::dispatch::CycleDispatcher;
 
-const DEFAULT_CYCLE_TASK_NAME: &str = "vv_agent.celery_tasks.run_single_cycle";
+const DEFAULT_CYCLE_NAME: &str = "vv_agent.distributed.run_single_cycle";
 
 #[derive(Clone)]
-pub struct CeleryBackend {
+pub struct DistributedBackend {
     pub(super) runtime_recipe: Option<RuntimeRecipe>,
     pub(super) state_store: Option<Arc<dyn StateStore>>,
-    pub(super) cycle_dispatcher: Option<Arc<dyn CycleTaskDispatcher>>,
-    pub(super) cycle_task_name: String,
+    pub(super) cycle_dispatcher: Option<Arc<dyn CycleDispatcher>>,
+    pub(super) cycle_name: String,
 }
 
-impl std::fmt::Debug for CeleryBackend {
+impl std::fmt::Debug for DistributedBackend {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("CeleryBackend")
+            .debug_struct("DistributedBackend")
             .field("runtime_recipe", &self.runtime_recipe)
             .field("has_state_store", &self.state_store.is_some())
             .field("has_cycle_dispatcher", &self.cycle_dispatcher.is_some())
-            .field("cycle_task_name", &self.cycle_task_name)
+            .field("cycle_name", &self.cycle_name)
             .finish()
     }
 }
 
-impl CeleryBackend {
+impl DistributedBackend {
     pub fn inline_fallback() -> Self {
         Self {
             runtime_recipe: None,
             state_store: None,
             cycle_dispatcher: None,
-            cycle_task_name: DEFAULT_CYCLE_TASK_NAME.to_string(),
+            cycle_name: DEFAULT_CYCLE_NAME.to_string(),
         }
     }
 
@@ -42,26 +42,30 @@ impl CeleryBackend {
             runtime_recipe: Some(runtime_recipe),
             state_store: None,
             cycle_dispatcher: None,
-            cycle_task_name: DEFAULT_CYCLE_TASK_NAME.to_string(),
+            cycle_name: DEFAULT_CYCLE_NAME.to_string(),
         }
     }
 
     pub fn distributed_with_dispatcher(
         runtime_recipe: RuntimeRecipe,
         state_store: Arc<dyn StateStore>,
-        cycle_dispatcher: Arc<dyn CycleTaskDispatcher>,
+        cycle_dispatcher: Arc<dyn CycleDispatcher>,
     ) -> Self {
         Self {
             runtime_recipe: Some(runtime_recipe),
             state_store: Some(state_store),
             cycle_dispatcher: Some(cycle_dispatcher),
-            cycle_task_name: DEFAULT_CYCLE_TASK_NAME.to_string(),
+            cycle_name: DEFAULT_CYCLE_NAME.to_string(),
         }
     }
 
-    pub fn with_cycle_task_name(mut self, cycle_task_name: impl Into<String>) -> Self {
-        self.cycle_task_name = cycle_task_name.into();
+    pub fn with_cycle_name(mut self, cycle_name: impl Into<String>) -> Self {
+        self.cycle_name = cycle_name.into();
         self
+    }
+
+    pub fn with_cycle_task_name(self, cycle_task_name: impl Into<String>) -> Self {
+        self.with_cycle_name(cycle_task_name)
     }
 
     pub fn runtime_recipe(&self) -> Option<&RuntimeRecipe> {
@@ -72,8 +76,12 @@ impl CeleryBackend {
         self.state_store.as_ref()
     }
 
+    pub fn cycle_name(&self) -> &str {
+        &self.cycle_name
+    }
+
     pub fn cycle_task_name(&self) -> &str {
-        &self.cycle_task_name
+        self.cycle_name()
     }
 
     pub fn parallel_map<T, R, F>(&self, function: F, items: Vec<T>) -> Vec<R>

@@ -6,13 +6,13 @@ use vv_agent::{
     load_llm_settings_from_file, resolve_model_endpoint, AfterLLMEvent, AgentDefinition,
     AgentRuntime, AgentSDKClient, AgentSDKOptions, AgentStatus, AgentTask,
     BackgroundSessionListener, BaseRuntimeHook, BeforeLLMEvent, BeforeLLMPatch, CancellationToken,
-    CeleryBackend, Checkpoint, ConfigError, EndpointConfig, EndpointOption, ExecutionBackend,
-    ExecutionContext, FileInfo, InMemoryStateStore, InlineBackend, LLMClient, LLMResponse,
-    LocalWorkspaceBackend, MemoryWorkspaceBackend, Message, RedisStateStore, ResolvedModelConfig,
-    RuntimeExecutionBackend, RuntimeRecipe, RuntimeRunControls, S3WorkspaceBackend,
-    S3WorkspaceConfig, ScriptedLLM, ScriptedLlmClient, SessionCancellationHandle, SqliteStateStore,
-    StateStore, ThreadBackend, ToolCall, ToolExecutionResult, ToolNotFoundError, ToolRegistry,
-    VVLlmClient, WorkspaceBackend,
+    CeleryBackend, Checkpoint, ConfigError, DistributedBackend, EndpointConfig, EndpointOption,
+    ExecutionBackend, ExecutionContext, FileInfo, InMemoryStateStore, InlineBackend, LLMClient,
+    LLMResponse, LocalWorkspaceBackend, MemoryWorkspaceBackend, Message, RedisStateStore,
+    ResolvedModelConfig, RuntimeExecutionBackend, RuntimeRecipe, RuntimeRunControls,
+    S3WorkspaceBackend, S3WorkspaceConfig, ScriptedLLM, ScriptedLlmClient,
+    SessionCancellationHandle, SqliteStateStore, StateStore, ThreadBackend, ToolCall,
+    ToolExecutionResult, ToolNotFoundError, ToolRegistry, VVLlmClient, WorkspaceBackend,
 };
 
 #[test]
@@ -259,6 +259,7 @@ fn top_level_types_are_constructible() {
     let _execution_backend_alias = ExecutionBackend::default();
     let _thread_backend = ThreadBackend::default();
     let _recipe = RuntimeRecipe::new("settings.json", "backend", "model", ".");
+    let _distributed_backend = DistributedBackend::inline_fallback();
     let _celery_backend = CeleryBackend::inline_fallback();
     let _checkpoint = Checkpoint {
         task_id: "task".to_string(),
@@ -277,13 +278,8 @@ fn top_level_types_are_constructible() {
     let _config_error = ConfigError::MissingSettingsFile("missing".to_string());
     let _endpoint = EndpointConfig::new("ep", "key", "http://localhost");
     let _endpoint_option = EndpointOption::new(_endpoint.clone(), "mini");
-    let _resolved = ResolvedModelConfig::new(
-        "moonshot",
-        "kimi-k2.5",
-        "kimi-k2-thinking",
-        "kimi-k2-thinking",
-        vec![],
-    );
+    let _resolved =
+        ResolvedModelConfig::new("moonshot", "kimi-k2.6", "kimi-k2.6", "kimi-k2.6", vec![]);
     let _ = load_llm_settings_from_file("missing.toml");
     let _ = resolve_model_endpoint(&serde_json::json!({}), "moonshot", "mini");
     let _registry_ref: &ToolRegistry = &_registry;

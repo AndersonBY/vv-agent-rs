@@ -2,67 +2,285 @@
 
 [English](README.md)
 
-VectorVein Agent 的 Rust 工作空间，包含运行时、SDK、CLI、内置工具和工作区后端。这个 crate 应该作为独立 Rust 包使用：面向模型的 prompt 和工具 schema 聚焦可执行能力、约束和输入要求。
+`vv-agent-rs` 是 `vv-agent` crate 的 Rust 工作空间，提供可嵌入的 Agent
+运行时、SDK、CLI、工具系统、记忆层和工作区抽象，用来构建由大语言模型驱动的自动化任务。
 
-## 目录结构
+它的核心设计是显式控制 Agent 状态：模型只是写出一段像最终答案的文本，并不代表任务完成；
+只有调用 `task_finish` 才会完成任务，调用 `ask_user` 则会进入等待用户输入的状态。这样 CLI、
+SDK 会话、后台任务和分布式执行都能使用同一套结果契约。
+
+## 架构
+
+```text
+AgentRuntime
+├── LLM client              # 基于 vv-llm 的聊天客户端、endpoint 解析、streaming
+├── CycleRunner             # 单轮模型调用：prompt、response、tool-call plan
+├── ToolCallRunner          # 工具调度和 finish / wait-user / continue 收敛
+├── RuntimeHookManager      # LLM、工具、memory 前后的 hook
+├── MemoryManager           # 上下文预算、压缩、artifact、session memory
+├── ExecutionBackend        # 运行调度
+│   ├── InlineBackend       # 默认同步执行
+│   ├── ThreadBackend       # 非阻塞任务提交
+│   └── DistributedBackend  # checkpoint cycle 与可插拔调度
+└── WorkspaceBackend        # 工具访问文件 / 对象存储的边界
+    ├── LocalWorkspaceBackend
+    ├── MemoryWorkspaceBackend
+    └── S3WorkspaceBackend
+```
+
+Provider 请求构造、endpoint 通信、重试、streaming delta、token limit、usage 统计和
+provider 协议细节统一交给已发布的 `vv-llm` crate。`vv-agent` 专注于 Agent
+执行层：prompt、工具、hook、memory、session、workspace 访问和任务编排。
+
+## 安装与配置
+
+在本仓库根目录运行：
+
+```bash
+cd vv-agent-rs
+cargo test -p vv-agent
+```
+
+大多数真实模型示例和 CLI 都读取本地 `vv-llm` settings 文件。带密钥的文件应保持未跟踪：
+
+```bash
+cp crates/vv-agent/tests/dev_settings.example.json local_settings.json
+# 在 local_settings.json 中填入 endpoint key。
+```
+
+默认 settings 路径是 `local_settings.json`。示例可通过 `VV_AGENT_LOCAL_SETTINGS` 覆盖，
+CLI 可通过 `--settings-file` 覆盖。
+
+## 快速开始
+
+### CLI
+
+```bash
+cargo run -p vv-agent -- \
+  --prompt "总结这个仓库" \
+  --backend deepseek \
+  --model deepseek-v4-pro \
+  --settings-file local_settings.json \
+  --workspace ./workspace \
+  --verbose
+```
+
+CLI 参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `--prompt` | 必填，用户任务。 |
+| `--backend` | `LLM_SETTINGS.backends` 下的 backend key。 |
+| `--model` | 选中 backend 下的 model key。 |
+| `--settings-file` | 本地 `vv-llm` settings 文件。 |
+| `--workspace` | 暴露给 workspace 工具的目录。 |
+| `--max-cycles` | 最大运行轮数。 |
+| `--language` | prompt 和工具指引语言。 |
+| `--agent-type` | 可选 Agent 类型，例如 `computer`。 |
+| `--verbose` | 输出每轮运行事件。 |
+
+### 直接使用 Runtime
+
+如果你需要自己组装 LLM client、prompt、工具 registry、workspace 和运行控制，可以直接使用
+runtime。
+
+```rust
+use std::path::PathBuf;
+
+use vv_agent::config::build_vv_llm_from_local_settings;
+use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
+use vv_agent::{build_default_registry, AgentRuntime, AgentTask, RuntimeRunControls};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (llm, resolved) = build_vv_llm_from_local_settings(
+        "local_settings.json",
+        "deepseek",
+        "deepseek-v4-pro",
+        90.0,
+    )?;
+    let runtime = AgentRuntime::new(llm).with_tool_registry(build_default_registry());
+    let system_prompt = build_system_prompt_with_options(
+        "You are a reliable execution agent.",
+        BuildSystemPromptOptions {
+            language: "zh-CN".to_string(),
+            use_workspace: true,
+            enable_todo_management: true,
+            ..BuildSystemPromptOptions::default()
+        },
+    );
+
+    let mut task = AgentTask::new(
+        "demo",
+        resolved.model_id,
+        system_prompt,
+        "读取 workspace README，并总结这个项目。",
+    );
+    task.max_cycles = 12;
+
+    let result = runtime.run_with_controls(
+        task,
+        RuntimeRunControls {
+            workspace: Some(PathBuf::from("./workspace")),
+            ..RuntimeRunControls::default()
+        },
+    )?;
+    println!("{:?}: {:?}", result.status, result.final_answer);
+    Ok(())
+}
+```
+
+完整版本见 `crates/vv-agent/examples/01_quick_start.rs`，其中包含 runtime event logging。
+
+### SDK
+
+如果你需要命名 Agent、one-shot run、query helper、长会话、资源发现、共享运行选项或
+workspace override，优先使用 SDK。
+
+```rust
+use std::path::PathBuf;
+
+use vv_agent::{AgentDefinition, AgentSDKClient, AgentSDKOptions};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut agent = AgentDefinition::default_for_model("deepseek-v4-pro");
+    agent.backend = Some("deepseek".to_string());
+    agent.description = "你会先规划任务，再通过工具执行，并返回简洁结果。".to_string();
+    agent.use_workspace = true;
+    agent.enable_todo_management = true;
+
+    let client = AgentSDKClient::new_with_agent(
+        AgentSDKOptions {
+            settings_file: PathBuf::from("local_settings.json"),
+            default_backend: "deepseek".to_string(),
+            workspace: PathBuf::from("./workspace"),
+            ..AgentSDKOptions::default()
+        },
+        agent,
+    );
+
+    let run = client.run("创建 notes.md，写入三个项目要点。")?;
+    println!("{:?}", run.final_answer);
+    Ok(())
+}
+```
+
+Session 会在多轮对话里保持稳定 workspace 和上下文状态：
+
+```rust
+let mut session = client.create_default_session()?;
+session.steer("如果存在 README，请优先读取 README。")?;
+session.follow_up("第一轮回答后，再补充三条后续建议。")?;
+let run = session.prompt("分析当前 workspace。")?;
+```
+
+## 核心能力
+
+| 模块 | 能力 |
+| --- | --- |
+| Runtime | 多轮模型执行、工具规划、显式终态、取消、streaming、事件日志和 max-cycle 控制。 |
+| Tools | 内置 finish/wait-user、TODO、workspace 读写/列表/grep、图片读取、shell 命令、memory note、skill 和 sub-task 工具。 |
+| SDK | 命名 Agent、one-shot run、query helper、长会话、follow-up、steering、workspace override、资源加载和共享配置。 |
+| Memory | Token 预算、prompt-too-long 重试、micro/full compaction、大型工具结果 artifact、图片裁剪和 session memory。 |
+| Hooks | 使用 Rust `RuntimeHook` 检查或修改 LLM 调用、工具调用、memory compaction 和运行生命周期。 |
+| Sub-agents | 基于 runtime 的子任务创建、批量提交、后台状态轮询、续跑、steering 和父级 streaming callback 继承。 |
+| Skills | Skill 目录发现、frontmatter 解析、校验、带预算的 prompt 渲染、激活和激活历史。 |
+| Workspace | Local、memory、S3 object-store 后端统一在 `WorkspaceBackend` 边界下。 |
+
+## 执行后端
+
+运行时会把调度交给 execution backend：
+
+| 后端 | 使用场景 |
+| --- | --- |
+| `InlineBackend` | 默认同步执行，适合普通 CLI、测试和简单嵌入。 |
+| `ThreadBackend` | 提交任务后不阻塞调用方。 |
+| `DistributedBackend` | 带 checkpoint 的 cycle 执行，支持可序列化 runtime recipe 和可插拔调度。 |
+
+Checkpointed run 可以把状态存到 memory、SQLite 或 Redis。可选 `apalis` feature 提供
+Apalis job bridge，适合已经使用 Apalis worker 的应用：
+
+```bash
+cargo test -p vv-agent --features apalis --test apalis_backend
+```
+
+分布式 API 也提供 inline fallback，方便本地开发和测试。示例见
+`crates/vv-agent/examples/23_distributed_backend.rs`。
+
+## Workspace 后端
+
+所有内置文件工具都会走 `WorkspaceBackend`。这样本地文件、内存文件和 S3-compatible
+object storage 可以共享同一套工具契约。
+
+`list_files` 和 `workspace_grep` 针对大 workspace 内置了安全默认值：结果数上限、隐藏目录和依赖目录过滤、
+显式 include ignored path，以及本地可用时用 `rg` 加速。
+
+## 示例
+
+编号示例是了解公开 API 的最好入口：
+
+```bash
+cargo run -p vv-agent --example 01_quick_start
+cargo run -p vv-agent --example 03_sdk_client
+cargo run -p vv-agent --example 04_session_api
+cargo run -p vv-agent --example 23_distributed_backend
+cargo run -p vv-agent --example 24_workspace_backends
+```
+
+完整索引见 `crates/vv-agent/examples/README_ZH.md`，覆盖 runtime hook、自定义工具、子 Agent
+pipeline、skills、streaming、取消、state store、执行后端、workspace 后端和临时工具注入。
+
+## 真实模型 Smoke Test
+
+真实测试默认关闭，会使用本地 settings 文件，且不会打印凭据。默认读取未跟踪的
+`crates/vv-agent/tests/dev_settings.json`；可从
+`crates/vv-agent/tests/dev_settings.example.json` 复制。
+
+```bash
+VV_AGENT_RUN_LIVE_TESTS=1 \
+cargo test -p vv-agent --test live_deepseek -- --ignored
+```
+
+live 套件会覆盖直接 runtime 完成、SDK 完成、`ask_user`、TODO 更新、memory note、skill
+激活、workspace 工具、图片读取、前台和后台 shell 命令、子 Agent 轮询，以及配置化子 Agent 委托。
+
+## 验证
+
+在 `vv-agent-rs/` 下运行标准检查：
+
+```bash
+cargo fmt --check
+cargo test -p vv-agent
+cargo check --examples
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+修改公开文档和示例时，下面两个检查很有用：
+
+```bash
+cargo test -p vv-agent --test public_api
+cargo test -p vv-agent --test examples_coverage
+```
+
+## 仓库结构
 
 ```text
 vv-agent-rs/
   Cargo.toml
   crates/vv-agent/
     src/
-      config, constants, integrations, llm, memory, prompt, runtime, sdk,
-      skills, tools, types, workspace, cli
+      cli/        # CLI 入口和任务构造
+      config/     # LLM settings 加载和模型解析
+      llm/        # LLM trait、脚本化测试 client、vv-llm client bridge
+      memory/     # compaction、artifact、session memory、token budget
+      prompt/     # system prompt section 和 prompt-cache metadata
+      runtime/    # agent runtime、hook、backend、cancel、sub-agent
+      sdk/        # 高层 client、session、resource、run payload
+      skills/     # skill 发现、解析、校验、激活
+      tools/      # registry、schema、dispatcher、内置 handler
+      workspace/  # local、memory、S3 workspace backend
+    examples/
     tests/
-      public API, runtime, SDK, LLM, tools, workspace, skills, CLI, examples,
-      and live smoke coverage
+  docs/
 ```
 
-包名是 `vv-agent`；库目标以 `vv_agent` 导入，符合连字符包名的 Rust 命名规则。
-
-## 验证
-
-在 `vv-agent-rs/` 目录下运行：
-
-```bash
-cargo fmt --check
-cargo test
-cargo check --examples
-cargo clippy --all-targets --all-features -- -D warnings
-```
-
-真实 DeepSeek smoke test 默认关闭，会使用本地 vv-llm 配置文件，且不会打印凭据。当前
-live 套件会验证直接 runtime 完成、SDK 完成、`ask_user` 等待用户流程、`todo_write`
-进度更新、`compress_memory` 记忆写入、`activate_skill` 加载、workspace `write_file`/`read_file`、
-`file_str_replace`、`list_files`、`workspace_grep` 和 `file_info` 工具调用、`read_image`
-加载、后台命令 handoff 和显式轮询、子 Agent 状态轮询，以及通过 `create_sub_task`
-进行配置子 Agent 的单任务/批量委托：
-
-```bash
-VV_AGENT_RUN_LIVE_TESTS=1 \
-VV_AGENT_LIVE_SETTINGS_JSON=/path/to/dev_settings.json \
-cargo test --test live_deepseek -- --ignored
-```
-
-## 当前范围
-
-当前 Rust 实现包括：
-
-- 一个 Cargo workspace，包含主 `vv-agent` library 和同包内 `vv-agent` CLI。
-- 稳定的 crate 顶层导出，覆盖核心 Agent 类型、运行时执行、工具调度、内置工具注册、SDK client、工作区后端、prompt helper、memory helper 和共享协议类型。
-- 基于 crates.io 官方 `vv-llm = "0.2.3"` 的 chat client 构建，支持本地 settings 解析、endpoint 解析、endpoint retry/failover、streaming 事件、prompt-cache metadata、请求 debug dump、模型 token limit 解析和 usage 统计。Provider HTTP 与请求序列化统一交给 `vv-llm`。
-- 用于测试的确定性 `ScriptedLlmClient`，支持固定响应 step、callback 响应 step、实时请求检查和脚本耗尽错误。
-- 多轮运行时执行，支持 tool-schema planning、tool-call dispatch、完成/等待用户收敛、runtime hooks、取消、生命周期事件、before-cycle 消息注入、插话中断和 max-cycle 处理。
-- inline、thread 和 checkpoint-dispatched 执行后端，配套可序列化 runtime recipe，以及 memory、SQLite、Redis 状态存储。
-- Prompt 构建能力，包含结构化 sections、stable prompt hash、本地化工具指引、可用 skill 渲染、子 Agent 指引、prompt-cache break tracking、当前时间 section 和 session memory 注入。
-- Memory 管理能力，包含上下文预算、usage 估算、大型工具结果 artifact 压缩、microcompaction、完整摘要、图片 payload 裁剪、重复压缩、session memory、prompt-too-long 重试和压缩后文件上下文恢复。
-- 高信息量内置工具 schema 和 handler，覆盖任务完成、向用户提问、TODO 管理、文件列表、文件元数据、文本读取、写入、字符串替换、grep、图片读取、memory note、前台/后台 shell 命令、skill 激活、子任务创建和子任务状态/续跑。
-- 工作区安全策略和后端，支持本地文件、内存文件、S3-compatible object store、稳定路径输出、glob 列表、append、metadata lookup、缺失文件错误、隐藏/忽略过滤，以及可信任务显式访问工作区外路径。
-- SDK 流程，支持命名 Agent 发现、任务预览、one-shot run、query helper、长会话、workspace override、shared state、由宿主程序显式传入的 Rust 原生 runtime hook、事件 listener、stream callback、取消、steering、follow-up prompt 和跨 turn session 复用。
-- Resource discovery 覆盖 Agent profile、prompt template 和 skill directory。Runtime hook 是使用方显式传入的 Rust `RuntimeHook` 实现。
-- Runtime-backed 子 Agent，支持同步或后台执行、批量任务提交、状态 snapshot、steering、已完成 session 续跑、重复运行任务保护和继承父级 stream callback。
-- Skill 发现、frontmatter 解析、metadata 归一化、校验、带预算限制的 `<available_skills>` prompt 渲染、激活状态和激活历史。
-- 覆盖 SDK/session API、runtime hooks、自定义工具、子 Agent pipeline、skills、streaming、cancellation、state stores、execution backends、workspace backends 和临时工具注入的 checked examples。
-- 覆盖公开 API 构造、CLI 任务准备、SDK resources、runtime cycle、tool planning、模型可见 schema 质量、workspace tools、vv-llm 集成和真实 DeepSeek smoke 的测试。
-
-Provider 请求序列化会统一交给 crates.io 官方 `vv-llm` crate；请求侧 provider 行为应优先补到 `vv-llm`。本仓库聚焦 Agent runtime、工具系统、SDK、prompt、memory 和 workspace 执行层。
+更多设计说明见 `docs/`，尤其是 `docs/architecture.md` 和 `docs/model-settings.md`。

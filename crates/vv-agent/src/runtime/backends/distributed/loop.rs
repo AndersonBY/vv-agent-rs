@@ -6,20 +6,20 @@ use crate::runtime::CancellationToken;
 use crate::types::{AgentResult, AgentStatus, AgentTask, Message, Metadata};
 
 use super::super::{cancelled_backend_result, failed_backend_result, RuntimeRecipe};
-use super::backend::CeleryBackend;
+use super::backend::DistributedBackend;
 use super::checkpoint::checkpoint_snapshot;
-use super::dispatch::CycleTaskDispatcher;
+use super::dispatch::CycleDispatcher;
 
 pub(super) struct DistributedRunContext<'a> {
     pub task: &'a AgentTask,
     pub recipe: &'a RuntimeRecipe,
     pub state_store: &'a Arc<dyn StateStore>,
-    pub cycle_dispatcher: &'a Arc<dyn CycleTaskDispatcher>,
+    pub cycle_dispatcher: &'a Arc<dyn CycleDispatcher>,
     pub cancellation_token: Option<&'a CancellationToken>,
     pub max_cycles: u32,
 }
 
-impl CeleryBackend {
+impl DistributedBackend {
     pub(super) fn execute_distributed(
         &self,
         initial_messages: Vec<Message>,
@@ -66,7 +66,7 @@ impl CeleryBackend {
             match context.cycle_dispatcher.dispatch_cycle(
                 context.task,
                 context.recipe,
-                &self.cycle_task_name,
+                &self.cycle_name,
                 cycle_index,
             ) {
                 Ok(dispatch_result) if dispatch_result.finished => {
@@ -77,7 +77,9 @@ impl CeleryBackend {
                             messages,
                             cycles,
                             shared_state,
-                            format!("Celery cycle {cycle_index} finished without result payload"),
+                            format!(
+                                "Distributed cycle {cycle_index} finished without result payload"
+                            ),
                         )
                     });
                 }
@@ -89,7 +91,7 @@ impl CeleryBackend {
                         messages,
                         cycles,
                         shared_state,
-                        format!("Celery cycle {cycle_index} failed: {error}"),
+                        format!("Distributed cycle {cycle_index} failed: {error}"),
                     );
                 }
             }

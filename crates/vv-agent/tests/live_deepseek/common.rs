@@ -77,8 +77,6 @@ pub(crate) fn live_settings_path() -> PathBuf {
     env::var("VV_AGENT_LIVE_SETTINGS_JSON")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
-                "../../../third_party_service/vv-llm-rs/crates/vv-llm/tests/fixtures/dev_settings.json",
-            )
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/dev_settings.json")
         })
 }

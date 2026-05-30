@@ -27,7 +27,7 @@ fn rust_examples_cover_agent_example_numbering() {
         "20_thread_backend.rs",
         "21_state_checkpoint.rs",
         "22_sdk_advanced.rs",
-        "23_celery_backend.rs",
+        "23_distributed_backend.rs",
         "24_workspace_backends.rs",
         "25_temporary_tool_injection.rs",
     ];

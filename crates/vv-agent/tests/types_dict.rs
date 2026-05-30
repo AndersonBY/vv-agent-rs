@@ -46,7 +46,7 @@ fn tool_execution_result_from_unknown_simple_status_defaults_to_success() {
 }
 
 #[test]
-fn agent_result_dict_round_trips_agent_celery_payload_shape() {
+fn agent_result_dict_round_trips_agent_result_payload_shape() {
     let mut tool_result = ToolExecutionResult::success("call-1", "tool ok");
     tool_result
         .metadata

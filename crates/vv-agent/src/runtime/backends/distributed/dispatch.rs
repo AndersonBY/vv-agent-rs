@@ -4,12 +4,12 @@ use crate::runtime::backends::RuntimeRecipe;
 use crate::types::{AgentResult, AgentTask};
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct CycleTaskDispatchResult {
+pub struct CycleDispatchResult {
     pub finished: bool,
     pub result: Option<AgentResult>,
 }
 
-impl CycleTaskDispatchResult {
+impl CycleDispatchResult {
     pub fn unfinished() -> Self {
         Self {
             finished: false,
@@ -36,7 +36,7 @@ impl CycleTaskDispatchResult {
     pub fn from_dict(data: &Value) -> Result<Self, String> {
         let object = data
             .as_object()
-            .ok_or_else(|| "CycleTaskDispatchResult payload must be an object".to_string())?;
+            .ok_or_else(|| "CycleDispatchResult payload must be an object".to_string())?;
         let finished = object
             .get("finished")
             .and_then(Value::as_bool)
@@ -50,12 +50,15 @@ impl CycleTaskDispatchResult {
     }
 }
 
-pub trait CycleTaskDispatcher: Send + Sync {
+pub trait CycleDispatcher: Send + Sync {
     fn dispatch_cycle(
         &self,
         task: &AgentTask,
         recipe: &RuntimeRecipe,
-        cycle_task_name: &str,
+        cycle_name: &str,
         cycle_index: u32,
-    ) -> Result<CycleTaskDispatchResult, String>;
+    ) -> Result<CycleDispatchResult, String>;
 }
+
+pub use CycleDispatchResult as CycleTaskDispatchResult;
+pub use CycleDispatcher as CycleTaskDispatcher;

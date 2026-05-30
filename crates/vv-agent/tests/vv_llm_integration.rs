@@ -23,12 +23,12 @@ fn settings_builder_returns_vv_llm_backed_client() {
           "backends": {{
             "moonshot": {{
               "models": {{
-                "kimi-k2.5": {{
-                  "id": "kimi-k2-thinking",
+                "kimi-k2.6": {{
+                  "id": "kimi-k2.6",
                   "endpoints": [
                     {{
                       "endpoint_id": "moonshot-default",
-                      "model_id": "kimi-k2-thinking"
+                      "model_id": "kimi-k2.6"
                     }}
                   ],
                   "context_length": 128000,
@@ -46,18 +46,102 @@ fn settings_builder_returns_vv_llm_backed_client() {
     .expect("write settings");
 
     let (client, resolved) =
-        build_vv_llm_from_local_settings(settings_file.path(), "moonshot", "kimi-k2.5", 90.0)
+        build_vv_llm_from_local_settings(settings_file.path(), "moonshot", "kimi-k2.6", 90.0)
             .expect("build llm");
 
     assert_eq!(resolved.backend, "moonshot");
-    assert_eq!(resolved.requested_model, "kimi-k2.5");
-    assert_eq!(resolved.selected_model, "kimi-k2.5");
-    assert_eq!(resolved.model_id, "kimi-k2-thinking");
+    assert_eq!(resolved.requested_model, "kimi-k2.6");
+    assert_eq!(resolved.selected_model, "kimi-k2.6");
+    assert_eq!(resolved.model_id, "kimi-k2.6");
     assert_eq!(resolved.context_length, Some(128_000));
     assert_eq!(resolved.max_output_tokens, Some(16_384));
     assert_eq!(resolved.endpoint().unwrap().endpoint_id, "moonshot-default");
     assert_eq!(client.provider_name(), "openai-compatible");
-    assert_eq!(client.model_id(), "kimi-k2-thinking");
+    assert_eq!(client.model_id(), "kimi-k2.6");
+}
+
+#[test]
+fn settings_resolution_keeps_kimi_k25_and_k26_distinct() {
+    let raw = serde_json::json!({
+        "VERSION": "2",
+        "endpoints": [
+            {
+                "id": "moonshot-default",
+                "api_base": "https://api.moonshot.cn/v1",
+                "api_key": "sk-test"
+            }
+        ],
+        "backends": {
+            "moonshot": {
+                "models": {
+                    "kimi-k2.5": {
+                        "id": "kimi-k2.5",
+                        "endpoints": [
+                            {"endpoint_id": "moonshot-default", "model_id": "kimi-k2.5"}
+                        ],
+                        "context_length": 128000,
+                        "max_output_tokens": 16384,
+                        "function_call_available": true,
+                        "response_format_available": true
+                    },
+                    "kimi-k2.6": {
+                        "id": "kimi-k2.6",
+                        "endpoints": [
+                            {"endpoint_id": "moonshot-default", "model_id": "kimi-k2.6"}
+                        ],
+                        "context_length": 128000,
+                        "max_output_tokens": 16384,
+                        "function_call_available": true,
+                        "response_format_available": true
+                    }
+                }
+            }
+        },
+        "embedding_backends": {},
+        "rerank_backends": {}
+    });
+
+    let k25 = resolve_model_endpoint(&raw, "moonshot", "kimi-k2.5").expect("resolve k2.5");
+    let k26 = resolve_model_endpoint(&raw, "moonshot", "kimi-k2.6").expect("resolve k2.6");
+    assert_eq!(k25.selected_model, "kimi-k2.5");
+    assert_eq!(k25.model_id, "kimi-k2.5");
+    assert_eq!(k26.selected_model, "kimi-k2.6");
+    assert_eq!(k26.model_id, "kimi-k2.6");
+
+    let k26_only = serde_json::json!({
+        "VERSION": "2",
+        "endpoints": [
+            {
+                "id": "moonshot-default",
+                "api_base": "https://api.moonshot.cn/v1",
+                "api_key": "sk-test"
+            }
+        ],
+        "backends": {
+            "moonshot": {
+                "models": {
+                    "kimi-k2.6": {
+                        "id": "kimi-k2.6",
+                        "endpoints": [
+                            {"endpoint_id": "moonshot-default", "model_id": "kimi-k2.6"}
+                        ],
+                        "context_length": 128000,
+                        "max_output_tokens": 16384,
+                        "function_call_available": true,
+                        "response_format_available": true
+                    }
+                }
+            }
+        },
+        "embedding_backends": {},
+        "rerank_backends": {}
+    });
+    let error =
+        resolve_model_endpoint(&k26_only, "moonshot", "kimi-k2.5").expect_err("k2.5 is missing");
+    assert!(
+        error.to_string().contains("kimi-k2.5"),
+        "missing model error should name the requested model: {error}"
+    );
 }
 
 #[test]
@@ -112,6 +196,32 @@ fn vv_llm_builder_api_stays_vv_llm_focused() {
             .expect("read library module")
             .contains("build_openai_llm_from_local_settings"),
         "public lib exports should not surface the legacy openai builder alias"
+    );
+}
+
+#[test]
+fn examples_do_not_use_deprecated_kimi_k2_thinking_model() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let deprecated = ["kimi", "k2", "thinking"].join("-");
+    let mut violations = Vec::new();
+
+    for source_path in rust_source_files(&manifest_dir.join("src"))
+        .into_iter()
+        .chain(rust_source_files(&manifest_dir.join("tests")))
+    {
+        let relative_path = source_path
+            .strip_prefix(manifest_dir)
+            .unwrap_or(&source_path);
+        let content = std::fs::read_to_string(&source_path).expect("read source file");
+        if contains_exact_model_token(&content, &deprecated) {
+            violations.push(relative_path.display().to_string());
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "use kimi-k2.6 instead of the deprecated {deprecated} example model:\n{}",
+        violations.join("\n")
     );
 }
 
@@ -448,10 +558,10 @@ settings: SettingsDict = {{
     "backends": {{
         "moonshot": {{
             "models": {{
-                "kimi-k2-thinking": {{
-                    "id": "kimi-k2-thinking",
+                "kimi-k2.6": {{
+                    "id": "kimi-k2.6",
                     "endpoints": [
-                        {{"endpoint_id": "moonshot-default", "model_id": "kimi-k2-thinking"}},
+                        {{"endpoint_id": "moonshot-default", "model_id": "kimi-k2.6"}},
                     ],
                 }},
             }},
@@ -466,18 +576,15 @@ settings: SettingsDict = {{
 
     let settings =
         load_llm_settings_from_file(settings_file.path()).expect("load lowercase settings");
-    let resolved =
-        resolve_model_endpoint(&settings, "moonshot", "kimi-k2-thinking").expect("resolve");
+    let resolved = resolve_model_endpoint(&settings, "moonshot", "kimi-k2.6").expect("resolve");
 
     assert_eq!(resolved.endpoint().unwrap().endpoint_id, "moonshot-default");
-    assert_eq!(resolved.model_id, "kimi-k2-thinking");
+    assert_eq!(resolved.model_id, "kimi-k2.6");
 }
 
 #[test]
 fn settings_loader_accepts_vv_llm_dev_settings_json_fixture() {
-    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join(
-        "../../../third_party_service/vv-llm-rs/crates/vv-llm/tests/fixtures/dev_settings.json",
-    );
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dev_settings.json");
 
     let settings = load_llm_settings_from_file(&example).expect("load vv-llm fixture settings");
     let resolved =
@@ -491,6 +598,22 @@ fn settings_loader_accepts_vv_llm_dev_settings_json_fixture() {
         .api_base
         .starts_with("https://"));
     assert!(!resolved.endpoint().unwrap().api_key.trim().is_empty());
+}
+
+#[test]
+fn settings_loader_accepts_vv_agent_dev_settings_example_json() {
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dev_settings.example.json");
+
+    let settings = load_llm_settings_from_file(&example).expect("load vv-agent fixture example");
+    let deepseek =
+        resolve_model_endpoint(&settings, "deepseek", "deepseek-v4-pro").expect("resolve deepseek");
+    let moonshot =
+        resolve_model_endpoint(&settings, "moonshot", "kimi-k2.6").expect("resolve moonshot");
+
+    assert_eq!(deepseek.backend, "deepseek");
+    assert_eq!(deepseek.model_id, "deepseek-v4-pro");
+    assert_eq!(moonshot.backend, "moonshot");
+    assert_eq!(moonshot.model_id, "kimi-k2.6");
 }
 
 #[test]
@@ -529,4 +652,16 @@ fn collect_rust_source_files(path: &Path, files: &mut Vec<std::path::PathBuf>) {
             files.push(path);
         }
     }
+}
+
+fn contains_exact_model_token(content: &str, model: &str) -> bool {
+    content
+        .split(|character: char| {
+            !(character.is_ascii_alphanumeric()
+                || character == '.'
+                || character == '-'
+                || character == '_'
+                || character == '/')
+        })
+        .any(|token| token.rsplit('/').any(|segment| segment == model))
 }

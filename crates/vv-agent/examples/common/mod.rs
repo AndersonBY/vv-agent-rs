@@ -28,7 +28,7 @@ impl ExampleConfig {
                 "local_settings.json",
             )),
             backend: env_string("V_AGENT_EXAMPLE_BACKEND", "moonshot"),
-            model: env_string("V_AGENT_EXAMPLE_MODEL", "kimi-k2.5"),
+            model: env_string("V_AGENT_EXAMPLE_MODEL", "kimi-k2.6"),
             workspace: PathBuf::from(env_string("V_AGENT_EXAMPLE_WORKSPACE", "./workspace")),
             prompt: env::var("V_AGENT_EXAMPLE_PROMPT").ok(),
             verbose: env_bool("V_AGENT_EXAMPLE_VERBOSE", true),

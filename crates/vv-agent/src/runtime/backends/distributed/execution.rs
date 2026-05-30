@@ -2,10 +2,10 @@ use crate::runtime::CancellationToken;
 use crate::types::{AgentResult, AgentTask, CycleRecord, Message, Metadata};
 
 use super::super::{execute_cycle_loop, failed_backend_result};
-use super::backend::CeleryBackend;
-use super::distributed::DistributedRunContext;
+use super::backend::DistributedBackend;
+use super::r#loop::DistributedRunContext;
 
-impl CeleryBackend {
+impl DistributedBackend {
     pub fn execute<F>(
         &self,
         task: &AgentTask,
@@ -48,8 +48,7 @@ impl CeleryBackend {
                     initial_messages,
                     Vec::new(),
                     shared_state,
-                    "Celery distributed backend requires a state_store and cycle_dispatcher"
-                        .to_string(),
+                    "Distributed backend requires a state_store and cycle_dispatcher".to_string(),
                 );
             }
             (None, _, _) => {}

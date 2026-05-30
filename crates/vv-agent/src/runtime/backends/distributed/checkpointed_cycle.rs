@@ -2,14 +2,14 @@ use crate::runtime::state::StateStore;
 use crate::runtime::CancellationToken;
 use crate::types::{AgentResult, AgentStatus, AgentTask, CycleRecord, Message, Metadata};
 
-use super::CycleTaskDispatchResult;
+use super::CycleDispatchResult;
 
 pub fn run_checkpointed_cycle<F>(
     state_store: &dyn StateStore,
     task: &AgentTask,
     cycle_index: u32,
     mut cycle_executor: F,
-) -> Result<CycleTaskDispatchResult, String>
+) -> Result<CycleDispatchResult, String>
 where
     F: FnMut(
         u32,
@@ -23,7 +23,7 @@ where
         .load_checkpoint(&task.task_id)
         .map_err(|error| error.to_string())?
     else {
-        return Ok(CycleTaskDispatchResult::finished(AgentResult {
+        return Ok(CycleDispatchResult::finished(AgentResult {
             status: AgentStatus::Failed,
             messages: Vec::new(),
             cycles: Vec::new(),
@@ -46,7 +46,7 @@ where
         state_store
             .delete_checkpoint(&task.task_id)
             .map_err(|error| error.to_string())?;
-        return Ok(CycleTaskDispatchResult::finished(result));
+        return Ok(CycleDispatchResult::finished(result));
     }
 
     checkpoint.cycle_index = cycle_index;
@@ -54,5 +54,5 @@ where
     state_store
         .save_checkpoint(checkpoint)
         .map_err(|error| error.to_string())?;
-    Ok(CycleTaskDispatchResult::unfinished())
+    Ok(CycleDispatchResult::unfinished())
 }

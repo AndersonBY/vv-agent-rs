@@ -2,8 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use vv_agent::runtime::backends::{
-    run_checkpointed_cycle, CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher,
-    InlineBackend, RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
+    run_checkpointed_cycle, CeleryBackend, CycleDispatchResult, CycleDispatcher,
+    CycleTaskDispatchResult, CycleTaskDispatcher, DistributedBackend, InlineBackend,
+    RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
 };
 use vv_agent::runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 use vv_agent::{
@@ -94,35 +95,41 @@ fn runtime_recipe_matches_dict_and_default_checkpoint_path() {
 }
 
 #[test]
-fn cycle_task_dispatch_result_matches_worker_payload_shape() {
+fn cycle_dispatch_result_matches_worker_payload_shape() {
     let result = AgentResult::completed(vec![Message::assistant("done")], Vec::new(), "ok");
-    let terminal = CycleTaskDispatchResult::finished(result.clone());
+    let terminal = CycleDispatchResult::finished(result.clone());
 
     let payload = terminal.to_dict();
     assert_eq!(payload["finished"], json!(true));
     assert_eq!(payload["result"]["status"], json!("completed"));
     assert_eq!(payload["result"]["final_answer"], json!("ok"));
 
-    let restored = CycleTaskDispatchResult::from_dict(&payload).expect("dispatch result");
+    let restored = CycleDispatchResult::from_dict(&payload).expect("dispatch result");
     assert!(restored.finished);
     assert_eq!(restored.result, Some(result));
 
-    let unfinished_payload = CycleTaskDispatchResult::unfinished().to_dict();
+    let unfinished_payload = CycleDispatchResult::unfinished().to_dict();
     assert_eq!(unfinished_payload, json!({"finished": false}));
-    let unfinished = CycleTaskDispatchResult::from_dict(&unfinished_payload)
-        .expect("unfinished dispatch result");
+    let unfinished =
+        CycleDispatchResult::from_dict(&unfinished_payload).expect("unfinished dispatch result");
     assert!(!unfinished.finished);
     assert!(unfinished.result.is_none());
+
+    let alias_payload = CycleTaskDispatchResult::unfinished().to_dict();
+    assert_eq!(alias_payload, json!({"finished": false}));
 }
 
 #[test]
-fn celery_backend_without_dispatcher_keeps_inline_parallel_map_fallback() {
-    let backend = CeleryBackend::inline_fallback();
+fn distributed_backend_without_dispatcher_keeps_inline_parallel_map_fallback() {
+    let backend = DistributedBackend::inline_fallback();
 
     let results = backend.parallel_map(|value| value * 3, vec![1, 2, 3]);
 
     assert_eq!(results, vec![3, 6, 9]);
     assert!(backend.runtime_recipe().is_none());
+
+    let legacy_backend = CeleryBackend::inline_fallback();
+    assert!(legacy_backend.runtime_recipe().is_none());
 }
 
 #[test]
@@ -219,9 +226,9 @@ fn thread_backend_execute_honors_cancellation_before_cycle() {
 }
 
 #[test]
-fn celery_backend_inline_execute_matches_inline_fallback() {
-    let backend = CeleryBackend::inline_fallback();
-    let task = AgentTask::new("backend-celery-inline", "model", "system", "prompt");
+fn distributed_backend_inline_execute_matches_inline_fallback() {
+    let backend = DistributedBackend::inline_fallback();
+    let task = AgentTask::new("backend-distributed-inline", "model", "system", "prompt");
 
     let result = backend.execute(
         &task,
@@ -237,7 +244,7 @@ fn celery_backend_inline_execute_matches_inline_fallback() {
             Some(AgentResult::completed_with_shared_state(
                 messages.clone(),
                 cycles.clone(),
-                "celery-inline",
+                "distributed-inline",
                 shared_state.clone(),
             ))
         },
@@ -246,13 +253,13 @@ fn celery_backend_inline_execute_matches_inline_fallback() {
     );
 
     assert_eq!(result.status, AgentStatus::Completed);
-    assert_eq!(result.final_answer.as_deref(), Some("celery-inline"));
+    assert_eq!(result.final_answer.as_deref(), Some("distributed-inline"));
     assert_eq!(result.cycles[0].index, 1);
 }
 
 #[test]
-fn celery_backend_distributed_requires_store_and_dispatcher() {
-    let backend = CeleryBackend::distributed(RuntimeRecipe::new(
+fn distributed_backend_requires_store_and_dispatcher() {
+    let backend = DistributedBackend::distributed(RuntimeRecipe::new(
         "settings.json",
         "deepseek",
         "deepseek-v4-pro",
@@ -290,18 +297,18 @@ struct RecordingDispatcher {
     calls: Arc<Mutex<Vec<(String, u32)>>>,
 }
 
-impl CycleTaskDispatcher for RecordingDispatcher {
+impl CycleDispatcher for RecordingDispatcher {
     fn dispatch_cycle(
         &self,
         task: &AgentTask,
         _recipe: &RuntimeRecipe,
-        cycle_task_name: &str,
+        cycle_name: &str,
         cycle_index: u32,
-    ) -> Result<CycleTaskDispatchResult, String> {
+    ) -> Result<CycleDispatchResult, String> {
         self.calls
             .lock()
             .expect("calls")
-            .push((cycle_task_name.to_string(), cycle_index));
+            .push((cycle_name.to_string(), cycle_index));
         let mut checkpoint = self
             .store
             .load_checkpoint(&task.task_id)
@@ -324,10 +331,10 @@ impl CycleTaskDispatcher for RecordingDispatcher {
             self.store
                 .save_checkpoint(checkpoint)
                 .expect("save cycle 1");
-            Ok(CycleTaskDispatchResult::unfinished())
+            Ok(CycleDispatchResult::unfinished())
         } else {
             assert_eq!(checkpoint.cycle_index, 1);
-            Ok(CycleTaskDispatchResult::finished(
+            Ok(CycleDispatchResult::finished(
                 AgentResult::completed_with_shared_state(
                     checkpoint.messages,
                     checkpoint.cycles,
@@ -340,7 +347,7 @@ impl CycleTaskDispatcher for RecordingDispatcher {
 }
 
 #[test]
-fn celery_backend_distributed_dispatches_cycles_through_checkpoint_store() {
+fn distributed_backend_dispatches_cycles_through_checkpoint_store() {
     let recipe = RuntimeRecipe::new("settings.json", "deepseek", "deepseek-v4-pro", ".");
     let store = Arc::new(InMemoryStateStore::new());
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -348,8 +355,9 @@ fn celery_backend_distributed_dispatches_cycles_through_checkpoint_store() {
         store: store.clone(),
         calls: calls.clone(),
     });
-    let backend = CeleryBackend::distributed_with_dispatcher(recipe, store.clone(), dispatcher)
-        .with_cycle_task_name("custom.run_cycle");
+    let backend =
+        DistributedBackend::distributed_with_dispatcher(recipe, store.clone(), dispatcher)
+            .with_cycle_name("custom.run_cycle");
     let task = AgentTask::new("distributed-task", "deepseek-v4-pro", "system", "prompt");
 
     let result = backend.execute(
@@ -389,10 +397,11 @@ fn runtime_delegates_cycle_execution_to_configured_backend() {
         store: store.clone(),
         calls: calls.clone(),
     });
-    let backend = CeleryBackend::distributed_with_dispatcher(recipe, store.clone(), dispatcher)
-        .with_cycle_task_name("custom.run_cycle");
+    let backend =
+        DistributedBackend::distributed_with_dispatcher(recipe, store.clone(), dispatcher)
+            .with_cycle_name("custom.run_cycle");
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(Vec::new()))
-        .with_execution_backend(RuntimeExecutionBackend::Celery(backend));
+        .with_execution_backend(RuntimeExecutionBackend::Distributed(backend));
     let task = AgentTask::new(
         "runtime-distributed-task",
         "deepseek-v4-pro",
@@ -422,17 +431,17 @@ struct MetadataSnapshotDispatcher {
     seen_bash_hint: Arc<Mutex<Option<Value>>>,
 }
 
-impl CycleTaskDispatcher for MetadataSnapshotDispatcher {
+impl CycleDispatcher for MetadataSnapshotDispatcher {
     fn dispatch_cycle(
         &self,
         task: &AgentTask,
         _recipe: &RuntimeRecipe,
-        _cycle_task_name: &str,
+        _cycle_name: &str,
         _cycle_index: u32,
-    ) -> Result<CycleTaskDispatchResult, String> {
+    ) -> Result<CycleDispatchResult, String> {
         *self.seen_bash_hint.lock().expect("seen hint") =
             task.metadata.get("_vv_agent_bash_runtime_hint").cloned();
-        Ok(CycleTaskDispatchResult::finished(
+        Ok(CycleDispatchResult::finished(
             AgentResult::completed_with_shared_state(
                 Vec::new(),
                 Vec::new(),
@@ -451,9 +460,9 @@ fn runtime_freezes_dynamic_tool_schema_hints_before_distributed_dispatch() {
     let dispatcher = Arc::new(MetadataSnapshotDispatcher {
         seen_bash_hint: seen_bash_hint.clone(),
     });
-    let backend = CeleryBackend::distributed_with_dispatcher(recipe, store, dispatcher);
+    let backend = DistributedBackend::distributed_with_dispatcher(recipe, store, dispatcher);
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(Vec::new()))
-        .with_execution_backend(RuntimeExecutionBackend::Celery(backend));
+        .with_execution_backend(RuntimeExecutionBackend::Distributed(backend));
     let mut task = AgentTask::new("runtime-frozen-hint", "deepseek-v4-pro", "system", "prompt");
     task.agent_type = Some("computer".to_string());
     task.metadata
@@ -475,23 +484,23 @@ fn runtime_freezes_dynamic_tool_schema_hints_before_distributed_dispatch() {
 #[derive(Debug)]
 struct FailingDispatcher;
 
-impl CycleTaskDispatcher for FailingDispatcher {
+impl CycleDispatcher for FailingDispatcher {
     fn dispatch_cycle(
         &self,
         _task: &AgentTask,
         _recipe: &RuntimeRecipe,
-        _cycle_task_name: &str,
+        _cycle_name: &str,
         cycle_index: u32,
-    ) -> Result<CycleTaskDispatchResult, String> {
+    ) -> Result<CycleDispatchResult, String> {
         Err(format!("worker unavailable at {cycle_index}"))
     }
 }
 
 #[test]
-fn celery_backend_distributed_returns_checkpointed_failure_and_cleans_up() {
+fn distributed_backend_returns_checkpointed_failure_and_cleans_up() {
     let recipe = RuntimeRecipe::new("settings.json", "deepseek", "deepseek-v4-pro", ".");
     let store = Arc::new(InMemoryStateStore::new());
-    let backend = CeleryBackend::distributed_with_dispatcher(
+    let backend = DistributedBackend::distributed_with_dispatcher(
         recipe,
         store.clone(),
         Arc::new(FailingDispatcher),
@@ -512,7 +521,7 @@ fn celery_backend_distributed_returns_checkpointed_failure_and_cleans_up() {
     assert_eq!(result.status, AgentStatus::Failed);
     assert_eq!(
         result.error.as_deref(),
-        Some("Celery cycle 1 failed: worker unavailable at 1")
+        Some("Distributed cycle 1 failed: worker unavailable at 1")
     );
     assert_eq!(result.messages[0].content, "hello");
     assert_eq!(result.shared_state["seed"], json!("state"));
@@ -527,14 +536,14 @@ struct AdvancingDispatcher {
     store: Arc<InMemoryStateStore>,
 }
 
-impl CycleTaskDispatcher for AdvancingDispatcher {
+impl CycleDispatcher for AdvancingDispatcher {
     fn dispatch_cycle(
         &self,
         task: &AgentTask,
         _recipe: &RuntimeRecipe,
-        _cycle_task_name: &str,
+        _cycle_name: &str,
         cycle_index: u32,
-    ) -> Result<CycleTaskDispatchResult, String> {
+    ) -> Result<CycleDispatchResult, String> {
         let mut checkpoint = self
             .store
             .load_checkpoint(&task.task_id)
@@ -547,18 +556,19 @@ impl CycleTaskDispatcher for AdvancingDispatcher {
             vec![],
         ));
         self.store.save_checkpoint(checkpoint).expect("save cycle");
-        Ok(CycleTaskDispatchResult::unfinished())
+        Ok(CycleDispatchResult::unfinished())
     }
 }
 
 #[test]
-fn celery_backend_distributed_returns_checkpointed_max_cycles_and_cleans_up() {
+fn distributed_backend_returns_checkpointed_max_cycles_and_cleans_up() {
     let recipe = RuntimeRecipe::new("settings.json", "deepseek", "deepseek-v4-pro", ".");
     let store = Arc::new(InMemoryStateStore::new());
     let dispatcher = Arc::new(AdvancingDispatcher {
         store: store.clone(),
     });
-    let backend = CeleryBackend::distributed_with_dispatcher(recipe, store.clone(), dispatcher);
+    let backend =
+        DistributedBackend::distributed_with_dispatcher(recipe, store.clone(), dispatcher);
     let task = AgentTask::new("distributed-max", "deepseek-v4-pro", "system", "prompt");
 
     let result = backend.execute(
@@ -582,6 +592,34 @@ fn celery_backend_distributed_returns_checkpointed_max_cycles_and_cleans_up() {
         .load_checkpoint(&task.task_id)
         .expect("load after cleanup")
         .is_none());
+}
+
+#[test]
+fn celery_dispatcher_alias_remains_usable_for_existing_integrations() {
+    fn assert_alias<T: CycleTaskDispatcher>() {}
+
+    #[derive(Debug)]
+    struct AliasDispatcher;
+
+    impl CycleTaskDispatcher for AliasDispatcher {
+        fn dispatch_cycle(
+            &self,
+            _task: &AgentTask,
+            _recipe: &RuntimeRecipe,
+            _cycle_name: &str,
+            _cycle_index: u32,
+        ) -> Result<CycleTaskDispatchResult, String> {
+            Ok(CycleTaskDispatchResult::unfinished())
+        }
+    }
+
+    assert_alias::<AliasDispatcher>();
+    let recipe = RuntimeRecipe::new("settings.json", "deepseek", "deepseek-v4-pro", ".");
+    let store = Arc::new(InMemoryStateStore::new());
+    let backend =
+        CeleryBackend::distributed_with_dispatcher(recipe, store, Arc::new(AliasDispatcher))
+            .with_cycle_task_name("legacy.run_cycle");
+    assert_eq!(backend.cycle_task_name(), "legacy.run_cycle");
 }
 
 #[test]

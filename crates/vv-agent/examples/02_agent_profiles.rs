@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn profiles() -> BTreeMap<String, AgentDefinition> {
-    let mut researcher = AgentDefinition::default_for_model("kimi-k2.5");
+    let mut researcher = AgentDefinition::default_for_model("kimi-k2.6");
     researcher.description = "你是研究助理, 先检索材料再输出结构化结论.".to_string();
     researcher.backend = Some("moonshot".to_string());
     researcher.max_cycles = 12;
@@ -57,7 +57,7 @@ fn profiles() -> BTreeMap<String, AgentDefinition> {
     translator.max_cycles = 20;
     translator.enable_todo_management = true;
 
-    let mut computer = AgentDefinition::default_for_model("kimi-k2.5");
+    let mut computer = AgentDefinition::default_for_model("kimi-k2.6");
     computer.description = "你是桌面执行代理, 优先使用工具完成任务.".to_string();
     computer.backend = Some("moonshot".to_string());
     computer.max_cycles = 16;

@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         env::var("V_AGENT_EXAMPLE_WORKSPACE").unwrap_or_else(|_| "./workspace".to_string()),
     );
     let backend = env::var("V_AGENT_EXAMPLE_BACKEND").unwrap_or_else(|_| "moonshot".to_string());
-    let model = env::var("V_AGENT_EXAMPLE_MODEL").unwrap_or_else(|_| "kimi-k2.5".to_string());
+    let model = env::var("V_AGENT_EXAMPLE_MODEL").unwrap_or_else(|_| "kimi-k2.6".to_string());
     let verbose = env::var("V_AGENT_EXAMPLE_VERBOSE")
         .map(|value| {
             matches!(

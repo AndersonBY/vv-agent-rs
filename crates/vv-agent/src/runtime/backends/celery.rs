@@ -1,8 +1,3 @@
-mod backend;
-mod checkpoint;
-mod dispatch;
-mod distributed;
-mod execution;
+pub use super::distributed::{CycleTaskDispatchResult, CycleTaskDispatcher};
 
-pub use backend::CeleryBackend;
-pub use dispatch::{CycleTaskDispatchResult, CycleTaskDispatcher};
+pub type CeleryBackend = super::distributed::DistributedBackend;

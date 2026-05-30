@@ -59,7 +59,7 @@ impl ParsedCliArgs {
         Self {
             prompt: None,
             backend: "moonshot".to_string(),
-            model: "kimi-k2.5".to_string(),
+            model: "kimi-k2.6".to_string(),
             settings_file: PathBuf::from(default_settings),
             workspace: PathBuf::from("./workspace"),
             max_cycles: 80,
@@ -141,7 +141,7 @@ pub(crate) fn help_text() -> String {
         "",
         "Options:",
         "  --backend <key>        Provider backend key in LLM_SETTINGS (default: moonshot)",
-        "  --model <key>          Model key in provider models (default: kimi-k2.5)",
+        "  --model <key>          Model key in provider models (default: kimi-k2.6)",
         "  --settings-file <path> Path to local settings (default: VV_AGENT_LOCAL_SETTINGS or local_settings.json)",
         "  --workspace <path>     Workspace directory (default: ./workspace)",
         "  --max-cycles <n>       Max runtime cycles (default: 80)",

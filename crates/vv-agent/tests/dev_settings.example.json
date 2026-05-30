@@ -1,0 +1,53 @@
+{
+  "VERSION": "2",
+  "endpoints": [
+    {
+      "id": "deepseek-default",
+      "api_base": "https://api.deepseek.com",
+      "api_key": "replace-with-deepseek-api-key"
+    },
+    {
+      "id": "moonshot-default",
+      "api_base": "https://api.moonshot.cn/v1",
+      "api_key": "replace-with-moonshot-api-key"
+    }
+  ],
+  "backends": {
+    "deepseek": {
+      "models": {
+        "deepseek-v4-pro": {
+          "id": "deepseek-v4-pro",
+          "endpoints": [
+            {
+              "endpoint_id": "deepseek-default",
+              "model_id": "deepseek-v4-pro"
+            }
+          ],
+          "context_length": 128000,
+          "max_output_tokens": 8192,
+          "function_call_available": true,
+          "response_format_available": true
+        }
+      }
+    },
+    "moonshot": {
+      "models": {
+        "kimi-k2.6": {
+          "id": "kimi-k2.6",
+          "endpoints": [
+            {
+              "endpoint_id": "moonshot-default",
+              "model_id": "kimi-k2.6"
+            }
+          ],
+          "context_length": 128000,
+          "max_output_tokens": 16384,
+          "function_call_available": true,
+          "response_format_available": true
+        }
+      }
+    }
+  },
+  "embedding_backends": {},
+  "rerank_backends": {}
+}

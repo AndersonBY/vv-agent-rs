@@ -1,4 +1,4 @@
-use super::celery::CeleryBackend;
+use super::distributed::DistributedBackend;
 use super::inline::InlineBackend;
 use super::thread::ThreadBackend;
 use crate::runtime::CancellationToken;
@@ -10,7 +10,7 @@ pub type ExecutionBackend = RuntimeExecutionBackend;
 pub enum RuntimeExecutionBackend {
     Inline(InlineBackend),
     Thread(ThreadBackend),
-    Celery(CeleryBackend),
+    Distributed(DistributedBackend),
 }
 
 impl Default for RuntimeExecutionBackend {
@@ -31,9 +31,9 @@ impl From<ThreadBackend> for RuntimeExecutionBackend {
     }
 }
 
-impl From<CeleryBackend> for RuntimeExecutionBackend {
-    fn from(backend: CeleryBackend) -> Self {
-        Self::Celery(backend)
+impl From<DistributedBackend> for RuntimeExecutionBackend {
+    fn from(backend: DistributedBackend) -> Self {
+        Self::Distributed(backend)
     }
 }
 
@@ -73,7 +73,7 @@ impl RuntimeExecutionBackend {
                 cancellation_token,
                 max_cycles,
             ),
-            Self::Celery(backend) => backend.execute(
+            Self::Distributed(backend) => backend.execute(
                 task,
                 initial_messages,
                 shared_state,
@@ -93,7 +93,7 @@ impl RuntimeExecutionBackend {
         match self {
             Self::Inline(backend) => backend.parallel_map(function, items),
             Self::Thread(backend) => backend.parallel_map(function, items),
-            Self::Celery(backend) => backend.parallel_map(function, items),
+            Self::Distributed(backend) => backend.parallel_map(function, items),
         }
     }
 }

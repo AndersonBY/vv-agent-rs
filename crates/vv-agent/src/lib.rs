@@ -33,8 +33,9 @@ pub use memory::{
     SessionMemoryState, SummaryCallback,
 };
 pub use runtime::backends::{
-    run_checkpointed_cycle, CeleryBackend, CycleTaskDispatchResult, CycleTaskDispatcher,
-    InlineBackend, RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
+    run_checkpointed_cycle, CeleryBackend, CycleDispatchResult, CycleDispatcher,
+    CycleTaskDispatchResult, CycleTaskDispatcher, DistributedBackend, InlineBackend,
+    RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
 };
 pub use runtime::background_sessions::{
     background_session_manager, BackgroundSessionAdoptOptions, BackgroundSessionListener,
