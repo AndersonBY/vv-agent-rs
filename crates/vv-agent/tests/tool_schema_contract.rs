@@ -1144,6 +1144,9 @@ fn tools_module_is_split_into_handler_files() {
         "types/dict/common.rs",
         "types/dict/messages.rs",
         "types/dict/records.rs",
+        "types/dict/records/cycle.rs",
+        "types/dict/records/result.rs",
+        "types/dict/records/task.rs",
         "types/dict/token_usage.rs",
         "types/dict/tools.rs",
         "prompt/builder/hash.rs",
@@ -1342,6 +1345,19 @@ fn workspace_s3_root_stays_focused_on_public_exports() {
     assert!(
         line_count <= 60,
         "workspace/s3.rs should keep only S3 module wiring and public exports while delegating backend operations, configuration, key mapping, and async runtime bridging to focused submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn types_dict_records_root_stays_focused_on_record_exports() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let records = manifest_dir.join("src/types/dict/records.rs");
+    let content = std::fs::read_to_string(&records).expect("read types dict records module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 50,
+        "types/dict/records.rs should keep only record conversion module wiring while delegating CycleRecord, AgentTask, and AgentResult dictionary contracts to focused submodules; found {line_count} lines"
     );
 }
 
