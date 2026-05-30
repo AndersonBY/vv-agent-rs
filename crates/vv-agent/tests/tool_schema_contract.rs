@@ -935,6 +935,10 @@ fn tools_module_is_split_into_handler_files() {
         "tools/handlers/search/local_rg.rs",
         "tools/handlers/search/local_rg/command.rs",
         "tools/handlers/search/local_rg/parse.rs",
+        "tools/handlers/search/local_rg/parse/decode.rs",
+        "tools/handlers/search/local_rg/parse/events.rs",
+        "tools/handlers/search/local_rg/parse/paths.rs",
+        "tools/handlers/search/local_rg/parse/state.rs",
         "tools/handlers/search/local_rg/paths.rs",
         "tools/handlers/search/response.rs",
         "tools/handlers/search/request.rs",
@@ -1522,6 +1526,19 @@ fn workspace_grep_local_rg_root_stays_focused_on_command_orchestration() {
     assert!(
         line_count <= 260,
         "tools/handlers/search/local_rg.rs should delegate rg parsing, path helpers, command helpers, and tests to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn workspace_grep_rg_parse_stays_split_by_json_event_responsibility() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let parse = manifest_dir.join("src/tools/handlers/search/local_rg/parse.rs");
+    let content = std::fs::read_to_string(&parse).expect("read local rg parse module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 90,
+        "tools/handlers/search/local_rg/parse.rs should keep only rg JSON parse orchestration while delegating field decoding, event normalization, path handling, and output accumulation to focused submodules; found {line_count} lines"
     );
 }
 
