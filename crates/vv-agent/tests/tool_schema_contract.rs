@@ -1078,6 +1078,11 @@ fn tools_module_is_split_into_handler_files() {
         "llm/vv_llm_client/execution.rs",
         "llm/vv_llm_client/model_rules.rs",
         "llm/vv_llm_client/prompt_cache.rs",
+        "llm/vv_llm_client/prompt_cache/apply.rs",
+        "llm/vv_llm_client/prompt_cache/endpoint.rs",
+        "llm/vv_llm_client/prompt_cache/from_cache.rs",
+        "llm/vv_llm_client/prompt_cache/metadata.rs",
+        "llm/vv_llm_client/prompt_cache/to_cache.rs",
         "llm/vv_llm_client/request.rs",
         "llm/vv_llm_client/response.rs",
         "llm/vv_llm_client/streaming.rs",
@@ -1516,6 +1521,19 @@ fn vv_llm_client_root_stays_focused_on_public_client_contract() {
     assert!(
         line_count <= 170,
         "llm/vv_llm_client/mod.rs should keep the client type, retry/failover trait entrypoint, and public debug surface while delegating construction, endpoint execution, request conversion, response conversion, streaming, endpoint bookkeeping, and prompt cache handling to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn vv_llm_prompt_cache_root_stays_focused_on_public_entrypoints() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let prompt_cache = manifest_dir.join("src/llm/vv_llm_client/prompt_cache.rs");
+    let content = std::fs::read_to_string(&prompt_cache).expect("read vv-llm prompt cache module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 90,
+        "llm/vv_llm_client/prompt_cache.rs should keep only the prompt-cache entrypoints while delegating endpoint normalization, request metadata extraction, cache JSON serialization, and planned cache application to submodules; found {line_count} lines"
     );
 }
 
