@@ -23,6 +23,14 @@ fn build_messages() -> Vec<Message> {
 }
 
 #[test]
+fn microcompact_handles_empty_messages() {
+    let (messages, cleared) = microcompact(&[], 5, &MicrocompactConfig::default());
+
+    assert!(messages.is_empty());
+    assert_eq!(cleared, 0);
+}
+
+#[test]
 fn microcompact_clears_only_old_compactable_tool_results() {
     let (messages, cleared) = microcompact(
         &build_messages(),
@@ -42,6 +50,47 @@ fn microcompact_clears_only_old_compactable_tool_results() {
     assert_eq!(tool_messages[0].content, CLEARED_MARKER);
     assert_ne!(tool_messages[1].content, CLEARED_MARKER);
     assert_eq!(tool_messages[0].metadata["microcompacted"], true);
+}
+
+#[test]
+fn microcompact_does_not_clear_already_cleared_messages() {
+    let mut messages = build_messages();
+    messages[3] = Message::tool(CLEARED_MARKER, "call_old");
+
+    let (compacted, cleared) = microcompact(
+        &messages,
+        4,
+        &MicrocompactConfig {
+            keep_recent_cycles: 2,
+            min_result_length: 500,
+            ..MicrocompactConfig::default()
+        },
+    );
+
+    assert_eq!(cleared, 0);
+    assert_eq!(compacted[3].content, CLEARED_MARKER);
+}
+
+#[test]
+fn microcompact_leaves_non_tool_messages_untouched() {
+    let messages = vec![
+        Message::system("sys"),
+        Message::user("u".repeat(1_000)),
+        Message::assistant("a".repeat(1_000)),
+    ];
+
+    let (compacted, cleared) = microcompact(
+        &messages,
+        3,
+        &MicrocompactConfig {
+            keep_recent_cycles: 1,
+            min_result_length: 10,
+            ..MicrocompactConfig::default()
+        },
+    );
+
+    assert_eq!(cleared, 0);
+    assert_eq!(compacted, messages);
 }
 
 #[test]
@@ -76,6 +125,20 @@ fn microcompact_respects_min_length_and_tool_filter() {
     );
     assert_eq!(cleared, 0);
     assert_ne!(compacted[3].content, CLEARED_MARKER);
+
+    let mut above_boundary = build_messages();
+    above_boundary[3] = Message::tool("x".repeat(501), "call_old");
+    let (compacted, cleared) = microcompact(
+        &above_boundary,
+        4,
+        &MicrocompactConfig {
+            keep_recent_cycles: 2,
+            min_result_length: 500,
+            ..MicrocompactConfig::default()
+        },
+    );
+    assert_eq!(cleared, 1);
+    assert_eq!(compacted[3].content, CLEARED_MARKER);
 }
 
 #[test]
