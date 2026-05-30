@@ -924,11 +924,14 @@ fn tools_module_is_split_into_handler_files() {
         "tools/handlers/workspace/listing/types.rs",
         "tools/handlers/search/mod.rs",
         "tools/handlers/search/error.rs",
+        "tools/handlers/search/execution.rs",
+        "tools/handlers/search/fallback.rs",
         "tools/handlers/search/format.rs",
         "tools/handlers/search/local_rg.rs",
         "tools/handlers/search/local_rg/command.rs",
         "tools/handlers/search/local_rg/parse.rs",
         "tools/handlers/search/local_rg/paths.rs",
+        "tools/handlers/search/response.rs",
         "tools/handlers/search/request.rs",
         "tools/handlers/search/local_rg/tests.rs",
         "tools/handlers/search/local_rg/types.rs",
@@ -1735,7 +1738,7 @@ fn workspace_grep_handler_root_stays_focused_on_tool_entrypoint() {
     let line_count = content.lines().count();
 
     assert!(
-        line_count <= 280,
+        line_count <= 90,
         "tools/handlers/search/mod.rs should keep workspace_grep orchestration at the root while delegating argument parsing, rg scanning, fallback scanning, and response rendering to submodules; found {line_count} lines"
     );
 }
