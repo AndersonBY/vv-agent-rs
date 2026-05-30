@@ -521,12 +521,9 @@ fn rust_source_files_stay_under_reasonable_size_limit() {
 }
 
 #[test]
-fn rust_schema_contract_test_files_stay_under_reasonable_size_limit() {
+fn rust_test_files_stay_under_reasonable_size_limit() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut test_files = vec![manifest_dir.join("tests/tool_schema_contract.rs")];
-    test_files.extend(collect_rust_files(
-        &manifest_dir.join("tests/tool_schema_contract"),
-    ));
+    let test_files = collect_rust_files(&manifest_dir.join("tests"));
     let oversized = test_files
         .into_iter()
         .filter_map(|path| {
@@ -545,7 +542,7 @@ fn rust_schema_contract_test_files_stay_under_reasonable_size_limit() {
 
     assert!(
         oversized.is_empty(),
-        "Rust schema contract test files over {MAX_REASONABLE_SOURCE_LINES} lines should be split:\n{}",
+        "Rust test files over {MAX_REASONABLE_SOURCE_LINES} lines should be split:\n{}",
         oversized.join("\n")
     );
 }
