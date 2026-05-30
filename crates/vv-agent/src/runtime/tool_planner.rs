@@ -32,7 +32,7 @@ pub fn plan_tool_names(task: &AgentTask, memory_usage_percentage: Option<u32>) -
     if task
         .metadata
         .get("available_skills")
-        .is_some_and(|value| !value.is_null())
+        .is_some_and(is_json_truthy)
     {
         names.push(ACTIVATE_SKILL_TOOL_NAME.to_string());
     }
@@ -130,5 +130,21 @@ fn build_bash_runtime_hint(task: &AgentTask) -> String {
             resolved.prefix.join(" ")
         ),
         Err(error) => format!("Runtime shell hint: invalid shell config. {error}."),
+    }
+}
+
+fn is_json_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(value) => *value,
+        Value::Number(value) => value
+            .as_i64()
+            .map(|number| number != 0)
+            .or_else(|| value.as_u64().map(|number| number != 0))
+            .or_else(|| value.as_f64().map(|number| number != 0.0))
+            .unwrap_or(true),
+        Value::String(value) => !value.is_empty(),
+        Value::Array(value) => !value.is_empty(),
+        Value::Object(value) => !value.is_empty(),
     }
 }

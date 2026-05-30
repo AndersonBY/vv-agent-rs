@@ -57,6 +57,19 @@ fn planned_tool_schemas_add_computer_sub_agent_skill_and_multimodal_tools() {
 }
 
 #[test]
+fn planned_tool_names_skip_activate_skill_for_empty_available_skills() {
+    for available_skills in [json!(false), json!(""), json!(0), json!([]), json!({})] {
+        let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+        task.metadata
+            .insert("available_skills".to_string(), available_skills);
+
+        let names = plan_tool_names(&task, None);
+
+        assert!(!names.contains(&"activate_skill".to_string()));
+    }
+}
+
+#[test]
 fn planned_tool_schemas_exclude_tools() {
     let registry = build_default_registry();
     let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
