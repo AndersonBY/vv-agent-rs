@@ -106,6 +106,26 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     ));
                 }
                 self.apply_cycle_inputs(&controls, cycle_index, messages, shared_state);
+                if cancellation_token.is_some_and(CancellationToken::is_cancelled)
+                    || controls_cancelled(&controls)
+                {
+                    self.emit_log(
+                        &controls,
+                        "run_cancelled",
+                        BTreeMap::from([
+                            ("cycle".to_string(), Value::from(cycle_index)),
+                            (
+                                "error".to_string(),
+                                Value::String("Operation was cancelled".to_string()),
+                            ),
+                        ]),
+                    );
+                    return Some(cancelled_agent_result(
+                        messages.clone(),
+                        cycles.clone(),
+                        shared_state.clone(),
+                    ));
+                }
                 self.emit_log(
                     &controls,
                     "cycle_started",

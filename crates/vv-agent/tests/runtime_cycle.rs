@@ -1650,6 +1650,50 @@ fn execution_context_cancellation_token_is_honored_by_runtime() {
 }
 
 #[test]
+fn cancellation_token_cancelled_by_before_cycle_provider_stops_before_llm() {
+    let second_llm_calls = Arc::new(Mutex::new(0_u32));
+    let calls = Arc::clone(&second_llm_calls);
+    let llm = ScriptedLlmClient::from_steps(vec![
+        LLMResponse::new("cycle1").into(),
+        vv_agent::ScriptStep::callback(move |_request| {
+            *calls.lock().expect("second llm calls") += 1;
+            Ok(LLMResponse::new("cycle2 should not run"))
+        }),
+    ]);
+    let runtime = AgentRuntime::new(llm);
+    let mut task = AgentTask::new("cancel_between_cycles", "demo", "system", "start");
+    task.max_cycles = 3;
+    task.no_tool_policy = vv_agent::NoToolPolicy::Continue;
+    let token = CancellationToken::default();
+    let token_for_provider = token.clone();
+
+    let result = runtime
+        .run_with_controls(
+            task,
+            RuntimeRunControls {
+                cancellation_token: Some(token),
+                before_cycle_messages: Some(Arc::new(move |cycle_index, _messages, _state| {
+                    if cycle_index == 2 {
+                        token_for_provider.cancel();
+                    }
+                    Vec::new()
+                })),
+                ..RuntimeRunControls::default()
+            },
+        )
+        .expect("cancelled result");
+
+    assert_eq!(result.status, AgentStatus::Failed);
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("cancelled"));
+    assert_eq!(result.cycles.len(), 1);
+    assert_eq!(*second_llm_calls.lock().expect("second llm calls"), 0);
+}
+
+#[test]
 fn runtime_compacts_memory_before_large_follow_up_cycle() {
     let workspace = tempfile::tempdir().expect("workspace");
     let large_tool_payload = "tool output ".repeat(300);
