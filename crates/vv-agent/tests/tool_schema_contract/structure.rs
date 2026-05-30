@@ -548,6 +548,43 @@ fn rust_test_files_stay_under_reasonable_size_limit() {
 }
 
 #[test]
+fn live_deepseek_tests_are_split_by_runtime_capability() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_path = manifest_dir.join("tests/live_deepseek.rs");
+    let root = std::fs::read_to_string(&root_path).expect("read live_deepseek root test");
+    let root_line_count = root.lines().count();
+
+    assert!(
+        root_line_count <= 250,
+        "tests/live_deepseek.rs should be a small module entrypoint; found {root_line_count} lines"
+    );
+    for module in [
+        "background",
+        "common",
+        "control",
+        "memory",
+        "skills",
+        "sub_agents",
+        "workspace",
+    ] {
+        assert!(
+            root.contains(&format!("mod {module};")),
+            "tests/live_deepseek.rs should declare `{module}` module"
+        );
+        assert!(
+            manifest_dir
+                .join(format!("tests/live_deepseek/{module}.rs"))
+                .is_file(),
+            "tests/live_deepseek/{module}.rs should hold live DeepSeek tests for that capability"
+        );
+    }
+    assert!(
+        !root.contains("fn live_deepseek_"),
+        "live DeepSeek test functions should live in capability modules, not the root entrypoint"
+    );
+}
+
+#[test]
 fn runtime_engine_root_stays_focused_on_loop_orchestration() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let runtime_engine = manifest_dir.join("src/runtime/engine/mod.rs");
