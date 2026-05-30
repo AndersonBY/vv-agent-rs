@@ -1004,6 +1004,10 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/hooks/patches.rs",
         "runtime/hooks/traits.rs",
         "runtime/processes.rs",
+        "runtime/processes/capture.rs",
+        "runtime/processes/output.rs",
+        "runtime/processes/platform.rs",
+        "runtime/processes/termination.rs",
         "runtime/results.rs",
         "runtime/shell/mod.rs",
         "runtime/shell/command.rs",
@@ -1824,6 +1828,19 @@ fn sdk_client_sessions_root_stays_focused_on_public_entrypoints() {
     assert!(
         line_count <= 120,
         "sdk/client/sessions.rs should delegate run closure construction, default-agent session helpers, and named-agent session helpers to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn runtime_processes_root_stays_focused_on_public_exports() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let processes = manifest_dir.join("src/runtime/processes.rs");
+    let content = std::fs::read_to_string(&processes).expect("read runtime processes module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 45,
+        "runtime/processes.rs should only expose captured-process APIs while delegating process startup, output files, platform process-group setup, and termination to focused submodules; found {line_count} lines"
     );
 }
 
