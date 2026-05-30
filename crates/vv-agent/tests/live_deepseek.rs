@@ -109,6 +109,73 @@ fn live_deepseek_v4_pro_finishes_sdk_task_without_injected_runtime() {
 
 #[test]
 #[ignore = "live API call; run with VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored"]
+fn live_deepseek_v4_pro_requests_user_input_with_ask_user() {
+    if !live_enabled() {
+        eprintln!("Live tests are disabled. Set VV_AGENT_RUN_LIVE_TESTS=1 to run.");
+        return;
+    }
+
+    let settings_path = live_settings_path();
+    assert!(
+        settings_path.exists(),
+        "live settings file is missing: {}",
+        settings_path.display()
+    );
+
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        settings_file: settings_path,
+        default_backend: "deepseek".to_string(),
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("deepseek-v4-pro");
+    agent.backend = Some("deepseek".to_string());
+    agent.max_cycles = 3;
+    agent.no_tool_policy = NoToolPolicy::WaitUser;
+    agent.allow_interruption = true;
+    agent.enable_todo_management = false;
+    agent.use_workspace = false;
+    agent.system_prompt = Some(
+        "You are running a deterministic integration test for user-input pauses.\n\
+         Follow this protocol exactly.\n\
+         1. Call `ask_user` with question exactly `Choose live option?`, options \
+         exactly [`alpha`, `beta`], selection_type exactly `single`, and \
+         allow_custom_options=false.\n\
+         2. Do not call `task_finish`.\n\
+         3. Do not answer in plain text before calling the tool."
+            .to_string(),
+    );
+
+    let run = client
+        .run_with_agent(agent, "Request the user decision now.")
+        .expect("run live ask_user test");
+    let tool_names = run
+        .result
+        .cycles
+        .iter()
+        .flat_map(|cycle| cycle.tool_calls.iter().map(|call| call.name.clone()))
+        .collect::<Vec<_>>();
+
+    assert_eq!(run.resolved.backend, "deepseek");
+    assert_eq!(run.resolved.requested_model, "deepseek-v4-pro");
+    assert_eq!(run.result.status, AgentStatus::WaitUser, "{tool_names:?}");
+    assert!(
+        run.result
+            .wait_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Choose live option?"),
+        "wait_reason was {:?}",
+        run.result.wait_reason
+    );
+    assert!(
+        tool_names.iter().any(|name| name == ASK_USER_TOOL_NAME),
+        "expected live model to call ask_user, got {tool_names:?}"
+    );
+}
+
+#[test]
+#[ignore = "live API call; run with VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored"]
 fn live_deepseek_v4_pro_uses_workspace_file_tools() {
     if !live_enabled() {
         eprintln!("Live tests are disabled. Set VV_AGENT_RUN_LIVE_TESTS=1 to run.");
