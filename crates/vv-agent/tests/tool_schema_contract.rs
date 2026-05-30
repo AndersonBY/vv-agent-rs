@@ -1152,6 +1152,10 @@ fn tools_module_is_split_into_handler_files() {
         "sdk/session/events.rs",
         "sdk/session/handles.rs",
         "sdk/session/run.rs",
+        "sdk/session/run/controls.rs",
+        "sdk/session/run/execution.rs",
+        "sdk/session/run/prompt.rs",
+        "sdk/session/run/query.rs",
         "sdk/session/state.rs",
         "sdk/session/util.rs",
         "sdk/session/watchers.rs",
@@ -1680,6 +1684,19 @@ fn sdk_client_sessions_root_stays_focused_on_public_entrypoints() {
     assert!(
         line_count <= 120,
         "sdk/client/sessions.rs should delegate run closure construction, default-agent session helpers, and named-agent session helpers to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn sdk_session_run_root_stays_focused_on_session_run_exports() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let run = manifest_dir.join("src/sdk/session/run.rs");
+    let content = std::fs::read_to_string(&run).expect("read sdk session run module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 50,
+        "sdk/session/run.rs should wire session run submodules while delegating prompt handling, queue controls, query helpers, and runtime execution assembly to focused files; found {line_count} lines"
     );
 }
 
