@@ -1179,6 +1179,10 @@ fn tools_module_is_split_into_handler_files() {
         "sdk/client/agents.rs",
         "sdk/client/queries.rs",
         "sdk/client/runtime.rs",
+        "sdk/client/runtime/controls.rs",
+        "sdk/client/runtime/llm.rs",
+        "sdk/client/runtime/options.rs",
+        "sdk/client/runtime/runners.rs",
         "sdk/client/runs.rs",
         "sdk/client/sessions.rs",
         "sdk/client/sessions/base.rs",
@@ -1531,6 +1535,19 @@ fn sdk_client_task_root_stays_focused_on_prepare_api() {
     assert!(
         line_count <= 120,
         "sdk/client/task.rs should keep shared task preparation helpers at the root while delegating named-agent, inline-agent, default-agent, task id generation, prompt construction, and metadata expansion to submodules; found {line_count} lines"
+    );
+}
+
+#[test]
+fn sdk_client_runtime_root_stays_focused_on_public_runtime_exports() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let runtime = manifest_dir.join("src/sdk/client/runtime.rs");
+    let content = std::fs::read_to_string(&runtime).expect("read sdk client runtime module");
+    let line_count = content.lines().count();
+
+    assert!(
+        line_count <= 80,
+        "sdk/client/runtime.rs should keep only SDK runtime module wiring and public exports while delegating run-control construction, LLM construction, runtime option application, and RunAgent implementations to focused submodules; found {line_count} lines"
     );
 }
 
