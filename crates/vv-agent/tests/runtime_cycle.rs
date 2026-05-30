@@ -93,6 +93,71 @@ fn runtime_preserves_reasoning_content_on_assistant_messages() {
 }
 
 #[test]
+fn runtime_collects_cycle_and_total_token_usage_from_llm_responses() {
+    let todo_args = BTreeMap::from([(
+        "todos".to_string(),
+        json!([
+            {"title": "draft", "status": "completed", "priority": "medium"}
+        ]),
+    )]);
+    let mut planning_response = LLMResponse::with_tool_calls(
+        "planning",
+        vec![ToolCall::new("todo_call", "todo_write", todo_args)],
+    );
+    planning_response.raw.insert(
+        "usage".to_string(),
+        json!({
+            "prompt_tokens": 100,
+            "completion_tokens": 25,
+            "total_tokens": 125,
+            "prompt_tokens_details": {"cached_tokens": 40},
+            "completion_tokens_details": {"reasoning_tokens": 10}
+        }),
+    );
+
+    let finish_args = BTreeMap::from([("message".to_string(), json!("ok"))]);
+    let mut finish_response = LLMResponse::with_tool_calls(
+        "done",
+        vec![ToolCall::new("finish_call", "task_finish", finish_args)],
+    );
+    finish_response.raw.insert(
+        "usage".to_string(),
+        json!({
+            "input_tokens": 50,
+            "output_tokens": 30,
+            "total_tokens": 80,
+            "input_tokens_details": {"cache_creation_tokens": 12}
+        }),
+    );
+
+    let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![
+        planning_response,
+        finish_response,
+    ]));
+    let mut task = AgentTask::new("task_usage", "demo", "system", "go");
+    task.max_cycles = 4;
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(result.token_usage.cycles.len(), 2);
+    assert_eq!(result.cycles[0].token_usage.prompt_tokens, 100);
+    assert_eq!(result.cycles[0].token_usage.completion_tokens, 25);
+    assert_eq!(result.cycles[0].token_usage.cached_tokens, 40);
+    assert_eq!(result.cycles[0].token_usage.reasoning_tokens, 10);
+    assert_eq!(result.cycles[1].token_usage.prompt_tokens, 50);
+    assert_eq!(result.cycles[1].token_usage.completion_tokens, 30);
+    assert_eq!(result.cycles[1].token_usage.cache_creation_tokens, 12);
+
+    assert_eq!(result.token_usage.prompt_tokens, 150);
+    assert_eq!(result.token_usage.completion_tokens, 55);
+    assert_eq!(result.token_usage.total_tokens, 205);
+    assert_eq!(result.token_usage.cached_tokens, 40);
+    assert_eq!(result.token_usage.reasoning_tokens, 10);
+    assert_eq!(result.token_usage.cache_creation_tokens, 12);
+}
+
+#[test]
 fn runtime_preserves_shared_state_when_task_finishes() {
     let todo_args = BTreeMap::from([(
         "todos".to_string(),

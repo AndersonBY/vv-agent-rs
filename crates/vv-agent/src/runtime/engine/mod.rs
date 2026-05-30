@@ -22,6 +22,7 @@ use super::cancellation::CancellationToken;
 
 use super::cycle_runner::{is_prompt_too_long_error, MAX_PROMPT_TOO_LONG_RETRIES};
 use super::results::assistant_message_from_response;
+use super::token_usage::normalize_token_usage;
 use super::tool_call_runner::{execute_tool_result, needs_tool_call_id, skipped_tool_result};
 
 use self::completion::{handle_directive_result, handle_no_tool_response, NoToolResponseRequest};
@@ -226,6 +227,10 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     Vec::<ToolExecutionResult>::new(),
                 );
                 cycle.memory_compacted = memory_compacted;
+                if !cycle.token_usage.has_usage() {
+                    cycle.token_usage =
+                        normalize_token_usage(response.raw.get("usage").unwrap_or(&Value::Null));
+                }
                 self.emit_cycle_llm_response(&controls, &cycle);
 
                 if response.tool_calls.is_empty() {
