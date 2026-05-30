@@ -36,7 +36,7 @@ live 套件会验证直接 runtime 完成、SDK 完成、`ask_user` 等待用户
 进度更新、`compress_memory` 记忆写入、`activate_skill` 加载、workspace `write_file`/`read_file`、
 `file_str_replace`、`list_files`、`workspace_grep` 和 `file_info` 工具调用、`read_image`
 加载、后台命令 handoff 和显式轮询、子 Agent 状态轮询，以及通过 `create_sub_task`
-调用配置好的子 Agent：
+进行配置子 Agent 的单任务/批量委托：
 
 ```bash
 VV_AGENT_RUN_LIVE_TESTS=1 \

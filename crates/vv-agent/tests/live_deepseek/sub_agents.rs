@@ -109,6 +109,117 @@ fn live_deepseek_v4_pro_runs_configured_sub_agent() {
 
 #[test]
 #[ignore = "live API call; run with VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored"]
+fn live_deepseek_v4_pro_runs_batch_sub_agents() {
+    if !live_enabled() {
+        eprintln!("Live tests are disabled. Set VV_AGENT_RUN_LIVE_TESTS=1 to run.");
+        return;
+    }
+
+    let settings_path = live_settings_path();
+    assert!(
+        settings_path.exists(),
+        "live settings file is missing: {}",
+        settings_path.display()
+    );
+
+    let workspace = tempfile::tempdir().expect("workspace");
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        settings_file: settings_path,
+        default_backend: "deepseek".to_string(),
+        workspace: workspace.path().to_path_buf(),
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    });
+    let mut sub_agent = SubAgentConfig::new(
+        "deepseek-v4-pro",
+        "A deterministic batch sub-agent used only for live delegation verification.",
+    );
+    sub_agent.backend = Some("deepseek".to_string());
+    sub_agent.max_cycles = 3;
+    sub_agent.system_prompt = Some(
+        "You are one worker in a deterministic batch delegation test. \
+         You must call `task_finish` with message exactly: batch sub-agent live result"
+            .to_string(),
+    );
+
+    let mut agent = AgentDefinition::default_for_model("deepseek-v4-pro");
+    agent.backend = Some("deepseek".to_string());
+    agent.language = "en-US".to_string();
+    agent.max_cycles = 10;
+    agent.no_tool_policy = NoToolPolicy::WaitUser;
+    agent.allow_interruption = false;
+    agent.enable_todo_management = false;
+    agent.use_workspace = false;
+    agent.enable_sub_agents = true;
+    agent.sub_agents = BTreeMap::from([("batch-sub".to_string(), sub_agent)]);
+    agent.exclude_tools = vec![ASK_USER_TOOL_NAME.to_string()];
+    agent.system_prompt = Some(
+        "You are running a deterministic integration test for batch sub-agent delegation.\n\
+         Follow this protocol exactly.\n\
+         1. First call `create_sub_task` with `agent_id` exactly `batch-sub`, \
+         `tasks` containing two entries, and both tasks describing separate work.\n\
+         2. Use `wait_for_completion=true` so the batch result comes back in one response.\n\
+         3. After the batch result shows `summary.total` equal to 2, `summary.completed` \
+         equal to 2, and both results with final answers equal to `batch sub-agent live result`, \
+         call `task_finish` with message exactly `batch sub-agent observed`.\n\
+         Do not answer in plain text before finishing."
+            .to_string(),
+    );
+
+    let run = client
+        .run_with_agent(
+            agent,
+            "Execute the batch sub-agent delegation protocol now.",
+        )
+        .expect("run live batch sub-agent test");
+    let tool_names = run
+        .result
+        .cycles
+        .iter()
+        .flat_map(|cycle| cycle.tool_calls.iter().map(|call| call.name.clone()))
+        .collect::<Vec<_>>();
+    let batch_payload = run
+        .result
+        .cycles
+        .iter()
+        .flat_map(|cycle| cycle.tool_results.iter())
+        .find(|result| result.content.contains("\"summary\""))
+        .map(|result| {
+            serde_json::from_str::<serde_json::Value>(&result.content).expect("batch result JSON")
+        });
+
+    assert_eq!(run.resolved.backend, "deepseek");
+    assert_eq!(run.resolved.requested_model, "deepseek-v4-pro");
+    assert_eq!(run.result.status, AgentStatus::Completed, "{tool_names:?}");
+    assert_eq!(
+        run.result.final_answer.as_deref(),
+        Some("batch sub-agent observed"),
+        "{tool_names:?}"
+    );
+    assert!(
+        tool_names
+            .iter()
+            .any(|name| name == CREATE_SUB_TASK_TOOL_NAME),
+        "expected live model to call create_sub_task, got {tool_names:?}"
+    );
+    let batch_payload =
+        batch_payload.expect("batch create_sub_task result should include summary payload");
+    assert_eq!(batch_payload["summary"]["total"], 2, "{batch_payload}");
+    assert_eq!(batch_payload["summary"]["completed"], 2, "{batch_payload}");
+    let results = batch_payload["results"]
+        .as_array()
+        .expect("batch results array");
+    assert_eq!(results.len(), 2, "{batch_payload}");
+    assert!(
+        results
+            .iter()
+            .all(|result| result["final_answer"] == "batch sub-agent live result"),
+        "{batch_payload}"
+    );
+}
+
+#[test]
+#[ignore = "live API call; run with VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored"]
 fn live_deepseek_v4_pro_polls_async_sub_agent_status() {
     if !live_enabled() {
         eprintln!("Live tests are disabled. Set VV_AGENT_RUN_LIVE_TESTS=1 to run.");
