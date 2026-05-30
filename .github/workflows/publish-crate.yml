@@ -57,7 +57,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Test
-        run: cargo test -p vv-agent
+        run: cargo test -p vv-agent -- --test-threads=1
 
       - name: Apalis backend test
         run: cargo test -p vv-agent --features apalis --test apalis_backend
