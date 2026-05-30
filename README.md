@@ -34,7 +34,9 @@ cargo clippy --all-targets --all-features -- -D warnings
 ```
 
 Live DeepSeek smoke tests are opt-in and use a local vv-llm settings file
-without printing credentials:
+without printing credentials. The live suite verifies direct runtime finish,
+SDK finish, workspace `write_file`/`read_file` tool use, and background command
+handoff:
 
 ```bash
 VV_AGENT_RUN_LIVE_TESTS=1 \

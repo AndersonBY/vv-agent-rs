@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
-use vv_agent::constants::{ASK_USER_TOOL_NAME, BASH_TOOL_NAME, CHECK_BACKGROUND_COMMAND_TOOL_NAME};
+use vv_agent::constants::{
+    ASK_USER_TOOL_NAME, BASH_TOOL_NAME, CHECK_BACKGROUND_COMMAND_TOOL_NAME, READ_FILE_TOOL_NAME,
+    WRITE_FILE_TOOL_NAME,
+};
 use vv_agent::{
     build_vv_llm_from_local_settings, AgentDefinition, AgentRuntime, AgentSDKClient,
     AgentSDKOptions, AgentStatus, AgentTask, NoToolPolicy,
@@ -100,6 +103,84 @@ fn live_deepseek_v4_pro_finishes_sdk_task_without_injected_runtime() {
             .iter()
             .any(|call| call.name == "task_finish")),
         "expected the live model to call task_finish"
+    );
+}
+
+#[test]
+#[ignore = "live API call; run with VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored"]
+fn live_deepseek_v4_pro_uses_workspace_file_tools() {
+    if !live_enabled() {
+        eprintln!("Live tests are disabled. Set VV_AGENT_RUN_LIVE_TESTS=1 to run.");
+        return;
+    }
+
+    let settings_path = live_settings_path();
+    assert!(
+        settings_path.exists(),
+        "live settings file is missing: {}",
+        settings_path.display()
+    );
+
+    let workspace = tempfile::tempdir().expect("workspace");
+    let client = AgentSDKClient::new(AgentSDKOptions {
+        settings_file: settings_path,
+        default_backend: "deepseek".to_string(),
+        workspace: workspace.path().to_path_buf(),
+        auto_discover_resources: false,
+        ..AgentSDKOptions::default()
+    });
+    let mut agent = AgentDefinition::default_for_model("deepseek-v4-pro");
+    agent.backend = Some("deepseek".to_string());
+    agent.language = "en-US".to_string();
+    agent.max_cycles = 8;
+    agent.no_tool_policy = NoToolPolicy::WaitUser;
+    agent.allow_interruption = false;
+    agent.enable_todo_management = false;
+    agent.use_workspace = true;
+    agent.exclude_tools = vec![ASK_USER_TOOL_NAME.to_string()];
+    agent.system_prompt = Some(
+        "You are running a deterministic integration test for workspace tools.\n\
+         Follow this protocol exactly.\n\
+         1. First call `write_file` with path `live_workspace_probe.txt` and content \
+         exactly `deepseek workspace tool ok`.\n\
+         2. After the write succeeds, call `read_file` with path `live_workspace_probe.txt`.\n\
+         3. After observing that the read content contains exactly \
+         `deepseek workspace tool ok`, call `task_finish` with message exactly \
+         `workspace tools observed`.\n\
+         Do not answer in plain text before finishing. Do not use bash."
+            .to_string(),
+    );
+
+    let run = client
+        .run_with_agent(agent, "Execute the workspace file tool protocol now.")
+        .expect("run live workspace tool test");
+    let tool_names = run
+        .result
+        .cycles
+        .iter()
+        .flat_map(|cycle| cycle.tool_calls.iter().map(|call| call.name.clone()))
+        .collect::<Vec<_>>();
+
+    assert_eq!(run.resolved.backend, "deepseek");
+    assert_eq!(run.resolved.requested_model, "deepseek-v4-pro");
+    assert_eq!(run.result.status, AgentStatus::Completed, "{tool_names:?}");
+    assert_eq!(
+        run.result.final_answer.as_deref(),
+        Some("workspace tools observed"),
+        "{tool_names:?}"
+    );
+    assert!(
+        tool_names.iter().any(|name| name == WRITE_FILE_TOOL_NAME),
+        "expected live model to call write_file, got {tool_names:?}"
+    );
+    assert!(
+        tool_names.iter().any(|name| name == READ_FILE_TOOL_NAME),
+        "expected live model to call read_file, got {tool_names:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("live_workspace_probe.txt"))
+            .expect("workspace probe file"),
+        "deepseek workspace tool ok"
     );
 }
 
