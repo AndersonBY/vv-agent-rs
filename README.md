@@ -21,7 +21,7 @@ AgentRuntime
 ├── ToolCallRunner          # tool dispatch and directive convergence
 ├── RuntimeHookManager      # before/after hooks for LLM, tools, and memory
 ├── MemoryManager           # context budgeting, compaction, artifacts, session memory
-├── ExecutionBackend        # run scheduling
+├── RuntimeExecutionBackend # run scheduling
 │   ├── InlineBackend       # synchronous default
 │   ├── ThreadBackend       # non-blocking task submission
 │   └── DistributedBackend  # checkpointed cycles with pluggable dispatch
@@ -86,11 +86,11 @@ CLI flags:
 
 ### Agent + Runner SDK
 
-Use the `Agent` + `Runner` facade for new embedded applications. `Agent`
+Use `Agent` + `Runner` for new embedded applications. `Agent`
 describes instructions, model, tools, handoffs, hooks, and defaults. `Runner`
 owns model providers, workspace defaults, and execution. `RunConfig` overrides
 one run without changing the agent definition, including the public
-`ExecutionMode` facade for inline, threaded, or distributed execution.
+`ExecutionMode` for inline, threaded, or distributed execution.
 
 ```rust
 use vv_agent::{Agent, ExecutionMode, ModelRef, Runner, RunConfig, VvLlmModelProvider};
@@ -137,10 +137,6 @@ let result = runner
     .run_with_config(&agent, "Continue with follow-up suggestions.", RunConfig::builder().session(session).build())
     .await?;
 ```
-
-`AgentDefinition`, `AgentSDKClient`, and `AgentSDKOptions` remain available for
-existing integrations, resource discovery, and the older interactive session
-helpers. New examples use the facade where possible.
 
 ### Low-Level Runtime
 
@@ -202,7 +198,7 @@ runtime version with event logging.
 | --- | --- |
 | Runtime | Multi-cycle model execution, tool planning, explicit terminal states, cancellation, streaming, event logs, and max-cycle handling. |
 | Tools | Built-in tools for finish/wait-user, TODOs, workspace reads/writes/listing/grep, image reads, shell commands, memory notes, skills, and sub-tasks. |
-| SDK | `Agent`, `Runner`, `RunConfig`, `ModelSettings`, typed tools, `Agent::as_tool()`, typed events, and `Session`; legacy client helpers remain available for existing integrations. |
+| SDK | `Agent`, `Runner`, `RunConfig`, `ModelSettings`, typed tools, `Agent::as_tool()`, typed events, and `Session`. |
 | Memory | Token budgeting, prompt-too-long retries, micro and full compaction, artifact-backed large tool results, image trimming, and session memory. |
 | Hooks | Rust `RuntimeHook` implementations can inspect or patch LLM calls, tool calls, memory compaction, and run lifecycle behavior. |
 | Sub-agents | Runtime-backed sub-task creation, batch submission, background status polling, continuation, steering, and inherited streaming callbacks. |
@@ -256,7 +252,7 @@ cargo run -p vv-agent --example 28_facade_approval_background_trace
 ```
 
 See `crates/vv-agent/examples/README.md` for the full example index covering
-Agent + Runner facade, runtime hooks, custom tools, handoffs, approval resume,
+Agent + Runner, runtime hooks, custom tools, handoffs, approval resume,
 background tasks, tracing, sub-agent pipelines, skills, streaming, cancellation,
 state stores, execution backends, workspace backends, and temporary tool
 injection.
@@ -308,14 +304,13 @@ vv-agent-rs/
       llm/        # LLM trait, scripted test client, vv-llm client bridge
       memory/     # compaction, artifacts, session memory, token budgeting
       prompt/     # system prompt sections and prompt-cache metadata
-      agent.rs    # public Agent builder facade
-      runner.rs   # public Runner facade over runtime execution
+      agent.rs    # public Agent builder
+      runner.rs   # public Runner over runtime execution
       run_config.rs
       model.rs
       model_settings.rs
       sessions.rs
       runtime/    # agent runtime, hooks, backends, cancellation, sub-agents
-      sdk/        # high-level client, sessions, resources, run payloads
       skills/     # skill discovery, parsing, validation, activation
       tools/      # registry, schemas, dispatcher, built-in handlers
       workspace/  # local, memory, and S3 workspace backends

@@ -4,8 +4,6 @@ use super::thread::ThreadBackend;
 use crate::runtime::CancellationToken;
 use crate::types::{AgentResult, AgentTask, CycleRecord, Message, Metadata};
 
-pub type ExecutionBackend = RuntimeExecutionBackend;
-
 #[derive(Debug, Clone)]
 pub enum RuntimeExecutionBackend {
     Inline(InlineBackend),

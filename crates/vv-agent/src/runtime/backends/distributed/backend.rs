@@ -64,10 +64,6 @@ impl DistributedBackend {
         self
     }
 
-    pub fn with_cycle_task_name(self, cycle_task_name: impl Into<String>) -> Self {
-        self.with_cycle_name(cycle_task_name)
-    }
-
     pub fn runtime_recipe(&self) -> Option<&RuntimeRecipe> {
         self.runtime_recipe.as_ref()
     }
@@ -78,10 +74,6 @@ impl DistributedBackend {
 
     pub fn cycle_name(&self) -> &str {
         &self.cycle_name
-    }
-
-    pub fn cycle_task_name(&self) -> &str {
-        self.cycle_name()
     }
 
     pub fn parallel_map<T, R, F>(&self, function: F, items: Vec<T>) -> Vec<R>

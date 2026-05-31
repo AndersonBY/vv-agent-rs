@@ -9,6 +9,4 @@ mod r#loop;
 
 pub use backend::DistributedBackend;
 pub use checkpointed_cycle::run_checkpointed_cycle;
-pub use dispatch::{
-    CycleDispatchResult, CycleDispatcher, CycleTaskDispatchResult, CycleTaskDispatcher,
-};
+pub use dispatch::{CycleDispatchResult, CycleDispatcher};

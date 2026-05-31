@@ -6,7 +6,7 @@ use thiserror::Error;
 use crate::config::{
     build_vv_llm_from_local_settings, resolve_model_endpoint, ResolvedModelConfig,
 };
-use crate::llm::{LLMClient, LlmClient, LlmRequest, ScriptStep, ScriptedLlmClient, VvLlmClient};
+use crate::llm::{LlmClient, LlmRequest, ScriptStep, ScriptedLlmClient, VvLlmClient};
 use crate::model_settings::ModelSettings;
 use crate::types::LLMResponse;
 
@@ -243,6 +243,6 @@ impl ModelProvider for VvLlmModelProvider {
         )
         .map_err(|error| ModelError::Config(error.to_string()))?;
         let llm: VvLlmClient = llm;
-        Ok(Arc::new(llm) as Arc<dyn LLMClient>)
+        Ok(Arc::new(llm) as Arc<dyn LlmClient>)
     }
 }

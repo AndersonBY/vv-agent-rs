@@ -2,10 +2,9 @@
 
 [中文](README_ZH.md)
 
-These examples show the main ways to embed and operate `vv-agent`: the 0.2
-Agent + Runner facade, direct runtime use, compatibility SDK clients, sessions,
-hooks, custom tools, sub-agents, streaming, state stores, execution backends,
-and workspace backends.
+These examples show the main ways to embed and operate `vv-agent`: Agent +
+Runner, direct runtime use, sessions, hooks, custom tools,
+sub-agents, streaming, state stores, execution backends, and workspace backends.
 
 Run commands from the `vv-agent-rs` repository root, the directory that
 contains `Cargo.toml`:
@@ -51,9 +50,9 @@ cargo run -p vv-agent --example 03_sdk_client
 | Example | Focus |
 | --- | --- |
 | `01_quick_start` | Direct runtime setup with prompt construction and tool registry. |
-| `02_agent_profiles` | SDK client with named agent profiles. |
-| `03_sdk_client` | One-shot SDK run/query flow with configured sub-agents. |
-| `04_session_api` | Long-lived SDK session lifecycle. |
+| `02_agent_profiles` | `Agent` profile metadata with `Runner`. |
+| `03_sdk_client` | One-shot `Runner` flow with handoff to another `Agent`. |
+| `04_session_api` | Long-lived `MemorySession` with `RunConfig`. |
 | `05_ask_user_resume` | `ask_user` wait state and resume flow. |
 | `06_runtime_hooks` | Before-LLM and before-tool hooks. |
 | `07_token_budget_guard` | Token budget monitoring and forced finish behavior. |
@@ -66,17 +65,17 @@ cargo run -p vv-agent --example 03_sdk_client
 | `14_batch_sub_tasks` | Batch sub-task delegation. |
 | `15_memory_compact_hook` | Memory compaction hook behavior. |
 | `16_hook_composition` | Combining timing, policy, and result hooks. |
-| `17_error_recovery` | Retry wrapper around SDK runs. |
+| `17_error_recovery` | Retry wrapper around `Runner` calls. |
 | `18_cancellation` | Cancellation token with direct runtime execution. |
 | `19_streaming` | Streaming callback collection. |
 | `20_thread_backend` | Thread execution backend. |
 | `21_state_checkpoint` | Checkpoint serialization with memory/SQLite stores. |
-| `22_sdk_advanced` | Advanced SDK options with streaming and thread backend. |
+| `22_sdk_advanced` | Advanced `RunConfig` options with threaded execution. |
 | `23_distributed_backend` | Distributed backend API with inline fallback. |
 | `24_workspace_backends` | Local, memory, S3-compatible, and wrapped workspace backends. |
 | `25_temporary_tool_injection` | Runtime hook that injects a temporary tool window. |
-| `26_agent_runner_facade` | 0.2 `Agent` + `Runner` facade with `VvLlmModelProvider`. |
-| `27_facade_handoff` | 0.2 handoff flow that transfers control to another agent. |
+| `26_agent_runner_facade` | `Agent` + `Runner` with `VvLlmModelProvider`. |
+| `27_facade_handoff` | Handoff flow that transfers control to another agent. |
 | `28_facade_approval_background_trace` | Approval resume, background agent task, and JSONL trace exporter. |
 
 ## Verification

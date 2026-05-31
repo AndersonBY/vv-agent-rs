@@ -2,9 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use vv_agent::runtime::backends::{
-    run_checkpointed_cycle, CeleryBackend, CycleDispatchResult, CycleDispatcher,
-    CycleTaskDispatchResult, CycleTaskDispatcher, DistributedBackend, InlineBackend,
-    RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
+    run_checkpointed_cycle, CycleDispatchResult, CycleDispatcher, DistributedBackend,
+    InlineBackend, RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
 };
 use vv_agent::runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 use vv_agent::{
@@ -14,8 +13,8 @@ use vv_agent::{
 
 #[test]
 fn runtime_backends_exports_agent_base_execution_backend_paths() {
-    let _direct = vv_agent::runtime::backends::ExecutionBackend::default();
-    let _base = vv_agent::runtime::backends::base::ExecutionBackend::default();
+    let _direct = vv_agent::runtime::backends::RuntimeExecutionBackend::default();
+    let _base = vv_agent::runtime::backends::base::RuntimeExecutionBackend::default();
 }
 
 #[test]
@@ -114,9 +113,6 @@ fn cycle_dispatch_result_matches_worker_payload_shape() {
         CycleDispatchResult::from_dict(&unfinished_payload).expect("unfinished dispatch result");
     assert!(!unfinished.finished);
     assert!(unfinished.result.is_none());
-
-    let alias_payload = CycleTaskDispatchResult::unfinished().to_dict();
-    assert_eq!(alias_payload, json!({"finished": false}));
 }
 
 #[test]
@@ -127,9 +123,6 @@ fn distributed_backend_without_dispatcher_keeps_inline_parallel_map_fallback() {
 
     assert_eq!(results, vec![3, 6, 9]);
     assert!(backend.runtime_recipe().is_none());
-
-    let legacy_backend = CeleryBackend::inline_fallback();
-    assert!(legacy_backend.runtime_recipe().is_none());
 }
 
 #[test]
@@ -595,31 +588,31 @@ fn distributed_backend_returns_checkpointed_max_cycles_and_cleans_up() {
 }
 
 #[test]
-fn celery_dispatcher_alias_remains_usable_for_existing_integrations() {
-    fn assert_alias<T: CycleTaskDispatcher>() {}
+fn distributed_backend_accepts_custom_cycle_name() {
+    fn assert_dispatcher<T: CycleDispatcher>() {}
 
     #[derive(Debug)]
-    struct AliasDispatcher;
+    struct CustomDispatcher;
 
-    impl CycleTaskDispatcher for AliasDispatcher {
+    impl CycleDispatcher for CustomDispatcher {
         fn dispatch_cycle(
             &self,
             _task: &AgentTask,
             _recipe: &RuntimeRecipe,
             _cycle_name: &str,
             _cycle_index: u32,
-        ) -> Result<CycleTaskDispatchResult, String> {
-            Ok(CycleTaskDispatchResult::unfinished())
+        ) -> Result<CycleDispatchResult, String> {
+            Ok(CycleDispatchResult::unfinished())
         }
     }
 
-    assert_alias::<AliasDispatcher>();
+    assert_dispatcher::<CustomDispatcher>();
     let recipe = RuntimeRecipe::new("settings.json", "deepseek", "deepseek-v4-pro", ".");
     let store = Arc::new(InMemoryStateStore::new());
     let backend =
-        CeleryBackend::distributed_with_dispatcher(recipe, store, Arc::new(AliasDispatcher))
-            .with_cycle_task_name("legacy.run_cycle");
-    assert_eq!(backend.cycle_task_name(), "legacy.run_cycle");
+        DistributedBackend::distributed_with_dispatcher(recipe, store, Arc::new(CustomDispatcher))
+            .with_cycle_name("custom.run_cycle");
+    assert_eq!(backend.cycle_name(), "custom.run_cycle");
 }
 
 #[test]

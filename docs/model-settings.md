@@ -72,7 +72,7 @@ there is a concrete need for a Python source fixture.
 
 ## Agent + Runner Model Provider
 
-The 0.2 facade resolves models through `ModelProvider`:
+`Agent` and `Runner` resolve models through `ModelProvider`:
 
 ```rust
 use vv_agent::{ModelRef, Runner, VvLlmModelProvider};

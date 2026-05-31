@@ -9,9 +9,9 @@ delegated to the `vv-llm` crate.
 
 ```text
 CLI / SDK / embedding application
-  -> Agent + Runner facade
+  -> Agent + Runner
       -> ModelProvider / ModelRef / ModelSettings
-      -> RunConfig / Session / Tool facade
+      -> RunConfig / Session / Tool APIs
       -> compile to runtime task
   -> config::load_llm_settings_from_file
   -> config::resolve_model_endpoint
@@ -22,7 +22,7 @@ CLI / SDK / embedding application
       -> tool planner
       -> tool-call runner
       -> execution backend
-  -> AgentResult / AgentRun
+  -> RunResult / AgentResult
 ```
 
 Task completion is tool-driven. The model must call `task_finish` or `ask_user`
@@ -35,21 +35,21 @@ from an assistant prose message.
 | --- | --- |
 | `crates/vv-agent/src/config/` | Settings literal parsing, API key decoding, backend normalization, endpoint lookup, and exact model resolution. |
 | `crates/vv-agent/src/cli/` | CLI argument parsing, task construction, runtime logging, and output payloads. |
-| `crates/vv-agent/src/agent.rs` | Public `Agent` builder facade for instructions, model defaults, tools, handoffs, hooks, and metadata. |
-| `crates/vv-agent/src/runner.rs` | Public `Runner` facade that resolves models, compiles public inputs, and reuses the runtime engine. |
+| `crates/vv-agent/src/agent.rs` | Public `Agent` builder for instructions, model defaults, tools, handoffs, hooks, and metadata. |
+| `crates/vv-agent/src/runner.rs` | Public `Runner` that resolves models, compiles public inputs, and reuses the runtime engine. |
 | `crates/vv-agent/src/run_config.rs` | Per-run overrides for model, workspace, max cycles, tool policy, session, hooks, cancellation, and metadata. |
 | `crates/vv-agent/src/model.rs` | Public `ModelRef`, `ModelProvider`, `VvLlmModelProvider`, and scripted provider contracts. |
 | `crates/vv-agent/src/model_settings.rs` | Public model-call settings aligned with common `vv-llm` request options. |
 | `crates/vv-agent/src/sessions.rs` | Public `Session` storage contract and in-memory implementation. |
-| `crates/vv-agent/src/events.rs` | Typed serializable run events for facade consumers. |
+| `crates/vv-agent/src/events.rs` | Typed serializable run events for SDK consumers. |
 | `crates/vv-agent/src/types/` | Public protocol types, dictionaries, messages, tasks, statuses, records, and token usage. |
 | `crates/vv-agent/src/llm/` | LLM trait, scripted test client, `vv-llm` bridge, endpoint failover, streaming, prompt cache, and request normalization. |
 | `crates/vv-agent/src/runtime/` | Agent runtime, cycle execution, hooks, cancellation, shell runtime, background sessions, sub-agents, state stores, and execution backends. |
-| `crates/vv-agent/src/tools/` | Tool registry, public `Tool`/`FunctionTool` facade, schemas, dispatcher, shared parsing helpers, and built-in handlers. |
+| `crates/vv-agent/src/tools/` | Tool registry, public `Tool`/`FunctionTool` APIs, schemas, dispatcher, shared parsing helpers, and built-in handlers. |
 | `crates/vv-agent/src/constants/` | Stable tool names and model-visible schema constants. |
 | `crates/vv-agent/src/memory/` | Token counting, compaction, artifact storage, session memory, micro-compaction, prompt-too-long handling, and file-context restoration. |
 | `crates/vv-agent/src/prompt/` | System prompt sections, prompt-cache break tracking, available skills, and prompt hashes. |
-| `crates/vv-agent/src/sdk/` | Compatibility client, named agents, resource loading, query helpers, older sessions, and SDK run payloads. |
+| `crates/vv-agent/src/agent.rs`, `runner.rs`, `run_config.rs`, `sessions.rs` | Public `Agent` + `Runner`, run configuration, and session storage. |
 | `crates/vv-agent/src/workspace/` | Local, memory, and S3-compatible workspace backends. |
 | `crates/vv-agent/src/skills/` | Skill discovery, frontmatter parsing, normalization, validation, prompt rendering, and activation state. |
 
@@ -63,14 +63,14 @@ from an assistant prose message.
 Distributed and checkpointed paths must preserve the same public result and
 checkpoint payload shape as inline execution.
 
-## Public SDK Facade
+## Public SDK
 
-The 0.2 public path is `Agent` + `Runner`. Public types express user intent;
+The public path is `Agent` + `Runner`. Public types express user intent;
 the runner compiles those values into the existing runtime payload and keeps
 `AgentRuntime`, `CycleRunner`, `ToolCallRunner`, and backend code as the
 execution layer.
 
-Current facade responsibilities:
+Core responsibilities:
 
 - `Agent`: name, instructions, model default, model settings, public tools,
   `Agent::as_tool()`, handoffs, hooks, and metadata.
@@ -85,12 +85,8 @@ Current facade responsibilities:
   into the current registry until the runtime is fully async-native.
 - `AgentTool`: public agent-as-tool wrapper that maps tool arguments into the
   existing `SubTaskRequest` runtime path.
-- `Session`: history-only storage. Interactive steering and follow-up controls
-  remain in the older client session helpers until the conversation facade is
-  added.
-
-The older `AgentDefinition`/`AgentSDKClient` path stays available for existing
-integrations, but new docs and examples should introduce the facade first.
+- `Session`: history-only storage for `RunConfig`; approval resume and
+  background-task handles are exposed through the current API.
 
 ## Tool Boundaries
 

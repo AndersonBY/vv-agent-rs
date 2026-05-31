@@ -1,7 +1,6 @@
 use crate::agent::Agent;
 use crate::config::ResolvedModelConfig;
 use crate::run_config::RunConfig;
-use crate::sdk::types::AgentRun;
 use crate::types::{AgentResult, AgentStatus};
 
 #[derive(Clone)]
@@ -57,12 +56,6 @@ impl RunResult {
 
     pub(crate) fn resume_context(&self) -> Option<&RunResumeContext> {
         self.resume_context.as_ref()
-    }
-}
-
-impl From<AgentRun> for RunResult {
-    fn from(run: AgentRun) -> Self {
-        Self::new(run.agent_name, run.result, run.resolved)
     }
 }
 

@@ -18,7 +18,7 @@ AgentRuntime
 ├── ToolCallRunner          # 工具调度和 finish / wait-user / continue 收敛
 ├── RuntimeHookManager      # LLM、工具、memory 前后的 hook
 ├── MemoryManager           # 上下文预算、压缩、artifact、session memory
-├── ExecutionBackend        # 运行调度
+├── RuntimeExecutionBackend # 运行调度
 │   ├── InlineBackend       # 默认同步执行
 │   ├── ThreadBackend       # 非阻塞任务提交
 │   └── DistributedBackend  # checkpoint cycle 与可插拔调度
@@ -81,10 +81,10 @@ CLI 参数：
 
 ### Agent + Runner SDK
 
-新嵌入场景优先使用 `Agent` + `Runner` facade。`Agent` 描述 instructions、model、
+新嵌入场景优先使用 `Agent` + `Runner`。`Agent` 描述 instructions、model、
 tools、handoffs、hooks 和默认值；`Runner` 管理 model provider、workspace 默认值和执行；
 `RunConfig` 用来覆盖单次运行，而不改变 Agent 定义，包括用于选择 inline、threaded
-或 distributed 执行的公共 `ExecutionMode` facade。
+或 distributed 执行的公共 `ExecutionMode`。
 
 ```rust
 use vv_agent::{Agent, ExecutionMode, ModelRef, Runner, RunConfig, VvLlmModelProvider};
@@ -131,9 +131,6 @@ let result = runner
     .run_with_config(&agent, "继续补充三条后续建议。", RunConfig::builder().session(session).build())
     .await?;
 ```
-
-`AgentDefinition`、`AgentSDKClient`、`AgentSDKOptions` 仍保留给已有集成、资源发现和旧的
-交互式 session helper；新示例会优先展示 facade。
 
 ### 低层 Runtime
 
@@ -193,7 +190,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | --- | --- |
 | Runtime | 多轮模型执行、工具规划、显式终态、取消、streaming、事件日志和 max-cycle 控制。 |
 | Tools | 内置 finish/wait-user、TODO、workspace 读写/列表/grep、图片读取、shell 命令、memory note、skill 和 sub-task 工具。 |
-| SDK | `Agent`、`Runner`、`RunConfig`、`ModelSettings`、typed tool、`Agent::as_tool()`、typed event 和 `Session`；旧 client helper 仍可用于已有集成。 |
+| SDK | `Agent`、`Runner`、`RunConfig`、`ModelSettings`、typed tool、`Agent::as_tool()`、typed event 和 `Session`。 |
 | Memory | Token 预算、prompt-too-long 重试、micro/full compaction、大型工具结果 artifact、图片裁剪和 session memory。 |
 | Hooks | 使用 Rust `RuntimeHook` 检查或修改 LLM 调用、工具调用、memory compaction 和运行生命周期。 |
 | Sub-agents | 基于 runtime 的子任务创建、批量提交、后台状态轮询、续跑、steering 和父级 streaming callback 继承。 |
@@ -243,7 +240,7 @@ cargo run -p vv-agent --example 27_facade_handoff
 cargo run -p vv-agent --example 28_facade_approval_background_trace
 ```
 
-完整索引见 `crates/vv-agent/examples/README_ZH.md`，覆盖 Agent + Runner facade、runtime hook、自定义工具、
+完整索引见 `crates/vv-agent/examples/README_ZH.md`，覆盖 Agent + Runner、runtime hook、自定义工具、
 handoff、approval resume、后台任务、tracing、子 Agent pipeline、skills、streaming、取消、state store、
 执行后端、workspace 后端和临时工具注入。
 
@@ -291,14 +288,13 @@ vv-agent-rs/
       llm/        # LLM trait、脚本化测试 client、vv-llm client bridge
       memory/     # compaction、artifact、session memory、token budget
       prompt/     # system prompt section 和 prompt-cache metadata
-      agent.rs    # public Agent builder facade
-      runner.rs   # runtime execution 上的 public Runner facade
+      agent.rs    # public Agent builder
+      runner.rs   # runtime execution 上的 public Runner
       run_config.rs
       model.rs
       model_settings.rs
       sessions.rs
       runtime/    # agent runtime、hook、backend、cancel、sub-agent
-      sdk/        # 高层 client、session、resource、run payload
       skills/     # skill 发现、解析、校验、激活
       tools/      # registry、schema、dispatcher、内置 handler
       workspace/  # local、memory、S3 workspace backend

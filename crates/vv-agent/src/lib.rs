@@ -22,7 +22,6 @@ pub mod result;
 pub mod run_config;
 pub mod runner;
 pub mod runtime;
-pub mod sdk;
 pub mod sessions;
 pub mod skills;
 pub mod tools;
@@ -43,8 +42,8 @@ pub use execution_mode::ExecutionMode;
 pub use guardrails::{GuardrailOutcome, InputGuardrail, OutputGuardrail};
 pub use handoffs::{handoff, Handoff};
 pub use llm::{
-    EndpointTarget, LLMClient, LlmClient, LlmError, LlmRequest, LlmStreamCallback, ScriptStep,
-    ScriptStepCallback, ScriptedLLM, ScriptedLlmClient, VVLlmClient, VvLlmClient,
+    EndpointTarget, LlmClient, LlmError, LlmRequest, LlmStreamCallback, ScriptStep,
+    ScriptStepCallback, ScriptedLlmClient, VvLlmClient,
 };
 pub use memory::{
     sanitize_for_resume, CompactionExhaustedError, LocalSummary, MemoryManager,
@@ -57,9 +56,8 @@ pub use result::{RunResult, RunState};
 pub use run_config::RunConfig;
 pub use runner::{NormalizedInput, RunEventStream, Runner};
 pub use runtime::backends::{
-    run_checkpointed_cycle, CeleryBackend, CycleDispatchResult, CycleDispatcher,
-    CycleTaskDispatchResult, CycleTaskDispatcher, DistributedBackend, InlineBackend,
-    RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
+    run_checkpointed_cycle, CycleDispatchResult, CycleDispatcher, DistributedBackend,
+    InlineBackend, RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
 };
 pub use runtime::background_sessions::{
     background_session_manager, BackgroundSessionAdoptOptions, BackgroundSessionListener,
@@ -79,30 +77,13 @@ pub use runtime::{
     _register_sub_agent_session, _unregister_sub_agent_session, continue_sub_agent_session,
     get_sub_agent_session, register_sub_agent_session, steer_sub_agent_session,
     sub_agent_session_registry, subscribe_sub_agent_session, unregister_sub_agent_session,
-    AfterLLMEvent, AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BaseRuntimeHook,
-    BeforeCycleMessageProvider, BeforeLLMEvent, BeforeLLMPatch, BeforeLlmEvent, BeforeLlmPatch,
-    BeforeMemoryCompactEvent, BeforeToolCallEvent, BeforeToolCallPatch, CancellationToken,
-    CancelledError, CycleRunRequest, CycleRunner, ExecutionBackend, ExecutionContext,
+    AfterLlmEvent, AfterToolCallEvent, AgentRuntime, BeforeCycleMessageProvider, BeforeLlmEvent,
+    BeforeLlmPatch, BeforeMemoryCompactEvent, BeforeToolCallEvent, BeforeToolCallPatch,
+    CancellationToken, CancelledError, CycleRunRequest, CycleRunner, ExecutionContext,
     InterruptionMessageProvider, RuntimeEventHandler, RuntimeHook, RuntimeHookManager,
     RuntimeRunControls, StreamCallback, SubAgentSession, SubAgentSessionListener,
     SubAgentSessionRegistry, SubAgentSessionUnsubscribe, ToolCallRunner, ToolRunOutcome,
     ToolRunRequest, MAX_PROMPT_TOO_LONG_RETRIES, MAX_PTL_RETRIES,
-};
-#[allow(deprecated)]
-pub use sdk::{
-    create_agent_session, create_agent_session_with_id, create_agent_session_with_id_and_workspace,
-    create_agent_session_with_id_and_workspace_and_shared_state,
-    create_agent_session_with_shared_state, create_agent_session_with_workspace,
-    create_agent_session_with_workspace_and_shared_state, query, query_with_options_and_agent,
-    query_with_options_and_agent_in_workspace,
-    query_with_options_and_agent_in_workspace_with_require_completed,
-    query_with_options_and_agent_request,
-    query_with_options_and_agent_request_with_require_completed,
-    query_with_options_and_agent_with_require_completed, run, run_with_options_and_agent,
-    run_with_options_and_agent_in_workspace, run_with_options_and_agent_request, AgentDefinition,
-    AgentResourceLoader, AgentRun, AgentSDKClient, AgentSDKOptions, AgentSession,
-    AgentSessionRunRequest, AgentSessionState, LlmBuilder, SdkLlmClient, SessionCancellationHandle,
-    SessionEventHandler, SessionListenerId, SessionSteeringHandle, ToolRegistryFactory,
 };
 pub use sessions::{
     session_store_conformance, MemorySession, Session, SessionItem, SessionStore,

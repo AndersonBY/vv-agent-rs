@@ -1,26 +1,35 @@
-#![allow(deprecated)]
-
 use std::collections::BTreeMap;
 
+use serde_json::json;
 use vv_agent::{
-    AgentDefinition, AgentRuntime, AgentSDKClient, AgentSDKOptions, LLMResponse, NoToolPolicy,
-    ScriptedLlmClient, ToolExecutionResult,
+    Agent, AgentStatus, LLMResponse, ModelRef, Runner, ScriptedModelProvider, ToolCall,
 };
 
-#[test]
-fn sdk_client_can_run_a_simple_prompt() {
-    let llm = ScriptedLlmClient::new(vec![LLMResponse::new("final answer")]);
-    let runtime = AgentRuntime::new(llm);
-    let client = AgentSDKClient::new(AgentSDKOptions::default()).with_runtime(runtime);
-    let mut agent = AgentDefinition::default_for_model("demo");
-    agent.no_tool_policy = NoToolPolicy::Finish;
+#[tokio::test]
+async fn runner_facade_can_run_a_simple_prompt() {
+    let runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "demo",
+            vec![finish_response("final answer")],
+        ))
+        .workspace(".")
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("demo")
+        .instructions("Answer and finish.")
+        .model(ModelRef::named("demo"))
+        .build()
+        .expect("agent");
 
-    let run = client.run_with_agent(agent, "say hello").expect("run");
+    let result = runner.run(&agent, "say hello").await.expect("run");
 
-    assert_eq!(run.result.final_answer.as_deref(), Some("final answer"));
-    assert_eq!(run.result.status, vv_agent::AgentStatus::Completed);
+    assert_eq!(result.status(), AgentStatus::Completed);
+    assert_eq!(result.final_output(), Some("final answer"));
+}
 
-    let execution = ToolExecutionResult::success("call_1", "ok");
-    assert_eq!(execution.to_message().content, "ok");
-    let _ = BTreeMap::<String, String>::new();
+fn finish_response(message: &str) -> LLMResponse {
+    let mut args = BTreeMap::new();
+    args.insert("message".to_string(), json!(message));
+    LLMResponse::with_tool_calls("", vec![ToolCall::new("finish", "task_finish", args)])
 }

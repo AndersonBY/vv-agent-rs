@@ -7,9 +7,6 @@ pub use anthropic_prompt_cache::{
     apply_claude_prompt_cache, cache_control_ephemeral, CACHE_CONTROL_EPHEMERAL,
     PROMPT_CACHE_ENABLED_KEY, SYSTEM_PROMPT_SECTIONS_KEY,
 };
-pub use base::LlmClient as LLMClient;
 pub use base::{EndpointTarget, LlmClient, LlmError, LlmRequest, LlmStreamCallback};
-pub use scripted::ScriptedLlmClient as ScriptedLLM;
 pub use scripted::{ScriptStep, ScriptStepCallback, ScriptedLlmClient};
-pub use vv_llm_client::VvLlmClient as VVLlmClient;
 pub use vv_llm_client::{EndpointClientSpec, NamedEndpointClientSpec, VvLlmClient};

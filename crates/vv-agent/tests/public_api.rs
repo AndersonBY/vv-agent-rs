@@ -1,20 +1,17 @@
-#![allow(deprecated)]
-
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use vv_agent::{
     background_session_manager, build_default_registry, dispatch_tool_call,
-    load_llm_settings_from_file, resolve_model_endpoint, AfterLLMEvent, AgentDefinition,
-    AgentRuntime, AgentSDKClient, AgentSDKOptions, AgentStatus, AgentTask,
-    BackgroundSessionListener, BaseRuntimeHook, BeforeLLMEvent, BeforeLLMPatch, CancellationToken,
-    CeleryBackend, Checkpoint, ConfigError, DistributedBackend, EndpointConfig, EndpointOption,
-    ExecutionBackend, ExecutionContext, FileInfo, InMemoryStateStore, InlineBackend, LLMClient,
-    LLMResponse, LocalWorkspaceBackend, MemoryWorkspaceBackend, Message, RedisStateStore,
-    ResolvedModelConfig, RuntimeExecutionBackend, RuntimeRecipe, RuntimeRunControls,
-    S3WorkspaceBackend, S3WorkspaceConfig, ScriptedLLM, ScriptedLlmClient,
-    SessionCancellationHandle, SqliteStateStore, StateStore, ThreadBackend, ToolCall,
-    ToolExecutionResult, ToolNotFoundError, ToolRegistry, VVLlmClient, WorkspaceBackend,
+    load_llm_settings_from_file, resolve_model_endpoint, AfterLlmEvent, Agent, AgentRuntime,
+    AgentStatus, AgentTask, BackgroundSessionListener, BeforeLlmEvent, BeforeLlmPatch,
+    CancellationToken, Checkpoint, ConfigError, DistributedBackend, EndpointConfig, EndpointOption,
+    ExecutionContext, FileInfo, InMemoryStateStore, InlineBackend, LLMResponse, LlmClient,
+    LocalWorkspaceBackend, MemoryWorkspaceBackend, Message, ModelRef, RedisStateStore,
+    ResolvedModelConfig, Runner, RuntimeExecutionBackend, RuntimeHook, RuntimeRecipe,
+    RuntimeRunControls, S3WorkspaceBackend, S3WorkspaceConfig, ScriptedLlmClient,
+    ScriptedModelProvider, SqliteStateStore, StateStore, ThreadBackend, ToolCall,
+    ToolExecutionResult, ToolNotFoundError, ToolRegistry, VvLlmClient, WorkspaceBackend,
 };
 
 #[test]
@@ -27,7 +24,6 @@ fn public_package_docs_stay_capability_focused() {
     let public_docs = [
         workspace_dir.join("README.md"),
         workspace_dir.join("README_ZH.md"),
-        workspace_dir.join("GOAL.md"),
         manifest_dir.join("src/lib.rs"),
     ];
 
@@ -119,34 +115,12 @@ fn source_rustdoc_comments_stay_capability_focused() {
 }
 
 #[test]
-fn sdk_exports_rust_native_hook_surface() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let sdk_mod =
-        std::fs::read_to_string(manifest_dir.join("src/sdk/mod.rs")).expect("read SDK module");
-    let language_specific_hook_export = format!(
-        "pub mod {}_hooks",
-        forbidden_phrase(&[TERM_LANGUAGE]).to_ascii_lowercase()
-    );
-
-    assert!(
-        !sdk_mod.contains(&language_specific_hook_export),
-        "SDK public modules should expose Rust agent capabilities directly"
-    );
-}
-
-#[test]
 fn internal_module_names_stay_runtime_focused() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let sdk_mod =
-        std::fs::read_to_string(manifest_dir.join("src/sdk/mod.rs")).expect("read SDK module");
     let config_mod =
         std::fs::read_to_string(manifest_dir.join("src/config.rs")).expect("read config module");
     let source_language = forbidden_phrase(&[TERM_LANGUAGE]).to_ascii_lowercase();
 
-    assert!(
-        !sdk_mod.contains(&format!("mod {source_language}_hooks;")),
-        "SDK internals should name hook modules by runtime purpose"
-    );
     assert!(
         !config_mod.contains(&format!("mod {source_language}_settings;")),
         "config internals should name settings parsing by purpose"
@@ -247,7 +221,11 @@ fn top_level_types_are_constructible() {
     let _registry = build_default_registry();
     let _dispatch = dispatch_tool_call;
     let _tool_not_found = ToolNotFoundError("missing_tool".to_string());
-    let _definition = AgentDefinition::default_for_model("mini");
+    let _agent = Agent::builder("mini")
+        .instructions("Answer directly.")
+        .model(ModelRef::named("mini"))
+        .build()
+        .expect("agent");
     let _task = AgentTask::new("task_1", "mini", "system", "user");
     let _runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new("done")]))
         .with_settings_file("settings.json")
@@ -258,11 +236,9 @@ fn top_level_types_are_constructible() {
     let _controls = RuntimeRunControls::default();
     let _inline_backend = InlineBackend;
     let _execution_backend = RuntimeExecutionBackend::default();
-    let _execution_backend_alias = ExecutionBackend::default();
     let _thread_backend = ThreadBackend::default();
     let _recipe = RuntimeRecipe::new("settings.json", "backend", "model", ".");
     let _distributed_backend = DistributedBackend::inline_fallback();
-    let _celery_backend = CeleryBackend::inline_fallback();
     let _checkpoint = Checkpoint {
         task_id: "task".to_string(),
         cycle_index: 0,
@@ -275,8 +251,11 @@ fn top_level_types_are_constructible() {
     let _state_store_ref: &dyn StateStore = &_state_store;
     let _sqlite_state_store = SqliteStateStore::new(":memory:");
     let _redis_key = RedisStateStore::checkpoint_key("task");
-    let _options = AgentSDKOptions::default();
-    let _client = AgentSDKClient::new(_options);
+    let _runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::default())
+        .workspace(".")
+        .build()
+        .expect("runner");
     let _config_error = ConfigError::MissingSettingsFile("missing".to_string());
     let _endpoint = EndpointConfig::new("ep", "key", "http://localhost");
     let _endpoint_option = EndpointOption::new(_endpoint.clone(), "mini");
@@ -299,7 +278,6 @@ fn top_level_types_are_constructible() {
     let _s3 = S3WorkspaceBackend::default();
     let _workspace: &dyn WorkspaceBackend = &_memory;
     let _listener: BackgroundSessionListener = std::sync::Arc::new(|_| {});
-    let _session_cancellation: Option<SessionCancellationHandle> = None;
     let _ = background_session_manager();
 }
 
@@ -321,44 +299,22 @@ fn collect_rust_files_inner(path: &Path, files: &mut Vec<std::path::PathBuf>) {
 }
 
 #[test]
-fn agent_public_aliases_are_available() {
-    fn assert_llm_client<T: LLMClient>() {}
-    assert_llm_client::<ScriptedLLM>();
+fn current_public_runtime_names_are_available() {
+    fn assert_llm_client<T: LlmClient>() {}
+    assert_llm_client::<ScriptedLlmClient>();
 
-    let _scripted = ScriptedLLM::new(vec![LLMResponse::new("done")]);
-    let _vv_llm: Option<VVLlmClient> = None;
-    let _backend = ExecutionBackend::default();
-    let _before_patch = BeforeLLMPatch::default();
-    let _before_event: Option<BeforeLLMEvent<'_>> = None;
-    let _after_event: Option<AfterLLMEvent<'_>> = None;
-    let _hook: Option<&dyn BaseRuntimeHook> = None;
-    let _sdk_llm_builder: Option<vv_agent::sdk::LLMBuilder> = None;
-    let _sdk_runtime_log_handler: Option<vv_agent::sdk::RuntimeLogHandler> = None;
-    let _run_request_helper = vv_agent::run_with_options_and_agent_request;
-    let _query_request_helper = vv_agent::query_with_options_and_agent_request;
-    let _query_request_strict_helper =
-        vv_agent::query_with_options_and_agent_request_with_require_completed;
-    let helper_client = AgentSDKClient::new(AgentSDKOptions {
-        auto_discover_resources: false,
-        ..AgentSDKOptions::default()
-    });
-    let _create_session_workspace_state =
-        vv_agent::create_agent_session_with_workspace_and_shared_state(
-            &helper_client,
-            "demo",
-            AgentDefinition::default_for_model("demo"),
-            ".",
-            BTreeMap::new(),
-        );
-    let _create_session_id_workspace_state =
-        vv_agent::create_agent_session_with_id_and_workspace_and_shared_state(
-            &helper_client,
-            "demo",
-            AgentDefinition::default_for_model("demo"),
-            "session-fixed",
-            ".",
-            BTreeMap::new(),
-        );
+    let _scripted = ScriptedLlmClient::new(vec![LLMResponse::new("done")]);
+    let _vv_llm: Option<VvLlmClient> = None;
+    let _backend = RuntimeExecutionBackend::default();
+    let _before_patch = BeforeLlmPatch::default();
+    let _before_event: Option<BeforeLlmEvent<'_>> = None;
+    let _after_event: Option<AfterLlmEvent<'_>> = None;
+    let _hook: Option<&dyn RuntimeHook> = None;
+    let _runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::default())
+        .workspace(".")
+        .build()
+        .expect("runner");
 }
 
 #[test]

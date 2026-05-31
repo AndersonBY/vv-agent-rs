@@ -296,26 +296,6 @@ fn execution_mode_is_the_public_backend_facade_for_run_config() {
 }
 
 #[test]
-fn legacy_sdk_entrypoints_are_marked_deprecated() {
-    let definition = include_str!("../src/sdk/types/definition.rs");
-    let options = include_str!("../src/sdk/types/options.rs");
-    let client = include_str!("../src/sdk/client/mod.rs");
-
-    assert!(
-        definition.contains("#[deprecated") && definition.contains("pub struct AgentDefinition"),
-        "AgentDefinition should be deprecated in favor of Agent"
-    );
-    assert!(
-        options.contains("#[deprecated") && options.contains("pub struct AgentSDKOptions"),
-        "AgentSDKOptions should be deprecated in favor of Runner/RunConfig/ModelSettings"
-    );
-    assert!(
-        client.contains("#[deprecated") && client.contains("pub struct AgentSDKClient"),
-        "AgentSDKClient should be deprecated in favor of Runner"
-    );
-}
-
-#[test]
 fn tool_output_supports_structured_payloads() {
     assert_eq!(
         ToolOutput::text("hello").to_result("call_1").content,

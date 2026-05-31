@@ -1,16 +1,13 @@
 pub mod base;
-pub mod celery;
 pub mod distributed;
 pub mod inline;
 pub mod recipe;
 mod results;
 pub mod thread;
 
-pub use base::{ExecutionBackend, RuntimeExecutionBackend};
-pub use celery::CeleryBackend;
+pub use base::RuntimeExecutionBackend;
 pub use distributed::{
-    run_checkpointed_cycle, CycleDispatchResult, CycleDispatcher, CycleTaskDispatchResult,
-    CycleTaskDispatcher, DistributedBackend,
+    run_checkpointed_cycle, CycleDispatchResult, CycleDispatcher, DistributedBackend,
 };
 pub use inline::InlineBackend;
 pub use recipe::RuntimeRecipe;

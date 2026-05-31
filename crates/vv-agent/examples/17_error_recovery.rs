@@ -1,73 +1,38 @@
-#![allow(deprecated)]
-
 mod common;
 
-use common::{env_usize, print_run, runtime_log_handler, ExampleConfig};
-use vv_agent::{AgentDefinition, AgentRun, AgentSDKClient, AgentSDKOptions, AgentStatus};
+use common::{build_facade_agent, build_facade_runner, print_run_result, ExampleConfig};
+use vv_agent::RunConfig;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ExampleConfig::load();
     config.ensure_workspace()?;
-    let max_retries = env_usize("V_AGENT_EXAMPLE_MAX_RETRIES", 2);
-
-    let mut agent = AgentDefinition::default_for_model(config.model.clone());
-    agent.description = "你是可靠执行 Agent. 完成任务后必须调用 `task_finish`.".to_string();
-    agent.backend = Some(config.backend.clone());
-    agent.max_cycles = 8;
-    agent.enable_todo_management = true;
-
-    let client = AgentSDKClient::new_with_agent(
-        AgentSDKOptions {
-            settings_file: config.settings_file,
-            default_backend: config.backend,
-            workspace: config.workspace,
-            log_handler: runtime_log_handler(config.verbose),
-            ..AgentSDKOptions::default()
-        },
-        agent,
-    );
-    let run = run_with_recovery(
-        &client,
-        "请列出 workspace 下的文件并输出简要说明, 然后调用 `task_finish`。",
-        max_retries,
+    let runner = build_facade_runner(&config)?;
+    let agent = build_facade_agent(
+        &config,
+        "retrying-agent",
+        "你是可靠执行 Agent。遇到可恢复问题时重新组织步骤并调用 task_finish。",
     )?;
-    print_run(&run)
-}
-
-fn run_with_recovery(
-    client: &AgentSDKClient,
-    prompt: &str,
-    max_retries: usize,
-) -> Result<AgentRun, String> {
-    let mut last_error = None::<String>;
-    let mut last_run = None::<AgentRun>;
-    for attempt in 1..=max_retries + 1 {
-        let effective_prompt = if let Some(error) = &last_error {
-            format!(
-                "[重试 #{}] 上次执行失败: {error}\n请调整策略后重新执行:\n{prompt}",
-                attempt - 1
+    let prompt = config
+        .prompt
+        .unwrap_or_else(|| "总结 workspace，失败时用更短步骤重试一次。".to_string());
+    let mut last_error = None;
+    for attempt in 1..=2 {
+        match runner
+            .run_with_config(
+                &agent,
+                prompt.clone(),
+                RunConfig::builder()
+                    .metadata("attempt", attempt.into())
+                    .build(),
             )
-        } else {
-            prompt.to_string()
-        };
-        eprintln!("\n--- Attempt {attempt}/{} ---", max_retries + 1);
-        let run = client.run(effective_prompt)?;
-        match run.result.status {
-            AgentStatus::Completed | AgentStatus::WaitUser => return Ok(run),
-            AgentStatus::MaxCycles => {
-                last_error = Some(format!("Reached max cycles ({})", run.result.cycles.len()));
-            }
-            AgentStatus::Failed => {
-                last_error = Some(
-                    run.result
-                        .error
-                        .clone()
-                        .unwrap_or_else(|| "Unknown failure".to_string()),
-                );
-            }
-            _ => return Ok(run),
+            .await
+        {
+            Ok(result) => return print_run_result(&result),
+            Err(error) => last_error = Some(error),
         }
-        last_run = Some(run);
     }
-    last_run.ok_or_else(|| "No run was attempted".to_string())
+    Err(last_error
+        .unwrap_or_else(|| "run failed".to_string())
+        .into())
 }

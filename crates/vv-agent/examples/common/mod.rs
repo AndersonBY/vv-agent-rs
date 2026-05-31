@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 use vv_agent::{
-    build_default_registry, build_vv_llm_from_local_settings, AgentRuntime, AgentTask,
-    RuntimeEventHandler, RuntimeRunControls, VvLlmClient,
+    build_default_registry, build_vv_llm_from_local_settings, Agent, AgentRuntime, AgentTask,
+    ModelRef, RunConfig, RunResult, Runner, RuntimeEventHandler, RuntimeRunControls, VvLlmClient,
+    VvLlmModelProvider,
 };
 
 pub struct ExampleConfig {
@@ -146,6 +147,46 @@ pub fn build_direct_runtime(
     Ok((runtime, resolved))
 }
 
+pub fn build_facade_runner(config: &ExampleConfig) -> Result<Runner, String> {
+    let provider = VvLlmModelProvider::from_settings_file(config.settings_file.clone())
+        .with_default_backend(config.backend.clone());
+    Runner::builder()
+        .model_provider(provider)
+        .workspace(config.workspace.clone())
+        .build()
+}
+
+pub fn build_facade_agent(
+    config: &ExampleConfig,
+    name: &str,
+    instructions: &str,
+) -> Result<Agent, String> {
+    Agent::builder(name)
+        .instructions(instructions)
+        .model(ModelRef::backend(
+            config.backend.clone(),
+            config.model.clone(),
+        ))
+        .build()
+}
+
+pub async fn run_facade_prompt(
+    config: &ExampleConfig,
+    name: &str,
+    instructions: &str,
+    default_prompt: &str,
+    run_config: RunConfig,
+) -> Result<RunResult, Box<dyn std::error::Error>> {
+    config.ensure_workspace()?;
+    let prompt = config
+        .prompt
+        .clone()
+        .unwrap_or_else(|| default_prompt.to_string());
+    let runner = build_facade_runner(config)?;
+    let agent = build_facade_agent(config, name, instructions)?;
+    Ok(runner.run_with_config(&agent, prompt, run_config).await?)
+}
+
 pub fn run_direct_task(
     runtime: &AgentRuntime<VvLlmClient>,
     task: AgentTask,
@@ -161,11 +202,6 @@ pub fn run_direct_task(
         .map_err(|error| error.into())
 }
 
-pub fn print_run(run: &vv_agent::AgentRun) -> Result<(), Box<dyn std::error::Error>> {
-    println!("{}", serde_json::to_string_pretty(&run.to_dict())?);
-    Ok(())
-}
-
 pub fn print_agent_result(
     result: &vv_agent::AgentResult,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -178,6 +214,27 @@ pub fn print_agent_result(
             "error": result.error,
             "cycles": result.cycles.len(),
             "token_usage": result.token_usage,
+        }))?
+    );
+    Ok(())
+}
+
+pub fn print_run_result(result: &RunResult) -> Result<(), Box<dyn std::error::Error>> {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "agent": result.agent_name(),
+            "status": format!("{:?}", result.status()),
+            "final_output": result.final_output(),
+            "wait_reason": result.result().wait_reason,
+            "error": result.result().error,
+            "cycles": result.result().cycles.len(),
+            "token_usage": result.result().token_usage,
+            "resolved": {
+                "backend": result.resolved_model().backend,
+                "selected_model": result.resolved_model().selected_model,
+                "model_id": result.resolved_model().model_id,
+            },
         }))?
     );
     Ok(())

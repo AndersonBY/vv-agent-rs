@@ -137,7 +137,7 @@ fn structured_stream_events_estimate_tokens_from_char_count() {
 }
 
 #[test]
-fn sdk_options_stream_callback_is_forwarded_to_runtime() {
+fn runtime_controls_stream_callback_is_forwarded_to_runtime() {
     let chat_client = StreamingChatClient::default();
     let probe = chat_client.clone();
     let runtime = AgentRuntime::new(VvLlmClient::new(
@@ -155,21 +155,26 @@ fn sdk_options_stream_callback_is_forwarded_to_runtime() {
             .expect("stream events lock")
             .push(event.clone());
     });
-    let client = AgentSDKClient::new(AgentSDKOptions {
-        stream_callback: Some(stream_callback),
-        ..AgentSDKOptions::default()
-    })
-    .with_runtime(runtime);
-
-    let run = client
-        .run_with_agent(
-            AgentDefinition::default_for_model("deepseek-v4-pro"),
-            "finish via SDK stream",
+    let task = AgentTask::new(
+        "stream-callback",
+        "deepseek-v4-pro",
+        "Use task_finish when finished.",
+        "finish via runtime stream",
+    );
+    let result = runtime
+        .run_with_controls(
+            task,
+            RuntimeRunControls {
+                execution_context: Some(
+                    ExecutionContext::default().with_stream_callback(stream_callback),
+                ),
+                ..RuntimeRunControls::default()
+            },
         )
-        .expect("sdk run");
+        .expect("runtime run");
 
-    assert_eq!(run.result.status, AgentStatus::Completed);
-    assert_eq!(run.result.final_answer.as_deref(), Some("streamed answer"));
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(result.final_answer.as_deref(), Some("streamed answer"));
     assert_eq!(probe.completion_calls(), 0);
     assert_eq!(probe.stream_calls(), 1);
     assert!(!events.lock().expect("stream events lock").is_empty());

@@ -110,7 +110,6 @@ fn tools_module_is_split_into_handler_files() {
         "runtime/background_sessions/session.rs",
         "runtime/background_sessions/subscription.rs",
         "runtime/background_sessions/tests.rs",
-        "runtime/backends/celery.rs",
         "runtime/cancellation.rs",
         "runtime/cycle_runner.rs",
         "runtime/engine/completion.rs",
@@ -306,50 +305,6 @@ fn tools_module_is_split_into_handler_files() {
         "prompt/builder/section.rs",
         "prompt/builder/system.rs",
         "prompt/builder/system_builder.rs",
-        "sdk/mod.rs",
-        "sdk/types.rs",
-        "sdk/resources.rs",
-        "sdk/resources/loader.rs",
-        "sdk/resources/models.rs",
-        "sdk/resources/parse.rs",
-        "sdk/resources/paths.rs",
-        "sdk/session/mod.rs",
-        "sdk/session/events.rs",
-        "sdk/session/handles.rs",
-        "sdk/session/run.rs",
-        "sdk/session/run/controls.rs",
-        "sdk/session/run/execution.rs",
-        "sdk/session/run/prompt.rs",
-        "sdk/session/run/query.rs",
-        "sdk/session/state.rs",
-        "sdk/session/util.rs",
-        "sdk/session/watchers.rs",
-        "sdk/client/mod.rs",
-        "sdk/client/agents.rs",
-        "sdk/client/queries.rs",
-        "sdk/client/runtime.rs",
-        "sdk/client/runtime/controls.rs",
-        "sdk/client/runtime/llm.rs",
-        "sdk/client/runtime/options.rs",
-        "sdk/client/runtime/runners.rs",
-        "sdk/client/runs.rs",
-        "sdk/client/sessions.rs",
-        "sdk/client/sessions/base.rs",
-        "sdk/client/sessions/defaults.rs",
-        "sdk/client/sessions/named.rs",
-        "sdk/client/sessions/run.rs",
-        "sdk/client/task.rs",
-        "sdk/client/task/build.rs",
-        "sdk/client/task/defaults.rs",
-        "sdk/client/task/ids.rs",
-        "sdk/client/task/inline.rs",
-        "sdk/client/task/metadata.rs",
-        "sdk/client/task/named.rs",
-        "sdk/types.rs",
-        "sdk/types/definition.rs",
-        "sdk/types/options.rs",
-        "sdk/types/query.rs",
-        "sdk/types/run.rs",
         "cli.rs",
         "cli/args.rs",
         "cli/logging.rs",
@@ -431,15 +386,6 @@ fn tools_module_is_split_into_handler_files() {
         (
             "workspace.rs",
             "workspace.rs should be split into src/workspace/ modules",
-        ),
-        ("sdk.rs", "sdk.rs should be split into src/sdk/ modules"),
-        (
-            "sdk/client.rs",
-            "SDK client facade should be split into src/sdk/client/ modules",
-        ),
-        (
-            "sdk/session.rs",
-            "SDK session runtime should be split into src/sdk/session/ modules",
         ),
         (
             "tools/schemas.rs",
@@ -549,7 +495,7 @@ fn rust_test_files_stay_under_reasonable_size_limit() {
 }
 
 #[test]
-fn live_deepseek_tests_are_split_by_runtime_capability() {
+fn live_deepseek_tests_use_facade_entrypoints() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root_path = manifest_dir.join("tests/live_deepseek.rs");
     let root = std::fs::read_to_string(&root_path).expect("read live_deepseek root test");
@@ -559,30 +505,13 @@ fn live_deepseek_tests_are_split_by_runtime_capability() {
         root_line_count <= 250,
         "tests/live_deepseek.rs should be a small module entrypoint; found {root_line_count} lines"
     );
-    for module in [
-        "background",
-        "common",
-        "control",
-        "media",
-        "memory",
-        "skills",
-        "sub_agents",
-        "workspace",
-    ] {
-        assert!(
-            root.contains(&format!("mod {module};")),
-            "tests/live_deepseek.rs should declare `{module}` module"
-        );
-        assert!(
-            manifest_dir
-                .join(format!("tests/live_deepseek/{module}.rs"))
-                .is_file(),
-            "tests/live_deepseek/{module}.rs should hold live DeepSeek tests for that capability"
-        );
-    }
     assert!(
-        !root.contains("fn live_deepseek_"),
-        "live DeepSeek test functions should live in capability modules, not the root entrypoint"
+        root.contains("Runner") && root.contains("Agent") && root.contains("VvLlmModelProvider"),
+        "live DeepSeek tests should exercise the current Agent/Runner API"
+    );
+    assert!(
+        !manifest_dir.join("tests/live_deepseek").exists(),
+        "old live DeepSeek capability modules should not be kept after Agent/Runner consolidation"
     );
 }
 

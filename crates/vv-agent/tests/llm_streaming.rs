@@ -1,5 +1,3 @@
-#![allow(deprecated)]
-
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -9,9 +7,8 @@ use futures_util::stream;
 use serde_json::{json, Value};
 use vv_agent::llm::{PROMPT_CACHE_ENABLED_KEY, SYSTEM_PROMPT_SECTIONS_KEY};
 use vv_agent::{
-    AgentDefinition, AgentRuntime, AgentSDKClient, AgentSDKOptions, AgentStatus, AgentTask,
-    ExecutionContext, LlmClient, LlmRequest, Message, RuntimeRunControls, StreamCallback,
-    VvLlmClient,
+    AgentRuntime, AgentStatus, AgentTask, ExecutionContext, LlmClient, LlmRequest, Message,
+    RuntimeRunControls, StreamCallback, VvLlmClient,
 };
 
 #[derive(Clone, Default)]
