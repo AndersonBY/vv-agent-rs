@@ -2,9 +2,9 @@
 
 [English](README.md)
 
-这些示例覆盖 `vv-agent` 的主要嵌入和运行方式：直接 runtime、SDK client、
-session、runtime hook、自定义工具、子 Agent、streaming、状态存储、执行后端和
-workspace 后端。
+这些示例覆盖 `vv-agent` 的主要嵌入和运行方式：0.2 Agent + Runner facade、直接
+runtime、兼容 SDK client、session、runtime hook、自定义工具、子 Agent、streaming、
+状态存储、执行后端和 workspace 后端。
 
 所有命令建议在 `vv-agent-rs` 仓库根目录执行，也就是包含 `Cargo.toml` 的目录：
 
@@ -72,6 +72,9 @@ cargo run -p vv-agent --example 03_sdk_client
 | `23_distributed_backend` | 分布式 backend API 和 inline fallback。 |
 | `24_workspace_backends` | local、memory、S3-compatible、wrapper workspace 后端。 |
 | `25_temporary_tool_injection` | runtime hook 临时注入工具窗口。 |
+| `26_agent_runner_facade` | 0.2 `Agent` + `Runner` facade 与 `VvLlmModelProvider`。 |
+| `27_facade_handoff` | 0.2 handoff 流程，将控制权转交给另一个 Agent。 |
+| `28_facade_approval_background_trace` | approval resume、后台 Agent task 和 JSONL trace exporter。 |
 
 ## 验证
 

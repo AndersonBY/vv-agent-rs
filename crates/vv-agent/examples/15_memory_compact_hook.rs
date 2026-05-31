@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 mod common;
 
 use common::{env_string, print_run, runtime_log_handler, ExampleConfig};

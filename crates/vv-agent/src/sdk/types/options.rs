@@ -21,6 +21,9 @@ pub use LlmBuilder as LLMBuilder;
 pub type ToolRegistryFactory = Arc<dyn Fn() -> ToolRegistry + Send + Sync + 'static>;
 
 #[derive(Clone)]
+#[deprecated(
+    note = "Use Runner defaults plus RunConfig, ModelSettings, and ToolPolicy for new SDK code."
+)]
 pub struct AgentSDKOptions {
     pub settings_file: PathBuf,
     pub default_backend: String,

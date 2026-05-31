@@ -30,6 +30,9 @@ fn rust_examples_cover_agent_example_numbering() {
         "23_distributed_backend.rs",
         "24_workspace_backends.rs",
         "25_temporary_tool_injection.rs",
+        "26_agent_runner_facade.rs",
+        "27_facade_handoff.rs",
+        "28_facade_approval_background_trace.rs",
     ];
 
     let missing = expected

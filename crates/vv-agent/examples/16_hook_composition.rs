@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use std::sync::Mutex;
 use std::time::Instant;
 

@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use std::env;
 use std::path::PathBuf;
 

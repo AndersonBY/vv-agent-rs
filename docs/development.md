@@ -77,6 +77,7 @@ Common environment variables:
 | Workspace tools/backends | `tests/workspace_tools.rs`, `tests/search_tools.rs` |
 | Memory and compaction | `tests/memory_tools.rs`, `tests/microcompact.rs`, `tests/post_compact_restore.rs` |
 | SDK client/session/resources | `tests/sdk_resources.rs`, `tests/sdk_session.rs`, `tests/sdk_smoke.rs` |
+| 0.2 Agent/Runner facade | `tests/public_sdk_redesign.rs` |
 | LLM bridge/streaming/failover | `tests/llm_streaming.rs`, `tests/vv_llm_integration.rs` |
 | Skills | `tests/skills_public_api.rs` |
 | Examples | `tests/examples_coverage.rs`, `cargo check --examples` |
@@ -86,6 +87,9 @@ Common environment variables:
 - Keep public exports in `src/lib.rs` aligned with new public types.
 - Update README, examples, and docs when user-facing commands, defaults, or
   environment variables change.
+- New embedded SDK examples should prefer `Agent`, `Runner`, `RunConfig`,
+  `ExecutionMode`, `ModelRef`, `ModelSettings`, `FunctionTool`, `ToolOutput`,
+  and `Session` before showing legacy `AgentSDKClient` helpers.
 - Keep key templates checked in and real key files ignored.
 - Prefer explicit configuration errors over silent compatibility fallbacks.
 - Keep model-visible schema wording deliberate and covered by contract tests.

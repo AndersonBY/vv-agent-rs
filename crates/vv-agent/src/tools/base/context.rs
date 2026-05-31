@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use super::paths::resolve_workspace_path_checked;
 use super::SubTaskRunner;
+use crate::model::ModelProvider;
 use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
 #[derive(Clone)]
@@ -16,6 +17,7 @@ pub struct ToolContext {
     pub task_id: String,
     pub metadata: BTreeMap<String, Value>,
     pub workspace_backend: Arc<dyn WorkspaceBackend>,
+    pub model_provider: Option<Arc<dyn ModelProvider>>,
     pub sub_task_runner: Option<SubTaskRunner>,
     pub sub_task_manager: Option<crate::runtime::sub_task_manager::SubTaskManager>,
     pub execution_backend: Option<crate::runtime::backends::RuntimeExecutionBackend>,
@@ -30,6 +32,7 @@ impl std::fmt::Debug for ToolContext {
             .field("cycle_index", &self.cycle_index)
             .field("task_id", &self.task_id)
             .field("metadata", &self.metadata)
+            .field("has_model_provider", &self.model_provider.is_some())
             .field("has_sub_task_runner", &self.sub_task_runner.is_some())
             .field("has_sub_task_manager", &self.sub_task_manager.is_some())
             .field("has_execution_backend", &self.execution_backend.is_some())
@@ -47,6 +50,7 @@ impl ToolContext {
             task_id: String::new(),
             metadata: BTreeMap::new(),
             workspace_backend: Arc::new(crate::workspace::LocalWorkspaceBackend::new(workspace)),
+            model_provider: None,
             sub_task_runner: None,
             sub_task_manager: None,
             execution_backend: None,

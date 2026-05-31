@@ -29,6 +29,7 @@ pub use sessions::{
 };
 
 #[derive(Clone)]
+#[deprecated(note = "Use vv_agent::Runner as the primary execution entrypoint for new SDK code.")]
 pub struct AgentSDKClient {
     pub options: AgentSDKOptions,
     default_agent: Option<AgentDefinition>,

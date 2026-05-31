@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use std::collections::BTreeMap;
 use std::env;
 use std::path::PathBuf;

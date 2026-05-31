@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use serde_json::{json, Value};
 
 mod common;

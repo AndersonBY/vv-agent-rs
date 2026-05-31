@@ -85,6 +85,16 @@ impl<C: LlmClient> AgentRuntime<C> {
             "run_started",
             BTreeMap::from([
                 ("task_id".to_string(), Value::String(task.task_id.clone())),
+                (
+                    "agent_name".to_string(),
+                    Value::String(
+                        task.metadata
+                            .get("agent_name")
+                            .and_then(Value::as_str)
+                            .unwrap_or(&task.task_id)
+                            .to_string(),
+                    ),
+                ),
                 ("model".to_string(), Value::String(task.model.clone())),
                 (
                     "workspace".to_string(),

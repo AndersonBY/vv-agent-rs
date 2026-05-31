@@ -115,6 +115,7 @@ impl RuntimeSubAgentSession {
                     execution_context,
                     workspace: None,
                     workspace_backend: None,
+                    model_provider: None,
                     sub_task_manager: None,
                 },
             )

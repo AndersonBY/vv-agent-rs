@@ -171,6 +171,10 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 let response = loop {
                     let mut request = LlmRequest::new(task.model.clone(), request_messages.clone());
                     request.tools = request_tool_schemas.clone();
+                    if let Some(execution_context) = controls.execution_context.as_ref() {
+                        request.metadata = serde_json::to_value(&execution_context.metadata)
+                            .unwrap_or(Value::Null);
+                    }
                     match self
                         .llm_client
                         .complete_with_stream(request, effective_stream_callback.clone())
@@ -295,6 +299,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     task_id: task.task_id.clone(),
                     metadata: tool_metadata,
                     workspace_backend: workspace_backend.clone(),
+                    model_provider: controls.model_provider.clone(),
                     sub_task_runner,
                     sub_task_manager: Some(sub_task_manager.clone()),
                     execution_backend: Some(self.execution_backend.clone()),

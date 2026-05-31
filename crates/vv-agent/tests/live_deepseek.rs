@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 #[path = "live_deepseek/background.rs"]
 mod background;
 #[path = "live_deepseek/common.rs"]

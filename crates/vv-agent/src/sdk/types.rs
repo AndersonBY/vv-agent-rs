@@ -3,7 +3,9 @@ mod options;
 mod query;
 mod run;
 
+#[allow(deprecated)]
 pub use definition::AgentDefinition;
+#[allow(deprecated)]
 pub use options::{
     AgentSDKOptions, LLMBuilder, LlmBuilder, RuntimeLogHandler, SdkLlmClient, ToolRegistryFactory,
 };

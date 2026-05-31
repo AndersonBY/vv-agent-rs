@@ -3,26 +3,45 @@
 //! This crate exposes a stable Rust library surface for building and running
 //! agent workflows with built-in tool dispatch and vv-llm backed chat clients.
 
+pub mod agent;
 pub mod cli;
 pub mod config;
 pub mod constants;
+pub mod context;
+pub mod events;
+pub mod execution_mode;
+pub mod guardrails;
+pub mod handoffs;
 pub mod integrations;
 pub mod llm;
 pub mod memory;
+pub mod model;
+pub mod model_settings;
 pub mod prompt;
+pub mod result;
+pub mod run_config;
+pub mod runner;
 pub mod runtime;
 pub mod sdk;
+pub mod sessions;
 pub mod skills;
 pub mod tools;
+pub mod tracing;
 pub mod types;
 pub mod workspace;
 
+pub use agent::{Agent, ToolUseBehavior};
 pub use config::{
     apply_resolved_model_limits, build_vv_llm_from_local_settings, build_vv_llm_settings,
     decode_api_key, load_llm_settings_from_file, load_memory_summary_defaults_from_file,
     resolve_model_endpoint, ConfigError, EndpointConfig, EndpointOption, MemorySummaryDefaults,
     ResolvedModelConfig,
 };
+pub use context::{RunContext, ToolCallContext};
+pub use events::{AgentErrorPayload, RunEvent, ToolStatus};
+pub use execution_mode::ExecutionMode;
+pub use guardrails::{GuardrailOutcome, InputGuardrail, OutputGuardrail};
+pub use handoffs::{handoff, Handoff};
 pub use llm::{
     EndpointTarget, LLMClient, LlmClient, LlmError, LlmRequest, LlmStreamCallback, ScriptStep,
     ScriptStepCallback, ScriptedLLM, ScriptedLlmClient, VVLlmClient, VvLlmClient,
@@ -32,6 +51,11 @@ pub use memory::{
     MemoryManagerConfig, SessionMemory, SessionMemoryConfig, SessionMemoryEntry,
     SessionMemoryState, SummaryCallback,
 };
+pub use model::{ModelError, ModelProvider, ModelRef, ScriptedModelProvider, VvLlmModelProvider};
+pub use model_settings::{ModelSettings, ResponseFormat, RetryPolicy, ToolChoice};
+pub use result::{RunResult, RunState};
+pub use run_config::RunConfig;
+pub use runner::{NormalizedInput, RunEventStream, Runner};
 pub use runtime::backends::{
     run_checkpointed_cycle, CeleryBackend, CycleDispatchResult, CycleDispatcher,
     CycleTaskDispatchResult, CycleTaskDispatcher, DistributedBackend, InlineBackend,
@@ -64,6 +88,7 @@ pub use runtime::{
     SubAgentSessionRegistry, SubAgentSessionUnsubscribe, ToolCallRunner, ToolRunOutcome,
     ToolRunRequest, MAX_PROMPT_TOO_LONG_RETRIES, MAX_PTL_RETRIES,
 };
+#[allow(deprecated)]
 pub use sdk::{
     create_agent_session, create_agent_session_with_id, create_agent_session_with_id_and_workspace,
     create_agent_session_with_id_and_workspace_and_shared_state,
@@ -79,10 +104,17 @@ pub use sdk::{
     AgentSessionRunRequest, AgentSessionState, LlmBuilder, SdkLlmClient, SessionCancellationHandle,
     SessionEventHandler, SessionListenerId, SessionSteeringHandle, ToolRegistryFactory,
 };
-pub use tools::{
-    build_default_registry, dispatch_tool_call, ToolContext, ToolHandler, ToolNotFoundError,
-    ToolRegistry, ToolSpec,
+pub use sessions::{
+    session_store_conformance, MemorySession, Session, SessionItem, SessionStore,
+    SqliteSessionStore,
 };
+pub use tools::{
+    build_default_registry, dispatch_tool_call, AgentTool, AgentToolBuilder, ApprovalDecision,
+    ApprovalPolicy, BackgroundAgentTask, BackgroundAgentTaskBuilder, BackgroundAgentTaskHandle,
+    BackgroundAgentTaskSnapshot, FunctionTool, StaticTool, Tool, ToolContext, ToolHandler,
+    ToolNotFoundError, ToolOutput, ToolPolicy, ToolRegistry, ToolSpec,
+};
+pub use tracing::{JsonlTraceExporter, Span, TraceSink};
 pub use types::{
     AgentResult, AgentStatus, AgentTask, CycleRecord, CycleStatus, LLMResponse, Message,
     MessageRole, NoToolPolicy, SubAgentConfig, SubTaskOutcome, SubTaskRequest, TaskTokenUsage,

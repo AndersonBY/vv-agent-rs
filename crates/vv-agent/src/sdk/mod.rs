@@ -1,8 +1,12 @@
+#![allow(deprecated)]
+
 pub mod client;
 pub mod resources;
 pub mod session;
+#[allow(deprecated)]
 pub mod types;
 
+#[allow(deprecated)]
 pub use client::{
     create_agent_session, create_agent_session_with_id, create_agent_session_with_id_and_workspace,
     create_agent_session_with_id_and_workspace_and_shared_state,
@@ -21,6 +25,7 @@ pub use session::{
     AgentSession, AgentSessionRunRequest, AgentSessionState, SessionCancellationHandle,
     SessionEventHandler, SessionListenerId, SessionSteeringHandle,
 };
+#[allow(deprecated)]
 pub use types::{
     AgentDefinition, AgentRun, AgentSDKOptions, LLMBuilder, LlmBuilder, RuntimeLogHandler,
     SdkLlmClient, ToolRegistryFactory,

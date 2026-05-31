@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
+use crate::model::ModelProvider;
 use crate::runtime::cancellation::CancellationToken;
 use crate::runtime::context::{ExecutionContext, StreamCallback};
 use crate::runtime::sub_task_manager::SubTaskManager;
@@ -27,6 +28,7 @@ pub struct RuntimeRunControls {
     pub execution_context: Option<ExecutionContext>,
     pub workspace: Option<PathBuf>,
     pub workspace_backend: Option<Arc<dyn WorkspaceBackend>>,
+    pub model_provider: Option<Arc<dyn ModelProvider>>,
     pub sub_task_manager: Option<SubTaskManager>,
 }
 

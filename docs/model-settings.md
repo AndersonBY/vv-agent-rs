@@ -70,6 +70,33 @@ The template uses `vv-llm` settings schema version `2`:
 used by older templates, but new checked-in fixtures should prefer JSON unless
 there is a concrete need for a Python source fixture.
 
+## Agent + Runner Model Provider
+
+The 0.2 facade resolves models through `ModelProvider`:
+
+```rust
+use vv_agent::{ModelRef, Runner, VvLlmModelProvider};
+
+let provider = VvLlmModelProvider::from_settings_file("local_settings.json")
+    .with_default_backend("moonshot");
+let runner = Runner::builder()
+    .model_provider(provider)
+    .workspace("./workspace")
+    .build()?;
+let model = ModelRef::backend("moonshot", "kimi-k2.6");
+```
+
+Use `ModelRef::backend(backend, model)` when a call must resolve a specific
+`LLM_SETTINGS.backends.<backend>.models.<model>` entry. `ModelRef::named(model)`
+uses the active provider default backend and should only be used when that
+default is explicit.
+
+`ModelSettings` carries common model-call options such as temperature,
+`max_output_tokens`, tool choice, response format, retry, and provider-specific
+`extra_body` / `extra_headers`. These settings are part of the public run
+contract and are forwarded to runtime request metadata while the runtime
+continues to use `vv-llm` for provider transport.
+
 ## Exact Model Resolution
 
 Model keys are exact. `resolve_model_endpoint(settings, backend, model)` asks

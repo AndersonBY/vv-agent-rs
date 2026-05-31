@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use std::ffi::OsStr;
 
 mod common;

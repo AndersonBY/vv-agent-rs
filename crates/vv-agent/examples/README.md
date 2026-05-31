@@ -2,9 +2,10 @@
 
 [中文](README_ZH.md)
 
-These examples show the main ways to embed and operate `vv-agent`: direct
-runtime use, SDK clients, sessions, hooks, custom tools, sub-agents, streaming,
-state stores, execution backends, and workspace backends.
+These examples show the main ways to embed and operate `vv-agent`: the 0.2
+Agent + Runner facade, direct runtime use, compatibility SDK clients, sessions,
+hooks, custom tools, sub-agents, streaming, state stores, execution backends,
+and workspace backends.
 
 Run commands from the `vv-agent-rs` repository root, the directory that
 contains `Cargo.toml`:
@@ -74,6 +75,9 @@ cargo run -p vv-agent --example 03_sdk_client
 | `23_distributed_backend` | Distributed backend API with inline fallback. |
 | `24_workspace_backends` | Local, memory, S3-compatible, and wrapped workspace backends. |
 | `25_temporary_tool_injection` | Runtime hook that injects a temporary tool window. |
+| `26_agent_runner_facade` | 0.2 `Agent` + `Runner` facade with `VvLlmModelProvider`. |
+| `27_facade_handoff` | 0.2 handoff flow that transfers control to another agent. |
+| `28_facade_approval_background_trace` | Approval resume, background agent task, and JSONL trace exporter. |
 
 ## Verification
 

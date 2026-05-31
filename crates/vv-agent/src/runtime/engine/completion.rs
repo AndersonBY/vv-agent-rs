@@ -45,6 +45,7 @@ pub(super) fn handle_no_tool_response<C: LlmClient>(
                 controls,
                 "run_completed",
                 BTreeMap::from([
+                    ("task_id".to_string(), Value::String(task.task_id.clone())),
                     ("cycle".to_string(), Value::from(cycle_index)),
                     (
                         "final_answer".to_string(),
@@ -112,6 +113,10 @@ pub(super) fn handle_directive_result<C: LlmClient>(
                 controls,
                 "run_completed",
                 BTreeMap::from([
+                    (
+                        "task_id".to_string(),
+                        Value::String(result.tool_call_id.clone()),
+                    ),
                     ("cycle".to_string(), Value::from(cycle_index)),
                     (
                         "final_answer".to_string(),

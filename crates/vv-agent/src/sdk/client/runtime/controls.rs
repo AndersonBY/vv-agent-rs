@@ -23,6 +23,7 @@ pub(super) fn run_controls_from_request(request: &AgentSessionRunRequest) -> Run
         workspace_backend: request.workspace.as_ref().map(|workspace| {
             Arc::new(LocalWorkspaceBackend::new(workspace.clone())) as Arc<dyn WorkspaceBackend>
         }),
+        model_provider: None,
         sub_task_manager: request.sub_task_manager.clone(),
     }
 }

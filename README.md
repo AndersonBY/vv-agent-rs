@@ -84,10 +84,69 @@ CLI flags:
 | `--agent-type` | Optional agent profile type such as `computer`. |
 | `--verbose` | Emit per-cycle runtime events. |
 
-### Direct Runtime
+### Agent + Runner SDK
 
-Use the runtime directly when you want to assemble the LLM client, prompt, tool
-registry, workspace, and run controls yourself.
+Use the `Agent` + `Runner` facade for new embedded applications. `Agent`
+describes instructions, model, tools, handoffs, hooks, and defaults. `Runner`
+owns model providers, workspace defaults, and execution. `RunConfig` overrides
+one run without changing the agent definition, including the public
+`ExecutionMode` facade for inline, threaded, or distributed execution.
+
+```rust
+use vv_agent::{Agent, ExecutionMode, ModelRef, Runner, RunConfig, VvLlmModelProvider};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let provider = VvLlmModelProvider::from_settings_file("local_settings.json")
+        .with_default_backend("deepseek");
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace("./workspace")
+        .build()?;
+
+    let agent = Agent::builder("assistant")
+        .instructions("You plan, use tools when useful, and call task_finish when done.")
+        .model(ModelRef::backend("deepseek", "deepseek-v4-pro"))
+        .build()?;
+
+    let result = runner
+        .run_with_config(
+            &agent,
+            "Create notes.md with three project takeaways.",
+            RunConfig::builder()
+                .max_cycles(12)
+                .execution_mode(ExecutionMode::Inline)
+                .build(),
+        )
+        .await?;
+    println!("{:?}", result.final_output());
+    Ok(())
+}
+```
+
+Sessions keep conversation history across runner calls:
+
+```rust
+use vv_agent::{MemorySession, RunConfig};
+
+let session = MemorySession::new("thread-001");
+runner
+    .run_with_config(&agent, "Analyze the current workspace.", RunConfig::builder().session(session.clone()).build())
+    .await?;
+let result = runner
+    .run_with_config(&agent, "Continue with follow-up suggestions.", RunConfig::builder().session(session).build())
+    .await?;
+```
+
+`AgentDefinition`, `AgentSDKClient`, and `AgentSDKOptions` remain available for
+existing integrations, resource discovery, and the older interactive session
+helpers. New examples use the facade where possible.
+
+### Low-Level Runtime
+
+Use the runtime directly only when you need to assemble the LLM client, prompt,
+tool registry, workspace, and run controls yourself. New embedded applications
+should start with `Agent` + `Runner`.
 
 ```rust
 use std::path::PathBuf;
@@ -134,50 +193,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-See `crates/vv-agent/examples/01_quick_start.rs` for a complete version with
-runtime event logging.
-
-### SDK
-
-Use the SDK when you want named agents, one-shot runs, query helpers, sessions,
-resource discovery, shared runtime options, and workspace overrides.
-
-```rust
-use std::path::PathBuf;
-
-use vv_agent::{AgentDefinition, AgentSDKClient, AgentSDKOptions};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut agent = AgentDefinition::default_for_model("deepseek-v4-pro");
-    agent.backend = Some("deepseek".to_string());
-    agent.description = "You plan, execute with tools, and return concise results.".to_string();
-    agent.use_workspace = true;
-    agent.enable_todo_management = true;
-
-    let client = AgentSDKClient::new_with_agent(
-        AgentSDKOptions {
-            settings_file: PathBuf::from("local_settings.json"),
-            default_backend: "deepseek".to_string(),
-            workspace: PathBuf::from("./workspace"),
-            ..AgentSDKOptions::default()
-        },
-        agent,
-    );
-
-    let run = client.run("Create notes.md with three project takeaways.")?;
-    println!("{:?}", run.final_answer);
-    Ok(())
-}
-```
-
-Sessions keep a stable workspace and conversation state across turns:
-
-```rust
-let mut session = client.create_default_session()?;
-session.steer("Prefer reading README files before inspecting source.")?;
-session.follow_up("After the first answer, add three follow-up suggestions.")?;
-let run = session.prompt("Analyze the current workspace.")?;
-```
+See `crates/vv-agent/examples/01_quick_start.rs` for a complete low-level
+runtime version with event logging.
 
 ## Core Capabilities
 
@@ -185,7 +202,7 @@ let run = session.prompt("Analyze the current workspace.")?;
 | --- | --- |
 | Runtime | Multi-cycle model execution, tool planning, explicit terminal states, cancellation, streaming, event logs, and max-cycle handling. |
 | Tools | Built-in tools for finish/wait-user, TODOs, workspace reads/writes/listing/grep, image reads, shell commands, memory notes, skills, and sub-tasks. |
-| SDK | Named agents, one-shot runs, query helpers, long-lived sessions, follow-ups, steering, workspace overrides, resource loading, and shared options. |
+| SDK | `Agent`, `Runner`, `RunConfig`, `ModelSettings`, typed tools, `Agent::as_tool()`, typed events, and `Session`; legacy client helpers remain available for existing integrations. |
 | Memory | Token budgeting, prompt-too-long retries, micro and full compaction, artifact-backed large tool results, image trimming, and session memory. |
 | Hooks | Rust `RuntimeHook` implementations can inspect or patch LLM calls, tool calls, memory compaction, and run lifecycle behavior. |
 | Sub-agents | Runtime-backed sub-task creation, batch submission, background status polling, continuation, steering, and inherited streaming callbacks. |
@@ -194,13 +211,14 @@ let run = session.prompt("Analyze the current workspace.")?;
 
 ## Execution Backends
 
-The runtime delegates scheduling to an execution backend:
+The public SDK selects scheduling through `ExecutionMode`. Lower-level runtime
+backend structs remain available for advanced integrations:
 
 | Backend | Use case |
 | --- | --- |
-| `InlineBackend` | Default synchronous execution in the current process. |
-| `ThreadBackend` | Submit runs without blocking the caller. |
-| `DistributedBackend` | Checkpointed cycle execution with serializable runtime recipes and pluggable dispatch. |
+| `ExecutionMode::Inline` | Default synchronous execution in the current process. |
+| `ExecutionMode::Threaded` | Submit runs without blocking the caller. |
+| `ExecutionMode::Distributed` | Checkpointed cycle execution with serializable runtime recipes and pluggable dispatch. |
 
 Checkpointed runs can store state in memory, SQLite, or Redis. The optional
 `apalis` feature adds an Apalis job bridge for applications that already use
@@ -232,12 +250,16 @@ cargo run -p vv-agent --example 03_sdk_client
 cargo run -p vv-agent --example 04_session_api
 cargo run -p vv-agent --example 23_distributed_backend
 cargo run -p vv-agent --example 24_workspace_backends
+cargo run -p vv-agent --example 26_agent_runner_facade
+cargo run -p vv-agent --example 27_facade_handoff
+cargo run -p vv-agent --example 28_facade_approval_background_trace
 ```
 
 See `crates/vv-agent/examples/README.md` for the full example index covering
-runtime hooks, custom tools, sub-agent pipelines, skills, streaming,
-cancellation, state stores, execution backends, workspace backends, and
-temporary tool injection.
+Agent + Runner facade, runtime hooks, custom tools, handoffs, approval resume,
+background tasks, tracing, sub-agent pipelines, skills, streaming, cancellation,
+state stores, execution backends, workspace backends, and temporary tool
+injection.
 
 ## Live Smoke Tests
 
@@ -286,6 +308,12 @@ vv-agent-rs/
       llm/        # LLM trait, scripted test client, vv-llm client bridge
       memory/     # compaction, artifacts, session memory, token budgeting
       prompt/     # system prompt sections and prompt-cache metadata
+      agent.rs    # public Agent builder facade
+      runner.rs   # public Runner facade over runtime execution
+      run_config.rs
+      model.rs
+      model_settings.rs
+      sessions.rs
       runtime/    # agent runtime, hooks, backends, cancellation, sub-agents
       sdk/        # high-level client, sessions, resources, run payloads
       skills/     # skill discovery, parsing, validation, activation

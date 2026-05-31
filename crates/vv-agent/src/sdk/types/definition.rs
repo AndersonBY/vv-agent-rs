@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crate::types::{Metadata, NoToolPolicy, SubAgentConfig};
 
 #[derive(Debug, Clone, PartialEq)]
+#[deprecated(note = "Use vv_agent::Agent with vv_agent::Runner for new embedded SDK code.")]
 pub struct AgentDefinition {
     pub description: String,
     pub model: String,

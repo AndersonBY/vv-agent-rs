@@ -79,10 +79,66 @@ CLI 参数：
 | `--agent-type` | 可选 Agent 类型，例如 `computer`。 |
 | `--verbose` | 输出每轮运行事件。 |
 
-### 直接使用 Runtime
+### Agent + Runner SDK
 
-如果你需要自己组装 LLM client、prompt、工具 registry、workspace 和运行控制，可以直接使用
-runtime。
+新嵌入场景优先使用 `Agent` + `Runner` facade。`Agent` 描述 instructions、model、
+tools、handoffs、hooks 和默认值；`Runner` 管理 model provider、workspace 默认值和执行；
+`RunConfig` 用来覆盖单次运行，而不改变 Agent 定义，包括用于选择 inline、threaded
+或 distributed 执行的公共 `ExecutionMode` facade。
+
+```rust
+use vv_agent::{Agent, ExecutionMode, ModelRef, Runner, RunConfig, VvLlmModelProvider};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let provider = VvLlmModelProvider::from_settings_file("local_settings.json")
+        .with_default_backend("deepseek");
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace("./workspace")
+        .build()?;
+
+    let agent = Agent::builder("assistant")
+        .instructions("你会先规划任务，必要时调用工具，并在完成后调用 task_finish。")
+        .model(ModelRef::backend("deepseek", "deepseek-v4-pro"))
+        .build()?;
+
+    let result = runner
+        .run_with_config(
+            &agent,
+            "创建 notes.md，写入三个项目要点。",
+            RunConfig::builder()
+                .max_cycles(12)
+                .execution_mode(ExecutionMode::Inline)
+                .build(),
+        )
+        .await?;
+    println!("{:?}", result.final_output());
+    Ok(())
+}
+```
+
+Session 会在多次 runner 调用之间保存上下文：
+
+```rust
+use vv_agent::{MemorySession, RunConfig};
+
+let session = MemorySession::new("thread-001");
+runner
+    .run_with_config(&agent, "分析当前 workspace。", RunConfig::builder().session(session.clone()).build())
+    .await?;
+let result = runner
+    .run_with_config(&agent, "继续补充三条后续建议。", RunConfig::builder().session(session).build())
+    .await?;
+```
+
+`AgentDefinition`、`AgentSDKClient`、`AgentSDKOptions` 仍保留给已有集成、资源发现和旧的
+交互式 session helper；新示例会优先展示 facade。
+
+### 低层 Runtime
+
+只有在你需要自己组装 LLM client、prompt、工具 registry、workspace 和运行控制时，才直接使用
+runtime。新的嵌入式应用应从 `Agent` + `Runner` 开始。
 
 ```rust
 use std::path::PathBuf;
@@ -129,49 +185,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-完整版本见 `crates/vv-agent/examples/01_quick_start.rs`，其中包含 runtime event logging。
-
-### SDK
-
-如果你需要命名 Agent、one-shot run、query helper、长会话、资源发现、共享运行选项或
-workspace override，优先使用 SDK。
-
-```rust
-use std::path::PathBuf;
-
-use vv_agent::{AgentDefinition, AgentSDKClient, AgentSDKOptions};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut agent = AgentDefinition::default_for_model("deepseek-v4-pro");
-    agent.backend = Some("deepseek".to_string());
-    agent.description = "你会先规划任务，再通过工具执行，并返回简洁结果。".to_string();
-    agent.use_workspace = true;
-    agent.enable_todo_management = true;
-
-    let client = AgentSDKClient::new_with_agent(
-        AgentSDKOptions {
-            settings_file: PathBuf::from("local_settings.json"),
-            default_backend: "deepseek".to_string(),
-            workspace: PathBuf::from("./workspace"),
-            ..AgentSDKOptions::default()
-        },
-        agent,
-    );
-
-    let run = client.run("创建 notes.md，写入三个项目要点。")?;
-    println!("{:?}", run.final_answer);
-    Ok(())
-}
-```
-
-Session 会在多轮对话里保持稳定 workspace 和上下文状态：
-
-```rust
-let mut session = client.create_default_session()?;
-session.steer("如果存在 README，请优先读取 README。")?;
-session.follow_up("第一轮回答后，再补充三条后续建议。")?;
-let run = session.prompt("分析当前 workspace。")?;
-```
+完整低层 runtime 示例见 `crates/vv-agent/examples/01_quick_start.rs`，其中包含 event logging。
 
 ## 核心能力
 
@@ -179,7 +193,7 @@ let run = session.prompt("分析当前 workspace。")?;
 | --- | --- |
 | Runtime | 多轮模型执行、工具规划、显式终态、取消、streaming、事件日志和 max-cycle 控制。 |
 | Tools | 内置 finish/wait-user、TODO、workspace 读写/列表/grep、图片读取、shell 命令、memory note、skill 和 sub-task 工具。 |
-| SDK | 命名 Agent、one-shot run、query helper、长会话、follow-up、steering、workspace override、资源加载和共享配置。 |
+| SDK | `Agent`、`Runner`、`RunConfig`、`ModelSettings`、typed tool、`Agent::as_tool()`、typed event 和 `Session`；旧 client helper 仍可用于已有集成。 |
 | Memory | Token 预算、prompt-too-long 重试、micro/full compaction、大型工具结果 artifact、图片裁剪和 session memory。 |
 | Hooks | 使用 Rust `RuntimeHook` 检查或修改 LLM 调用、工具调用、memory compaction 和运行生命周期。 |
 | Sub-agents | 基于 runtime 的子任务创建、批量提交、后台状态轮询、续跑、steering 和父级 streaming callback 继承。 |
@@ -188,13 +202,13 @@ let run = session.prompt("分析当前 workspace。")?;
 
 ## 执行后端
 
-运行时会把调度交给 execution backend：
+公共 SDK 通过 `ExecutionMode` 选择调度方式。底层 runtime backend struct 仍保留给高级集成：
 
 | 后端 | 使用场景 |
 | --- | --- |
-| `InlineBackend` | 默认同步执行，适合普通 CLI、测试和简单嵌入。 |
-| `ThreadBackend` | 提交任务后不阻塞调用方。 |
-| `DistributedBackend` | 带 checkpoint 的 cycle 执行，支持可序列化 runtime recipe 和可插拔调度。 |
+| `ExecutionMode::Inline` | 默认同步执行，适合普通 CLI、测试和简单嵌入。 |
+| `ExecutionMode::Threaded` | 提交任务后不阻塞调用方。 |
+| `ExecutionMode::Distributed` | 带 checkpoint 的 cycle 执行，支持可序列化 runtime recipe 和可插拔调度。 |
 
 Checkpointed run 可以把状态存到 memory、SQLite 或 Redis。可选 `apalis` feature 提供
 Apalis job bridge，适合已经使用 Apalis worker 的应用：
@@ -224,10 +238,14 @@ cargo run -p vv-agent --example 03_sdk_client
 cargo run -p vv-agent --example 04_session_api
 cargo run -p vv-agent --example 23_distributed_backend
 cargo run -p vv-agent --example 24_workspace_backends
+cargo run -p vv-agent --example 26_agent_runner_facade
+cargo run -p vv-agent --example 27_facade_handoff
+cargo run -p vv-agent --example 28_facade_approval_background_trace
 ```
 
-完整索引见 `crates/vv-agent/examples/README_ZH.md`，覆盖 runtime hook、自定义工具、子 Agent
-pipeline、skills、streaming、取消、state store、执行后端、workspace 后端和临时工具注入。
+完整索引见 `crates/vv-agent/examples/README_ZH.md`，覆盖 Agent + Runner facade、runtime hook、自定义工具、
+handoff、approval resume、后台任务、tracing、子 Agent pipeline、skills、streaming、取消、state store、
+执行后端、workspace 后端和临时工具注入。
 
 ## 真实模型 Smoke Test
 
@@ -273,6 +291,12 @@ vv-agent-rs/
       llm/        # LLM trait、脚本化测试 client、vv-llm client bridge
       memory/     # compaction、artifact、session memory、token budget
       prompt/     # system prompt section 和 prompt-cache metadata
+      agent.rs    # public Agent builder facade
+      runner.rs   # runtime execution 上的 public Runner facade
+      run_config.rs
+      model.rs
+      model_settings.rs
+      sessions.rs
       runtime/    # agent runtime、hook、backend、cancel、sub-agent
       sdk/        # 高层 client、session、resource、run payload
       skills/     # skill 发现、解析、校验、激活
