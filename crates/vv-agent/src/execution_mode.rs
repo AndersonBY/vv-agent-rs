@@ -2,17 +2,14 @@ use crate::runtime::backends::{
     DistributedBackend, InlineBackend, RuntimeExecutionBackend, ThreadBackend,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum ExecutionMode {
+    #[default]
     Inline,
-    Threaded { max_workers: usize },
+    Threaded {
+        max_workers: usize,
+    },
     Distributed(DistributedBackend),
-}
-
-impl Default for ExecutionMode {
-    fn default() -> Self {
-        Self::Inline
-    }
 }
 
 impl From<ExecutionMode> for RuntimeExecutionBackend {

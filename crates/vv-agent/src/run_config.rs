@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -15,7 +14,7 @@ use crate::tracing::TraceSink;
 use crate::types::Metadata;
 use crate::workspace::WorkspaceBackend;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct RunConfig {
     pub model: Option<ModelRef>,
     pub model_provider: Option<Arc<dyn ModelProvider>>,
@@ -31,27 +30,6 @@ pub struct RunConfig {
     pub trace_sink: Option<Arc<dyn TraceSink>>,
     pub app_state: Option<Arc<dyn std::any::Any + Send + Sync>>,
     pub metadata: Metadata,
-}
-
-impl Default for RunConfig {
-    fn default() -> Self {
-        Self {
-            model: None,
-            model_provider: None,
-            model_settings: None,
-            workspace: None,
-            workspace_backend: None,
-            session: None,
-            max_cycles: None,
-            tool_policy: ToolPolicy::default(),
-            execution_backend: None,
-            cancellation_token: None,
-            hooks: Vec::new(),
-            trace_sink: None,
-            app_state: None,
-            metadata: BTreeMap::new(),
-        }
-    }
 }
 
 impl RunConfig {

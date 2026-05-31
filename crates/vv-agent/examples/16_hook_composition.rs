@@ -12,7 +12,7 @@ struct ToolPolicyHook;
 
 impl RuntimeHook for ToolPolicyHook {
     fn before_tool_call(&self, event: BeforeToolCallEvent<'_>) -> Option<BeforeToolCallPatch> {
-        if event.call.name == "bash" && event.call.arguments.get("command").is_some() {
+        if event.call.name == "bash" && event.call.arguments.contains_key("command") {
             return None;
         }
         None

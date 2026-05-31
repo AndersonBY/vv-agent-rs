@@ -9,11 +9,14 @@ use crate::context::{RunContext, ToolCallContext};
 use crate::tools::{Tool, ToolContext, ToolOutput, ToolSpec};
 use crate::types::ToolArguments;
 
+type DynamicFunctionHandler =
+    Arc<dyn Fn(ToolCallContext, Value) -> Result<ToolOutput, String> + Send + Sync>;
+
 pub struct FunctionTool<Args = Value> {
     name: String,
     description: String,
     parameters_schema: Value,
-    handler: Arc<dyn Fn(ToolCallContext, Value) -> Result<ToolOutput, String> + Send + Sync>,
+    handler: DynamicFunctionHandler,
     _args: PhantomData<fn() -> Args>,
 }
 
@@ -84,7 +87,6 @@ where
                             model: None,
                             workspace: Some(context.workspace.clone()),
                             metadata: context.metadata.clone(),
-                            ..RunContext::default()
                         },
                         tool_call_id: String::new(),
                         tool_name: name.clone(),
@@ -115,8 +117,7 @@ pub struct FunctionToolBuilder<Args = Value> {
     name: String,
     description: String,
     parameters_schema: Value,
-    handler:
-        Option<Arc<dyn Fn(ToolCallContext, Value) -> Result<ToolOutput, String> + Send + Sync>>,
+    handler: Option<DynamicFunctionHandler>,
     _args: PhantomData<fn() -> Args>,
 }
 

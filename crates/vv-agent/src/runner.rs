@@ -254,12 +254,8 @@ impl Runner {
             .or_else(|| self.default_run_config.model.clone())
             .or_else(|| agent.model().cloned())
             .ok_or_else(|| "agent model is not configured".to_string())?;
-        let resolved = provider
-            .resolve(&model_ref)
-            .map_err(|error| format_model_error(error))?;
-        let llm = provider
-            .client(&resolved)
-            .map_err(|error| format_model_error(error))?;
+        let resolved = provider.resolve(&model_ref).map_err(format_model_error)?;
+        let llm = provider.client(&resolved).map_err(format_model_error)?;
         let provider_settings = provider.default_settings(&resolved);
         let settings = provider_settings
             .merge(agent.model_settings())
