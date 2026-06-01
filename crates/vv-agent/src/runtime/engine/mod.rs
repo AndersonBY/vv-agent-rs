@@ -473,6 +473,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     if let Some(result) = handle_directive_result(
                         self,
                         &controls,
+                        &task,
                         cycle_index,
                         directive_result,
                         messages,

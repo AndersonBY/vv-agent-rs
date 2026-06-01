@@ -8,6 +8,7 @@ pub mod cli;
 pub mod config;
 pub mod constants;
 pub mod context;
+pub mod event_store;
 pub mod events;
 pub mod execution_mode;
 pub mod guardrails;
@@ -37,6 +38,9 @@ pub use config::{
     ResolvedModelConfig,
 };
 pub use context::{RunContext, ToolCallContext};
+pub use event_store::{
+    EventStoreError, JsonlRunEventStore, RunEventIter, RunEventReplayQuery, RunEventStore,
+};
 pub use events::{
     AgentErrorPayload, EventId, RunEvent, RunEventPayload, RunEventVersion, ToolStatus,
 };

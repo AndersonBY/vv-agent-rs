@@ -100,6 +100,7 @@ pub(super) fn handle_no_tool_response<C: LlmClient>(
 pub(super) fn handle_directive_result<C: LlmClient>(
     runtime: &AgentRuntime<C>,
     controls: &RuntimeRunControls,
+    task: &AgentTask,
     cycle_index: u32,
     result: &ToolExecutionResult,
     messages: &[Message],
@@ -113,10 +114,7 @@ pub(super) fn handle_directive_result<C: LlmClient>(
                 controls,
                 "run_completed",
                 BTreeMap::from([
-                    (
-                        "task_id".to_string(),
-                        Value::String(result.tool_call_id.clone()),
-                    ),
+                    ("task_id".to_string(), Value::String(task.task_id.clone())),
                     ("cycle".to_string(), Value::from(cycle_index)),
                     (
                         "final_answer".to_string(),

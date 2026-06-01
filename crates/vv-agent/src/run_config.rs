@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::event_store::RunEventStore;
 use crate::execution_mode::ExecutionMode;
 use crate::model::{ModelProvider, ModelRef};
 use crate::model_settings::ModelSettings;
@@ -28,6 +29,8 @@ pub struct RunConfig {
     pub cancellation_token: Option<CancellationToken>,
     pub hooks: Vec<Arc<dyn RuntimeHook>>,
     pub trace_sink: Option<Arc<dyn TraceSink>>,
+    pub event_store: Option<Arc<dyn RunEventStore>>,
+    pub event_store_fail_closed: bool,
     pub app_state: Option<Arc<dyn std::any::Any + Send + Sync>>,
     pub metadata: Metadata,
 }
@@ -116,6 +119,16 @@ impl RunConfigBuilder {
 
     pub fn trace_sink(mut self, sink: Arc<dyn TraceSink>) -> Self {
         self.config.trace_sink = Some(sink);
+        self
+    }
+
+    pub fn event_store(mut self, store: Arc<dyn RunEventStore>) -> Self {
+        self.config.event_store = Some(store);
+        self
+    }
+
+    pub fn event_store_fail_closed(mut self, fail_closed: bool) -> Self {
+        self.config.event_store_fail_closed = fail_closed;
         self
     }
 

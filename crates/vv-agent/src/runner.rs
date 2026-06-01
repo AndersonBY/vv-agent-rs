@@ -196,6 +196,8 @@ impl Runner {
         config: RunConfig,
         event_collector: Option<Arc<std::sync::Mutex<Vec<RunEvent>>>>,
     ) -> Result<RunResult, String> {
+        let (event_store, event_store_fail_closed) =
+            effective_event_store(&self.default_run_config, &config);
         let mut current_agent = agent.clone();
         let mut current_input = input;
         for _ in 0..=max_handoff_depth(&config, &current_agent) {
@@ -220,8 +222,10 @@ impl Runner {
                         current_agent.name()
                     )
                 })?;
-            push_event(
+            capture_event(
                 event_collector.as_ref(),
+                event_store.as_ref(),
+                event_store_fail_closed,
                 RunEvent::handoff_completed(
                     format!("{}_run", handoff.from_agent),
                     format!("{}_run", handoff.from_agent),
@@ -258,6 +262,8 @@ impl Runner {
             .ok_or_else(|| "agent model is not configured".to_string())?;
         let resolved = provider.resolve(&model_ref).map_err(format_model_error)?;
         let llm = provider.client(&resolved).map_err(format_model_error)?;
+        let (event_store, event_store_fail_closed) =
+            effective_event_store(&self.default_run_config, &config);
         let provider_settings = provider.default_settings(&resolved);
         let settings = provider_settings
             .merge(agent.model_settings())
@@ -367,18 +373,24 @@ impl Runner {
                 task.metadata.clone(),
             )));
         }
-        let log_handler = event_collector.as_ref().map(|collector| {
-            let collector = collector.clone();
-            Arc::new(
+        let log_handler = if event_collector.is_some() || event_store.is_some() {
+            let collector = event_collector.clone();
+            let event_store = event_store.clone();
+            Some(Arc::new(
                 move |event: &str, payload: &std::collections::BTreeMap<String, Value>| {
                     if let Some(mapped) = map_runtime_event(event, payload) {
-                        if let Ok(mut events) = collector.lock() {
-                            events.push(mapped);
-                        }
+                        capture_event(
+                            collector.as_ref(),
+                            event_store.as_ref(),
+                            event_store_fail_closed,
+                            mapped,
+                        );
                     }
                 },
-            ) as crate::runtime::RuntimeEventHandler
-        });
+            ) as crate::runtime::RuntimeEventHandler)
+        } else {
+            None
+        };
         let controls = RuntimeRunControls {
             log_handler,
             cancellation_token: config
@@ -544,7 +556,33 @@ fn max_handoff_depth(config: &RunConfig, agent: &Agent) -> u32 {
         .max(1)
 }
 
-fn push_event(collector: Option<&Arc<std::sync::Mutex<Vec<RunEvent>>>>, event: RunEvent) {
+fn effective_event_store(
+    default_config: &RunConfig,
+    config: &RunConfig,
+) -> (Option<Arc<dyn crate::event_store::RunEventStore>>, bool) {
+    (
+        config
+            .event_store
+            .clone()
+            .or_else(|| default_config.event_store.clone()),
+        config.event_store_fail_closed || default_config.event_store_fail_closed,
+    )
+}
+
+fn capture_event(
+    collector: Option<&Arc<std::sync::Mutex<Vec<RunEvent>>>>,
+    event_store: Option<&Arc<dyn crate::event_store::RunEventStore>>,
+    event_store_fail_closed: bool,
+    event: RunEvent,
+) {
+    if let Some(store) = event_store {
+        if let Err(error) = store.append(&event) {
+            if event_store_fail_closed {
+                panic!("run event store append failed: {error}");
+            }
+            eprintln!("warning: run event store append failed: {error}");
+        }
+    }
     if let Some(collector) = collector {
         if let Ok(mut events) = collector.lock() {
             events.push(event);
