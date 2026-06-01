@@ -336,6 +336,36 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         call.clone(),
                         &context,
                     );
+                    self.emit_log(
+                        &controls,
+                        "tool_call_started",
+                        BTreeMap::from([
+                            ("task_id".to_string(), Value::String(task.task_id.clone())),
+                            (
+                                "agent_name".to_string(),
+                                Value::String(
+                                    task.metadata
+                                        .get("agent_name")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or(&task.task_id)
+                                        .to_string(),
+                                ),
+                            ),
+                            ("cycle".to_string(), Value::from(cycle_index)),
+                            (
+                                "tool_name".to_string(),
+                                Value::String(patched_call.name.clone()),
+                            ),
+                            (
+                                "tool_arguments".to_string(),
+                                Value::Object(patched_call.arguments.clone().into_iter().collect()),
+                            ),
+                            (
+                                "tool_call_id".to_string(),
+                                Value::String(patched_call.id.clone()),
+                            ),
+                        ]),
+                    );
                     let mut result = match short_circuit_result {
                         Some(mut result) => {
                             if needs_tool_call_id(&result.tool_call_id) {

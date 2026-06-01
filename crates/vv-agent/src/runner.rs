@@ -2,9 +2,10 @@ mod event_stream;
 mod session_blocking;
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
+use tokio::sync::broadcast;
 
 use crate::agent::Agent;
 use crate::config::apply_resolved_model_limits;
@@ -15,6 +16,7 @@ use crate::llm::LlmClient;
 use crate::model::{ModelError, ModelProvider, VvLlmModelProvider};
 use crate::result::{RunResult, RunResumeContext, RunState};
 use crate::run_config::RunConfig;
+use crate::run_handle::{RunEventSenderSlot, RunHandle, RunHandleState, SharedRunResult};
 use crate::runtime::{
     AgentRuntime, BeforeToolCallEvent, BeforeToolCallPatch, ExecutionContext, RuntimeHook,
     RuntimeRunControls,
@@ -186,7 +188,18 @@ impl Runner {
         config: RunConfig,
         event_collector: Option<Arc<std::sync::Mutex<Vec<RunEvent>>>>,
     ) -> Result<RunResult, String> {
-        self.run_agent_chain(agent, input, config, event_collector)
+        self.run_blocking_with_event_sender(agent, input, config, event_collector, None)
+    }
+
+    fn run_blocking_with_event_sender(
+        &self,
+        agent: &Agent,
+        input: NormalizedInput,
+        config: RunConfig,
+        event_collector: Option<Arc<std::sync::Mutex<Vec<RunEvent>>>>,
+        event_sender: Option<broadcast::Sender<RunEvent>>,
+    ) -> Result<RunResult, String> {
+        self.run_agent_chain(agent, input, config, event_collector, event_sender)
     }
 
     fn run_agent_chain(
@@ -195,6 +208,7 @@ impl Runner {
         input: NormalizedInput,
         config: RunConfig,
         event_collector: Option<Arc<std::sync::Mutex<Vec<RunEvent>>>>,
+        event_sender: Option<broadcast::Sender<RunEvent>>,
     ) -> Result<RunResult, String> {
         let (event_store, event_store_fail_closed) =
             effective_event_store(&self.default_run_config, &config);
@@ -206,6 +220,7 @@ impl Runner {
                 current_input.clone(),
                 config.clone(),
                 event_collector.clone(),
+                event_sender.clone(),
             )?;
             let Some(handoff) = outcome.handoff else {
                 return Ok(outcome.result);
@@ -224,6 +239,7 @@ impl Runner {
                 })?;
             capture_event(
                 event_collector.as_ref(),
+                event_sender.as_ref(),
                 event_store.as_ref(),
                 event_store_fail_closed,
                 RunEvent::handoff_completed(
@@ -248,6 +264,7 @@ impl Runner {
         input: NormalizedInput,
         config: RunConfig,
         event_collector: Option<Arc<std::sync::Mutex<Vec<RunEvent>>>>,
+        event_sender: Option<broadcast::Sender<RunEvent>>,
     ) -> Result<SingleRunOutcome, String> {
         let provider = config
             .model_provider
@@ -373,24 +390,27 @@ impl Runner {
                 task.metadata.clone(),
             )));
         }
-        let log_handler = if event_collector.is_some() || event_store.is_some() {
-            let collector = event_collector.clone();
-            let event_store = event_store.clone();
-            Some(Arc::new(
-                move |event: &str, payload: &std::collections::BTreeMap<String, Value>| {
-                    if let Some(mapped) = map_runtime_event(event, payload) {
-                        capture_event(
-                            collector.as_ref(),
-                            event_store.as_ref(),
-                            event_store_fail_closed,
-                            mapped,
-                        );
-                    }
-                },
-            ) as crate::runtime::RuntimeEventHandler)
-        } else {
-            None
-        };
+        let log_handler =
+            if event_collector.is_some() || event_sender.is_some() || event_store.is_some() {
+                let collector = event_collector.clone();
+                let event_sender = event_sender.clone();
+                let event_store = event_store.clone();
+                Some(Arc::new(
+                    move |event: &str, payload: &std::collections::BTreeMap<String, Value>| {
+                        if let Some(mapped) = map_runtime_event(event, payload) {
+                            capture_event(
+                                collector.as_ref(),
+                                event_sender.as_ref(),
+                                event_store.as_ref(),
+                                event_store_fail_closed,
+                                mapped,
+                            );
+                        }
+                    },
+                ) as crate::runtime::RuntimeEventHandler)
+            } else {
+                None
+            };
         let controls = RuntimeRunControls {
             log_handler,
             cancellation_token: config
@@ -479,18 +499,70 @@ impl Runner {
         agent: &Agent,
         input: impl Into<NormalizedInput>,
     ) -> Result<RunEventStream, String> {
-        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let result = self.run_blocking(
-            agent,
-            input.into(),
-            RunConfig::default(),
-            Some(events.clone()),
-        )?;
-        let collected = events
-            .lock()
-            .map_err(|_| "stream event lock poisoned".to_string())?
-            .clone();
-        Ok(RunEventStream::from_events(result, collected))
+        let handle = self.start(agent, input, RunConfig::default()).await?;
+        Ok(handle.into_event_stream())
+    }
+
+    pub async fn start(
+        &self,
+        agent: &Agent,
+        input: impl Into<NormalizedInput>,
+        mut config: RunConfig,
+    ) -> Result<RunHandle, String> {
+        let cancellation_token = config
+            .cancellation_token
+            .clone()
+            .or_else(|| self.default_run_config.cancellation_token.clone())
+            .unwrap_or_default();
+        config.cancellation_token = Some(cancellation_token.clone());
+
+        let (event_sender, _) = broadcast::channel(1024);
+        let event_collector = Arc::new(Mutex::new(Vec::new()));
+        let event_sender_slot: RunEventSenderSlot =
+            Arc::new(Mutex::new(Some(event_sender.clone())));
+        let state = Arc::new(Mutex::new(RunHandleState::running()));
+        let runner = self.clone();
+        let agent = agent.clone();
+        let input = input.into();
+        let state_for_task = state.clone();
+        let sender_slot_for_task = event_sender_slot.clone();
+        let event_collector_for_task = event_collector.clone();
+        let cancellation_token_for_task = cancellation_token.clone();
+        let join = tokio::task::spawn_blocking(move || {
+            let result = runner.run_blocking_with_event_sender(
+                &agent,
+                input,
+                config,
+                Some(event_collector_for_task),
+                Some(event_sender),
+            );
+            if let Ok(mut state) = state_for_task.lock() {
+                *state = match &result {
+                    Ok(_) if cancellation_token_for_task.is_cancelled() => {
+                        RunHandleState::cancelled()
+                    }
+                    Ok(_) => RunHandleState::completed(),
+                    Err(error) if cancellation_token_for_task.is_cancelled() => {
+                        let mut state = RunHandleState::cancelled();
+                        state.error = Some(error.clone());
+                        state
+                    }
+                    Err(error) => RunHandleState::failed(error.clone()),
+                };
+            }
+            if let Ok(mut sender) = sender_slot_for_task.lock() {
+                sender.take();
+            }
+            result
+        });
+        let result = SharedRunResult::new(join);
+        Ok(RunHandle::new(
+            event_sender_slot,
+            event_collector,
+            result,
+            state,
+            cancellation_token,
+        ))
     }
 }
 
@@ -571,6 +643,7 @@ fn effective_event_store(
 
 fn capture_event(
     collector: Option<&Arc<std::sync::Mutex<Vec<RunEvent>>>>,
+    event_sender: Option<&broadcast::Sender<RunEvent>>,
     event_store: Option<&Arc<dyn crate::event_store::RunEventStore>>,
     event_store_fail_closed: bool,
     event: RunEvent,
@@ -582,6 +655,9 @@ fn capture_event(
             }
             eprintln!("warning: run event store append failed: {error}");
         }
+    }
+    if let Some(sender) = event_sender {
+        let _ = sender.send(event.clone());
     }
     if let Some(collector) = collector {
         if let Ok(mut events) = collector.lock() {

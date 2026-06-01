@@ -1,30 +1,67 @@
+use std::collections::{HashSet, VecDeque};
+
 use serde_json::Value;
+use tokio::sync::broadcast;
 
 use crate::events::{RunEvent, ToolStatus};
 use crate::result::RunResult;
+use crate::run_handle::SharedRunResult;
 
 pub struct RunEventStream {
-    events: std::vec::IntoIter<Result<RunEvent, String>>,
-    result: Option<RunResult>,
+    pending: VecDeque<RunEvent>,
+    seen_event_ids: HashSet<String>,
+    receiver: Option<broadcast::Receiver<RunEvent>>,
+    shared_result: Option<SharedRunResult>,
 }
 
 impl RunEventStream {
-    pub(super) fn from_events(result: RunResult, events: Vec<RunEvent>) -> Self {
-        let events = events.into_iter().map(Ok).collect::<Vec<_>>().into_iter();
+    pub(crate) fn from_live(
+        receiver: Option<broadcast::Receiver<RunEvent>>,
+        result: Option<SharedRunResult>,
+        backlog: Vec<RunEvent>,
+    ) -> Self {
+        let seen_event_ids = backlog
+            .iter()
+            .map(|event| event.event_id().as_str().to_string())
+            .collect();
         Self {
-            events,
-            result: Some(result),
+            pending: VecDeque::from(backlog),
+            seen_event_ids,
+            receiver,
+            shared_result: result,
         }
     }
 
     pub async fn next(&mut self) -> Option<Result<RunEvent, String>> {
-        self.events.next()
+        if let Some(event) = self.pending.pop_front() {
+            return Some(Ok(event));
+        }
+        let receiver = self.receiver.as_mut()?;
+        loop {
+            match receiver.recv().await {
+                Ok(event) => {
+                    if self
+                        .seen_event_ids
+                        .insert(event.event_id().as_str().to_string())
+                    {
+                        return Some(Ok(event));
+                    }
+                }
+                Err(broadcast::error::RecvError::Closed) => return None,
+                Err(broadcast::error::RecvError::Lagged(count)) => {
+                    return Some(Err(format!(
+                        "run event stream lagged and dropped {count} events"
+                    )));
+                }
+            }
+        }
     }
 
     pub async fn into_result(mut self) -> Result<RunResult, String> {
-        self.result
-            .take()
-            .ok_or_else(|| "stream result already taken".to_string())
+        if let Some(result) = self.shared_result.take() {
+            return result.wait().await;
+        }
+        Err("stream result already taken".to_string())
     }
 }
 
@@ -80,6 +117,27 @@ pub(super) fn map_runtime_event(
                     RunEvent::assistant_delta(run_id, trace_id, agent_name, cycle_index, delta)
                 })
         }
+        "tool_call_started" => Some(RunEvent::tool_call_started(
+            run_id,
+            trace_id,
+            agent_name,
+            payload
+                .get("cycle")
+                .and_then(Value::as_u64)
+                .unwrap_or_default() as u32,
+            payload
+                .get("tool_call_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            payload
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            payload
+                .get("tool_arguments")
+                .cloned()
+                .unwrap_or(Value::Null),
+        )),
         "tool_result" => {
             let metadata = payload.get("metadata").and_then(Value::as_object);
             if let Some(interruption_id) = metadata

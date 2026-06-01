@@ -21,6 +21,7 @@ pub mod model_settings;
 pub mod prompt;
 pub mod result;
 pub mod run_config;
+pub mod run_handle;
 pub mod runner;
 pub mod runtime;
 pub mod sessions;
@@ -60,6 +61,7 @@ pub use model::{ModelError, ModelProvider, ModelRef, ScriptedModelProvider, VvLl
 pub use model_settings::{ModelSettings, ResponseFormat, RetryPolicy, ToolChoice};
 pub use result::{RunResult, RunState};
 pub use run_config::RunConfig;
+pub use run_handle::{RunHandle, RunHandleState, RunHandleStatus};
 pub use runner::{NormalizedInput, RunEventStream, Runner};
 pub use runtime::backends::{
     run_checkpointed_cycle, CycleDispatchResult, CycleDispatcher, DistributedBackend,
