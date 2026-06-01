@@ -37,7 +37,9 @@ pub use config::{
     ResolvedModelConfig,
 };
 pub use context::{RunContext, ToolCallContext};
-pub use events::{AgentErrorPayload, RunEvent, ToolStatus};
+pub use events::{
+    AgentErrorPayload, EventId, RunEvent, RunEventPayload, RunEventVersion, ToolStatus,
+};
 pub use execution_mode::ExecutionMode;
 pub use guardrails::{GuardrailOutcome, InputGuardrail, OutputGuardrail};
 pub use handoffs::{handoff, Handoff};

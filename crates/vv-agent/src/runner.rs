@@ -222,11 +222,13 @@ impl Runner {
                 })?;
             push_event(
                 event_collector.as_ref(),
-                RunEvent::Handoff {
-                    run_id: format!("{}_run", handoff.from_agent),
-                    from_agent: handoff.from_agent.clone(),
-                    to_agent: handoff.to_agent.clone(),
-                },
+                RunEvent::handoff_completed(
+                    format!("{}_run", handoff.from_agent),
+                    format!("{}_run", handoff.from_agent),
+                    handoff.from_agent.clone(),
+                    handoff.to_agent.clone(),
+                    "",
+                ),
             );
             current_input = NormalizedInput {
                 text: handoff.input,

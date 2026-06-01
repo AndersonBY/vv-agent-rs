@@ -6,8 +6,8 @@ use serde_json::json;
 use vv_agent::{
     handoff, Agent, AgentStatus, ApprovalPolicy, ExecutionMode, FunctionTool, LLMResponse,
     MemorySession, MessageRole, ModelRef, ModelSettings, NormalizedInput, RunConfig, RunContext,
-    RunEvent, Runner, ScriptStep, ScriptedModelProvider, Session, SessionItem, SubTaskRequest,
-    Tool, ToolCall, ToolContext, ToolOutput, ToolPolicy,
+    RunEvent, RunEventPayload, Runner, ScriptStep, ScriptedModelProvider, Session, SessionItem,
+    SubTaskRequest, Tool, ToolCall, ToolContext, ToolOutput, ToolPolicy,
 };
 
 #[tokio::test]
@@ -270,14 +270,11 @@ fn model_ref_and_run_event_are_serializable_public_contracts() {
         Some("backend-a")
     );
 
-    let event = RunEvent::RunCompleted {
-        run_id: "run_1".to_string(),
-        status: AgentStatus::Completed,
-    };
+    let event = RunEvent::run_completed("run_1", "trace_1", "assistant", AgentStatus::Completed);
     let encoded = serde_json::to_value(&event).expect("serialize event");
     assert_eq!(encoded["type"], "run_completed");
     let decoded: RunEvent = serde_json::from_value(encoded).expect("deserialize event");
-    assert_eq!(decoded.run_id(), Some("run_1"));
+    assert_eq!(decoded.run_id(), "run_1");
 }
 
 #[test]
@@ -430,16 +427,20 @@ async fn runner_stream_returns_typed_runtime_events_before_result() {
     assert_eq!(result.final_output(), Some("stream done"));
     assert!(events
         .iter()
-        .any(|event| matches!(event, RunEvent::RunStarted { agent_name, .. } if agent_name == "stream-agent")));
-    assert!(events.iter().any(
-        |event| matches!(event, RunEvent::AssistantDelta { delta, .. } if delta == "calling tool")
-    ));
-    assert!(events
-        .iter()
-        .any(|event| matches!(event, RunEvent::ToolFinished { tool_name, .. } if tool_name == "echo_json")));
-    assert!(events
-        .iter()
-        .any(|event| matches!(event, RunEvent::RunCompleted { status, .. } if *status == AgentStatus::Completed)));
+        .any(|event| event.agent_name() == Some("stream-agent")
+            && matches!(event.payload(), RunEventPayload::RunStarted { .. })));
+    assert!(events.iter().any(|event| matches!(
+        event.payload(),
+        RunEventPayload::AssistantDelta { delta } if delta == "calling tool"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event.payload(),
+        RunEventPayload::ToolCallCompleted { tool_name, .. } if tool_name == "echo_json"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event.payload(),
+        RunEventPayload::RunCompleted { status } if *status == AgentStatus::Completed
+    )));
 }
 
 #[tokio::test]
@@ -718,12 +719,12 @@ async fn tool_approval_interrupts_run_and_resume_executes_approved_call() {
 
     assert_eq!(result.status(), AgentStatus::WaitUser);
     assert!(executed.lock().expect("lock").is_empty());
-    let requested = events.iter().find_map(|event| match event {
-        RunEvent::ToolApprovalRequested {
-            interruption_id,
+    let requested = events.iter().find_map(|event| match event.payload() {
+        RunEventPayload::ApprovalRequested {
+            request_id,
             tool_name,
             ..
-        } if tool_name == "delete_file" => Some(interruption_id.clone()),
+        } if tool_name == "delete_file" => Some(request_id.clone()),
         _ => None,
     });
     let interruption_id = requested.expect("approval requested event");
@@ -804,10 +805,14 @@ async fn handoff_switches_current_agent_and_emits_typed_event() {
 
     assert_eq!(result.agent_name(), "researcher");
     assert_eq!(result.final_output(), Some("researcher final"));
-    assert!(events.iter().any(
-        |event| matches!(event, RunEvent::Handoff { from_agent, to_agent, .. }
-            if from_agent == "triage" && to_agent == "researcher")
-    ));
+    assert!(events.iter().any(|event| matches!(
+        event.payload(),
+        RunEventPayload::HandoffCompleted {
+            source_agent,
+            target_agent,
+            ..
+        } if source_agent == "triage" && target_agent == "researcher"
+    )));
     assert_eq!(captured_requests.lock().expect("lock").len(), 1);
 }
 

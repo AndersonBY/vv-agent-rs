@@ -38,27 +38,35 @@ pub(super) fn map_runtime_event(
         .or_else(|| payload.get("run_id").and_then(Value::as_str))
         .unwrap_or("run")
         .to_string();
+    let trace_id = payload
+        .get("trace_id")
+        .and_then(Value::as_str)
+        .unwrap_or(&run_id)
+        .to_string();
+    let agent_name = payload
+        .get("agent_name")
+        .and_then(Value::as_str)
+        .unwrap_or("agent")
+        .to_string();
     match event {
-        "run_started" => Some(RunEvent::RunStarted {
+        "run_started" => Some(RunEvent::run_started(
             run_id,
-            agent_name: payload
-                .get("agent_name")
+            trace_id,
+            agent_name,
+            payload
+                .get("input")
                 .and_then(Value::as_str)
-                .unwrap_or("agent")
-                .to_string(),
-        }),
-        "cycle_started" => Some(RunEvent::AgentStarted {
+                .unwrap_or_default(),
+        )),
+        "cycle_started" => Some(RunEvent::cycle_started(
             run_id,
-            agent_name: payload
-                .get("agent_name")
-                .and_then(Value::as_str)
-                .unwrap_or("agent")
-                .to_string(),
-            cycle_index: payload
+            trace_id,
+            agent_name,
+            payload
                 .get("cycle")
                 .and_then(Value::as_u64)
                 .unwrap_or_default() as u32,
-        }),
+        )),
         "cycle_llm_response" => {
             let cycle_index = payload
                 .get("cycle")
@@ -68,10 +76,8 @@ pub(super) fn map_runtime_event(
                 .get("assistant_message")
                 .and_then(Value::as_str)
                 .filter(|delta| !delta.is_empty())
-                .map(|delta| RunEvent::AssistantDelta {
-                    run_id,
-                    delta: delta.to_string(),
-                    cycle_index,
+                .map(|delta| {
+                    RunEvent::assistant_delta(run_id, trace_id, agent_name, cycle_index, delta)
                 })
         }
         "tool_result" => {
@@ -80,15 +86,21 @@ pub(super) fn map_runtime_event(
                 .and_then(|metadata| metadata.get("approval_interruption_id"))
                 .and_then(Value::as_str)
             {
-                return Some(RunEvent::ToolApprovalRequested {
+                return Some(RunEvent::approval_requested(
                     run_id,
-                    interruption_id: interruption_id.to_string(),
-                    tool_name: payload
+                    trace_id,
+                    agent_name,
+                    interruption_id,
+                    payload
+                        .get("tool_call_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    payload
                         .get("tool_name")
                         .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
-                });
+                        .unwrap_or_default(),
+                    "Approval required for tool call.",
+                ));
             }
             let status = match payload
                 .get("status")
@@ -99,42 +111,51 @@ pub(super) fn map_runtime_event(
                 "wait_response" | "WAIT_RESPONSE" => ToolStatus::WaitResponse,
                 _ => ToolStatus::Success,
             };
-            Some(RunEvent::ToolFinished {
+            Some(RunEvent::tool_call_completed(
                 run_id,
-                tool_call_id: payload
+                trace_id,
+                agent_name,
+                None,
+                payload
                     .get("tool_call_id")
                     .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                tool_name: payload
+                    .unwrap_or_default(),
+                payload
                     .get("tool_name")
                     .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
+                    .unwrap_or_default(),
                 status,
-            })
+            ))
         }
-        "run_completed" => Some(RunEvent::RunCompleted {
+        "run_completed" => Some(RunEvent::run_completed(
             run_id,
-            status: crate::types::AgentStatus::Completed,
-        }),
-        "run_wait_user" => Some(RunEvent::RunCompleted {
+            trace_id,
+            agent_name,
+            crate::types::AgentStatus::Completed,
+        )),
+        "run_wait_user" => Some(RunEvent::run_completed(
             run_id,
-            status: crate::types::AgentStatus::WaitUser,
-        }),
-        "run_max_cycles" => Some(RunEvent::RunCompleted {
+            trace_id,
+            agent_name,
+            crate::types::AgentStatus::WaitUser,
+        )),
+        "run_max_cycles" => Some(RunEvent::run_completed(
             run_id,
-            status: crate::types::AgentStatus::MaxCycles,
-        }),
-        "cycle_failed" => Some(RunEvent::RunFailed {
+            trace_id,
+            agent_name,
+            crate::types::AgentStatus::MaxCycles,
+        )),
+        "cycle_failed" => Some(RunEvent::run_failed(
             run_id,
-            error: crate::events::AgentErrorPayload::new(
+            trace_id,
+            agent_name,
+            crate::events::AgentErrorPayload::new(
                 payload
                     .get("error")
                     .and_then(Value::as_str)
                     .unwrap_or("cycle failed"),
             ),
-        }),
+        )),
         _ => None,
     }
 }
