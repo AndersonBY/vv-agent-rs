@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::context::{RunContext, ToolCallContext};
-use crate::tools::{Tool, ToolContext, ToolOutput, ToolSpec};
+use crate::tools::{Tool, ToolContext, ToolOutput, ToolSpec, ToolSpecExecutor};
 use crate::types::ToolArguments;
 
 type DynamicFunctionHandler =
@@ -45,6 +45,15 @@ impl<Args> Clone for FunctionTool<Args> {
             handler: self.handler.clone(),
             _args: PhantomData,
         }
+    }
+}
+
+impl<Args> FunctionTool<Args>
+where
+    Args: Send + Sync + 'static,
+{
+    pub fn to_executor(&self) -> std::sync::Arc<dyn crate::tools::ToolExecutor> {
+        ToolSpecExecutor::new(self.as_tool_spec()).into_arc()
     }
 }
 

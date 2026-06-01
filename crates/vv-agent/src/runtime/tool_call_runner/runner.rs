@@ -1,12 +1,11 @@
 use crate::runtime::hooks::RuntimeHookManager;
-use crate::tools::ToolRegistry;
+use crate::tools::{ToolError, ToolOrchestrator, ToolRegistry, ToolRunOptions};
 use crate::types::ToolDirective;
 
 use super::outcome::ToolRunOutcome;
 use super::request::ToolRunRequest;
 use super::results::{
-    execute_tool_result, image_notification_from_tool_result, needs_tool_call_id,
-    skipped_tool_result,
+    image_notification_from_tool_result, needs_tool_call_id, skipped_tool_result,
 };
 
 pub struct ToolCallRunner {
@@ -31,6 +30,7 @@ impl ToolCallRunner {
         let mut directive_result = None;
         let mut interruption_messages = Vec::new();
         let mut image_notifications = Vec::new();
+        let orchestrator = ToolOrchestrator::from_tools(self.tool_registry.executors());
 
         for (index, call) in request.tool_calls.iter().enumerate() {
             if let Some(context) = request.execution_context {
@@ -50,8 +50,11 @@ impl ToolCallRunner {
                     result
                 }
                 None => {
-                    let mut result =
-                        execute_tool_result(&self.tool_registry, &patched_call, request.context);
+                    let mut result = block_on_tool_run(orchestrator.run_one(
+                        patched_call.clone(),
+                        request.context,
+                        ToolRunOptions::default(),
+                    ))?;
                     if needs_tool_call_id(&result.tool_call_id) {
                         result.tool_call_id = patched_call.id.clone();
                     }
@@ -130,5 +133,25 @@ impl ToolCallRunner {
             directive_result,
             interruption_messages,
         })
+    }
+}
+
+fn block_on_tool_run<'a>(
+    future: impl std::future::Future<Output = Result<crate::types::ToolExecutionResult, ToolError>> + 'a,
+) -> Result<crate::types::ToolExecutionResult, String> {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+            tokio::task::block_in_place(|| handle.block_on(future))
+                .map_err(|error| error.to_string())
+        } else {
+            handle.block_on(future).map_err(|error| error.to_string())
+        }
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| error.to_string())?
+            .block_on(future)
+            .map_err(|error| error.to_string())
     }
 }

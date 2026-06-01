@@ -4,8 +4,10 @@ pub mod base;
 pub mod builtins;
 pub(crate) mod common;
 pub mod dispatcher;
+pub mod executor;
 pub mod function;
 pub mod handlers;
+pub mod orchestrator;
 pub mod outputs;
 pub mod policy;
 pub mod public_tool;
@@ -19,7 +21,12 @@ pub use background_agent_task::{
 };
 pub use base::{SubTaskRunner, ToolContext, ToolHandler, ToolNotFoundError, ToolSpec};
 pub use dispatcher::dispatch_tool_call;
+pub use executor::{
+    ApprovalRequirement, ToolError, ToolExecutor, ToolExposure, ToolFuture, ToolRunContext,
+    ToolSpecContext, ToolSpecExecutor,
+};
 pub use function::FunctionTool;
+pub use orchestrator::{ToolOrchestrator, ToolRunOptions};
 pub use outputs::ToolOutput;
 pub use policy::{ApprovalDecision, ApprovalPolicy, ToolPolicy};
 pub use public_tool::{StaticTool, Tool};

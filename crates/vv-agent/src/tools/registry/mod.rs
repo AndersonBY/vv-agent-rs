@@ -5,6 +5,7 @@ use serde_json::Value;
 mod defaults;
 
 use super::base::{ToolContext, ToolHandler, ToolNotFoundError, ToolSpec};
+use super::{ToolExecutor, ToolSpecExecutor};
 use crate::types::{AgentTask, ToolCall, ToolExecutionResult};
 
 pub use defaults::build_default_registry;
@@ -141,5 +142,13 @@ impl ToolRegistry {
     ) -> Result<ToolExecutionResult, ToolNotFoundError> {
         let tool = self.get(&call.name)?;
         Ok((tool.handler)(context, &call.arguments))
+    }
+
+    pub fn executors(&self) -> Vec<std::sync::Arc<dyn ToolExecutor>> {
+        self.tool_order
+            .iter()
+            .filter_map(|name| self.tools.get(name).cloned())
+            .map(|spec| ToolSpecExecutor::new(spec).into_arc())
+            .collect()
     }
 }

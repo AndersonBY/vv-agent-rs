@@ -103,9 +103,11 @@ pub use sessions::{
 };
 pub use tools::{
     build_default_registry, dispatch_tool_call, AgentTool, AgentToolBuilder, ApprovalDecision,
-    ApprovalPolicy, BackgroundAgentTask, BackgroundAgentTaskBuilder, BackgroundAgentTaskHandle,
-    BackgroundAgentTaskSnapshot, FunctionTool, StaticTool, Tool, ToolContext, ToolHandler,
-    ToolNotFoundError, ToolOutput, ToolPolicy, ToolRegistry, ToolSpec,
+    ApprovalPolicy, ApprovalRequirement, BackgroundAgentTask, BackgroundAgentTaskBuilder,
+    BackgroundAgentTaskHandle, BackgroundAgentTaskSnapshot, FunctionTool, StaticTool, Tool,
+    ToolContext, ToolError, ToolExecutor, ToolExposure, ToolFuture, ToolHandler, ToolNotFoundError,
+    ToolOrchestrator, ToolOutput, ToolPolicy, ToolRegistry, ToolRunContext, ToolRunOptions,
+    ToolSpec, ToolSpecContext, ToolSpecExecutor,
 };
 pub use tracing::{JsonlTraceExporter, Span, TraceSink};
 pub use types::{
