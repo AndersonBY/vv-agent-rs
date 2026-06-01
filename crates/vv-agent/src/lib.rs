@@ -4,6 +4,7 @@
 //! agent workflows with built-in tool dispatch and vv-llm backed chat clients.
 
 pub mod agent;
+pub mod approval;
 pub mod cli;
 pub mod config;
 pub mod constants;
@@ -32,6 +33,9 @@ pub mod types;
 pub mod workspace;
 
 pub use agent::{Agent, ToolUseBehavior};
+pub use approval::{
+    ApprovalBroker, ApprovalError, ApprovalFuture, ApprovalProvider, ApprovalRequest,
+};
 pub use config::{
     apply_resolved_model_limits, build_vv_llm_from_local_settings, build_vv_llm_settings,
     decode_api_key, load_llm_settings_from_file, load_memory_summary_defaults_from_file,

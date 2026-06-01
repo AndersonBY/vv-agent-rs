@@ -30,5 +30,20 @@ pub enum ApprovalPolicy {
 pub enum ApprovalDecision {
     Approved,
     Denied(String),
+    TimedOut(String),
     NeedsApproval,
+}
+
+impl ApprovalDecision {
+    pub fn allow() -> Self {
+        Self::Approved
+    }
+
+    pub fn deny(reason: impl Into<String>) -> Self {
+        Self::Denied(reason.into())
+    }
+
+    pub fn timeout(reason: impl Into<String>) -> Self {
+        Self::TimedOut(reason.into())
+    }
 }

@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use tokio::sync::broadcast;
 
 use crate::agent::Agent;
+use crate::approval::ApprovalBroker;
 use crate::config::apply_resolved_model_limits;
 use crate::context::RunContext;
 use crate::events::RunEvent;
@@ -315,6 +316,22 @@ impl Runner {
             &self.default_run_config.tool_policy,
             &config.tool_policy,
         );
+        let approval_provider = config
+            .approval_provider
+            .clone()
+            .or_else(|| self.default_run_config.approval_provider.clone());
+        let approval_broker = config
+            .approval_broker
+            .clone()
+            .or_else(|| self.default_run_config.approval_broker.clone())
+            .or_else(|| {
+                approval_provider
+                    .as_ref()
+                    .map(|_| ApprovalBroker::default())
+            });
+        let approval_timeout = config
+            .approval_timeout
+            .or(self.default_run_config.approval_timeout);
         let run_context = RunContext {
             run_id: format!("{}_run", agent.name()),
             agent_name: agent.name().to_string(),
@@ -419,6 +436,9 @@ impl Runner {
                 .or_else(|| self.default_run_config.cancellation_token.clone()),
             execution_context: Some(ExecutionContext {
                 metadata: task.metadata.clone(),
+                approval_provider,
+                approval_broker,
+                approval_timeout,
                 ..ExecutionContext::default()
             }),
             workspace: Some(workspace),
@@ -515,6 +535,12 @@ impl Runner {
             .or_else(|| self.default_run_config.cancellation_token.clone())
             .unwrap_or_default();
         config.cancellation_token = Some(cancellation_token.clone());
+        let approval_broker = config
+            .approval_broker
+            .clone()
+            .or_else(|| self.default_run_config.approval_broker.clone())
+            .unwrap_or_default();
+        config.approval_broker = Some(approval_broker.clone());
 
         let (event_sender, _) = broadcast::channel(1024);
         let event_collector = Arc::new(Mutex::new(Vec::new()));
@@ -562,6 +588,7 @@ impl Runner {
             result,
             state,
             cancellation_token,
+            approval_broker,
         ))
     }
 }

@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::Value;
 
+use crate::approval::{ApprovalBroker, ApprovalProvider};
 use crate::event_store::RunEventStore;
 use crate::execution_mode::ExecutionMode;
 use crate::model::{ModelProvider, ModelRef};
@@ -31,6 +33,9 @@ pub struct RunConfig {
     pub trace_sink: Option<Arc<dyn TraceSink>>,
     pub event_store: Option<Arc<dyn RunEventStore>>,
     pub event_store_fail_closed: bool,
+    pub approval_provider: Option<Arc<dyn ApprovalProvider>>,
+    pub approval_timeout: Option<Duration>,
+    pub approval_broker: Option<ApprovalBroker>,
     pub app_state: Option<Arc<dyn std::any::Any + Send + Sync>>,
     pub metadata: Metadata,
 }
@@ -129,6 +134,21 @@ impl RunConfigBuilder {
 
     pub fn event_store_fail_closed(mut self, fail_closed: bool) -> Self {
         self.config.event_store_fail_closed = fail_closed;
+        self
+    }
+
+    pub fn approval_provider(mut self, provider: Arc<dyn ApprovalProvider>) -> Self {
+        self.config.approval_provider = Some(provider);
+        self
+    }
+
+    pub fn approval_timeout(mut self, timeout: Duration) -> Self {
+        self.config.approval_timeout = Some(timeout);
+        self
+    }
+
+    pub fn approval_broker(mut self, broker: ApprovalBroker) -> Self {
+        self.config.approval_broker = Some(broker);
         self
     }
 

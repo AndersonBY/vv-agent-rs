@@ -13,10 +13,14 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
+use crate::approval::{block_on_approval_future, ApprovalRequest};
 use crate::llm::{LlmClient, LlmError, LlmRequest};
 use crate::memory::CompactionExhaustedError;
-use crate::tools::ToolContext;
-use crate::types::{AgentResult, AgentStatus, AgentTask, ToolDirective, ToolExecutionResult};
+use crate::tools::{ApprovalDecision, ToolContext};
+use crate::types::{
+    AgentResult, AgentStatus, AgentTask, ToolCall, ToolDirective, ToolExecutionResult,
+    ToolResultStatus,
+};
 
 use super::cancellation::CancellationToken;
 
@@ -366,24 +370,27 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             ),
                         ]),
                     );
-                    let mut result = match short_circuit_result {
-                        Some(mut result) => {
-                            if needs_tool_call_id(&result.tool_call_id) {
-                                result.tool_call_id = call.id.clone();
-                            }
-                            result
+                    let provider_approval_result = approval_provider_result(
+                        self,
+                        &controls,
+                        &task,
+                        cycle_index,
+                        &patched_call,
+                    );
+                    let mut result = if let Some(mut result) = short_circuit_result {
+                        if needs_tool_call_id(&result.tool_call_id) {
+                            result.tool_call_id = call.id.clone();
                         }
-                        None => {
-                            let mut result = execute_tool_result(
-                                &self.tool_registry,
-                                &patched_call,
-                                &mut context,
-                            );
-                            if needs_tool_call_id(&result.tool_call_id) {
-                                result.tool_call_id = patched_call.id.clone();
-                            }
-                            result
+                        result
+                    } else if let Some(result) = provider_approval_result {
+                        result
+                    } else {
+                        let mut result =
+                            execute_tool_result(&self.tool_registry, &patched_call, &mut context);
+                        if needs_tool_call_id(&result.tool_call_id) {
+                            result.tool_call_id = patched_call.id.clone();
                         }
+                        result
                     };
                     result = hook_manager.apply_after_tool_call(
                         &task,
@@ -525,5 +532,151 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             self.emit_run_max_cycles(&controls, &result);
         }
         Ok(result)
+    }
+}
+
+fn approval_provider_result<C: LlmClient>(
+    runtime: &AgentRuntime<C>,
+    controls: &RuntimeRunControls,
+    task: &AgentTask,
+    cycle_index: u32,
+    call: &ToolCall,
+) -> Option<ToolExecutionResult> {
+    if call.name == "task_finish" {
+        return None;
+    }
+    let execution_context = controls.execution_context.as_ref()?;
+    let provider = execution_context.approval_provider.as_ref()?;
+    let broker = execution_context.approval_broker.as_ref()?;
+    let agent_name = task
+        .metadata
+        .get("agent_name")
+        .and_then(Value::as_str)
+        .unwrap_or(&task.task_id)
+        .to_string();
+    let request = ApprovalRequest::for_tool_call(
+        task.task_id.clone(),
+        task.task_id.clone(),
+        agent_name,
+        cycle_index,
+        call,
+    );
+    if !provider.should_request(&request) {
+        return None;
+    }
+
+    let decision = match block_on_approval_future(provider.decide(&request)) {
+        Ok(Some(ApprovalDecision::Approved)) => return None,
+        Ok(Some(ApprovalDecision::Denied(reason))) => ApprovalDecision::Denied(reason),
+        Ok(Some(ApprovalDecision::TimedOut(reason))) => ApprovalDecision::TimedOut(reason),
+        Ok(Some(ApprovalDecision::NeedsApproval)) | Ok(None) => {
+            if let Err(error) = broker.register(request.clone()) {
+                return Some(approval_error_result(
+                    call,
+                    "approval_broker_error",
+                    error.to_string(),
+                ));
+            }
+            runtime.emit_log(
+                controls,
+                "approval_requested",
+                BTreeMap::from([
+                    ("task_id".to_string(), Value::String(request.run_id.clone())),
+                    (
+                        "agent_name".to_string(),
+                        Value::String(request.agent_name.clone()),
+                    ),
+                    ("cycle".to_string(), Value::from(cycle_index)),
+                    (
+                        "request_id".to_string(),
+                        Value::String(request.request_id.clone()),
+                    ),
+                    (
+                        "tool_call_id".to_string(),
+                        Value::String(request.tool_call_id.clone()),
+                    ),
+                    (
+                        "tool_name".to_string(),
+                        Value::String(request.tool_name.clone()),
+                    ),
+                    (
+                        "preview".to_string(),
+                        Value::String(request.preview.clone()),
+                    ),
+                ]),
+            );
+            broker
+                .wait_blocking(&request.request_id, execution_context.approval_timeout)
+                .unwrap_or_else(|error| ApprovalDecision::deny(error.to_string()))
+        }
+        Err(error) => ApprovalDecision::deny(error.to_string()),
+    };
+
+    runtime.emit_log(
+        controls,
+        "approval_resolved",
+        BTreeMap::from([
+            ("task_id".to_string(), Value::String(request.run_id.clone())),
+            (
+                "agent_name".to_string(),
+                Value::String(request.agent_name.clone()),
+            ),
+            ("cycle".to_string(), Value::from(cycle_index)),
+            (
+                "request_id".to_string(),
+                Value::String(request.request_id.clone()),
+            ),
+            (
+                "tool_call_id".to_string(),
+                Value::String(request.tool_call_id.clone()),
+            ),
+            (
+                "tool_name".to_string(),
+                Value::String(request.tool_name.clone()),
+            ),
+            (
+                "approved".to_string(),
+                Value::Bool(matches!(decision, ApprovalDecision::Approved)),
+            ),
+        ]),
+    );
+
+    match decision {
+        ApprovalDecision::Approved => None,
+        ApprovalDecision::NeedsApproval => Some(approval_error_result(
+            call,
+            "approval_unresolved",
+            "Approval was not resolved.",
+        )),
+        ApprovalDecision::Denied(reason) => {
+            Some(approval_error_result(call, "approval_denied", reason))
+        }
+        ApprovalDecision::TimedOut(reason) => {
+            Some(approval_error_result(call, "approval_timeout", reason))
+        }
+    }
+}
+
+fn approval_error_result(
+    call: &ToolCall,
+    error_code: &str,
+    message: impl Into<String>,
+) -> ToolExecutionResult {
+    let message = message.into();
+    ToolExecutionResult {
+        tool_call_id: call.id.clone(),
+        content: serde_json::json!({
+            "ok": false,
+            "error": message,
+            "error_code": error_code,
+            "tool_name": call.name.clone(),
+        })
+        .to_string(),
+        status: ToolResultStatus::Error,
+        directive: ToolDirective::Continue,
+        error_code: Some(error_code.to_string()),
+        metadata: BTreeMap::new(),
+        image_url: None,
+        image_path: None,
     }
 }

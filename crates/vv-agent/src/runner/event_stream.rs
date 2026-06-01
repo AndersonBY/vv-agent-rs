@@ -138,6 +138,57 @@ pub(super) fn map_runtime_event(
                 .cloned()
                 .unwrap_or(Value::Null),
         )),
+        "approval_requested" => Some(RunEvent::approval_requested(
+            run_id,
+            trace_id,
+            agent_name,
+            payload
+                .get("request_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            payload
+                .get("tool_call_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            payload
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            payload
+                .get("preview")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        )),
+        "approval_resolved" => Some(RunEvent::new(
+            run_id,
+            trace_id,
+            agent_name,
+            payload
+                .get("cycle")
+                .and_then(Value::as_u64)
+                .map(|cycle| cycle as u32),
+            crate::events::RunEventPayload::ApprovalResolved {
+                request_id: payload
+                    .get("request_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                tool_call_id: payload
+                    .get("tool_call_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                tool_name: payload
+                    .get("tool_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                approved: payload
+                    .get("approved")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            },
+        )),
         "tool_result" => {
             let metadata = payload.get("metadata").and_then(Value::as_object);
             if let Some(interruption_id) = metadata

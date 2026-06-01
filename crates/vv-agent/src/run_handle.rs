@@ -3,10 +3,12 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
+use crate::approval::{ApprovalBroker, ApprovalError};
 use crate::events::RunEvent;
 use crate::result::RunResult;
 use crate::runner::RunEventStream;
 use crate::runtime::CancellationToken;
+use crate::tools::ApprovalDecision;
 
 pub(crate) type RunEventSenderSlot = Arc<Mutex<Option<broadcast::Sender<RunEvent>>>>;
 
@@ -95,6 +97,7 @@ pub struct RunHandle {
     result: SharedRunResult,
     state: Arc<Mutex<RunHandleState>>,
     cancellation_token: CancellationToken,
+    approval_broker: ApprovalBroker,
 }
 
 impl RunHandle {
@@ -104,6 +107,7 @@ impl RunHandle {
         result: SharedRunResult,
         state: Arc<Mutex<RunHandleState>>,
         cancellation_token: CancellationToken,
+        approval_broker: ApprovalBroker,
     ) -> Self {
         Self {
             sender,
@@ -111,6 +115,7 @@ impl RunHandle {
             result,
             state,
             cancellation_token,
+            approval_broker,
         }
     }
 
@@ -154,6 +159,18 @@ impl RunHandle {
 
     pub fn cancellation_token(&self) -> &CancellationToken {
         &self.cancellation_token
+    }
+
+    pub async fn approve(
+        &self,
+        request_id: impl AsRef<str>,
+        decision: ApprovalDecision,
+    ) -> Result<(), ApprovalError> {
+        self.approval_broker.resolve(request_id, decision)
+    }
+
+    pub fn approval_broker(&self) -> &ApprovalBroker {
+        &self.approval_broker
     }
 
     fn event_snapshot(&self) -> Vec<RunEvent> {
