@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::approval::{ApprovalBroker, ApprovalProvider};
 use crate::llm::LlmStreamCallback;
+use crate::memory::MemoryProvider;
 
 use super::state::StateStore;
 use super::CancellationToken;
@@ -20,6 +21,7 @@ pub struct ExecutionContext {
     pub approval_provider: Option<Arc<dyn ApprovalProvider>>,
     pub approval_broker: Option<ApprovalBroker>,
     pub approval_timeout: Option<Duration>,
+    pub memory_providers: Vec<Arc<dyn MemoryProvider>>,
     pub metadata: BTreeMap<String, Value>,
 }
 
@@ -32,6 +34,7 @@ impl std::fmt::Debug for ExecutionContext {
             .field("has_state_store", &self.state_store.is_some())
             .field("has_approval_provider", &self.approval_provider.is_some())
             .field("has_approval_broker", &self.approval_broker.is_some())
+            .field("memory_provider_count", &self.memory_providers.len())
             .field("metadata", &self.metadata)
             .finish()
     }
@@ -65,6 +68,11 @@ impl ExecutionContext {
 
     pub fn with_approval_timeout(mut self, timeout: Duration) -> Self {
         self.approval_timeout = Some(timeout);
+        self
+    }
+
+    pub fn with_memory_provider(mut self, provider: Arc<dyn MemoryProvider>) -> Self {
+        self.memory_providers.push(provider);
         self
     }
 

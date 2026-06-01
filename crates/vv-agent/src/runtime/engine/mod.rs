@@ -9,20 +9,24 @@ mod planning;
 mod run_setup;
 mod state;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
 use crate::approval::{block_on_approval_future, ApprovalRequest};
+use crate::events::RunEvent;
 use crate::llm::{LlmClient, LlmError, LlmRequest};
-use crate::memory::CompactionExhaustedError;
+use crate::memory::{
+    provider::block_on_memory_future, CompactionExhaustedError, MemoryManager, MemoryProvider,
+};
 use crate::tools::{ApprovalDecision, ToolContext};
 use crate::types::{
-    AgentResult, AgentStatus, AgentTask, ToolCall, ToolDirective, ToolExecutionResult,
+    AgentResult, AgentStatus, AgentTask, Message, ToolCall, ToolDirective, ToolExecutionResult,
     ToolResultStatus,
 };
 
 use super::cancellation::CancellationToken;
+use super::context::ExecutionContext;
 
 use super::cycle_runner::{is_prompt_too_long_error, MAX_PROMPT_TOO_LONG_RETRIES};
 use super::results::assistant_message_from_response;
@@ -150,6 +154,18 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     memory_manager.apply_session_memory_context(&pre_compact_messages);
                 let (previous_prompt_tokens, recent_tool_call_ids) =
                     previous_cycle_memory_usage(cycles);
+                let memory_compact_event = memory_compact_started_event(
+                    controls.execution_context.as_ref(),
+                    &memory_manager,
+                    &task,
+                    cycle_index,
+                    &pre_compact_messages,
+                    previous_prompt_tokens,
+                    recent_tool_call_ids.as_ref(),
+                );
+                if let Some(event) = memory_compact_event.as_ref() {
+                    notify_memory_before_compact(controls.execution_context.as_ref(), event);
+                }
                 let (prepared_messages, memory_compacted) = memory_manager
                     .compact_for_cycle_with_usage(
                         &pre_compact_messages,
@@ -158,6 +174,23 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         previous_prompt_tokens,
                         recent_tool_call_ids.as_ref(),
                     );
+                if memory_compacted {
+                    if let Some(started_event) = memory_compact_event.as_ref() {
+                        let completed = RunEvent::memory_compact_completed(
+                            started_event.run_id().to_string(),
+                            started_event.trace_id().to_string(),
+                            started_event.agent_name().unwrap_or("agent").to_string(),
+                            cycle_index,
+                            pre_compact_messages.len(),
+                            prepared_messages.len(),
+                            None,
+                        );
+                        notify_memory_after_compact(
+                            controls.execution_context.as_ref(),
+                            &completed,
+                        );
+                    }
+                }
                 *messages = prepared_messages;
                 let tool_schemas = self.planned_tool_schemas(&task);
                 let llm_messages = memory_manager.apply_session_memory_context(messages);
@@ -655,6 +688,63 @@ fn approval_provider_result<C: LlmClient>(
             Some(approval_error_result(call, "approval_timeout", reason))
         }
     }
+}
+
+fn memory_compact_started_event(
+    execution_context: Option<&ExecutionContext>,
+    memory_manager: &MemoryManager,
+    task: &AgentTask,
+    cycle_index: u32,
+    messages: &[Message],
+    previous_prompt_tokens: Option<u64>,
+    recent_tool_call_ids: Option<&BTreeSet<String>>,
+) -> Option<RunEvent> {
+    let providers = memory_providers(execution_context);
+    if providers.is_empty() {
+        return None;
+    }
+    let usage = memory_manager.estimate_memory_usage_percentage(
+        messages,
+        previous_prompt_tokens,
+        recent_tool_call_ids,
+    );
+    if usage <= 100 {
+        return None;
+    }
+    let agent_name = task
+        .metadata
+        .get("agent_name")
+        .and_then(Value::as_str)
+        .unwrap_or(&task.task_id)
+        .to_string();
+    Some(RunEvent::memory_compact_started(
+        task.task_id.clone(),
+        task.task_id.clone(),
+        agent_name,
+        cycle_index,
+        messages.len(),
+        previous_prompt_tokens,
+    ))
+}
+
+fn notify_memory_before_compact(execution_context: Option<&ExecutionContext>, event: &RunEvent) {
+    for provider in memory_providers(execution_context) {
+        let _ = block_on_memory_future(provider.before_compact(event));
+    }
+}
+
+fn notify_memory_after_compact(execution_context: Option<&ExecutionContext>, event: &RunEvent) {
+    for provider in memory_providers(execution_context) {
+        let _ = block_on_memory_future(provider.after_compact(event));
+    }
+}
+
+fn memory_providers(
+    execution_context: Option<&ExecutionContext>,
+) -> Vec<&std::sync::Arc<dyn MemoryProvider>> {
+    execution_context
+        .map(|context| context.memory_providers.iter().collect())
+        .unwrap_or_default()
 }
 
 fn approval_error_result(

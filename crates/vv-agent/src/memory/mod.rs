@@ -4,6 +4,7 @@ pub mod manager;
 pub mod message_sanitizer;
 pub mod microcompact;
 pub mod post_compact_restore;
+pub mod provider;
 mod session;
 pub mod session_memory;
 mod summary;
@@ -21,6 +22,10 @@ pub use microcompact::{
     COMPACTABLE_TOOLS,
 };
 pub use post_compact_restore::{restore_key_files, PostCompactRestoreConfig};
+pub use provider::{
+    MemoryError, MemoryFuture, MemoryProvider, MemoryProviderResult, MemorySaveRequest,
+    MemorySaveResult, MemorySearchRequest, MemorySearchResult,
+};
 pub use session::{
     SessionMemory, SessionMemoryConfig, SessionMemoryEntry, SessionMemoryExtractionCallback,
     SessionMemoryState,

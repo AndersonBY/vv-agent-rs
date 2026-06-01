@@ -8,6 +8,7 @@ use crate::approval::{ApprovalBroker, ApprovalProvider};
 use crate::context_providers::ContextProvider;
 use crate::event_store::RunEventStore;
 use crate::execution_mode::ExecutionMode;
+use crate::memory::MemoryProvider;
 use crate::model::{ModelProvider, ModelRef};
 use crate::model_settings::ModelSettings;
 use crate::runtime::backends::RuntimeExecutionBackend;
@@ -39,6 +40,7 @@ pub struct RunConfig {
     pub approval_broker: Option<ApprovalBroker>,
     pub context_providers: Vec<Arc<dyn ContextProvider>>,
     pub max_context_chars: Option<usize>,
+    pub memory_providers: Vec<Arc<dyn MemoryProvider>>,
     pub app_state: Option<Arc<dyn std::any::Any + Send + Sync>>,
     pub metadata: Metadata,
 }
@@ -162,6 +164,11 @@ impl RunConfigBuilder {
 
     pub fn max_context_chars(mut self, max_chars: usize) -> Self {
         self.config.max_context_chars = Some(max_chars);
+        self
+    }
+
+    pub fn memory_provider(mut self, provider: Arc<dyn MemoryProvider>) -> Self {
+        self.config.memory_providers.push(provider);
         self
     }
 

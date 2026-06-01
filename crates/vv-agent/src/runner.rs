@@ -335,6 +335,13 @@ impl Runner {
         let approval_timeout = config
             .approval_timeout
             .or(self.default_run_config.approval_timeout);
+        let memory_providers = self
+            .default_run_config
+            .memory_providers
+            .iter()
+            .chain(config.memory_providers.iter())
+            .cloned()
+            .collect::<Vec<_>>();
         let run_context = RunContext {
             run_id: format!("{}_run", agent.name()),
             agent_name: agent.name().to_string(),
@@ -447,6 +454,7 @@ impl Runner {
                 approval_provider,
                 approval_broker,
                 approval_timeout,
+                memory_providers,
                 ..ExecutionContext::default()
             }),
             workspace: Some(workspace),

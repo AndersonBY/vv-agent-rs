@@ -206,6 +206,48 @@ impl RunEvent {
         )
     }
 
+    pub fn memory_compact_started(
+        run_id: impl Into<String>,
+        trace_id: impl Into<String>,
+        agent_name: impl Into<String>,
+        cycle_index: u32,
+        message_count: usize,
+        estimated_tokens: Option<u64>,
+    ) -> Self {
+        Self::new(
+            run_id,
+            trace_id,
+            agent_name,
+            Some(cycle_index),
+            RunEventPayload::MemoryCompactStarted {
+                message_count,
+                estimated_tokens,
+            },
+        )
+    }
+
+    pub fn memory_compact_completed(
+        run_id: impl Into<String>,
+        trace_id: impl Into<String>,
+        agent_name: impl Into<String>,
+        cycle_index: u32,
+        before_count: usize,
+        after_count: usize,
+        summary_tokens: Option<u64>,
+    ) -> Self {
+        Self::new(
+            run_id,
+            trace_id,
+            agent_name,
+            Some(cycle_index),
+            RunEventPayload::MemoryCompactCompleted {
+                before_count,
+                after_count,
+                summary_tokens,
+            },
+        )
+    }
+
     pub fn handoff_completed(
         run_id: impl Into<String>,
         trace_id: impl Into<String>,

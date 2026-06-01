@@ -62,9 +62,10 @@ pub use llm::{
     ScriptStepCallback, ScriptedLlmClient, VvLlmClient,
 };
 pub use memory::{
-    sanitize_for_resume, CompactionExhaustedError, LocalSummary, MemoryManager,
-    MemoryManagerConfig, SessionMemory, SessionMemoryConfig, SessionMemoryEntry,
-    SessionMemoryState, SummaryCallback,
+    sanitize_for_resume, CompactionExhaustedError, LocalSummary, MemoryError, MemoryFuture,
+    MemoryManager, MemoryManagerConfig, MemoryProvider, MemoryProviderResult, MemorySaveRequest,
+    MemorySaveResult, MemorySearchRequest, MemorySearchResult, SessionMemory, SessionMemoryConfig,
+    SessionMemoryEntry, SessionMemoryState, SummaryCallback,
 };
 pub use model::{ModelError, ModelProvider, ModelRef, ScriptedModelProvider, VvLlmModelProvider};
 pub use model_settings::{ModelSettings, ResponseFormat, RetryPolicy, ToolChoice};
