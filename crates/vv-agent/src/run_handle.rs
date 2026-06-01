@@ -11,6 +11,8 @@ use crate::runtime::CancellationToken;
 use crate::tools::ApprovalDecision;
 
 pub(crate) type RunEventSenderSlot = Arc<Mutex<Option<broadcast::Sender<RunEvent>>>>;
+type RunJoinHandle = JoinHandle<Result<RunResult, String>>;
+type SharedJoinHandle = Arc<tokio::sync::Mutex<Option<RunJoinHandle>>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RunHandleStatus {
@@ -68,11 +70,11 @@ impl RunHandleState {
 
 #[derive(Clone)]
 pub(crate) struct SharedRunResult {
-    join: Arc<tokio::sync::Mutex<Option<JoinHandle<Result<RunResult, String>>>>>,
+    join: SharedJoinHandle,
 }
 
 impl SharedRunResult {
-    pub(crate) fn new(join: JoinHandle<Result<RunResult, String>>) -> Self {
+    pub(crate) fn new(join: RunJoinHandle) -> Self {
         Self {
             join: Arc::new(tokio::sync::Mutex::new(Some(join))),
         }

@@ -33,7 +33,9 @@ use super::results::assistant_message_from_response;
 use super::token_usage::normalize_token_usage;
 use super::tool_call_runner::{execute_tool_result, needs_tool_call_id, skipped_tool_result};
 
-use self::completion::{handle_directive_result, handle_no_tool_response, NoToolResponseRequest};
+use self::completion::{
+    handle_directive_result, handle_no_tool_response, DirectiveResultRequest, NoToolResponseRequest,
+};
 use self::helpers::{
     cancelled_agent_result, collect_interruption_messages, controls_cancelled,
     drain_steering_queue, failed_agent_result, image_notification_from_tool_result,
@@ -619,16 +621,16 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
 
                 cycles.push(cycle);
                 if let Some(directive_result) = directive_result.as_ref() {
-                    if let Some(result) = handle_directive_result(
-                        self,
-                        &controls,
-                        &task,
+                    if let Some(result) = handle_directive_result(DirectiveResultRequest {
+                        runtime: self,
+                        controls: &controls,
+                        task: &task,
                         cycle_index,
-                        directive_result,
+                        result: directive_result,
                         messages,
                         cycles,
                         shared_state,
-                    ) {
+                    }) {
                         return Some(result);
                     }
                 }

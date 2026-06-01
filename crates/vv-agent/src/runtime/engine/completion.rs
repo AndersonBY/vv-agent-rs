@@ -97,16 +97,30 @@ pub(super) fn handle_no_tool_response<C: LlmClient>(
     }
 }
 
+pub(super) struct DirectiveResultRequest<'a, C: LlmClient> {
+    pub runtime: &'a AgentRuntime<C>,
+    pub controls: &'a RuntimeRunControls,
+    pub task: &'a AgentTask,
+    pub cycle_index: u32,
+    pub result: &'a ToolExecutionResult,
+    pub messages: &'a [Message],
+    pub cycles: &'a [CycleRecord],
+    pub shared_state: &'a BTreeMap<String, Value>,
+}
+
 pub(super) fn handle_directive_result<C: LlmClient>(
-    runtime: &AgentRuntime<C>,
-    controls: &RuntimeRunControls,
-    task: &AgentTask,
-    cycle_index: u32,
-    result: &ToolExecutionResult,
-    messages: &[Message],
-    cycles: &[CycleRecord],
-    shared_state: &BTreeMap<String, Value>,
+    request: DirectiveResultRequest<'_, C>,
 ) -> Option<AgentResult> {
+    let DirectiveResultRequest {
+        runtime,
+        controls,
+        task,
+        cycle_index,
+        result,
+        messages,
+        cycles,
+        shared_state,
+    } = request;
     match result.directive {
         ToolDirective::Finish => {
             let final_message = extract_final_message(result);

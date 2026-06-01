@@ -208,6 +208,7 @@ fn runtime_emits_lifecycle_log_events() {
             "run_started",
             "cycle_started",
             "cycle_llm_response",
+            "tool_call_started",
             "tool_result",
             "run_completed"
         ]
@@ -218,8 +219,10 @@ fn runtime_emits_lifecycle_log_events() {
     assert_eq!(events[2].1["tool_call_count"], 1);
     assert_eq!(events[3].1["tool_name"], "task_finish");
     assert_eq!(events[3].1["tool_call_id"], "log_finish");
-    assert_eq!(events[3].1["directive"], "finish");
-    assert_eq!(events[4].1["final_answer"], "logged finish");
+    assert_eq!(events[4].1["tool_name"], "task_finish");
+    assert_eq!(events[4].1["tool_call_id"], "log_finish");
+    assert_eq!(events[4].1["directive"], "finish");
+    assert_eq!(events[5].1["final_answer"], "logged finish");
 }
 
 #[test]
