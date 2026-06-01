@@ -19,7 +19,7 @@ use crate::llm::{LlmClient, LlmError, LlmRequest};
 use crate::memory::{
     provider::block_on_memory_future, CompactionExhaustedError, MemoryManager, MemoryProvider,
 };
-use crate::tools::{ApprovalDecision, ToolContext};
+use crate::tools::{ApprovalDecision, ToolContext, ToolSpecKind};
 use crate::types::{
     AgentResult, AgentStatus, AgentTask, Message, ToolCall, ToolDirective, ToolExecutionResult,
     ToolResultStatus,
@@ -403,6 +403,46 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             ),
                         ]),
                     );
+                    let tool_kind = self
+                        .tool_registry
+                        .get(&patched_call.name)
+                        .map(|spec| spec.kind)
+                        .ok();
+                    if matches!(
+                        tool_kind,
+                        Some(ToolSpecKind::Agent | ToolSpecKind::BackgroundAgent)
+                    ) {
+                        self.emit_log(
+                            &controls,
+                            "sub_run_started",
+                            BTreeMap::from([
+                                ("task_id".to_string(), Value::String(task.task_id.clone())),
+                                (
+                                    "agent_name".to_string(),
+                                    Value::String(
+                                        task.metadata
+                                            .get("agent_name")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or(&task.task_id)
+                                            .to_string(),
+                                    ),
+                                ),
+                                ("cycle".to_string(), Value::from(cycle_index)),
+                                (
+                                    "parent_run_id".to_string(),
+                                    Value::String(task.task_id.clone()),
+                                ),
+                                (
+                                    "parent_tool_call_id".to_string(),
+                                    Value::String(patched_call.id.clone()),
+                                ),
+                                (
+                                    "task_id_hint".to_string(),
+                                    Value::String(format!("sub_run:{}", patched_call.id)),
+                                ),
+                            ]),
+                        );
+                    }
                     let provider_approval_result = approval_provider_result(
                         self,
                         &controls,
@@ -434,6 +474,45 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     );
                     if needs_tool_call_id(&result.tool_call_id) {
                         result.tool_call_id = patched_call.id.clone();
+                    }
+                    if matches!(
+                        tool_kind,
+                        Some(ToolSpecKind::Agent | ToolSpecKind::BackgroundAgent)
+                    ) {
+                        self.emit_log(
+                            &controls,
+                            "sub_run_completed",
+                            BTreeMap::from([
+                                ("task_id".to_string(), Value::String(task.task_id.clone())),
+                                (
+                                    "agent_name".to_string(),
+                                    Value::String(
+                                        task.metadata
+                                            .get("agent_name")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or(&task.task_id)
+                                            .to_string(),
+                                    ),
+                                ),
+                                ("cycle".to_string(), Value::from(cycle_index)),
+                                (
+                                    "parent_run_id".to_string(),
+                                    Value::String(task.task_id.clone()),
+                                ),
+                                (
+                                    "parent_tool_call_id".to_string(),
+                                    Value::String(patched_call.id.clone()),
+                                ),
+                                (
+                                    "status".to_string(),
+                                    serde_json::to_value(result.status).unwrap_or(Value::Null),
+                                ),
+                                (
+                                    "final_output".to_string(),
+                                    Value::String(result.content.clone()),
+                                ),
+                            ]),
+                        );
                     }
                     self.emit_tool_result(&controls, cycle_index, &patched_call, &result);
 

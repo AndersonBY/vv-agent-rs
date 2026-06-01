@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use crate::agent::Agent;
 use crate::run_config::RunConfig;
 use crate::runner::Runner;
-use crate::tools::{Tool, ToolContext, ToolOutput, ToolSpec};
+use crate::tools::{Tool, ToolContext, ToolOutput, ToolSpec, ToolSpecKind};
 use crate::types::{SubTaskRequest, ToolArguments};
 
 #[derive(Clone)]
@@ -103,6 +103,7 @@ impl Tool for AgentTool {
                 },
             ),
         );
+        spec.kind = ToolSpecKind::Agent;
         spec.schema = json!({
             "type": "function",
             "function": {

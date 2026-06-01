@@ -14,7 +14,7 @@ use crate::context::RunContext;
 use crate::context_providers::{
     assemble_context_fragments, collect_context_fragments, ContextBundle, ContextRequest,
 };
-use crate::events::RunEvent;
+use crate::events::{RunEvent, RunEventPayload};
 use crate::guardrails::GuardrailOutcome;
 use crate::llm::LlmClient;
 use crate::model::{ModelError, ModelProvider, VvLlmModelProvider};
@@ -246,12 +246,29 @@ impl Runner {
                 event_sender.as_ref(),
                 event_store.as_ref(),
                 event_store_fail_closed,
+                RunEvent::new(
+                    format!("{}_run", handoff.from_agent),
+                    format!("{}_run", handoff.from_agent),
+                    handoff.from_agent.clone(),
+                    None,
+                    RunEventPayload::HandoffStarted {
+                        source_agent: handoff.from_agent.clone(),
+                        target_agent: handoff.to_agent.clone(),
+                        tool_call_id: handoff.tool_call_id.clone(),
+                    },
+                ),
+            );
+            capture_event(
+                event_collector.as_ref(),
+                event_sender.as_ref(),
+                event_store.as_ref(),
+                event_store_fail_closed,
                 RunEvent::handoff_completed(
                     format!("{}_run", handoff.from_agent),
                     format!("{}_run", handoff.from_agent),
                     handoff.from_agent.clone(),
                     handoff.to_agent.clone(),
-                    "",
+                    handoff.tool_call_id.clone(),
                 ),
             );
             current_input = NormalizedInput {
@@ -651,6 +668,7 @@ struct HandoffRequest {
     from_agent: String,
     to_agent: String,
     input: String,
+    tool_call_id: String,
 }
 
 struct SingleRunOutcome {
@@ -838,6 +856,7 @@ fn extract_handoff(result: &AgentResult) -> Option<HandoffRequest> {
                 from_agent,
                 to_agent,
                 input,
+                tool_call_id: tool_result.tool_call_id.clone(),
             })
         })
 }

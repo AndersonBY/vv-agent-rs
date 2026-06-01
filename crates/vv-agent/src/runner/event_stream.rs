@@ -189,6 +189,76 @@ pub(super) fn map_runtime_event(
                     .unwrap_or(false),
             },
         )),
+        "sub_run_started" => Some(
+            RunEvent::new(
+                payload
+                    .get("task_id_hint")
+                    .and_then(Value::as_str)
+                    .unwrap_or("sub_run"),
+                trace_id,
+                agent_name,
+                payload
+                    .get("cycle")
+                    .and_then(Value::as_u64)
+                    .map(|cycle| cycle as u32),
+                crate::events::RunEventPayload::SubRunStarted {
+                    parent_tool_call_id: payload
+                        .get("parent_tool_call_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    child_session_id: payload
+                        .get("child_session_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    task_id: payload
+                        .get("task_id_hint")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                },
+            )
+            .with_parent_run_id(
+                payload
+                    .get("parent_run_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&run_id),
+            ),
+        ),
+        "sub_run_completed" => Some(
+            RunEvent::new(
+                format!(
+                    "sub_run:{}",
+                    payload
+                        .get("parent_tool_call_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                ),
+                trace_id,
+                agent_name,
+                payload
+                    .get("cycle")
+                    .and_then(Value::as_u64)
+                    .map(|cycle| cycle as u32),
+                crate::events::RunEventPayload::SubRunCompleted {
+                    parent_tool_call_id: payload
+                        .get("parent_tool_call_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    status: crate::types::AgentStatus::Completed,
+                    final_output: payload
+                        .get("final_output")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                },
+            )
+            .with_parent_run_id(
+                payload
+                    .get("parent_run_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&run_id),
+            ),
+        ),
         "tool_result" => {
             let metadata = payload.get("metadata").and_then(Value::as_object);
             if let Some(interruption_id) = metadata

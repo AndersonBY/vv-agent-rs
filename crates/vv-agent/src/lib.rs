@@ -113,7 +113,7 @@ pub use tools::{
     BackgroundAgentTaskHandle, BackgroundAgentTaskSnapshot, FunctionTool, StaticTool, Tool,
     ToolContext, ToolError, ToolExecutor, ToolExposure, ToolFuture, ToolHandler, ToolNotFoundError,
     ToolOrchestrator, ToolOutput, ToolPolicy, ToolRegistry, ToolRunContext, ToolRunOptions,
-    ToolSpec, ToolSpecContext, ToolSpecExecutor,
+    ToolSpec, ToolSpecContext, ToolSpecExecutor, ToolSpecKind,
 };
 pub use tracing::{JsonlTraceExporter, Span, TraceSink};
 pub use types::{

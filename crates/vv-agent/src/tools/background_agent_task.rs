@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use crate::agent::Agent;
 use crate::result::RunResult;
 use crate::runner::{NormalizedInput, Runner};
-use crate::tools::{Tool, ToolContext, ToolOutput, ToolSpec};
+use crate::tools::{Tool, ToolContext, ToolOutput, ToolSpec, ToolSpecKind};
 use crate::types::{AgentStatus, ToolArguments};
 
 static NEXT_BACKGROUND_AGENT_TASK_ID: AtomicU64 = AtomicU64::new(1);
@@ -130,6 +130,7 @@ impl Tool for BackgroundAgentTask {
                 },
             ),
         );
+        spec.kind = ToolSpecKind::BackgroundAgent;
         spec.schema = json!({
             "type": "function",
             "function": {

@@ -19,7 +19,9 @@ pub use background_agent_task::{
     BackgroundAgentTask, BackgroundAgentTaskBuilder, BackgroundAgentTaskHandle,
     BackgroundAgentTaskSnapshot,
 };
-pub use base::{SubTaskRunner, ToolContext, ToolHandler, ToolNotFoundError, ToolSpec};
+pub use base::{
+    SubTaskRunner, ToolContext, ToolHandler, ToolNotFoundError, ToolSpec, ToolSpecKind,
+};
 pub use dispatcher::dispatch_tool_call;
 pub use executor::{
     ApprovalRequirement, ToolError, ToolExecutor, ToolExposure, ToolFuture, ToolRunContext,

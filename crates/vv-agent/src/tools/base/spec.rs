@@ -17,6 +17,15 @@ pub struct ToolSpec {
     pub handler: ToolHandler,
     pub description: String,
     pub schema: Value,
+    pub kind: ToolSpecKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolSpecKind {
+    Function,
+    Agent,
+    BackgroundAgent,
+    Handoff,
 }
 
 impl ToolSpec {
@@ -46,6 +55,7 @@ impl ToolSpec {
             name,
             handler,
             description,
+            kind: ToolSpecKind::Function,
         }
     }
 }

@@ -3,4 +3,4 @@ mod paths;
 mod spec;
 
 pub use context::ToolContext;
-pub use spec::{SubTaskRunner, ToolHandler, ToolNotFoundError, ToolSpec};
+pub use spec::{SubTaskRunner, ToolHandler, ToolNotFoundError, ToolSpec, ToolSpecKind};

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::agent::Agent;
-use crate::tools::{ToolContext, ToolHandler, ToolSpec};
+use crate::tools::{ToolContext, ToolHandler, ToolSpec, ToolSpecKind};
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 #[derive(Clone)]
@@ -41,6 +41,7 @@ impl Handoff {
             },
         );
         let mut spec = ToolSpec::new(tool_name.clone(), description.clone(), handler);
+        spec.kind = ToolSpecKind::Handoff;
         spec.schema = json!({
             "type": "function",
             "function": {
