@@ -11,8 +11,11 @@ delegated to the `vv-llm` crate.
 CLI / SDK / embedding application
   -> Agent + Runner
       -> ModelProvider / ModelRef / ModelSettings
-      -> RunConfig / Session / Tool APIs
+      -> RunConfig / Session / Tool APIs / Providers
+      -> Runner::run / Runner::start / Runner::stream
+      -> RunHandle / RunEventStream / RunResult
       -> compile to runtime task
+  -> RunEventStore / TraceSink
   -> config::load_llm_settings_from_file
   -> config::resolve_model_endpoint
   -> llm::VvLlmClient
@@ -20,7 +23,7 @@ CLI / SDK / embedding application
       -> cycle runner
       -> memory manager
       -> tool planner
-      -> tool-call runner
+      -> tool orchestrator
       -> execution backend
   -> RunResult / AgentResult
 ```
@@ -36,18 +39,22 @@ from an assistant prose message.
 | `crates/vv-agent/src/config/` | Settings literal parsing, API key decoding, backend normalization, endpoint lookup, and exact model resolution. |
 | `crates/vv-agent/src/cli/` | CLI argument parsing, task construction, runtime logging, and output payloads. |
 | `crates/vv-agent/src/agent.rs` | Public `Agent` builder for instructions, model defaults, tools, handoffs, hooks, and metadata. |
-| `crates/vv-agent/src/runner.rs` | Public `Runner` that resolves models, compiles public inputs, and reuses the runtime engine. |
-| `crates/vv-agent/src/run_config.rs` | Per-run overrides for model, workspace, max cycles, tool policy, session, hooks, cancellation, and metadata. |
+| `crates/vv-agent/src/runner.rs` | Public `Runner` that resolves models, compiles public inputs, starts live handles, streams typed events, and reuses the runtime engine. |
+| `crates/vv-agent/src/run_handle.rs` | Live run handle for event subscription, result synchronization, cancellation, state reads, and approval decisions. |
+| `crates/vv-agent/src/run_config.rs` | Per-run overrides for model, workspace, max cycles, tool policy, providers, session, hooks, cancellation, event store, and metadata. |
+| `crates/vv-agent/src/approval.rs` | Host approval protocol, broker, request payload, async decision future, and approval errors. |
+| `crates/vv-agent/src/context_providers.rs` | Context fragment collection, ordering, prompt-budget assembly, source metadata, and stable fragment reporting. |
+| `crates/vv-agent/src/event_store.rs` | Append-only run event storage and replay query contract, including JSONL storage. |
 | `crates/vv-agent/src/model.rs` | Public `ModelRef`, `ModelProvider`, `VvLlmModelProvider`, and scripted provider contracts. |
 | `crates/vv-agent/src/model_settings.rs` | Public model-call settings aligned with common `vv-llm` request options. |
 | `crates/vv-agent/src/sessions.rs` | Public `Session` storage contract and in-memory implementation. |
-| `crates/vv-agent/src/events.rs` | Typed serializable run events for SDK consumers. |
+| `crates/vv-agent/src/events.rs` | v1 run event envelope and typed serializable payloads for SDK consumers. |
 | `crates/vv-agent/src/types/` | Public protocol types, dictionaries, messages, tasks, statuses, records, and token usage. |
 | `crates/vv-agent/src/llm/` | LLM trait, scripted test client, `vv-llm` bridge, endpoint failover, streaming, prompt cache, and request normalization. |
 | `crates/vv-agent/src/runtime/` | Agent runtime, cycle execution, hooks, cancellation, shell runtime, background sessions, sub-agents, state stores, and execution backends. |
-| `crates/vv-agent/src/tools/` | Tool registry, public `Tool`/`FunctionTool` APIs, schemas, dispatcher, shared parsing helpers, and built-in handlers. |
+| `crates/vv-agent/src/tools/` | Tool registry, public `Tool`/`FunctionTool` APIs, executor/orchestrator contracts, schemas, dispatcher, shared parsing helpers, and built-in handlers. |
 | `crates/vv-agent/src/constants/` | Stable tool names and model-visible schema constants. |
-| `crates/vv-agent/src/memory/` | Token counting, compaction, artifact storage, session memory, micro-compaction, prompt-too-long handling, and file-context restoration. |
+| `crates/vv-agent/src/memory/` | Token counting, compaction, external memory provider hooks, artifact storage, session memory, micro-compaction, prompt-too-long handling, and file-context restoration. |
 | `crates/vv-agent/src/prompt/` | System prompt sections, prompt-cache break tracking, available skills, and prompt hashes. |
 | `crates/vv-agent/src/agent.rs`, `runner.rs`, `run_config.rs`, `sessions.rs` | Public `Agent` + `Runner`, run configuration, and session storage. |
 | `crates/vv-agent/src/workspace/` | Local, memory, and S3-compatible workspace backends. |
@@ -67,7 +74,7 @@ checkpoint payload shape as inline execution.
 
 The public path is `Agent` + `Runner`. Public types express user intent;
 the runner compiles those values into the existing runtime payload and keeps
-`AgentRuntime`, `CycleRunner`, `ToolCallRunner`, and backend code as the
+`AgentRuntime`, `CycleRunner`, `ToolOrchestrator`, and backend code as the
 execution layer.
 
 Core responsibilities:
@@ -75,18 +82,43 @@ Core responsibilities:
 - `Agent`: name, instructions, model default, model settings, public tools,
   `Agent::as_tool()`, handoffs, hooks, and metadata.
 - `Runner`: model provider, workspace default, default tool registry, run and
-  stream entrypoints.
+  live entrypoints.
 - `RunConfig`: per-call model, model settings, workspace, max cycles, session,
-  hooks, cancellation, public `ExecutionMode`, and metadata override.
+  hooks, cancellation, public `ExecutionMode`, providers, event store, and
+  metadata override.
+- `RunHandle`: live event stream, cancellation, state, approval decisions, and
+  final result synchronization.
+- `RunEvent`: v1 envelope with stable identity fields and a typed payload.
+- `RunEventStore`: append-only event storage and replay by run lineage.
+- `ApprovalProvider`: host-driven live tool approval. `ask_user` remains the
+  model-facing tool for asking a user to provide conversational input.
+- `ContextProvider`: source-tracked, budgeted context fragments assembled into
+  agent instructions before the run starts.
+- `MemoryProvider`: external search/save and compaction lifecycle callbacks.
 - `ModelProvider`: exact model resolution plus LLM client construction. The
   built-in `VvLlmModelProvider` uses repository settings through `vv-llm`, and
   `ScriptedModelProvider` is for unit tests.
 - `FunctionTool`: typed argument parsing with structured `ToolOutput`, adapted
-  into the current registry until the runtime is fully async-native.
+  into the registry-backed executor path.
 - `AgentTool`: public agent-as-tool wrapper that maps tool arguments into the
   existing `SubTaskRequest` runtime path.
-- `Session`: history-only storage for `RunConfig`; approval resume and
-  background-task handles are exposed through the current API.
+- `Session`: history-only storage for `RunConfig`; background-task handles and
+  interrupted-result resume are exposed through public APIs.
+
+## Runtime Contracts
+
+The runtime contract separates product concerns from framework concerns:
+
+- Applications own UI timelines, approval dialogs, profile settings, product
+  memory stores, notification channels, and durable production storage.
+- The crate owns run lifecycle, event shape, tool execution policy, approval
+  request flow, context assembly, memory provider callbacks, session graph
+  lineage, and JSONL event replay.
+- Applications can implement `ApprovalProvider`, `ContextProvider`,
+  `MemoryProvider`, `RunEventStore`, `TraceSink`, and `ToolExecutor` without
+  depending on internal runtime payloads.
+- Product code should consume `RunEventPayload` for primary UI state instead of
+  parsing raw runtime log strings.
 
 ## Tool Boundaries
 
@@ -95,6 +127,9 @@ Tool behavior is split so schemas and handlers can be tested independently:
 - `tools/base/`: context, paths, and tool spec/result types.
 - `tools/common/`: shared argument, path, grep, edit, and process helpers.
 - `tools/handlers/`: concrete built-in tool behavior.
+- `tools/executor.rs`: public executor adapter contract.
+- `tools/orchestrator.rs`: per-call policy, approval, dispatch, timeout, and
+  telemetry path.
 - `tools/dispatcher.rs`: normalized dispatch and structured errors.
 - `constants/tool_names.rs` and `constants/workspace.rs`: stable public names
   and model-visible schema constants.

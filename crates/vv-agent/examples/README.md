@@ -67,7 +67,7 @@ cargo run -p vv-agent --example 03_sdk_client
 | `16_hook_composition` | Combining timing, policy, and result hooks. |
 | `17_error_recovery` | Retry wrapper around `Runner` calls. |
 | `18_cancellation` | Cancellation token with direct runtime execution. |
-| `19_streaming` | Streaming callback collection. |
+| `19_streaming` | Live typed event streaming with `Runner::stream()`. |
 | `20_thread_backend` | Thread execution backend. |
 | `21_state_checkpoint` | Checkpoint serialization with memory/SQLite stores. |
 | `22_sdk_advanced` | Advanced `RunConfig` options with threaded execution. |
@@ -76,7 +76,7 @@ cargo run -p vv-agent --example 03_sdk_client
 | `25_temporary_tool_injection` | Runtime hook that injects a temporary tool window. |
 | `26_agent_runner_facade` | `Agent` + `Runner` with `VvLlmModelProvider`. |
 | `27_facade_handoff` | Handoff flow that transfers control to another agent. |
-| `28_facade_approval_background_trace` | Approval resume, background agent task, and JSONL trace exporter. |
+| `28_facade_approval_background_trace` | Live approval provider, background agent task, and JSONL trace exporter. |
 
 ## Verification
 

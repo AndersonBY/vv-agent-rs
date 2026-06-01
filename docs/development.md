@@ -29,6 +29,14 @@ Use targeted checks while iterating:
 cargo test -p vv-agent --test vv_llm_integration
 cargo test -p vv-agent --test runtime_cycle
 cargo test -p vv-agent --test public_sdk_redesign
+cargo test -p vv-agent --test run_events_v1
+cargo test -p vv-agent --test event_store
+cargo test -p vv-agent --test run_handle
+cargo test -p vv-agent --test approval_provider
+cargo test -p vv-agent --test tool_orchestrator
+cargo test -p vv-agent --test context_providers
+cargo test -p vv-agent --test memory_provider
+cargo test -p vv-agent --test session_graph_events
 cargo test -p vv-agent --test no_legacy_sdk
 cargo test -p vv-agent --test workspace_tools
 cargo test -p vv-agent --test examples_coverage
@@ -77,6 +85,12 @@ Common environment variables:
 | Tools and schemas | `tests/tools_dispatcher.rs`, `tests/tool_schema_contract.rs`, `tests/tool_planner.rs` |
 | Workspace tools/backends | `tests/workspace_tools.rs`, `tests/search_tools.rs` |
 | Memory and compaction | `tests/memory_tools.rs`, `tests/microcompact.rs`, `tests/post_compact_restore.rs` |
+| External memory provider contract | `tests/memory_provider.rs` |
+| Run events and replay | `tests/run_events_v1.rs`, `tests/event_store.rs`, `tests/session_graph_events.rs` |
+| Live run handle and streaming | `tests/run_handle.rs`, `tests/public_sdk_redesign.rs`, `tests/sdk_smoke.rs` |
+| Live approval provider | `tests/approval_provider.rs` |
+| Tool orchestrator | `tests/tool_orchestrator.rs`, `tests/tools_dispatcher.rs` |
+| Context providers | `tests/context_providers.rs` |
 | Agent/Runner API | `tests/public_sdk_redesign.rs`, `tests/sdk_smoke.rs`, `tests/no_legacy_sdk.rs` |
 | LLM bridge/streaming/failover | `tests/llm_streaming.rs`, `tests/vv_llm_integration.rs` |
 | Skills | `tests/skills_public_api.rs` |
@@ -89,7 +103,10 @@ Common environment variables:
   environment variables change.
 - New embedded SDK examples should use `Agent`, `Runner`, `RunConfig`,
   `ExecutionMode`, `ModelRef`, `ModelSettings`, `FunctionTool`, `ToolOutput`,
-  and `Session`.
+  `RunEventPayload`, providers, and `Session`.
+- Host integration points should be expressed as public traits:
+  `ApprovalProvider`, `ContextProvider`, `MemoryProvider`, `RunEventStore`,
+  `TraceSink`, or `ToolExecutor`.
 - Keep key templates checked in and real key files ignored.
 - Prefer explicit configuration errors over implicit fallback behavior.
 - Keep model-visible schema wording deliberate and covered by contract tests.

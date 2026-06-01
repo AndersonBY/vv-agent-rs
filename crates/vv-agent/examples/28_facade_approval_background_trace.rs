@@ -6,13 +6,26 @@ use common::ExampleConfig;
 use serde::Deserialize;
 use serde_json::json;
 use vv_agent::{
-    Agent, ApprovalPolicy, FunctionTool, JsonlTraceExporter, ModelRef, RunConfig, Runner,
-    ToolOutput, ToolPolicy, VvLlmModelProvider,
+    Agent, ApprovalDecision, ApprovalFuture, ApprovalProvider, ApprovalRequest, FunctionTool,
+    JsonlTraceExporter, ModelRef, RunConfig, RunEventPayload, Runner, ToolOutput,
+    VvLlmModelProvider,
 };
 
 #[derive(Debug, Deserialize)]
 struct EchoArgs {
     message: String,
+}
+
+struct HostApproval;
+
+impl ApprovalProvider for HostApproval {
+    fn should_request(&self, _request: &ApprovalRequest) -> bool {
+        true
+    }
+
+    fn decide(&self, _request: &ApprovalRequest) -> ApprovalFuture<Option<ApprovalDecision>> {
+        Box::pin(async { Ok(None) })
+    }
 }
 
 #[tokio::main]
@@ -44,24 +57,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .instructions("调用 approved_echo 前会等待宿主审批，获批后再完成。")
         .model(ModelRef::backend(config.backend, config.model))
         .tool(echo)
-        .tool_policy(ToolPolicy {
-            approval: ApprovalPolicy::Always,
-            ..ToolPolicy::default()
-        })
         .build()?;
     let prompt = config
         .prompt
         .unwrap_or_else(|| "调用 approved_echo，message 为 approved path。".to_string());
 
-    let first = runner.run(&agent, prompt).await?;
-    if first.status() == vv_agent::AgentStatus::WaitUser {
-        let mut state = first.into_state()?;
-        if let Some(interruption_id) = state.pending_approval_ids().first().cloned() {
-            state.approve(&interruption_id)?;
-            let resumed = runner.resume(state).await?;
-            println!("{:?}: {:?}", resumed.status(), resumed.final_output());
+    let handle = runner
+        .start(
+            &agent,
+            prompt,
+            RunConfig::builder()
+                .approval_provider(Arc::new(HostApproval))
+                .build(),
+        )
+        .await?;
+    let mut events = handle.events();
+    while let Some(event) = events.next().await {
+        let event = event?;
+        match event.payload() {
+            RunEventPayload::ApprovalRequested {
+                request_id,
+                tool_name,
+                preview,
+                ..
+            } => {
+                println!("approval requested for {tool_name}: {preview}");
+                let request_id = request_id.clone();
+                handle
+                    .approve(&request_id, ApprovalDecision::allow())
+                    .await?;
+            }
+            RunEventPayload::ToolCallStarted { tool_name, .. } => {
+                println!("tool started: {tool_name}");
+            }
+            RunEventPayload::RunCompleted { status } => {
+                println!("run completed: {status:?}");
+            }
+            _ => {}
         }
     }
+    let result = handle.result().await?;
+    println!("{:?}: {:?}", result.status(), result.final_output());
+
+    // Interrupted results can still be resumed with RunState::approve() when a
+    // host chooses the older result/resume control flow.
 
     let background = agent
         .as_background_task()

@@ -18,9 +18,10 @@ result contract.
 AgentRuntime
 ├── LLM client              # vv-llm backed chat client, endpoint resolution, streaming
 ├── CycleRunner             # one model turn: prompt, response, tool-call plan
-├── ToolCallRunner          # tool dispatch and directive convergence
+├── ToolOrchestrator        # tool policy, approval, dispatch, timeout, telemetry
 ├── RuntimeHookManager      # before/after hooks for LLM, tools, and memory
 ├── MemoryManager           # context budgeting, compaction, artifacts, session memory
+├── RunHandle / RunEvent    # live control, typed events, event-store replay
 ├── RuntimeExecutionBackend # run scheduling
 │   ├── InlineBackend       # synchronous default
 │   ├── ThreadBackend       # non-blocking task submission
@@ -138,6 +139,49 @@ let result = runner
     .await?;
 ```
 
+### Live Runs and Events
+
+`Runner::run()` and `run_with_config()` are the one-shot entrypoints. Use
+`Runner::start()` when an application needs live UI/server control: subscribe
+to events, approve pending tools, cancel a run, or await the final result from
+one `RunHandle`. `Runner::stream()` is a convenience wrapper over `start()` for
+typed live events.
+
+```rust
+use vv_agent::{ApprovalDecision, RunConfig, RunEventPayload};
+
+let handle = runner
+    .start(&agent, "Inspect the workspace and report findings.", RunConfig::default())
+    .await?;
+let mut events = handle.events();
+
+while let Some(event) = events.next().await {
+    match event?.payload() {
+        RunEventPayload::AssistantDelta { delta } => print!("{delta}"),
+        RunEventPayload::ToolCallStarted { tool_name, .. } => {
+            eprintln!("tool started: {tool_name}");
+        }
+        RunEventPayload::ApprovalRequested { request_id, .. } => {
+            handle.approve(request_id, ApprovalDecision::allow()).await?;
+        }
+        _ => {}
+    }
+}
+
+let result = handle.result().await?;
+```
+
+Each `RunEvent` is a v1 envelope with `event_id`, `run_id`, `trace_id`,
+optional session and parent identifiers, timing, metadata, and a typed
+`RunEventPayload`. `JsonlRunEventStore` can append events and replay a run,
+including child events linked by parent run id.
+
+Live tool approval uses `ApprovalProvider` and the handle-owned broker. The
+model-facing `ask_user` tool remains for requesting user input as part of the
+conversation. Host applications can also attach `ContextProvider` values for
+ordered prompt fragments and `MemoryProvider` values for external search, save,
+and compaction lifecycle hooks.
+
 ### Low-Level Runtime
 
 Use the runtime directly only when you need to assemble the LLM client, prompt,
@@ -196,10 +240,10 @@ runtime version with event logging.
 
 | Area | What `vv-agent` provides |
 | --- | --- |
-| Runtime | Multi-cycle model execution, tool planning, explicit terminal states, cancellation, streaming, event logs, and max-cycle handling. |
-| Tools | Built-in tools for finish/wait-user, TODOs, workspace reads/writes/listing/grep, image reads, shell commands, memory notes, skills, and sub-tasks. |
-| SDK | `Agent`, `Runner`, `RunConfig`, `ModelSettings`, typed tools, `Agent::as_tool()`, typed events, and `Session`. |
-| Memory | Token budgeting, prompt-too-long retries, micro and full compaction, artifact-backed large tool results, image trimming, and session memory. |
+| Runtime | Multi-cycle model execution, explicit terminal states, live `RunHandle`, cancellation, typed events, event replay, and max-cycle handling. |
+| Tools | Built-in tools plus a `ToolOrchestrator` path for policy, approval, dispatch, timeout, and telemetry. |
+| SDK | `Agent`, `Runner`, `RunConfig`, `ModelSettings`, typed tools, `Agent::as_tool()`, `RunEvent`, providers, and `Session`. |
+| Memory | Token budgeting, prompt-too-long retries, micro and full compaction, artifact-backed large tool results, image trimming, session memory, and external provider hooks. |
 | Hooks | Rust `RuntimeHook` implementations can inspect or patch LLM calls, tool calls, memory compaction, and run lifecycle behavior. |
 | Sub-agents | Runtime-backed sub-task creation, batch submission, background status polling, continuation, steering, and inherited streaming callbacks. |
 | Skills | Skill directory discovery, frontmatter parsing, validation, prompt rendering with budget limits, activation, and activation history. |
@@ -252,7 +296,7 @@ cargo run -p vv-agent --example 28_facade_approval_background_trace
 ```
 
 See `crates/vv-agent/examples/README.md` for the full example index covering
-Agent + Runner, runtime hooks, custom tools, handoffs, approval resume,
+Agent + Runner, runtime hooks, custom tools, handoffs, live approval,
 background tasks, tracing, sub-agent pipelines, skills, streaming, cancellation,
 state stores, execution backends, workspace backends, and temporary tool
 injection.

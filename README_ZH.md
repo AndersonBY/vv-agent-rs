@@ -15,9 +15,10 @@ SDK 会话、后台任务和分布式执行都能使用同一套结果契约。
 AgentRuntime
 ├── LLM client              # 基于 vv-llm 的聊天客户端、endpoint 解析、streaming
 ├── CycleRunner             # 单轮模型调用：prompt、response、tool-call plan
-├── ToolCallRunner          # 工具调度和 finish / wait-user / continue 收敛
+├── ToolOrchestrator        # 工具 policy、approval、dispatch、timeout、telemetry
 ├── RuntimeHookManager      # LLM、工具、memory 前后的 hook
 ├── MemoryManager           # 上下文预算、压缩、artifact、session memory
+├── RunHandle / RunEvent    # live 控制、typed event、event-store replay
 ├── RuntimeExecutionBackend # 运行调度
 │   ├── InlineBackend       # 默认同步执行
 │   ├── ThreadBackend       # 非阻塞任务提交
@@ -132,6 +133,46 @@ let result = runner
     .await?;
 ```
 
+### Live Run 与事件
+
+`Runner::run()` 和 `run_with_config()` 适合普通一次性调用。应用如果需要给 UI
+或服务端提供实时控制，应使用 `Runner::start()`：同一个 `RunHandle` 可以订阅事件、
+审批工具、取消运行并等待最终结果。`Runner::stream()` 是基于 `start()` 的 typed live
+event 便捷入口。
+
+```rust
+use vv_agent::{ApprovalDecision, RunConfig, RunEventPayload};
+
+let handle = runner
+    .start(&agent, "检查 workspace 并汇报发现。", RunConfig::default())
+    .await?;
+let mut events = handle.events();
+
+while let Some(event) = events.next().await {
+    match event?.payload() {
+        RunEventPayload::AssistantDelta { delta } => print!("{delta}"),
+        RunEventPayload::ToolCallStarted { tool_name, .. } => {
+            eprintln!("tool started: {tool_name}");
+        }
+        RunEventPayload::ApprovalRequested { request_id, .. } => {
+            handle.approve(request_id, ApprovalDecision::allow()).await?;
+        }
+        _ => {}
+    }
+}
+
+let result = handle.result().await?;
+```
+
+每个 `RunEvent` 都是 v1 envelope，包含 `event_id`、`run_id`、`trace_id`、
+可选 session/parent 标识、时间、metadata 和 typed `RunEventPayload`。
+`JsonlRunEventStore` 可以 append 事件并 replay 一个 run，也可以通过 parent run id
+带出子事件。
+
+实时工具审批使用 `ApprovalProvider` 和 handle 持有的 broker。面向模型的 `ask_user`
+工具仍用于在对话中请求用户输入。宿主应用还可以通过 `ContextProvider` 注入有序 prompt
+片段，通过 `MemoryProvider` 接入外部 search、save 和 compaction lifecycle。
+
 ### 低层 Runtime
 
 只有在你需要自己组装 LLM client、prompt、工具 registry、workspace 和运行控制时，才直接使用
@@ -188,10 +229,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | 模块 | 能力 |
 | --- | --- |
-| Runtime | 多轮模型执行、工具规划、显式终态、取消、streaming、事件日志和 max-cycle 控制。 |
-| Tools | 内置 finish/wait-user、TODO、workspace 读写/列表/grep、图片读取、shell 命令、memory note、skill 和 sub-task 工具。 |
-| SDK | `Agent`、`Runner`、`RunConfig`、`ModelSettings`、typed tool、`Agent::as_tool()`、typed event 和 `Session`。 |
-| Memory | Token 预算、prompt-too-long 重试、micro/full compaction、大型工具结果 artifact、图片裁剪和 session memory。 |
+| Runtime | 多轮模型执行、显式终态、live `RunHandle`、取消、typed event、event replay 和 max-cycle 控制。 |
+| Tools | 内置工具，以及统一处理 policy、approval、dispatch、timeout、telemetry 的 `ToolOrchestrator` 路径。 |
+| SDK | `Agent`、`Runner`、`RunConfig`、`ModelSettings`、typed tool、`Agent::as_tool()`、`RunEvent`、provider 和 `Session`。 |
+| Memory | Token 预算、prompt-too-long 重试、micro/full compaction、大型工具结果 artifact、图片裁剪、session memory 和外部 provider hook。 |
 | Hooks | 使用 Rust `RuntimeHook` 检查或修改 LLM 调用、工具调用、memory compaction 和运行生命周期。 |
 | Sub-agents | 基于 runtime 的子任务创建、批量提交、后台状态轮询、续跑、steering 和父级 streaming callback 继承。 |
 | Skills | Skill 目录发现、frontmatter 解析、校验、带预算的 prompt 渲染、激活和激活历史。 |
@@ -241,7 +282,7 @@ cargo run -p vv-agent --example 28_facade_approval_background_trace
 ```
 
 完整索引见 `crates/vv-agent/examples/README_ZH.md`，覆盖 Agent + Runner、runtime hook、自定义工具、
-handoff、approval resume、后台任务、tracing、子 Agent pipeline、skills、streaming、取消、state store、
+handoff、live approval、后台任务、tracing、子 Agent pipeline、skills、streaming、取消、state store、
 执行后端、workspace 后端和临时工具注入。
 
 ## 真实模型 Smoke Test

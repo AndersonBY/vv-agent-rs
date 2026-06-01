@@ -65,7 +65,7 @@ cargo run -p vv-agent --example 03_sdk_client
 | `16_hook_composition` | 组合 timing、policy、result hook。 |
 | `17_error_recovery` | `Runner` 调用外层重试。 |
 | `18_cancellation` | cancellation token 和直接 runtime 执行。 |
-| `19_streaming` | streaming callback 收集。 |
+| `19_streaming` | 使用 `Runner::stream()` 消费 live typed event。 |
 | `20_thread_backend` | thread 执行后端。 |
 | `21_state_checkpoint` | memory / SQLite 状态存储和 checkpoint 序列化。 |
 | `22_sdk_advanced` | threaded execution 等高级 `RunConfig` 选项。 |
@@ -74,7 +74,7 @@ cargo run -p vv-agent --example 03_sdk_client
 | `25_temporary_tool_injection` | runtime hook 临时注入工具窗口。 |
 | `26_agent_runner_facade` | `Agent` + `Runner` 与 `VvLlmModelProvider`。 |
 | `27_facade_handoff` | handoff 流程，将控制权转交给另一个 Agent。 |
-| `28_facade_approval_background_trace` | approval resume、后台 Agent task 和 JSONL trace exporter。 |
+| `28_facade_approval_background_trace` | live approval provider、后台 Agent task 和 JSONL trace exporter。 |
 
 ## 验证
 
