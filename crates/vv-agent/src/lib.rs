@@ -9,6 +9,7 @@ pub mod cli;
 pub mod config;
 pub mod constants;
 pub mod context;
+pub mod context_providers;
 pub mod event_store;
 pub mod events;
 pub mod execution_mode;
@@ -43,6 +44,10 @@ pub use config::{
     ResolvedModelConfig,
 };
 pub use context::{RunContext, ToolCallContext};
+pub use context_providers::{
+    assemble_context_fragments, collect_context_fragments, ContextBundle, ContextError,
+    ContextFragment, ContextProvider, ContextRequest, ContextSection,
+};
 pub use event_store::{
     EventStoreError, JsonlRunEventStore, RunEventIter, RunEventReplayQuery, RunEventStore,
 };

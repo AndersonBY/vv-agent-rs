@@ -11,6 +11,9 @@ use crate::agent::Agent;
 use crate::approval::ApprovalBroker;
 use crate::config::apply_resolved_model_limits;
 use crate::context::RunContext;
+use crate::context_providers::{
+    assemble_context_fragments, collect_context_fragments, ContextBundle, ContextRequest,
+};
 use crate::events::RunEvent;
 use crate::guardrails::GuardrailOutcome;
 use crate::llm::LlmClient;
@@ -341,10 +344,12 @@ impl Runner {
         };
         let guarded_input = apply_input_guardrails(agent, &run_context, input)?;
         let input_text = guarded_input.text;
+        let (instructions, context_bundle) =
+            self.build_instructions_with_context(agent, &input_text, &config)?;
         let mut task = AgentTask::new(
             format!("{}_run", agent.name()),
             resolved.model_id.clone(),
-            agent.instructions().to_string(),
+            instructions,
             input_text.clone(),
         );
         task.max_cycles = config
@@ -361,6 +366,9 @@ impl Runner {
         task.metadata
             .entry("agent_name".to_string())
             .or_insert_with(|| Value::String(agent.name().to_string()));
+        if let Some(context_bundle) = context_bundle {
+            insert_context_metadata(&mut task.metadata, &context_bundle);
+        }
         task.metadata
             .insert("model_settings".to_string(), settings.to_value());
         task.metadata.insert(
@@ -591,6 +599,43 @@ impl Runner {
             approval_broker,
         ))
     }
+
+    fn build_instructions_with_context(
+        &self,
+        agent: &Agent,
+        input_text: &str,
+        config: &RunConfig,
+    ) -> Result<(String, Option<ContextBundle>), String> {
+        let providers = self
+            .default_run_config
+            .context_providers
+            .iter()
+            .chain(config.context_providers.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        if providers.is_empty() {
+            return Ok((agent.instructions().to_string(), None));
+        }
+        let mut request = ContextRequest::new(agent.name(), input_text);
+        if let Some(max_chars) = config
+            .max_context_chars
+            .or(self.default_run_config.max_context_chars)
+        {
+            request = request.max_prompt_chars(max_chars);
+        }
+        let fragments = collect_context_fragments(&request, &providers)
+            .map_err(|error| format!("context provider failed: {error}"))?;
+        let bundle = assemble_context_fragments(&request, fragments)
+            .map_err(|error| format!("context assembly failed: {error}"))?;
+        let mut instructions = agent.instructions().to_string();
+        if !bundle.prompt.is_empty() {
+            if !instructions.trim().is_empty() {
+                instructions.push_str("\n\n");
+            }
+            instructions.push_str(&bundle.prompt);
+        }
+        Ok((instructions, Some(bundle)))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -691,6 +736,26 @@ fn capture_event(
             events.push(event);
         }
     }
+}
+
+fn insert_context_metadata(metadata: &mut crate::types::Metadata, bundle: &ContextBundle) {
+    metadata.insert(
+        "context_section_ids".to_string(),
+        json!(bundle
+            .sections
+            .iter()
+            .map(|section| section.id.clone())
+            .collect::<Vec<_>>()),
+    );
+    metadata.insert("context_sources".to_string(), json!(bundle.sources.clone()));
+    metadata.insert(
+        "context_stable_hash".to_string(),
+        Value::String(bundle.stable_hash.clone()),
+    );
+    metadata.insert(
+        "context_omitted_section_ids".to_string(),
+        json!(bundle.omitted_section_ids.clone()),
+    );
 }
 
 fn find_approved_tool_call(

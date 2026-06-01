@@ -5,6 +5,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::approval::{ApprovalBroker, ApprovalProvider};
+use crate::context_providers::ContextProvider;
 use crate::event_store::RunEventStore;
 use crate::execution_mode::ExecutionMode;
 use crate::model::{ModelProvider, ModelRef};
@@ -36,6 +37,8 @@ pub struct RunConfig {
     pub approval_provider: Option<Arc<dyn ApprovalProvider>>,
     pub approval_timeout: Option<Duration>,
     pub approval_broker: Option<ApprovalBroker>,
+    pub context_providers: Vec<Arc<dyn ContextProvider>>,
+    pub max_context_chars: Option<usize>,
     pub app_state: Option<Arc<dyn std::any::Any + Send + Sync>>,
     pub metadata: Metadata,
 }
@@ -149,6 +152,16 @@ impl RunConfigBuilder {
 
     pub fn approval_broker(mut self, broker: ApprovalBroker) -> Self {
         self.config.approval_broker = Some(broker);
+        self
+    }
+
+    pub fn context_provider(mut self, provider: Arc<dyn ContextProvider>) -> Self {
+        self.config.context_providers.push(provider);
+        self
+    }
+
+    pub fn max_context_chars(mut self, max_chars: usize) -> Self {
+        self.config.max_context_chars = Some(max_chars);
         self
     }
 
