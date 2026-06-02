@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AppTurn",
+  "type": "object",
+  "properties": {
+    "completedAtMs": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint128",
+      "minimum": 0
+    },
+    "id": {
+      "type": "string"
+    },
+    "input": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/UserInput"
+      }
+    },
+    "runId": {
+      "type": "string"
+    },
+    "startedAtMs": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint128",
+      "minimum": 0
+    },
+    "status": {
+      "$ref": "#/$defs/TurnStatus"
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "tokenUsage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AppTokenUsage"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "threadId",
+    "runId",
+    "status",
+    "input"
+  ],
+  "$defs": {
+    "AppTokenUsage": {
+      "type": "object",
+      "properties": {
+        "inputTokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "totalTokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "inputTokens",
+        "outputTokens",
+        "totalTokens"
+      ]
+    },
+    "TurnStatus": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "interrupted"
+      ]
+    },
+    "UserInput": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    }
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AppThread",
+  "type": "object",
+  "properties": {
+    "activeTurnId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "archived": {
+      "type": "boolean"
+    },
+    "createdAtMs": {
+      "type": "integer",
+      "format": "uint128",
+      "minimum": 0
+    },
+    "cwd": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ephemeral": {
+      "type": "boolean"
+    },
+    "id": {
+      "type": "string"
+    },
+    "model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "$ref": "#/$defs/ThreadStatus"
+    },
+    "title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "updatedAtMs": {
+      "type": "integer",
+      "format": "uint128",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "id",
+    "status",
+    "archived",
+    "ephemeral",
+    "createdAtMs",
+    "updatedAtMs"
+  ],
+  "$defs": {
+    "ThreadStatus": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "running",
+        "archived"
+      ]
+    }
+  }
+}

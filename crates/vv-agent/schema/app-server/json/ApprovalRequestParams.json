@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ApprovalRequestParams",
+  "type": "object",
+  "properties": {
+    "choices": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ApprovalDecision"
+      }
+    },
+    "preview": {
+      "type": "string"
+    },
+    "requestId": {
+      "type": "string"
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "toolName": {
+      "type": "string"
+    },
+    "turnId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "threadId",
+    "turnId",
+    "requestId",
+    "toolName",
+    "preview",
+    "choices"
+  ],
+  "$defs": {
+    "ApprovalDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    }
+  }
+}

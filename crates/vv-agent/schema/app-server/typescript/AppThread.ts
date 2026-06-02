@@ -1,0 +1,1 @@
+export type AppThread = { id: string, title?: string | null, cwd?: string | null, model?: string | null, status: ThreadStatus, archived: boolean, ephemeral: boolean, createdAtMs: bigint, updatedAtMs: bigint, activeTurnId?: string | null, };;

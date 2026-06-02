@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InitializeParams",
+  "type": "object",
+  "properties": {
+    "capabilities": {
+      "$ref": "#/$defs/AppClientCapabilities"
+    },
+    "clientInfo": {
+      "$ref": "#/$defs/AppClientInfo"
+    }
+  },
+  "required": [
+    "clientInfo",
+    "capabilities"
+  ],
+  "$defs": {
+    "AppClientCapabilities": {
+      "type": "object",
+      "properties": {
+        "experimentalApi": {
+          "type": "boolean",
+          "default": false
+        },
+        "optOutNotificationMethods": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "AppClientInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  }
+}

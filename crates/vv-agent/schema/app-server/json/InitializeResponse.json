@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InitializeResponse",
+  "type": "object",
+  "properties": {
+    "capabilities": {
+      "$ref": "#/$defs/AppServerCapabilities"
+    },
+    "protocolVersion": {
+      "type": "string"
+    },
+    "serverInfo": {
+      "$ref": "#/$defs/AppServerInfo"
+    },
+    "supportedTransports": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "serverInfo",
+    "protocolVersion",
+    "supportedTransports",
+    "capabilities"
+  ],
+  "$defs": {
+    "AppServerCapabilities": {
+      "type": "object",
+      "properties": {
+        "approvalRequests": {
+          "type": "boolean"
+        },
+        "eventReplay": {
+          "type": "boolean"
+        },
+        "itemStream": {
+          "type": "boolean"
+        },
+        "schemaExport": {
+          "type": "boolean"
+        },
+        "thread": {
+          "type": "boolean"
+        },
+        "turn": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "thread",
+        "turn",
+        "itemStream",
+        "approvalRequests",
+        "eventReplay",
+        "schemaExport"
+      ]
+    },
+    "AppServerInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    }
+  }
+}

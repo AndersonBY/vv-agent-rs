@@ -4,7 +4,11 @@ use std::fmt;
 use schemars::{schema_for, JsonSchema};
 use ts_rs::TS;
 
-use super::{ClientRequest, JsonRpcMessage, ServerNotification, ServerRequest};
+use super::{
+    AppItem, AppThread, AppTurn, ApprovalRequestParams, ApprovalResolveParams, ClientRequest,
+    InitializeParams, InitializeResponse, JsonRpcMessage, ServerNotification, ServerRequest,
+    ThreadReadResponse, ThreadResumeResponse, ThreadStartResponse, TurnStartResponse,
+};
 
 pub type SchemaBundle = BTreeMap<String, String>;
 
@@ -35,6 +39,17 @@ pub fn generate_app_server_json_schema_bundle() -> Result<SchemaBundle, AppServe
     insert_json_schema::<ServerNotification>(&mut bundle, "ServerNotification")?;
     insert_json_schema::<ServerRequest>(&mut bundle, "ServerRequest")?;
     insert_json_schema::<JsonRpcMessage>(&mut bundle, "JsonRpcMessage")?;
+    insert_json_schema::<InitializeParams>(&mut bundle, "InitializeParams")?;
+    insert_json_schema::<InitializeResponse>(&mut bundle, "InitializeResponse")?;
+    insert_json_schema::<ThreadStartResponse>(&mut bundle, "ThreadStartResponse")?;
+    insert_json_schema::<ThreadReadResponse>(&mut bundle, "ThreadReadResponse")?;
+    insert_json_schema::<ThreadResumeResponse>(&mut bundle, "ThreadResumeResponse")?;
+    insert_json_schema::<TurnStartResponse>(&mut bundle, "TurnStartResponse")?;
+    insert_json_schema::<AppThread>(&mut bundle, "AppThread")?;
+    insert_json_schema::<AppTurn>(&mut bundle, "AppTurn")?;
+    insert_json_schema::<AppItem>(&mut bundle, "AppItem")?;
+    insert_json_schema::<ApprovalRequestParams>(&mut bundle, "ApprovalRequestParams")?;
+    insert_json_schema::<ApprovalResolveParams>(&mut bundle, "ApprovalResolveParams")?;
     Ok(bundle)
 }
 
@@ -43,6 +58,17 @@ pub fn generate_app_server_typescript_bundle() -> Result<SchemaBundle, AppServer
     insert_typescript::<ClientRequest>(&mut bundle, "ClientRequest.ts");
     insert_typescript::<ServerNotification>(&mut bundle, "ServerNotification.ts");
     insert_typescript::<ServerRequest>(&mut bundle, "ServerRequest.ts");
+    insert_typescript::<InitializeParams>(&mut bundle, "InitializeParams.ts");
+    insert_typescript::<InitializeResponse>(&mut bundle, "InitializeResponse.ts");
+    insert_typescript::<ThreadStartResponse>(&mut bundle, "ThreadStartResponse.ts");
+    insert_typescript::<ThreadReadResponse>(&mut bundle, "ThreadReadResponse.ts");
+    insert_typescript::<ThreadResumeResponse>(&mut bundle, "ThreadResumeResponse.ts");
+    insert_typescript::<TurnStartResponse>(&mut bundle, "TurnStartResponse.ts");
+    insert_typescript::<AppThread>(&mut bundle, "AppThread.ts");
+    insert_typescript::<AppTurn>(&mut bundle, "AppTurn.ts");
+    insert_typescript::<AppItem>(&mut bundle, "AppItem.ts");
+    insert_typescript::<ApprovalRequestParams>(&mut bundle, "ApprovalRequestParams.ts");
+    insert_typescript::<ApprovalResolveParams>(&mut bundle, "ApprovalResolveParams.ts");
     Ok(bundle)
 }
 

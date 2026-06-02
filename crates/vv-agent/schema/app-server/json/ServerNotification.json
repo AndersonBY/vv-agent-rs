@@ -1,0 +1,622 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ServerNotification",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "thread/started"
+        },
+        "params": {
+          "$ref": "#/$defs/ThreadStartedParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "thread/archived"
+        },
+        "params": {
+          "$ref": "#/$defs/ThreadArchivedParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "turn/started"
+        },
+        "params": {
+          "$ref": "#/$defs/TurnStartedParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "turn/completed"
+        },
+        "params": {
+          "$ref": "#/$defs/TurnCompletedParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "item/started"
+        },
+        "params": {
+          "$ref": "#/$defs/ItemStartedParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "item/agentMessage/delta"
+        },
+        "params": {
+          "$ref": "#/$defs/AgentMessageDeltaParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "item/toolCall/delta"
+        },
+        "params": {
+          "$ref": "#/$defs/ToolCallDeltaParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "item/completed"
+        },
+        "params": {
+          "$ref": "#/$defs/ItemCompletedParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "approval/requested"
+        },
+        "params": {
+          "$ref": "#/$defs/ApprovalRequestParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "approval/resolved"
+        },
+        "params": {
+          "$ref": "#/$defs/ApprovalResolveParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "error/warning"
+        },
+        "params": {
+          "$ref": "#/$defs/WarningParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    }
+  ],
+  "$defs": {
+    "AgentMessageDeltaParams": {
+      "type": "object",
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "itemId",
+        "delta"
+      ]
+    },
+    "AppItem": {
+      "type": "object",
+      "properties": {
+        "completedAtMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint128",
+          "minimum": 0
+        },
+        "content": true,
+        "createdAtMs": {
+          "type": "integer",
+          "format": "uint128",
+          "minimum": 0
+        },
+        "id": {
+          "type": "string"
+        },
+        "runEventId": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AppItemStatus"
+        },
+        "type": {
+          "$ref": "#/$defs/AppItemKind"
+        }
+      },
+      "required": [
+        "id",
+        "runEventId",
+        "type",
+        "status",
+        "createdAtMs"
+      ]
+    },
+    "AppItemKind": {
+      "type": "string",
+      "enum": [
+        "userMessage",
+        "agentMessage",
+        "toolCall",
+        "approvalRequest",
+        "approvalResolved",
+        "memoryCompact",
+        "subRun",
+        "handoff",
+        "runStatus"
+      ]
+    },
+    "AppItemStatus": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "inProgress",
+        "completed",
+        "failed",
+        "interrupted"
+      ]
+    },
+    "AppThread": {
+      "type": "object",
+      "properties": {
+        "activeTurnId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "archived": {
+          "type": "boolean"
+        },
+        "createdAtMs": {
+          "type": "integer",
+          "format": "uint128",
+          "minimum": 0
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ephemeral": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/ThreadStatus"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updatedAtMs": {
+          "type": "integer",
+          "format": "uint128",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "archived",
+        "ephemeral",
+        "createdAtMs",
+        "updatedAtMs"
+      ]
+    },
+    "AppTokenUsage": {
+      "type": "object",
+      "properties": {
+        "inputTokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "totalTokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "inputTokens",
+        "outputTokens",
+        "totalTokens"
+      ]
+    },
+    "AppTurn": {
+      "type": "object",
+      "properties": {
+        "completedAtMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint128",
+          "minimum": 0
+        },
+        "id": {
+          "type": "string"
+        },
+        "input": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UserInput"
+          }
+        },
+        "runId": {
+          "type": "string"
+        },
+        "startedAtMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint128",
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/$defs/TurnStatus"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "tokenUsage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AppTokenUsage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "threadId",
+        "runId",
+        "status",
+        "input"
+      ]
+    },
+    "ApprovalDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    },
+    "ApprovalRequestParams": {
+      "type": "object",
+      "properties": {
+        "choices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ApprovalDecision"
+          }
+        },
+        "preview": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "requestId",
+        "toolName",
+        "preview",
+        "choices"
+      ]
+    },
+    "ApprovalResolveParams": {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/ApprovalDecision"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "requestId",
+        "decision"
+      ]
+    },
+    "ItemCompletedParams": {
+      "type": "object",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/AppItem"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "item"
+      ]
+    },
+    "ItemStartedParams": {
+      "type": "object",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/AppItem"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "item"
+      ]
+    },
+    "ThreadArchivedParams": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ]
+    },
+    "ThreadStartedParams": {
+      "type": "object",
+      "properties": {
+        "thread": {
+          "$ref": "#/$defs/AppThread"
+        }
+      },
+      "required": [
+        "thread"
+      ]
+    },
+    "ThreadStatus": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "running",
+        "archived"
+      ]
+    },
+    "ToolCallDeltaParams": {
+      "type": "object",
+      "properties": {
+        "delta": true,
+        "itemId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "itemId",
+        "delta"
+      ]
+    },
+    "TurnCompletedParams": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "#/$defs/AppTurn"
+        }
+      },
+      "required": [
+        "turn"
+      ]
+    },
+    "TurnStartedParams": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "#/$defs/AppTurn"
+        }
+      },
+      "required": [
+        "turn"
+      ]
+    },
+    "TurnStatus": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "interrupted"
+      ]
+    },
+    "UserInput": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    },
+    "WarningParams": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message"
+      ]
+    }
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AppItem",
+  "type": "object",
+  "properties": {
+    "completedAtMs": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint128",
+      "minimum": 0
+    },
+    "content": true,
+    "createdAtMs": {
+      "type": "integer",
+      "format": "uint128",
+      "minimum": 0
+    },
+    "id": {
+      "type": "string"
+    },
+    "runEventId": {
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/AppItemStatus"
+    },
+    "type": {
+      "$ref": "#/$defs/AppItemKind"
+    }
+  },
+  "required": [
+    "id",
+    "runEventId",
+    "type",
+    "status",
+    "createdAtMs"
+  ],
+  "$defs": {
+    "AppItemKind": {
+      "type": "string",
+      "enum": [
+        "userMessage",
+        "agentMessage",
+        "toolCall",
+        "approvalRequest",
+        "approvalResolved",
+        "memoryCompact",
+        "subRun",
+        "handoff",
+        "runStatus"
+      ]
+    },
+    "AppItemStatus": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "inProgress",
+        "completed",
+        "failed",
+        "interrupted"
+      ]
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ServerRequest",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "approval/request"
+        },
+        "params": {
+          "$ref": "#/$defs/ApprovalRequestParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    }
+  ],
+  "$defs": {
+    "ApprovalDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    },
+    "ApprovalRequestParams": {
+      "type": "object",
+      "properties": {
+        "choices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ApprovalDecision"
+          }
+        },
+        "preview": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "requestId",
+        "toolName",
+        "preview",
+        "choices"
+      ]
+    }
+  }
+}

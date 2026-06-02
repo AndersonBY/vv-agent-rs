@@ -1,0 +1,1 @@
+export type AppTurn = { id: string, threadId: string, runId: string, status: TurnStatus, input: Array<UserInput>, startedAtMs?: bigint | null, completedAtMs?: bigint | null, tokenUsage?: AppTokenUsage | null, };;

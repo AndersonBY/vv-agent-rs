@@ -1,0 +1,476 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ClientRequest",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "initialize"
+        },
+        "params": {
+          "$ref": "#/$defs/InitializeParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "thread/start"
+        },
+        "params": {
+          "$ref": "#/$defs/ThreadStartParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "thread/resume"
+        },
+        "params": {
+          "$ref": "#/$defs/ThreadResumeParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "thread/read"
+        },
+        "params": {
+          "$ref": "#/$defs/ThreadReadParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "thread/list"
+        },
+        "params": {
+          "$ref": "#/$defs/ThreadListParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "thread/archive"
+        },
+        "params": {
+          "$ref": "#/$defs/ThreadArchiveParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "turn/start"
+        },
+        "params": {
+          "$ref": "#/$defs/TurnStartParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "turn/interrupt"
+        },
+        "params": {
+          "$ref": "#/$defs/TurnInterruptParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "turn/steer"
+        },
+        "params": {
+          "$ref": "#/$defs/TurnSteerParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "approval/resolve"
+        },
+        "params": {
+          "$ref": "#/$defs/ApprovalResolveParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "model/list"
+        },
+        "params": {
+          "$ref": "#/$defs/ModelListParams"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "schema/export"
+        }
+      },
+      "required": [
+        "method"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "const": "initialized"
+        }
+      },
+      "required": [
+        "method"
+      ]
+    }
+  ],
+  "$defs": {
+    "AppClientCapabilities": {
+      "type": "object",
+      "properties": {
+        "experimentalApi": {
+          "type": "boolean",
+          "default": false
+        },
+        "optOutNotificationMethods": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "AppClientInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "ApprovalDecision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    },
+    "ApprovalResolveParams": {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/ApprovalDecision"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "requestId",
+        "decision"
+      ]
+    },
+    "InitializeParams": {
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/AppClientCapabilities"
+        },
+        "clientInfo": {
+          "$ref": "#/$defs/AppClientInfo"
+        }
+      },
+      "required": [
+        "clientInfo",
+        "capabilities"
+      ]
+    },
+    "ModelListParams": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ThreadArchiveParams": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ]
+    },
+    "ThreadListParams": {
+      "type": "object",
+      "properties": {
+        "archived": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "includeArchived": {
+          "type": "boolean",
+          "default": false
+        },
+        "limit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "offset": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        }
+      }
+    },
+    "ThreadReadParams": {
+      "type": "object",
+      "properties": {
+        "afterItemId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ]
+    },
+    "ThreadResumeParams": {
+      "type": "object",
+      "properties": {
+        "subscribe": {
+          "type": "boolean",
+          "default": true
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ]
+    },
+    "ThreadStartParams": {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ephemeral": {
+          "type": "boolean",
+          "default": false
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "TurnInterruptParams": {
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId"
+      ]
+    },
+    "TurnStartParams": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UserInput"
+          }
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "input"
+      ]
+    },
+    "TurnSteerParams": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UserInput"
+          }
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "input"
+      ]
+    },
+    "UserInput": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    }
+  }
+}
