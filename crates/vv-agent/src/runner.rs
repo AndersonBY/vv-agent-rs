@@ -23,7 +23,7 @@ use crate::run_config::RunConfig;
 use crate::run_handle::{RunEventSenderSlot, RunHandle, RunHandleState, SharedRunResult};
 use crate::runtime::{AgentRuntime, ExecutionContext, RuntimeRunControls};
 use crate::sessions::SessionItem;
-use crate::tools::ToolRegistry;
+use crate::tools::{ToolOrchestrator, ToolRegistry, ToolRunOptions};
 use crate::tracing::Span;
 use crate::types::{AgentTask, NoToolPolicy, ToolResultStatus};
 use crate::workspace::LocalWorkspaceBackend;
@@ -93,8 +93,9 @@ impl Runner {
         let Some(resume_context) = source.resume_context().cloned() else {
             return Err("run state does not include resume context".to_string());
         };
-        if let Some(result) =
-            self.resume_approved_tool_call(&source, &resume_context, &approved_ids)
+        if let Some(result) = self
+            .resume_approved_tool_call(&source, &resume_context, &approved_ids)
+            .await
         {
             return result;
         }
@@ -113,7 +114,7 @@ impl Runner {
         Ok(result)
     }
 
-    fn resume_approved_tool_call(
+    async fn resume_approved_tool_call(
         &self,
         source: &RunResult,
         resume_context: &RunResumeContext,
@@ -163,7 +164,18 @@ impl Runner {
             .metadata
             .entry("agent_name".to_string())
             .or_insert_with(|| Value::String(resume_context.agent.name().to_string()));
-        let tool_result = crate::tools::dispatch_tool_call(&registry, &mut context, &approval.call);
+        let tool_result = ToolOrchestrator::from_tools(registry.executors())
+            .run_one(
+                approval.call.clone(),
+                &mut context,
+                ToolRunOptions::default(),
+            )
+            .await
+            .map_err(|error| error.to_string());
+        let tool_result = match tool_result {
+            Ok(result) => result,
+            Err(error) => return Some(Err(error)),
+        };
         if tool_result.status != ToolResultStatus::Success {
             return Some(Err(tool_result.content));
         }

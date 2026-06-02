@@ -11,6 +11,7 @@ mod state;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use futures_util::FutureExt;
 use serde_json::Value;
 
 use crate::approval::{block_on_approval_future, ApprovalRequest};
@@ -19,7 +20,9 @@ use crate::llm::{LlmClient, LlmError, LlmRequest};
 use crate::memory::{
     provider::block_on_memory_future, CompactionExhaustedError, MemoryManager, MemoryProvider,
 };
-use crate::tools::{ApprovalDecision, ToolContext, ToolSpecKind};
+use crate::tools::{
+    ApprovalDecision, ToolContext, ToolError, ToolOrchestrator, ToolRunOptions, ToolSpecKind,
+};
 use crate::types::{
     AgentResult, AgentStatus, AgentTask, Message, ToolCall, ToolDirective, ToolExecutionResult,
     ToolResultStatus,
@@ -31,7 +34,7 @@ use super::context::ExecutionContext;
 use super::cycle_runner::{is_prompt_too_long_error, MAX_PROMPT_TOO_LONG_RETRIES};
 use super::results::assistant_message_from_response;
 use super::token_usage::normalize_token_usage;
-use super::tool_call_runner::{execute_tool_result, needs_tool_call_id, skipped_tool_result};
+use super::tool_call_runner::{needs_tool_call_id, skipped_tool_result};
 
 use self::completion::{
     handle_directive_result, handle_no_tool_response, DirectiveResultRequest, NoToolResponseRequest,
@@ -346,6 +349,8 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
 
                 let mut directive_result = None;
                 let mut image_notifications = Vec::new();
+                let tool_orchestrator =
+                    ToolOrchestrator::from_tools(self.tool_registry.executors());
                 for (call_index, call) in response.tool_calls.iter().enumerate() {
                     if cancellation_token.is_some_and(CancellationToken::is_cancelled)
                         || controls_cancelled(&controls)
@@ -460,8 +465,18 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     } else if let Some(result) = provider_approval_result {
                         result
                     } else {
-                        let mut result =
-                            execute_tool_result(&self.tool_registry, &patched_call, &mut context);
+                        let mut result = match block_on_engine_tool_run(tool_orchestrator.run_one(
+                            patched_call.clone(),
+                            &mut context,
+                            ToolRunOptions::default(),
+                        )) {
+                            Ok(result) => result,
+                            Err(error) => approval_error_result(
+                                &patched_call,
+                                "tool_orchestrator_error",
+                                error.to_string(),
+                            ),
+                        };
                         if needs_tool_call_id(&result.tool_call_id) {
                             result.tool_call_id = patched_call.id.clone();
                         }
@@ -849,5 +864,27 @@ fn approval_error_result(
         metadata: BTreeMap::new(),
         image_url: None,
         image_path: None,
+    }
+}
+
+fn block_on_engine_tool_run<'a>(
+    future: impl std::future::Future<Output = Result<ToolExecutionResult, ToolError>> + 'a,
+) -> Result<ToolExecutionResult, ToolError> {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+            tokio::task::block_in_place(|| handle.block_on(future))
+        } else {
+            future.now_or_never().unwrap_or_else(|| {
+                Err(ToolError::new(
+                    "tool future cannot be driven from a current-thread runtime",
+                ))
+            })
+        }
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| ToolError::new(error.to_string()))?
+            .block_on(future)
     }
 }

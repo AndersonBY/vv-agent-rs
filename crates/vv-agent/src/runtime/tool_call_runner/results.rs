@@ -1,15 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::tools::{ToolContext, ToolRegistry};
 use crate::types::{Message, ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus};
-
-pub(crate) fn execute_tool_result(
-    registry: &ToolRegistry,
-    call: &ToolCall,
-    context: &mut ToolContext,
-) -> ToolExecutionResult {
-    crate::tools::dispatch_tool_call(registry, context, call)
-}
 
 pub(crate) fn needs_tool_call_id(value: &str) -> bool {
     let stripped = value.trim();
