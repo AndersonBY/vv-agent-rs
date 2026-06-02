@@ -14,6 +14,25 @@ pub struct CliArgs {
     pub verbose: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CliCommand {
+    Run(CliArgs),
+    AppServer(AppServerCliCommand),
+    Debug(DebugCliCommand),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppServerCliCommand {
+    ListenStdio,
+    GenerateTs { out: PathBuf },
+    GenerateJsonSchema { out: PathBuf },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DebugCliCommand {
+    AppServerSendMessage { message: String },
+}
+
 pub fn parse_cli_args_from<I, S>(args: I) -> Result<CliArgs, String>
 where
     I: IntoIterator<Item = S>,
@@ -22,6 +41,39 @@ where
     let default_settings =
         env::var("VV_AGENT_LOCAL_SETTINGS").unwrap_or_else(|_| "local_settings.json".to_string());
     parse_cli_args_from_with_default_settings(args, default_settings)
+}
+
+pub fn parse_cli_command_from<I, S>(args: I) -> Result<CliCommand, String>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let default_settings =
+        env::var("VV_AGENT_LOCAL_SETTINGS").unwrap_or_else(|_| "local_settings.json".to_string());
+    parse_cli_command_from_with_default_settings(args, default_settings)
+}
+
+pub fn parse_cli_command_from_with_default_settings<I, S>(
+    args: I,
+    default_settings: impl Into<String>,
+) -> Result<CliCommand, String>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let mut values = args.into_iter().map(Into::into).collect::<Vec<_>>();
+    if !values.is_empty() {
+        values.remove(0);
+    }
+    match values.first().map(String::as_str) {
+        Some("app-server") => parse_app_server_command(&values[1..]).map(CliCommand::AppServer),
+        Some("debug") => parse_debug_command(&values[1..]).map(CliCommand::Debug),
+        _ => parse_cli_args_from_with_default_settings(
+            std::iter::once("vv-agent".to_string()).chain(values),
+            default_settings,
+        )
+        .map(CliCommand::Run),
+    }
 }
 
 pub fn parse_cli_args_from_with_default_settings<I, S>(
@@ -40,6 +92,52 @@ where
     let mut parsed = ParsedCliArgs::with_default_settings(default_settings.into());
     parsed.consume(values)?;
     parsed.finish()
+}
+
+fn parse_app_server_command(values: &[String]) -> Result<AppServerCliCommand, String> {
+    match values.first().map(String::as_str) {
+        Some("--listen") => {
+            let listen = values
+                .get(1)
+                .ok_or_else(|| "app-server --listen requires a value".to_string())?;
+            if listen != "stdio" {
+                return Err("only app-server --listen stdio is supported".to_string());
+            }
+            Ok(AppServerCliCommand::ListenStdio)
+        }
+        Some("generate-ts") => Ok(AppServerCliCommand::GenerateTs {
+            out: parse_out_dir(&values[1..], "app-server generate-ts")?,
+        }),
+        Some("generate-json-schema") => Ok(AppServerCliCommand::GenerateJsonSchema {
+            out: parse_out_dir(&values[1..], "app-server generate-json-schema")?,
+        }),
+        _ => Err(format!("unknown app-server command\n\n{}", help_text())),
+    }
+}
+
+fn parse_debug_command(values: &[String]) -> Result<DebugCliCommand, String> {
+    match (
+        values.first().map(String::as_str),
+        values.get(1).map(String::as_str),
+        values.get(2).map(String::as_str),
+    ) {
+        (Some("app-server"), Some("send-message"), Some(message)) => {
+            Ok(DebugCliCommand::AppServerSendMessage {
+                message: message.to_string(),
+            })
+        }
+        _ => Err(format!("unknown debug command\n\n{}", help_text())),
+    }
+}
+
+fn parse_out_dir(values: &[String], command: &str) -> Result<PathBuf, String> {
+    if values.first().map(String::as_str) != Some("--out") {
+        return Err(format!("{command} requires --out <dir>"));
+    }
+    values
+        .get(1)
+        .map(PathBuf::from)
+        .ok_or_else(|| format!("{command} requires --out <dir>"))
 }
 
 struct ParsedCliArgs {
