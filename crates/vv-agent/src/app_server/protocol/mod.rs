@@ -38,7 +38,7 @@ pub use turn::{
     TurnSteerResponse, UserInput,
 };
 
-pub use errors::AppServerErrorCode;
+pub use errors::{AppServerError, AppServerErrorCode};
 pub use jsonrpc::{
     JsonRpcError, JsonRpcErrorBody, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
     JsonRpcResponse, RequestId,
