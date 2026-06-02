@@ -7,9 +7,13 @@ use crate::app_server::outgoing::{OutgoingEnvelope, OutgoingMessageSender};
 use crate::app_server::protocol::{
     AppClientInfo, AppServerCapabilities, AppServerError, AppServerErrorCode, InitializeParams,
     InitializeResponse, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, ServerNotification,
-    ThreadReadParams, ThreadReadResponse, ThreadStartParams, ThreadStartResponse,
-    ThreadStartedParams, TurnInterruptParams, TurnInterruptResponse, TurnStartParams,
-    TurnStartResponse,
+    ThreadArchiveParams, ThreadArchiveResponse, ThreadArchivedParams, ThreadListParams,
+    ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
+    ThreadResumeResponse, ThreadStartParams, ThreadStartResponse, ThreadStartedParams,
+    TurnInterruptParams, TurnInterruptResponse, TurnStartParams, TurnStartResponse,
+};
+use crate::app_server::request_serialization::{
+    RequestSerializationQueue, RequestSerializationScope,
 };
 use crate::app_server::run_adapter::AppServerRunAdapter;
 use crate::app_server::thread_state::ThreadStateManager;
@@ -22,6 +26,7 @@ pub struct MessageProcessor {
     connections: HashMap<ConnectionId, ConnectionSessionState>,
     run_adapter: Option<AppServerRunAdapter>,
     thread_state: ThreadStateManager,
+    request_queue: RequestSerializationQueue,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -66,6 +71,7 @@ impl MessageProcessor {
                 connections: HashMap::new(),
                 run_adapter: None,
                 thread_state: ThreadStateManager::default(),
+                request_queue: RequestSerializationQueue::default(),
             },
             rx,
         )
@@ -104,6 +110,7 @@ impl MessageProcessor {
                 connections: HashMap::new(),
                 run_adapter: Some(run_adapter),
                 thread_state,
+                request_queue: RequestSerializationQueue::default(),
             },
             rx,
         )
@@ -153,9 +160,34 @@ impl MessageProcessor {
             return;
         }
 
+        if let Some(scope) =
+            RequestSerializationScope::for_method(&request.method, request.params.as_ref())
+        {
+            let queue = self.request_queue.clone();
+            queue
+                .run(scope, async move {
+                    self.process_initialized_request(connection_id, request)
+                        .await;
+                })
+                .await;
+            return;
+        }
+
+        self.process_initialized_request(connection_id, request)
+            .await;
+    }
+
+    async fn process_initialized_request(
+        &mut self,
+        connection_id: ConnectionId,
+        request: JsonRpcRequest,
+    ) {
         match request.method.as_str() {
             "thread/start" => self.process_thread_start(connection_id, request).await,
+            "thread/resume" => self.process_thread_resume(connection_id, request).await,
             "thread/read" => self.process_thread_read(connection_id, request).await,
+            "thread/list" => self.process_thread_list(connection_id, request).await,
+            "thread/archive" => self.process_thread_archive(connection_id, request).await,
             "turn/start" => self.process_turn_start(connection_id, request).await,
             "turn/interrupt" => self.process_turn_interrupt(connection_id, request).await,
             _ => {
@@ -173,6 +205,80 @@ impl MessageProcessor {
                     .await;
             }
         }
+    }
+
+    async fn process_thread_resume(
+        &mut self,
+        connection_id: ConnectionId,
+        request: JsonRpcRequest,
+    ) {
+        let params = match parse_params::<ThreadResumeParams>(request.params) {
+            Ok(params) => params,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+                return;
+            }
+        };
+        let Some(adapter) = self.run_adapter.clone() else {
+            let _ = self
+                .outgoing
+                .send_error(
+                    connection_id,
+                    request.id,
+                    AppServerError::internal("App Server runtime is not configured"),
+                )
+                .await;
+            return;
+        };
+        let Some(thread) = (match adapter.store().get_thread(&params.thread_id) {
+            Ok(thread) => thread,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, store_error(error))
+                    .await;
+                return;
+            }
+        }) else {
+            let _ = self
+                .outgoing
+                .send_error(
+                    connection_id,
+                    request.id,
+                    AppServerError::invalid_params("Unknown thread"),
+                )
+                .await;
+            return;
+        };
+        let items = match adapter.store().replay_items(&params.thread_id) {
+            Ok(items) => items,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, store_error(error))
+                    .await;
+                return;
+            }
+        };
+        if params.subscribe {
+            self.thread_state
+                .subscribe(params.thread_id.clone(), connection_id)
+                .await;
+        }
+        let active_turn = adapter.active_turn(&params.thread_id).await;
+        let result = serde_json::to_value(ThreadResumeResponse {
+            thread,
+            items,
+            active_turn,
+        })
+        .expect("thread resume response serializes");
+        let _ = self
+            .outgoing
+            .send_response(connection_id, request.id, result)
+            .await;
     }
 
     async fn process_initialize(&mut self, connection_id: ConnectionId, request: JsonRpcRequest) {
@@ -221,6 +327,130 @@ impl MessageProcessor {
             .outgoing
             .send_response(connection_id, request.id, result)
             .await;
+    }
+
+    async fn process_thread_list(&mut self, connection_id: ConnectionId, request: JsonRpcRequest) {
+        let params = match parse_params::<ThreadListParams>(request.params) {
+            Ok(params) => params,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+                return;
+            }
+        };
+        let Some(adapter) = self.run_adapter.clone() else {
+            let _ = self
+                .outgoing
+                .send_error(
+                    connection_id,
+                    request.id,
+                    AppServerError::internal("App Server runtime is not configured"),
+                )
+                .await;
+            return;
+        };
+        let include_archived = params.include_archived || params.archived.unwrap_or(false);
+        let mut threads = match adapter.store().list_threads(include_archived) {
+            Ok(threads) => threads,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, store_error(error))
+                    .await;
+                return;
+            }
+        };
+        if let Some(archived) = params.archived {
+            threads.retain(|thread| thread.archived == archived);
+        }
+        let offset = params.offset.unwrap_or_default();
+        let limit = params.limit.unwrap_or(threads.len());
+        let threads = threads.into_iter().skip(offset).take(limit).collect();
+        let result =
+            serde_json::to_value(ThreadListResponse { threads }).expect("thread list serializes");
+        let _ = self
+            .outgoing
+            .send_response(connection_id, request.id, result)
+            .await;
+    }
+
+    async fn process_thread_archive(
+        &mut self,
+        connection_id: ConnectionId,
+        request: JsonRpcRequest,
+    ) {
+        let params = match parse_params::<ThreadArchiveParams>(request.params) {
+            Ok(params) => params,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+                return;
+            }
+        };
+        let Some(adapter) = self.run_adapter.clone() else {
+            let _ = self
+                .outgoing
+                .send_error(
+                    connection_id,
+                    request.id,
+                    AppServerError::internal("App Server runtime is not configured"),
+                )
+                .await;
+            return;
+        };
+        match adapter.store().get_thread(&params.thread_id) {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                let _ = self
+                    .outgoing
+                    .send_error(
+                        connection_id,
+                        request.id,
+                        AppServerError::invalid_params("Unknown thread"),
+                    )
+                    .await;
+                return;
+            }
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, store_error(error))
+                    .await;
+                return;
+            }
+        }
+        if let Err(error) = adapter.store().archive_thread(&params.thread_id) {
+            let _ = self
+                .outgoing
+                .send_error(connection_id, request.id, store_error(error))
+                .await;
+            return;
+        }
+        self.thread_state
+            .subscribe(params.thread_id.clone(), connection_id)
+            .await;
+        let result = serde_json::to_value(ThreadArchiveResponse {})
+            .expect("thread archive response serializes");
+        let _ = self
+            .outgoing
+            .send_response(connection_id, request.id, result)
+            .await;
+        let subscribers = self.thread_state.subscribers(&params.thread_id).await;
+        for subscriber in subscribers {
+            let _ = self
+                .outgoing
+                .send_notification(
+                    subscriber,
+                    ServerNotification::ThreadArchived(ThreadArchivedParams {
+                        thread_id: params.thread_id.clone(),
+                    }),
+                )
+                .await;
+        }
     }
 
     async fn process_notification(

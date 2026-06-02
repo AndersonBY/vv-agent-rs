@@ -1,6 +1,7 @@
 pub mod outgoing;
 pub mod processor;
 pub mod protocol;
+pub mod request_serialization;
 pub mod run_adapter;
 pub mod thread_state;
 pub mod thread_store;

@@ -24,7 +24,7 @@ pub struct ThreadStartParams {
 #[serde(rename_all = "camelCase")]
 pub struct ThreadResumeParams {
     pub thread_id: String,
-    #[serde(default)]
+    #[serde(default = "default_subscribe")]
     pub subscribe: bool,
 }
 
@@ -41,6 +41,12 @@ pub struct ThreadReadParams {
 pub struct ThreadListParams {
     #[serde(default)]
     pub include_archived: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -120,4 +126,8 @@ pub enum ThreadStatus {
     Idle,
     Running,
     Archived,
+}
+
+fn default_subscribe() -> bool {
+    true
 }
