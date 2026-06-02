@@ -4,6 +4,7 @@
 //! agent workflows with built-in tool dispatch and vv-llm backed chat clients.
 
 pub mod agent;
+pub mod app_server;
 pub mod approval;
 pub mod cli;
 pub mod config;
