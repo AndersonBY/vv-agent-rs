@@ -12,6 +12,7 @@ pub enum AppServerErrorCode {
     NotInitialized,
     AlreadyInitialized,
     ExperimentalApiRequired,
+    UnsupportedMethod,
 }
 
 impl AppServerErrorCode {
@@ -25,6 +26,7 @@ impl AppServerErrorCode {
             Self::NotInitialized => -32010,
             Self::AlreadyInitialized => -32011,
             Self::ExperimentalApiRequired => -32012,
+            Self::UnsupportedMethod => -32013,
         }
     }
 }
@@ -73,6 +75,15 @@ impl AppServerError {
             AppServerErrorCode::ServerOverloaded,
             "Server overloaded; retry later.",
         )
+    }
+
+    pub fn unsupported_method(method: impl Into<String>) -> Self {
+        let method = method.into();
+        Self::new(
+            AppServerErrorCode::UnsupportedMethod,
+            format!("Unsupported App Server method: {method}"),
+        )
+        .with_data(serde_json::json!({ "method": method }))
     }
 
     pub fn with_data(mut self, data: Value) -> Self {

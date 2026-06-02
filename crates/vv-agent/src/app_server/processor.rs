@@ -1,16 +1,19 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::app_server::outgoing::{OutgoingEnvelope, OutgoingMessageSender};
 use crate::app_server::protocol::{
-    AppClientInfo, AppServerCapabilities, AppServerError, AppServerErrorCode, InitializeParams,
-    InitializeResponse, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, ServerNotification,
-    ThreadArchiveParams, ThreadArchiveResponse, ThreadArchivedParams, ThreadListParams,
-    ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
-    ThreadResumeResponse, ThreadStartParams, ThreadStartResponse, ThreadStartedParams,
-    TurnInterruptParams, TurnInterruptResponse, TurnStartParams, TurnStartResponse,
+    generate_app_server_json_schema_bundle, generate_app_server_typescript_bundle, AppClientInfo,
+    AppServerCapabilities, AppServerError, AppServerErrorCode, ApprovalDecision,
+    ApprovalResolveParams, InitializeParams, InitializeResponse, JsonRpcMessage,
+    JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, ModelListParams, ModelListResponse,
+    SchemaExportResponse, ServerNotification, ThreadArchiveParams, ThreadArchiveResponse,
+    ThreadArchivedParams, ThreadListParams, ThreadListResponse, ThreadReadParams,
+    ThreadReadResponse, ThreadResumeParams, ThreadResumeResponse, ThreadStartParams,
+    ThreadStartResponse, ThreadStartedParams, TurnInterruptParams, TurnInterruptResponse,
+    TurnStartParams, TurnStartResponse,
 };
 use crate::app_server::request_serialization::{
     RequestSerializationQueue, RequestSerializationScope,
@@ -190,6 +193,10 @@ impl MessageProcessor {
             "thread/archive" => self.process_thread_archive(connection_id, request).await,
             "turn/start" => self.process_turn_start(connection_id, request).await,
             "turn/interrupt" => self.process_turn_interrupt(connection_id, request).await,
+            "turn/steer" => self.process_unsupported(connection_id, request).await,
+            "approval/resolve" => self.process_approval_resolve(connection_id, request).await,
+            "model/list" => self.process_model_list(connection_id, request).await,
+            "schema/export" => self.process_schema_export(connection_id, request).await,
             _ => {
                 let _ = self
                     .outgoing
@@ -205,6 +212,124 @@ impl MessageProcessor {
                     .await;
             }
         }
+    }
+
+    async fn process_schema_export(
+        &mut self,
+        connection_id: ConnectionId,
+        request: JsonRpcRequest,
+    ) {
+        let json_schema = match generate_app_server_json_schema_bundle() {
+            Ok(bundle) => bundle,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(
+                        connection_id,
+                        request.id,
+                        AppServerError::internal(error.to_string()),
+                    )
+                    .await;
+                return;
+            }
+        };
+        let typescript = match generate_app_server_typescript_bundle() {
+            Ok(bundle) => bundle,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(
+                        connection_id,
+                        request.id,
+                        AppServerError::internal(error.to_string()),
+                    )
+                    .await;
+                return;
+            }
+        };
+        let result = serde_json::to_value(SchemaExportResponse {
+            json_schema,
+            typescript,
+        })
+        .expect("schema export response serializes");
+        let _ = self
+            .outgoing
+            .send_response(connection_id, request.id, result)
+            .await;
+    }
+
+    async fn process_model_list(&mut self, connection_id: ConnectionId, request: JsonRpcRequest) {
+        let _params = match parse_params::<ModelListParams>(request.params) {
+            Ok(params) => params,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+                return;
+            }
+        };
+        let result = serde_json::to_value(ModelListResponse { models: Vec::new() })
+            .expect("model list response serializes");
+        let _ = self
+            .outgoing
+            .send_response(connection_id, request.id, result)
+            .await;
+    }
+
+    async fn process_approval_resolve(
+        &mut self,
+        connection_id: ConnectionId,
+        request: JsonRpcRequest,
+    ) {
+        let params = match parse_params::<ApprovalResolveParams>(request.params) {
+            Ok(params) => params,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+                return;
+            }
+        };
+        let decision = match params.decision {
+            ApprovalDecision::Allow => "allow",
+            ApprovalDecision::Deny => "deny",
+        };
+        let resolved = self
+            .outgoing
+            .resolve_server_response(JsonRpcResponse {
+                id: crate::app_server::protocol::RequestId::String(params.request_id.clone()),
+                result: json!({ "decision": decision }),
+            })
+            .await;
+        if !resolved {
+            let _ = self
+                .outgoing
+                .send_error(
+                    connection_id,
+                    request.id,
+                    AppServerError::invalid_params("Unknown approval request"),
+                )
+                .await;
+            return;
+        }
+        let _ = self
+            .outgoing
+            .send_response(connection_id, request.id, json!({}))
+            .await;
+    }
+
+    async fn process_unsupported(&mut self, connection_id: ConnectionId, request: JsonRpcRequest) {
+        let method = request.method.clone();
+        let _ = self
+            .outgoing
+            .send_error(
+                connection_id,
+                request.id,
+                AppServerError::unsupported_method(method),
+            )
+            .await;
     }
 
     async fn process_thread_resume(

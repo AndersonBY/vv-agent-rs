@@ -24,7 +24,7 @@ pub use item::{
 pub use model::{AppModelInfo, ModelListParams, ModelListResponse};
 pub use schema::{
     generate_app_server_json_schema_bundle, generate_app_server_typescript_bundle,
-    AppServerSchemaError, SchemaBundle,
+    AppServerSchemaError, SchemaBundle, SchemaExportResponse,
 };
 pub use thread::{
     AppThread, ThreadArchiveParams, ThreadArchiveResponse, ThreadArchivedParams, ThreadListParams,

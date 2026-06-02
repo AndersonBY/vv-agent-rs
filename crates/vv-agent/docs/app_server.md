@@ -146,6 +146,12 @@ Server notification:
 {"method":"approval/resolved","params":{"threadId":"thread_1","turnId":"turn_1","requestId":"approval_1","decision":"allow"}}
 ```
 
+Clients may also resolve the same approval with `approval/resolve`:
+
+```json
+{"id":5,"method":"approval/resolve","params":{"threadId":"thread_1","turnId":"turn_1","requestId":"approval_1","decision":"allow"}}
+```
+
 ### Replay Thread History
 
 Client request:
@@ -163,6 +169,27 @@ Server response:
 `thread/resume` returns the same replay items plus an `activeTurn` when a turn
 is still running. It also subscribes the connection to future thread
 notifications by default.
+
+### Schema And Catalog Requests
+
+`schema/export` returns both committed JSON Schema and TypeScript protocol
+bundles:
+
+```json
+{"id":6,"method":"schema/export","params":{}}
+```
+
+`model/list` currently returns a valid, possibly empty model list. Product
+clients should keep their existing model catalog fallback until a configured
+App Server model catalog is added:
+
+```json
+{"id":7,"method":"model/list","params":{}}
+```
+
+`turn/steer` is reserved for follow-up input on active turns. Until runtime
+steering is wired through this protocol method, the server returns an explicit
+unsupported-method error with code `-32013`.
 
 ## Rust Test Client
 

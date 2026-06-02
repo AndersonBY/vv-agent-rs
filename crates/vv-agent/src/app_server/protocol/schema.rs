@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use schemars::{schema_for, JsonSchema};
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::{
@@ -11,6 +12,13 @@ use super::{
 };
 
 pub type SchemaBundle = BTreeMap<String, String>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaExportResponse {
+    pub json_schema: SchemaBundle,
+    pub typescript: SchemaBundle,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppServerSchemaError {
@@ -38,6 +46,7 @@ pub fn generate_app_server_json_schema_bundle() -> Result<SchemaBundle, AppServe
     insert_json_schema::<ClientRequest>(&mut bundle, "ClientRequest")?;
     insert_json_schema::<ServerNotification>(&mut bundle, "ServerNotification")?;
     insert_json_schema::<ServerRequest>(&mut bundle, "ServerRequest")?;
+    insert_json_schema::<SchemaExportResponse>(&mut bundle, "SchemaExportResponse")?;
     insert_json_schema::<JsonRpcMessage>(&mut bundle, "JsonRpcMessage")?;
     insert_json_schema::<InitializeParams>(&mut bundle, "InitializeParams")?;
     insert_json_schema::<InitializeResponse>(&mut bundle, "InitializeResponse")?;
@@ -58,6 +67,7 @@ pub fn generate_app_server_typescript_bundle() -> Result<SchemaBundle, AppServer
     insert_typescript::<ClientRequest>(&mut bundle, "ClientRequest.ts");
     insert_typescript::<ServerNotification>(&mut bundle, "ServerNotification.ts");
     insert_typescript::<ServerRequest>(&mut bundle, "ServerRequest.ts");
+    insert_typescript::<SchemaExportResponse>(&mut bundle, "SchemaExportResponse.ts");
     insert_typescript::<InitializeParams>(&mut bundle, "InitializeParams.ts");
     insert_typescript::<InitializeResponse>(&mut bundle, "InitializeResponse.ts");
     insert_typescript::<ThreadStartResponse>(&mut bundle, "ThreadStartResponse.ts");
