@@ -16,12 +16,19 @@ pub struct ThreadStateManager {
 struct ThreadStateInner {
     subscribers: HashMap<String, HashSet<ConnectionId>>,
     active_turns: HashMap<String, ActiveTurn>,
+    pending_approvals: HashMap<String, PendingApproval>,
 }
 
 #[derive(Clone)]
 pub struct ActiveTurn {
     pub turn: AppTurn,
     pub handle: RunHandle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingApproval {
+    pub turn_id: String,
+    pub request_id: String,
 }
 
 impl ThreadStateManager {
@@ -78,5 +85,40 @@ impl ThreadStateManager {
         }
         active.handle.cancel();
         true
+    }
+
+    pub async fn set_pending_approval(
+        &self,
+        thread_id: impl Into<String>,
+        turn_id: impl Into<String>,
+        request_id: impl Into<String>,
+    ) {
+        self.inner.lock().await.pending_approvals.insert(
+            thread_id.into(),
+            PendingApproval {
+                turn_id: turn_id.into(),
+                request_id: request_id.into(),
+            },
+        );
+    }
+
+    pub async fn pending_approval(&self, thread_id: &str) -> Option<PendingApproval> {
+        self.inner
+            .lock()
+            .await
+            .pending_approvals
+            .get(thread_id)
+            .cloned()
+    }
+
+    pub async fn clear_pending_approval(&self, thread_id: &str, request_id: &str) {
+        let mut inner = self.inner.lock().await;
+        if inner
+            .pending_approvals
+            .get(thread_id)
+            .is_some_and(|pending| pending.request_id == request_id)
+        {
+            inner.pending_approvals.remove(thread_id);
+        }
     }
 }

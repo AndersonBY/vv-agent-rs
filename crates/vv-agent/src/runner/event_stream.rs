@@ -318,6 +318,20 @@ pub(super) fn map_runtime_event(
             agent_name,
             crate::types::AgentStatus::WaitUser,
         )),
+        "run_cancelled" => Some(RunEvent::new(
+            run_id,
+            trace_id,
+            agent_name,
+            None,
+            crate::events::RunEventPayload::RunCancelled {
+                reason: payload
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .or_else(|| payload.get("error").and_then(Value::as_str))
+                    .unwrap_or("run cancelled")
+                    .to_string(),
+            },
+        )),
         "run_max_cycles" => Some(RunEvent::run_completed(
             run_id,
             trace_id,

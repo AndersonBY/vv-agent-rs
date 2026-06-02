@@ -7,8 +7,8 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::app_server::protocol::{
-    AppServerError, JsonRpcError, JsonRpcErrorBody, JsonRpcMessage, JsonRpcNotification,
-    JsonRpcResponse, RequestId, ServerNotification, ServerRequest,
+    AppServerError, AppServerErrorCode, JsonRpcError, JsonRpcErrorBody, JsonRpcMessage,
+    JsonRpcNotification, JsonRpcResponse, RequestId, ServerNotification, ServerRequest,
 };
 use crate::app_server::transport::ConnectionId;
 
@@ -161,16 +161,119 @@ impl OutgoingMessageSender {
             .await
             .insert(id.clone(), callback_tx);
         let (method, params) = tagged_method_params(&request)?;
+        if let Err(error) = self
+            .send_message(
+                connection_id,
+                JsonRpcMessage::Request(crate::app_server::protocol::JsonRpcRequest {
+                    id: id.clone(),
+                    method,
+                    params,
+                }),
+            )
+            .await
+        {
+            self.pending_server_requests.lock().await.remove(&id);
+            return Err(error);
+        }
+        Ok((id, callback_rx))
+    }
+
+    pub async fn send_server_request_with_timeout(
+        &self,
+        connection_id: ConnectionId,
+        request: ServerRequest,
+        timeout: std::time::Duration,
+    ) -> Result<Value, AppServerError> {
+        let (id, callback_rx) = self.send_server_request(connection_id, request).await?;
+        match tokio::time::timeout(timeout, callback_rx).await {
+            Ok(Ok(Ok(value))) => Ok(value),
+            Ok(Ok(Err(error))) => Err(AppServerError::new(
+                AppServerErrorCode::InternalError,
+                error.message,
+            )
+            .with_data(error.data.unwrap_or(Value::Null))),
+            Ok(Err(_)) => Err(AppServerError::internal("server request callback dropped")),
+            Err(_) => {
+                self.pending_server_requests.lock().await.remove(&id);
+                Err(AppServerError::internal("server request timed out"))
+            }
+        }
+    }
+
+    pub async fn pending_server_request_count(&self) -> usize {
+        self.pending_server_requests.lock().await.len()
+    }
+
+    pub async fn send_server_request_with_id(
+        &self,
+        connection_id: ConnectionId,
+        id: RequestId,
+        request: ServerRequest,
+    ) -> Result<oneshot::Receiver<ServerRequestResult>, AppServerError> {
+        let (callback_tx, callback_rx) = oneshot::channel();
+        self.pending_server_requests
+            .lock()
+            .await
+            .insert(id.clone(), callback_tx);
+        let (method, params) = tagged_method_params(&request)?;
+        if let Err(error) = self
+            .send_message(
+                connection_id,
+                JsonRpcMessage::Request(crate::app_server::protocol::JsonRpcRequest {
+                    id: id.clone(),
+                    method,
+                    params,
+                }),
+            )
+            .await
+        {
+            self.pending_server_requests.lock().await.remove(&id);
+            return Err(error);
+        }
+        Ok(callback_rx)
+    }
+
+    pub async fn send_server_request_with_id_and_timeout(
+        &self,
+        connection_id: ConnectionId,
+        id: RequestId,
+        request: ServerRequest,
+        timeout: std::time::Duration,
+    ) -> Result<Value, AppServerError> {
+        let callback_rx = self
+            .send_server_request_with_id(connection_id, id.clone(), request)
+            .await?;
+        match tokio::time::timeout(timeout, callback_rx).await {
+            Ok(Ok(Ok(value))) => Ok(value),
+            Ok(Ok(Err(error))) => Err(AppServerError::new(
+                AppServerErrorCode::InternalError,
+                error.message,
+            )
+            .with_data(error.data.unwrap_or(Value::Null))),
+            Ok(Err(_)) => Err(AppServerError::internal("server request callback dropped")),
+            Err(_) => {
+                self.pending_server_requests.lock().await.remove(&id);
+                Err(AppServerError::internal("server request timed out"))
+            }
+        }
+    }
+
+    pub async fn send_json_rpc_request(
+        &self,
+        connection_id: ConnectionId,
+        id: RequestId,
+        method: String,
+        params: Option<Value>,
+    ) -> Result<(), AppServerError> {
         self.send_message(
             connection_id,
             JsonRpcMessage::Request(crate::app_server::protocol::JsonRpcRequest {
-                id: id.clone(),
+                id,
                 method,
                 params,
             }),
         )
-        .await?;
-        Ok((id, callback_rx))
+        .await
     }
 
     pub async fn resolve_server_response(&self, response: JsonRpcResponse) -> bool {

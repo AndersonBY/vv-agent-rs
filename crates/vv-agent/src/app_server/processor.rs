@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -76,10 +77,27 @@ impl MessageProcessor {
         agent: Agent,
         store: SqliteThreadStore,
     ) -> (Self, tokio::sync::mpsc::Receiver<OutgoingEnvelope>) {
+        Self::new_for_tests_with_runtime_and_approval_timeout(
+            outgoing_capacity,
+            runner,
+            agent,
+            store,
+            Duration::from_secs(30),
+        )
+    }
+
+    pub fn new_for_tests_with_runtime_and_approval_timeout(
+        outgoing_capacity: usize,
+        runner: Runner,
+        agent: Agent,
+        store: SqliteThreadStore,
+        approval_request_timeout: Duration,
+    ) -> (Self, tokio::sync::mpsc::Receiver<OutgoingEnvelope>) {
         let (outgoing, rx) = OutgoingMessageSender::channel(outgoing_capacity);
         let thread_state = ThreadStateManager::default();
         let run_adapter =
-            AppServerRunAdapter::new(runner, agent, store, thread_state.clone(), outgoing.clone());
+            AppServerRunAdapter::new(runner, agent, store, thread_state.clone(), outgoing.clone())
+                .with_approval_request_timeout(approval_request_timeout);
         (
             Self {
                 outgoing,
@@ -424,13 +442,19 @@ impl MessageProcessor {
             .interrupt_turn(&params.thread_id, &params.turn_id)
             .await
         {
-            Ok(()) => {
+            Ok(outcome) => {
                 let result = serde_json::to_value(TurnInterruptResponse {})
                     .expect("turn interrupt response serializes");
                 let _ = self
                     .outgoing
                     .send_response(connection_id, request.id, result)
                     .await;
+                if let Some(resolved_approval) = outcome.approval_resolved {
+                    let _ = adapter.notify_approval_resolved(resolved_approval).await;
+                }
+                if let Some(completed_turn) = outcome.completed_turn {
+                    let _ = adapter.notify_turn_completed(completed_turn).await;
+                }
             }
             Err(error) => {
                 let _ = self

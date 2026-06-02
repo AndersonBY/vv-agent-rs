@@ -1,19 +1,24 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 
 use crate::app_server::outgoing::OutgoingMessageSender;
 use crate::app_server::protocol::{
     map_run_event_to_notifications, AgentMessageDeltaParams, AppItem, AppItemKind, AppItemStatus,
-    AppServerError, AppTurn, ApprovalDecision, ApprovalRequestParams, ItemCompletedParams,
-    ItemStartedParams, ServerNotification, ThreadStatus, TurnStartParams, TurnStartedParams,
-    TurnStatus, UserInput,
+    AppServerError, AppServerErrorCode, AppTurn, ApprovalDecision, ApprovalRequestParams,
+    ApprovalResolveParams, ItemCompletedParams, ItemStartedParams, JsonRpcError, JsonRpcErrorBody,
+    RequestId, ServerNotification, ServerRequest, ThreadStatus, TurnCompletedParams,
+    TurnStartParams, TurnStartedParams, TurnStatus, UserInput,
 };
 use crate::app_server::thread_state::{ActiveTurn, ThreadStateManager};
 use crate::app_server::thread_store::{SqliteThreadStore, ThreadStoreError};
-use crate::{Agent, ModelRef, RunConfig, Runner};
+use crate::tools::ApprovalDecision as ToolApprovalDecision;
+use crate::{
+    Agent, ApprovalBroker, ApprovalFuture, ApprovalProvider, ApprovalRequest, ModelRef, RunConfig,
+    RunHandle, Runner,
+};
 
 #[derive(Clone)]
 pub struct AppServerRunAdapter {
@@ -23,6 +28,7 @@ pub struct AppServerRunAdapter {
     state: ThreadStateManager,
     outgoing: OutgoingMessageSender,
     next_turn_id: Arc<AtomicU64>,
+    approval_request_timeout: Duration,
 }
 
 impl AppServerRunAdapter {
@@ -40,7 +46,13 @@ impl AppServerRunAdapter {
             state,
             outgoing,
             next_turn_id: Arc::new(AtomicU64::new(1)),
+            approval_request_timeout: Duration::from_secs(30),
         }
+    }
+
+    pub fn with_approval_request_timeout(mut self, timeout: Duration) -> Self {
+        self.approval_request_timeout = timeout;
+        self
     }
 
     pub fn store(&self) -> &SqliteThreadStore {
@@ -74,6 +86,9 @@ impl AppServerRunAdapter {
         if let Some(model) = params.model {
             config.model = Some(ModelRef::named(model));
         }
+        let approval_broker = ApprovalBroker::default();
+        config.approval_provider = Some(Arc::new(AppServerApprovalProvider));
+        config.approval_broker = Some(approval_broker);
         config
             .metadata
             .insert("thread_id".to_string(), json!(params.thread_id));
@@ -138,6 +153,16 @@ impl AppServerRunAdapter {
                             let _ = adapter
                                 .broadcast_to_thread(&thread_id, notification.clone())
                                 .await;
+                            if let ServerNotification::ApprovalRequested(approval) = &notification {
+                                adapter
+                                    .route_approval_request(
+                                        &thread_id,
+                                        &turn_id,
+                                        &active.handle,
+                                        approval.clone(),
+                                    )
+                                    .await;
+                            }
                             if is_terminal_turn_notification(&notification) {
                                 adapter.state.clear_active_turn(&thread_id, &turn_id).await;
                                 let _ = adapter.store.set_active_turn(
@@ -171,14 +196,81 @@ impl AppServerRunAdapter {
         &self,
         thread_id: &str,
         turn_id: &str,
-    ) -> Result<(), AppServerError> {
-        if self.state.cancel_turn(thread_id, turn_id).await {
+    ) -> Result<InterruptTurnOutcome, AppServerError> {
+        if let Some(pending) = self.state.pending_approval(thread_id).await {
+            if pending.turn_id == turn_id {
+                let mut completed_turn = None;
+                if let Some(active) = self.state.active_turn(thread_id).await {
+                    active.handle.cancel();
+                    let _ = active
+                        .handle
+                        .approve(
+                            &pending.request_id,
+                            ToolApprovalDecision::timeout("turn interrupted"),
+                        )
+                        .await;
+                    completed_turn = Some(interrupted_turn(active.turn));
+                }
+                let _ = self
+                    .outgoing
+                    .resolve_server_error(JsonRpcError {
+                        id: RequestId::String(pending.request_id.clone()),
+                        error: JsonRpcErrorBody {
+                            code: AppServerErrorCode::InternalError.code(),
+                            message: "turn interrupted".to_string(),
+                            data: None,
+                        },
+                    })
+                    .await;
+                self.state
+                    .clear_pending_approval(thread_id, &pending.request_id)
+                    .await;
+                self.store
+                    .set_active_turn(thread_id, None, ThreadStatus::Idle)
+                    .map_err(store_error)?;
+                return Ok(InterruptTurnOutcome {
+                    approval_resolved: Some(ApprovalResolveParams {
+                        thread_id: thread_id.to_string(),
+                        turn_id: turn_id.to_string(),
+                        request_id: pending.request_id,
+                        decision: ApprovalDecision::Deny,
+                    }),
+                    completed_turn,
+                });
+            }
+        }
+        if let Some(active) = self.state.active_turn(thread_id).await {
+            if active.turn.id != turn_id {
+                return Err(AppServerError::invalid_params("No matching active turn"));
+            }
+            active.handle.cancel();
             self.store
                 .set_active_turn(thread_id, None, ThreadStatus::Idle)
                 .map_err(store_error)?;
-            return Ok(());
+            return Ok(InterruptTurnOutcome {
+                approval_resolved: None,
+                completed_turn: Some(interrupted_turn(active.turn)),
+            });
         }
         Err(AppServerError::invalid_params("No matching active turn"))
+    }
+
+    pub async fn notify_approval_resolved(
+        &self,
+        params: ApprovalResolveParams,
+    ) -> Result<(), AppServerError> {
+        let thread_id = params.thread_id.clone();
+        self.broadcast_to_thread(&thread_id, ServerNotification::ApprovalResolved(params))
+            .await
+    }
+
+    pub async fn notify_turn_completed(&self, turn: AppTurn) -> Result<(), AppServerError> {
+        let thread_id = turn.thread_id.clone();
+        self.broadcast_to_thread(
+            &thread_id,
+            ServerNotification::TurnCompleted(TurnCompletedParams { turn }),
+        )
+        .await
     }
 
     pub async fn active_turn(&self, thread_id: &str) -> Option<AppTurn> {
@@ -200,6 +292,86 @@ impl AppServerRunAdapter {
                 .await?;
         }
         Ok(())
+    }
+
+    async fn route_approval_request(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+        handle: &RunHandle,
+        approval: ApprovalRequestParams,
+    ) {
+        let subscribers = self.state.subscribers(thread_id).await;
+        let Some(connection_id) = subscribers.first().copied() else {
+            let _ = handle
+                .approve(
+                    &approval.request_id,
+                    ToolApprovalDecision::timeout("approval client disconnected"),
+                )
+                .await;
+            return;
+        };
+        self.state
+            .set_pending_approval(thread_id, turn_id, approval.request_id.clone())
+            .await;
+        let response = self
+            .outgoing
+            .send_server_request_with_id_and_timeout(
+                connection_id,
+                RequestId::String(approval.request_id.clone()),
+                ServerRequest::ApprovalRequest(approval.clone()),
+                self.approval_request_timeout,
+            )
+            .await;
+        let (decision, protocol_decision) = match response {
+            Ok(value) => tool_approval_decision_from_response(value),
+            Err(error) => (
+                ToolApprovalDecision::timeout(error.message().to_string()),
+                ApprovalDecision::Deny,
+            ),
+        };
+        if self
+            .state
+            .pending_approval(thread_id)
+            .await
+            .is_none_or(|pending| pending.request_id != approval.request_id)
+        {
+            return;
+        }
+        self.state
+            .clear_pending_approval(thread_id, &approval.request_id)
+            .await;
+        let _ = handle.approve(&approval.request_id, decision).await;
+        let _ = self
+            .broadcast_to_thread(
+                thread_id,
+                ServerNotification::ApprovalResolved(
+                    crate::app_server::protocol::ApprovalResolveParams {
+                        thread_id: thread_id.to_string(),
+                        turn_id: turn_id.to_string(),
+                        request_id: approval.request_id,
+                        decision: protocol_decision,
+                    },
+                ),
+            )
+            .await;
+    }
+}
+
+pub struct InterruptTurnOutcome {
+    pub approval_resolved: Option<ApprovalResolveParams>,
+    pub completed_turn: Option<AppTurn>,
+}
+
+struct AppServerApprovalProvider;
+
+impl ApprovalProvider for AppServerApprovalProvider {
+    fn should_request(&self, _request: &ApprovalRequest) -> bool {
+        true
+    }
+
+    fn decide(&self, _request: &ApprovalRequest) -> ApprovalFuture<Option<ToolApprovalDecision>> {
+        Box::pin(async { Ok(None) })
     }
 }
 
@@ -244,6 +416,12 @@ fn is_terminal_turn_notification(notification: &ServerNotification) -> bool {
     matches!(notification, ServerNotification::TurnCompleted(_))
 }
 
+fn interrupted_turn(mut turn: AppTurn) -> AppTurn {
+    turn.status = TurnStatus::Interrupted;
+    turn.completed_at_ms = Some(timestamp_millis());
+    turn
+}
+
 fn input_text(input: &[UserInput]) -> String {
     input
         .iter()
@@ -254,6 +432,29 @@ fn input_text(input: &[UserInput]) -> String {
 
 fn store_error(error: ThreadStoreError) -> AppServerError {
     AppServerError::internal(error.to_string())
+}
+
+fn tool_approval_decision_from_response(
+    value: serde_json::Value,
+) -> (ToolApprovalDecision, ApprovalDecision) {
+    match value
+        .get("decision")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+    {
+        "allow" | "approved" => (ToolApprovalDecision::allow(), ApprovalDecision::Allow),
+        "deny" | "denied" => {
+            let reason = value
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("approval denied");
+            (ToolApprovalDecision::deny(reason), ApprovalDecision::Deny)
+        }
+        _ => (
+            ToolApprovalDecision::deny("invalid approval response"),
+            ApprovalDecision::Deny,
+        ),
+    }
 }
 
 fn timestamp_millis() -> u128 {
