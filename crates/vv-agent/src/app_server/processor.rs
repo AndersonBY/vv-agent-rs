@@ -5,13 +5,22 @@ use serde_json::Value;
 use crate::app_server::outgoing::{OutgoingEnvelope, OutgoingMessageSender};
 use crate::app_server::protocol::{
     AppClientInfo, AppServerCapabilities, AppServerError, AppServerErrorCode, InitializeParams,
-    InitializeResponse, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
+    InitializeResponse, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, ServerNotification,
+    ThreadReadParams, ThreadReadResponse, ThreadStartParams, ThreadStartResponse,
+    ThreadStartedParams, TurnInterruptParams, TurnInterruptResponse, TurnStartParams,
+    TurnStartResponse,
 };
+use crate::app_server::run_adapter::AppServerRunAdapter;
+use crate::app_server::thread_state::ThreadStateManager;
+use crate::app_server::thread_store::{SqliteThreadStore, ThreadStoreError};
 use crate::app_server::transport::ConnectionId;
+use crate::{Agent, Runner};
 
 pub struct MessageProcessor {
     outgoing: OutgoingMessageSender,
     connections: HashMap<ConnectionId, ConnectionSessionState>,
+    run_adapter: Option<AppServerRunAdapter>,
+    thread_state: ThreadStateManager,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -54,6 +63,29 @@ impl MessageProcessor {
             Self {
                 outgoing,
                 connections: HashMap::new(),
+                run_adapter: None,
+                thread_state: ThreadStateManager::default(),
+            },
+            rx,
+        )
+    }
+
+    pub fn new_for_tests_with_runtime(
+        outgoing_capacity: usize,
+        runner: Runner,
+        agent: Agent,
+        store: SqliteThreadStore,
+    ) -> (Self, tokio::sync::mpsc::Receiver<OutgoingEnvelope>) {
+        let (outgoing, rx) = OutgoingMessageSender::channel(outgoing_capacity);
+        let thread_state = ThreadStateManager::default();
+        let run_adapter =
+            AppServerRunAdapter::new(runner, agent, store, thread_state.clone(), outgoing.clone());
+        (
+            Self {
+                outgoing,
+                connections: HashMap::new(),
+                run_adapter: Some(run_adapter),
+                thread_state,
             },
             rx,
         )
@@ -103,18 +135,26 @@ impl MessageProcessor {
             return;
         }
 
-        let _ = self
-            .outgoing
-            .send_error(
-                connection_id,
-                request.id,
-                AppServerError::new(
-                    AppServerErrorCode::MethodNotFound,
-                    format!("Method not found: {}", request.method),
-                )
-                .with_data(serde_json::json!({ "method": request.method })),
-            )
-            .await;
+        match request.method.as_str() {
+            "thread/start" => self.process_thread_start(connection_id, request).await,
+            "thread/read" => self.process_thread_read(connection_id, request).await,
+            "turn/start" => self.process_turn_start(connection_id, request).await,
+            "turn/interrupt" => self.process_turn_interrupt(connection_id, request).await,
+            _ => {
+                let _ = self
+                    .outgoing
+                    .send_error(
+                        connection_id,
+                        request.id,
+                        AppServerError::new(
+                            AppServerErrorCode::MethodNotFound,
+                            format!("Method not found: {}", request.method),
+                        )
+                        .with_data(serde_json::json!({ "method": request.method })),
+                    )
+                    .await;
+            }
+        }
     }
 
     async fn process_initialize(&mut self, connection_id: ConnectionId, request: JsonRpcRequest) {
@@ -184,6 +224,222 @@ impl MessageProcessor {
             .mark_ready_for_notifications(connection_id)
             .await;
     }
+
+    async fn process_thread_start(&mut self, connection_id: ConnectionId, request: JsonRpcRequest) {
+        let params = match parse_params::<ThreadStartParams>(request.params) {
+            Ok(params) => params,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+                return;
+            }
+        };
+        let Some(adapter) = self.run_adapter.clone() else {
+            let _ = self
+                .outgoing
+                .send_error(
+                    connection_id,
+                    request.id,
+                    AppServerError::internal("App Server runtime is not configured"),
+                )
+                .await;
+            return;
+        };
+        let thread = match adapter.store().create_thread(params) {
+            Ok(thread) => thread,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, store_error(error))
+                    .await;
+                return;
+            }
+        };
+        self.thread_state
+            .subscribe(thread.id.clone(), connection_id)
+            .await;
+        let result = serde_json::to_value(ThreadStartResponse {
+            thread: thread.clone(),
+        })
+        .expect("thread start response serializes");
+        let _ = self
+            .outgoing
+            .send_response(connection_id, request.id, result)
+            .await;
+        let _ = self
+            .outgoing
+            .send_notification(
+                connection_id,
+                ServerNotification::ThreadStarted(ThreadStartedParams { thread }),
+            )
+            .await;
+    }
+
+    async fn process_thread_read(&mut self, connection_id: ConnectionId, request: JsonRpcRequest) {
+        let params = match parse_params::<ThreadReadParams>(request.params) {
+            Ok(params) => params,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+                return;
+            }
+        };
+        let Some(adapter) = self.run_adapter.clone() else {
+            let _ = self
+                .outgoing
+                .send_error(
+                    connection_id,
+                    request.id,
+                    AppServerError::internal("App Server runtime is not configured"),
+                )
+                .await;
+            return;
+        };
+        let Some(thread) = (match adapter.store().get_thread(&params.thread_id) {
+            Ok(thread) => thread,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, store_error(error))
+                    .await;
+                return;
+            }
+        }) else {
+            let _ = self
+                .outgoing
+                .send_error(
+                    connection_id,
+                    request.id,
+                    AppServerError::invalid_params("Unknown thread"),
+                )
+                .await;
+            return;
+        };
+        let mut items = match adapter.store().replay_items(&params.thread_id) {
+            Ok(items) => items,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, store_error(error))
+                    .await;
+                return;
+            }
+        };
+        if let Some(after_item_id) = params.after_item_id {
+            if let Some(index) = items.iter().position(|item| item.id == after_item_id) {
+                items = items.into_iter().skip(index + 1).collect();
+            }
+        }
+        let active_turn = adapter.active_turn(&params.thread_id).await;
+        let result = serde_json::to_value(ThreadReadResponse {
+            thread,
+            items,
+            active_turn,
+        })
+        .expect("thread read response serializes");
+        let _ = self
+            .outgoing
+            .send_response(connection_id, request.id, result)
+            .await;
+    }
+
+    async fn process_turn_start(&mut self, connection_id: ConnectionId, request: JsonRpcRequest) {
+        let params = match parse_params::<TurnStartParams>(request.params) {
+            Ok(params) => params,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+                return;
+            }
+        };
+        let Some(adapter) = self.run_adapter.clone() else {
+            let _ = self
+                .outgoing
+                .send_error(
+                    connection_id,
+                    request.id,
+                    AppServerError::internal("App Server runtime is not configured"),
+                )
+                .await;
+            return;
+        };
+        self.thread_state
+            .subscribe(params.thread_id.clone(), connection_id)
+            .await;
+        let turn = match adapter.start_turn(params).await {
+            Ok(turn) => turn,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+                return;
+            }
+        };
+        let result = serde_json::to_value(TurnStartResponse { turn: turn.clone() })
+            .expect("turn start response serializes");
+        let _ = self
+            .outgoing
+            .send_response(connection_id, request.id, result)
+            .await;
+        let _ = adapter.notify_turn_started(&turn).await;
+        adapter
+            .spawn_event_forwarding(turn.thread_id.clone(), turn.id.clone())
+            .await;
+    }
+
+    async fn process_turn_interrupt(
+        &mut self,
+        connection_id: ConnectionId,
+        request: JsonRpcRequest,
+    ) {
+        let params = match parse_params::<TurnInterruptParams>(request.params) {
+            Ok(params) => params,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+                return;
+            }
+        };
+        let Some(adapter) = self.run_adapter.clone() else {
+            let _ = self
+                .outgoing
+                .send_error(
+                    connection_id,
+                    request.id,
+                    AppServerError::internal("App Server runtime is not configured"),
+                )
+                .await;
+            return;
+        };
+        match adapter
+            .interrupt_turn(&params.thread_id, &params.turn_id)
+            .await
+        {
+            Ok(()) => {
+                let result = serde_json::to_value(TurnInterruptResponse {})
+                    .expect("turn interrupt response serializes");
+                let _ = self
+                    .outgoing
+                    .send_response(connection_id, request.id, result)
+                    .await;
+            }
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+            }
+        }
+    }
 }
 
 fn parse_params<T: serde::de::DeserializeOwned>(
@@ -192,4 +448,8 @@ fn parse_params<T: serde::de::DeserializeOwned>(
     let params = params.ok_or_else(|| AppServerError::invalid_params("Missing params"))?;
     serde_json::from_value(params)
         .map_err(|error| AppServerError::invalid_params(error.to_string()))
+}
+
+fn store_error(error: ThreadStoreError) -> AppServerError {
+    AppServerError::internal(error.to_string())
 }

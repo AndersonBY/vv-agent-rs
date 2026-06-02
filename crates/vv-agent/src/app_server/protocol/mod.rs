@@ -18,8 +18,8 @@ pub use initialize::{
     InitializeResponse,
 };
 pub use item::{
-    AgentMessageDeltaParams, AppItem, AppItemKind, AppItemStatus, ItemCompletedParams,
-    ItemStartedParams, ToolCallDeltaParams,
+    map_run_event_to_notifications, AgentMessageDeltaParams, AppItem, AppItemKind, AppItemStatus,
+    ItemCompletedParams, ItemStartedParams, ToolCallDeltaParams,
 };
 pub use model::{AppModelInfo, ModelListParams, ModelListResponse};
 pub use schema::{
