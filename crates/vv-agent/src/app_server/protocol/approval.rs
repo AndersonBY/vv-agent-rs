@@ -1,6 +1,8 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalRequestParams {
     pub thread_id: String,
@@ -11,7 +13,7 @@ pub struct ApprovalRequestParams {
     pub choices: Vec<ApprovalDecision>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalResolveParams {
     pub thread_id: String,
@@ -20,7 +22,7 @@ pub struct ApprovalResolveParams {
     pub decision: ApprovalDecision,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum ApprovalDecision {
     Allow,

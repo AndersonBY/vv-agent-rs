@@ -1,16 +1,18 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 
 use super::errors::AppServerErrorCode;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(untagged)]
 pub enum RequestId {
     String(String),
     Integer(i64),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(untagged)]
 pub enum JsonRpcMessage {
     Request(JsonRpcRequest),
@@ -19,7 +21,7 @@ pub enum JsonRpcMessage {
     Error(JsonRpcError),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct JsonRpcRequest {
     pub id: RequestId,
     pub method: String,
@@ -27,26 +29,26 @@ pub struct JsonRpcRequest {
     pub params: Option<Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct JsonRpcNotification {
     pub method: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct JsonRpcResponse {
     pub id: RequestId,
     pub result: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct JsonRpcError {
     pub id: RequestId,
     pub error: JsonRpcErrorBody,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct JsonRpcErrorBody {
     pub code: i64,
     pub message: String,

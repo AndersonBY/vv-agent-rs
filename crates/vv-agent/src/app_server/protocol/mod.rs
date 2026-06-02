@@ -4,10 +4,13 @@ pub mod initialize;
 pub mod item;
 pub mod jsonrpc;
 pub mod model;
+pub mod schema;
 pub mod thread;
 pub mod turn;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 pub use approval::{ApprovalDecision, ApprovalRequestParams, ApprovalResolveParams};
 pub use initialize::{
@@ -19,6 +22,10 @@ pub use item::{
     ItemStartedParams, ToolCallDeltaParams,
 };
 pub use model::{AppModelInfo, ModelListParams, ModelListResponse};
+pub use schema::{
+    generate_app_server_json_schema_bundle, generate_app_server_typescript_bundle,
+    AppServerSchemaError, SchemaBundle,
+};
 pub use thread::{
     AppThread, ThreadArchiveParams, ThreadArchiveResponse, ThreadArchivedParams, ThreadListParams,
     ThreadListResponse, ThreadReadParams, ThreadReadResponse, ThreadResumeParams,
@@ -37,7 +44,7 @@ pub use jsonrpc::{
     JsonRpcResponse, RequestId,
 };
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "method", content = "params")]
 pub enum ClientRequest {
     #[serde(rename = "initialize")]
@@ -88,7 +95,7 @@ impl ClientRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "method", content = "params")]
 pub enum ServerNotification {
     #[serde(rename = "thread/started")]
@@ -133,7 +140,7 @@ impl ServerNotification {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "method", content = "params")]
 pub enum ServerRequest {
     #[serde(rename = "approval/request")]
@@ -146,7 +153,7 @@ impl ServerRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct WarningParams {
     pub message: String,

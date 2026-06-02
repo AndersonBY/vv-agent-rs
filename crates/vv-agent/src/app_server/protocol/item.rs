@@ -1,7 +1,9 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemStartedParams {
     pub thread_id: String,
@@ -9,7 +11,7 @@ pub struct ItemStartedParams {
     pub item: AppItem,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentMessageDeltaParams {
     pub thread_id: String,
@@ -18,7 +20,7 @@ pub struct AgentMessageDeltaParams {
     pub delta: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallDeltaParams {
     pub thread_id: String,
@@ -27,7 +29,7 @@ pub struct ToolCallDeltaParams {
     pub delta: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemCompletedParams {
     pub thread_id: String,
@@ -35,7 +37,7 @@ pub struct ItemCompletedParams {
     pub item: AppItem,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AppItem {
     pub id: String,
@@ -50,7 +52,7 @@ pub struct AppItem {
     pub content: Option<Value>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum AppItemKind {
     UserMessage,
@@ -64,7 +66,7 @@ pub enum AppItemKind {
     RunStatus,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum AppItemStatus {
     Queued,

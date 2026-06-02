@@ -1,13 +1,15 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeParams {
     pub client_info: AppClientInfo,
     pub capabilities: AppClientCapabilities,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AppClientInfo {
     pub name: String,
@@ -17,7 +19,7 @@ pub struct AppClientInfo {
     pub version: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AppClientCapabilities {
     #[serde(default)]
@@ -26,16 +28,7 @@ pub struct AppClientCapabilities {
     pub opt_out_notification_methods: Vec<String>,
 }
 
-impl Default for AppClientCapabilities {
-    fn default() -> Self {
-        Self {
-            experimental_api: false,
-            opt_out_notification_methods: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeResponse {
     pub server_info: AppServerInfo,
@@ -62,14 +55,14 @@ impl InitializeResponse {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AppServerInfo {
     pub name: String,
     pub version: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AppServerCapabilities {
     pub thread: bool,
