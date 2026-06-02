@@ -173,6 +173,20 @@ let result = handle.result().await?;
 工具仍用于在对话中请求用户输入。宿主应用还可以通过 `ContextProvider` 注入有序 prompt
 片段，通过 `MemoryProvider` 接入外部 search、save 和 compaction lifecycle。
 
+### App Server
+
+当产品宿主需要通过稳定 JSON-RPC 协议驱动 `vv-agent`，而不是直接链接 runtime 内部实现时，
+使用 App Server。它支持 stdio JSONL transport、thread / turn 生命周期请求、live item
+notification、approval server request、replay、schema 生成和 typed Rust 测试客户端。
+
+```bash
+vv-agent app-server --listen stdio
+vv-agent app-server generate-json-schema --out target/app-server-schema/json
+vv-agent app-server generate-ts --out target/app-server-schema/typescript
+```
+
+协议示例和客户端职责见 `crates/vv-agent/docs/app_server.md`。
+
 ### 低层 Runtime
 
 只有在你需要自己组装 LLM client、prompt、工具 registry、workspace 和运行控制时，才直接使用
@@ -296,7 +310,7 @@ VV_AGENT_RUN_LIVE_TESTS=1 \
 cargo test -p vv-agent --test live_deepseek -- --ignored
 ```
 
-live 套件会覆盖直接 runtime 完成、SDK 完成、`ask_user`、TODO 更新、memory note、skill
+live 套件会覆盖直接 runtime 完成、SDK 完成、`ask_user`、todo 更新、memory note、skill
 激活、workspace 工具、图片读取、前台和后台 shell 命令、子 Agent 轮询，以及配置化子 Agent 委托。
 
 ## 验证

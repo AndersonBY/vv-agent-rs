@@ -76,6 +76,9 @@ cargo run -p vv-agent --example 03_sdk_client
 | `27_facade_handoff` | handoff 流程，将控制权转交给另一个 Agent。 |
 | `28_facade_approval_background_trace` | live approval provider、后台 Agent task 和 JSONL trace exporter。 |
 
+高级集成：App Server 协议见 `crates/vv-agent/docs/app_server.md`。产品宿主如果需要通过
+JSON-RPC 控制 thread、turn、item、approval 和 replay，应优先使用这一路径。
+
 ## 验证
 
 检查所有 examples 能编译：

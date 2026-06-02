@@ -182,6 +182,23 @@ conversation. Host applications can also attach `ContextProvider` values for
 ordered prompt fragments and `MemoryProvider` values for external search, save,
 and compaction lifecycle hooks.
 
+### App Server
+
+Use the App Server when a product shell needs to drive `vv-agent` over a stable
+JSON-RPC protocol instead of linking directly to runtime internals. It supports
+stdio JSONL transport, thread and turn lifecycle requests, live item
+notifications, approval server requests, replay, schema generation, and a typed
+Rust test client.
+
+```bash
+vv-agent app-server --listen stdio
+vv-agent app-server generate-json-schema --out target/app-server-schema/json
+vv-agent app-server generate-ts --out target/app-server-schema/typescript
+```
+
+See `crates/vv-agent/docs/app_server.md` for protocol examples and client
+responsibilities.
+
 ### Low-Level Runtime
 
 Use the runtime directly only when you need to assemble the LLM client, prompt,
@@ -314,7 +331,7 @@ cargo test -p vv-agent --test live_deepseek -- --ignored
 ```
 
 The live suite exercises direct runtime completion, SDK completion,
-`ask_user`, TODO updates, memory notes, skill activation, workspace tools,
+`ask_user`, todo updates, memory notes, skill activation, workspace tools,
 image reading, foreground and background shell commands, sub-agent polling, and
 configured sub-agent delegation.
 
