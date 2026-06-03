@@ -56,7 +56,7 @@ Client request:
 Server response:
 
 ```json
-{"id":1,"result":{"serverInfo":{"name":"vv-agent-rs","version":"0.3.0"},"protocolVersion":"2026-06-02","supportedTransports":["stdio"],"capabilities":{"thread":true,"turn":true,"itemStream":true,"approvalRequests":true,"eventReplay":true,"schemaExport":true}}}
+{"id":1,"result":{"serverInfo":{"name":"vv-agent-rs","version":"0.4.0"},"protocolVersion":"2026-06-02","supportedTransports":["stdio"],"capabilities":{"thread":true,"turn":true,"itemStream":true,"approvalRequests":true,"eventReplay":true,"schemaExport":true}}}
 ```
 
 Client readiness notification:
