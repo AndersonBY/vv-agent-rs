@@ -9,7 +9,7 @@ use crate::types::{LLMResponse, Metadata};
 
 use super::response::{
     completion_payload_for_usage, estimate_missing_usage, from_vv_llm_tool_call, from_vv_llm_usage,
-    UsageEstimateContext,
+    merge_tool_call_extra_content, UsageEstimateContext,
 };
 
 mod events;
@@ -95,6 +95,12 @@ pub(super) async fn collect_vv_llm_stream(
             if !tool_call_delta.arguments.is_empty() {
                 slot.arguments.push_str(&tool_call_delta.arguments);
             }
+            if let Some(extra_content) = tool_call_delta.extra_content {
+                slot.extra_content = Some(match slot.extra_content.take() {
+                    Some(existing) => merge_tool_call_extra_content(existing, extra_content),
+                    None => extra_content,
+                });
+            }
             if !had_name && !slot.name.is_empty() {
                 emit_tool_stream_event(
                     &stream_callback,
@@ -129,36 +135,35 @@ pub(super) async fn collect_vv_llm_stream(
     if !raw_content.is_empty() {
         raw.insert("raw_content".to_string(), Value::Array(raw_content));
     }
-    let completion_payload = completion_payload_for_usage(
-        &content,
-        &tool_order
-            .iter()
-            .filter_map(|key| {
-                tool_calls.get(key).map(|parts| {
-                    vv_llm::ToolCall::function(&parts.id, &parts.name, &parts.arguments)
-                })
-            })
-            .collect::<Vec<_>>(),
-    );
+    let collected_tool_calls = tool_order
+        .iter()
+        .filter_map(|key| tool_calls.get(key))
+        .filter(|parts| !parts.name.is_empty())
+        .map(stream_parts_to_tool_call)
+        .collect::<Vec<_>>();
+    let completion_payload = completion_payload_for_usage(&content, &collected_tool_calls);
     let token_usage = usage
         .map(from_vv_llm_usage)
         .unwrap_or_else(|| estimate_missing_usage(&completion_payload, &[], estimate));
     raw.insert("usage".to_string(), token_usage.raw.clone());
     Ok(LLMResponse {
         content,
-        tool_calls: tool_order
+        tool_calls: collected_tool_calls
             .into_iter()
-            .filter_map(|key| tool_calls.remove(&key))
-            .filter(|parts| !parts.name.is_empty())
             .enumerate()
-            .map(|(index, parts)| {
-                from_vv_llm_tool_call(
-                    vv_llm::ToolCall::function(parts.id, parts.name, parts.arguments),
-                    index,
-                )
-            })
+            .map(|(index, tool_call)| from_vv_llm_tool_call(tool_call, index))
             .collect(),
         raw,
         token_usage,
     })
+}
+
+fn stream_parts_to_tool_call(parts: &StreamingToolCallParts) -> vv_llm::ToolCall {
+    vv_llm::ToolCall {
+        id: parts.id.clone(),
+        name: parts.name.clone(),
+        arguments: parts.arguments.clone(),
+        index: parts.index,
+        extra_content: parts.extra_content.clone(),
+    }
 }

@@ -33,7 +33,7 @@ fn vv_llm_client_fails_over_to_next_endpoint_client() {
     assert_eq!(response.content, "estimated usage response");
     assert_eq!(response.raw["used_endpoint_id"], json!("backup-endpoint"));
     assert_eq!(response.raw["used_model_id"], json!("gpt-4o-mini-backup"));
-    assert_eq!(response.raw["stream_mode"], json!(false));
+    assert_eq!(response.raw["stream_mode"], json!(true));
 }
 
 #[test]

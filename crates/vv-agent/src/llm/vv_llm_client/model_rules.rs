@@ -1,14 +1,7 @@
 use serde_json::Value;
 
-const STREAM_MODEL_PREFIXES: &[&str] = &[
-    "qwen3", "claude", "gemini", "kimi", "glm-4.", "glm-5", "gpt-5", "minimax",
-];
-const STREAM_MODEL_EXACT: &[&str] = &[
-    "deepseek-reasoner",
-    "deepseek-r1-tools",
-    "deepseek-v4-flash",
-    "deepseek-v4-pro",
-];
+const REASONING_CHAIN_PROVIDERS: &[&str] = &["deepseek", "minimax", "moonshot"];
+const REASONING_CHAIN_MODEL_PREFIXES: &[&str] = &["deepseek-", "minimax-", "kimi-", "moonshot-"];
 const CLAUDE_THINKING_MODELS: &[&str] = &[
     "claude-3-7-sonnet-thinking",
     "claude-opus-4-20250514-thinking",
@@ -26,22 +19,6 @@ const QWEN_THINKING_KEEP_SUFFIX_MODELS: &[&str] = &[
     "qwen3-vl-30b-a3b-thinking",
     "qwen3-vl-8b-thinking",
 ];
-const REASONING_CHAIN_MODELS: &[&str] = &[
-    "deepseek-reasoner",
-    "deepseek-r1-tools",
-    "deepseek-v4-flash",
-    "deepseek-v4-pro",
-    "kimi-k2.5",
-    "kimi-k2.6",
-    "minimax-m2.1",
-    "minimax-m2.1-lightning",
-    "minimax-m2.1-highspeed",
-    "minimax-m2.5",
-    "minimax-m2.5-highspeed",
-    "minimax-m2.7",
-    "minimax-m2.7-highspeed",
-];
-const REASONING_CHAIN_PREFIXES: &[&str] = &["deepseek-", "minimax-m2."];
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct ResolvedRequestOptions {
@@ -51,17 +28,18 @@ pub(super) struct ResolvedRequestOptions {
     pub(super) extra_body: Value,
 }
 
-pub(super) fn resolve_request_options(model: &str) -> ResolvedRequestOptions {
+pub(super) fn resolve_request_options(
+    backend: &str,
+    endpoint_provider: &str,
+    model: &str,
+) -> ResolvedRequestOptions {
     let mut resolved_model = model.to_string();
     let mut normalized_model = resolved_model.to_ascii_lowercase();
     let mut temperature = None;
     let mut max_tokens = None;
     let mut extra_body = Value::Null;
 
-    if STREAM_MODEL_EXACT
-        .iter()
-        .any(|candidate| normalized_model == *candidate)
-    {
+    if uses_deepseek_reasoning_defaults(backend, endpoint_provider, &normalized_model) {
         temperature = Some(0.6);
     } else if CLAUDE_THINKING_MODELS
         .iter()
@@ -145,6 +123,26 @@ pub(super) fn resolve_request_options(model: &str) -> ResolvedRequestOptions {
     }
 }
 
+fn is_reasoning_chain_provider(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    REASONING_CHAIN_PROVIDERS.iter().any(|provider| {
+        normalized == *provider
+            || normalized.starts_with(&format!("{provider}-"))
+            || normalized.starts_with(&format!("{provider}_"))
+    })
+}
+
+fn uses_deepseek_reasoning_defaults(backend: &str, endpoint_provider: &str, model: &str) -> bool {
+    model.trim().to_ascii_lowercase().starts_with("deepseek-")
+        || is_reasoning_chain_provider(backend)
+            && backend.trim().to_ascii_lowercase().starts_with("deepseek")
+        || is_reasoning_chain_provider(endpoint_provider)
+            && endpoint_provider
+                .trim()
+                .to_ascii_lowercase()
+                .starts_with("deepseek")
+}
+
 fn remove_suffix_case_insensitive(value: &str, suffix: &str) -> String {
     if value.to_ascii_lowercase().ends_with(suffix) {
         value[..value.len().saturating_sub(suffix.len())].to_string()
@@ -153,26 +151,20 @@ fn remove_suffix_case_insensitive(value: &str, suffix: &str) -> String {
     }
 }
 
-pub(super) fn should_use_stream(model: &str) -> bool {
-    let normalized = model.trim().to_ascii_lowercase();
-    STREAM_MODEL_EXACT
-        .iter()
-        .any(|candidate| normalized == *candidate)
-        || STREAM_MODEL_PREFIXES
-            .iter()
-            .any(|prefix| normalized.starts_with(prefix))
+pub(super) fn should_use_stream(_model: &str) -> bool {
+    true
 }
 
-pub(super) fn should_preserve_reasoning_chain(candidates: &[&str]) -> bool {
+pub(super) fn should_preserve_reasoning_chain(backend: &str, candidates: &[&str]) -> bool {
+    if is_reasoning_chain_provider(backend) {
+        return true;
+    }
     candidates.iter().any(|candidate| {
         let normalized = candidate.trim().to_ascii_lowercase();
         !normalized.is_empty()
-            && (REASONING_CHAIN_MODELS
+            && REASONING_CHAIN_MODEL_PREFIXES
                 .iter()
-                .any(|model| normalized == *model)
-                || REASONING_CHAIN_PREFIXES
-                    .iter()
-                    .any(|prefix| normalized.starts_with(prefix)))
+                .any(|prefix| normalized.starts_with(prefix))
     })
 }
 
@@ -185,6 +177,38 @@ mod tests {
         assert!(should_use_stream("deepseek-v4-pro"));
         assert!(should_use_stream("MiniMax-M2.1"));
         assert!(should_use_stream("claude-sonnet-4-6-thinking"));
-        assert!(!should_use_stream("gpt-4o-mini"));
+        assert!(should_use_stream("gpt-4o-mini"));
+        assert!(should_use_stream("custom-enterprise-model"));
+    }
+
+    #[test]
+    fn deepseek_prefix_defaults_new_models_to_reasoning_temperature() {
+        let options = resolve_request_options("openai", "default", "deepseek-v5-pro");
+
+        assert_eq!(options.temperature, Some(0.6));
+    }
+
+    #[test]
+    fn deepseek_provider_defaults_aliases_to_reasoning_temperature() {
+        let options = resolve_request_options("deepseek", "default", "enterprise-reasoner");
+
+        assert_eq!(options.temperature, Some(0.6));
+    }
+
+    #[test]
+    fn reasoning_chain_uses_provider_defaults() {
+        assert!(should_preserve_reasoning_chain(
+            "moonshot",
+            &["enterprise-kimi"]
+        ));
+        assert!(should_preserve_reasoning_chain(
+            "minimax",
+            &["future-model"]
+        ));
+        assert!(should_preserve_reasoning_chain(
+            "deepseek",
+            &["custom-reasoner"]
+        ));
+        assert!(!should_preserve_reasoning_chain("openai", &["gpt-4o-mini"]));
     }
 }

@@ -1,9 +1,12 @@
+use serde_json::Value;
+
 #[derive(Debug, Default)]
 pub(super) struct StreamingToolCallParts {
     pub(super) id: String,
     pub(super) index: Option<usize>,
     pub(super) name: String,
     pub(super) arguments: String,
+    pub(super) extra_content: Option<Value>,
 }
 
 pub(super) fn resolve_stream_tool_call_key(

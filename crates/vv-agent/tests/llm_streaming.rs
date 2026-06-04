@@ -377,7 +377,7 @@ impl vv_llm::ChatClient for FlakyChatClient {
 
     fn create_stream<'life0, 'async_trait>(
         &'life0 self,
-        _request: vv_llm::ChatRequest,
+        request: vv_llm::ChatRequest,
     ) -> Pin<
         Box<
             dyn Future<Output = Result<vv_llm::ChatStream, vv_llm::VvLlmError>>
@@ -389,8 +389,24 @@ impl vv_llm::ChatClient for FlakyChatClient {
         'life0: 'async_trait,
         Self: 'async_trait,
     {
+        let failures_remaining = Arc::clone(&self.failures_remaining);
+        let calls = Arc::clone(&self.calls);
         Box::pin(async move {
-            let chat_stream: vv_llm::ChatStream = Box::pin(stream::empty());
+            *calls.lock().expect("flaky calls lock") += 1;
+            let mut failures = failures_remaining.lock().expect("flaky failures lock");
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(vv_llm::VvLlmError::Provider(
+                    "transient endpoint error".to_string(),
+                ));
+            }
+            let chat_stream: vv_llm::ChatStream =
+                Box::pin(stream::iter([Ok(vv_llm::ChatStreamDelta {
+                    content: "flaky success".to_string(),
+                    done: true,
+                    ..vv_llm::ChatStreamDelta::default()
+                })]));
+            assert_eq!(request.options.stream, Some(true));
             Ok(chat_stream)
         })
     }
@@ -520,7 +536,16 @@ impl vv_llm::ChatClient for UnnormalizedToolCallChatClient {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let chat_stream: vv_llm::ChatStream = Box::pin(stream::empty());
+            let chat_stream: vv_llm::ChatStream =
+                Box::pin(stream::iter([Ok(vv_llm::ChatStreamDelta {
+                    tool_calls: vec![vv_llm::ToolCall::function(
+                        "",
+                        "task _finish",
+                        r#"{"message":"done"}"#,
+                    )],
+                    done: true,
+                    ..vv_llm::ChatStreamDelta::default()
+                })]));
             Ok(chat_stream)
         })
     }
@@ -609,9 +634,19 @@ impl vv_llm::ChatClient for RecordingMessagesChatClient {
                 .lock()
                 .expect("recorded requests lock")
                 .push(request);
+            let mut tool_call = vv_llm::ToolCall {
+                id: "call_response".to_string(),
+                name: "default_api:read_file".to_string(),
+                arguments: r#"{"path":"README.md"}"#.to_string(),
+                index: None,
+                extra_content: Some(json!({"google": {"thought_signature": "sig_456"}})),
+            };
+            tool_call.index = Some(0);
             let chat_stream: vv_llm::ChatStream =
                 Box::pin(stream::iter([Ok(vv_llm::ChatStreamDelta {
                     content: "recorded".to_string(),
+                    reasoning_content: "new-thought".to_string(),
+                    tool_calls: vec![tool_call],
                     done: true,
                     ..vv_llm::ChatStreamDelta::default()
                 })]));
@@ -712,7 +747,12 @@ impl vv_llm::ChatClient for UsageMissingChatClient {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let chat_stream: vv_llm::ChatStream = Box::pin(stream::empty());
+            let chat_stream: vv_llm::ChatStream =
+                Box::pin(stream::iter([Ok(vv_llm::ChatStreamDelta {
+                    content: "estimated usage response".to_string(),
+                    done: true,
+                    ..vv_llm::ChatStreamDelta::default()
+                })]));
             Ok(chat_stream)
         })
     }

@@ -29,14 +29,19 @@ impl VvLlmClient {
         stream_callback: Option<LlmStreamCallback>,
     ) -> Result<LLMResponse, LlmError> {
         let effective_model = self.effective_model_for_endpoint(&request.model, endpoint);
-        let request_options = resolve_request_options(&effective_model);
+        let endpoint_provider = endpoint.chat_client.provider_name();
+        let request_options =
+            resolve_request_options(&self.backend, endpoint_provider, &effective_model);
         let request_model = request_options.model.clone();
-        let preserve_reasoning_chain = should_preserve_reasoning_chain(&[
-            &request.model,
-            &self.selected_model,
-            &endpoint.model_id,
-            &request_model,
-        ]);
+        let preserve_reasoning_chain = should_preserve_reasoning_chain(
+            &self.backend,
+            &[
+                &request.model,
+                &self.selected_model,
+                &endpoint.model_id,
+                &request_model,
+            ],
+        );
         let should_stream = stream_callback.is_some()
             || request
                 .metadata

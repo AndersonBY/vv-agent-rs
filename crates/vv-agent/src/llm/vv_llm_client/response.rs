@@ -58,7 +58,7 @@ pub(super) fn from_vv_llm_tool_call(tool_call: vv_llm::ToolCall, index: usize) -
     normalized
 }
 
-fn merge_tool_call_extra_content(existing: Value, extra_content: Value) -> Value {
+pub(super) fn merge_tool_call_extra_content(existing: Value, extra_content: Value) -> Value {
     match (existing, extra_content) {
         (Value::Object(mut existing), Value::Object(extra)) => {
             existing.extend(extra);
