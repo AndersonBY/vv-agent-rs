@@ -2,16 +2,6 @@ use serde_json::Value;
 
 const REASONING_CHAIN_PROVIDERS: &[&str] = &["deepseek", "minimax", "moonshot"];
 const REASONING_CHAIN_MODEL_PREFIXES: &[&str] = &["deepseek-", "minimax-", "kimi-", "moonshot-"];
-const CLAUDE_THINKING_MODELS: &[&str] = &[
-    "claude-3-7-sonnet-thinking",
-    "claude-opus-4-20250514-thinking",
-    "claude-opus-4-1-20250805-thinking",
-    "claude-sonnet-4-20250514-thinking",
-    "claude-sonnet-4-5-20250929-thinking",
-    "claude-opus-4-5-20251101-thinking",
-    "claude-opus-4-6-thinking",
-    "claude-sonnet-4-6-thinking",
-];
 const QWEN_THINKING_KEEP_SUFFIX_MODELS: &[&str] = &[
     "qwen3-next-80b-a3b-thinking",
     "qwen3-vl-235b-a22b-thinking",
@@ -39,12 +29,12 @@ pub(super) fn resolve_request_options(
     let mut max_tokens = None;
     let mut extra_body = Value::Null;
 
-    if uses_deepseek_reasoning_defaults(backend, endpoint_provider, &normalized_model) {
-        temperature = Some(0.6);
-    } else if CLAUDE_THINKING_MODELS
-        .iter()
-        .any(|candidate| normalized_model == *candidate)
-    {
+    if uses_deepseek_model(backend, endpoint_provider, &normalized_model) {
+        extra_body = serde_json::json!({
+            "thinking": {"type": "enabled"},
+            "reasoning_effort": "max"
+        });
+    } else if normalized_model.starts_with("claude") && normalized_model.ends_with("-thinking") {
         resolved_model = remove_suffix_case_insensitive(&resolved_model, "-thinking");
         normalized_model = resolved_model.to_ascii_lowercase();
         temperature = Some(1.0);
@@ -132,7 +122,7 @@ fn is_reasoning_chain_provider(value: &str) -> bool {
     })
 }
 
-fn uses_deepseek_reasoning_defaults(backend: &str, endpoint_provider: &str, model: &str) -> bool {
+fn uses_deepseek_model(backend: &str, endpoint_provider: &str, model: &str) -> bool {
     model.trim().to_ascii_lowercase().starts_with("deepseek-")
         || is_reasoning_chain_provider(backend)
             && backend.trim().to_ascii_lowercase().starts_with("deepseek")
@@ -182,17 +172,31 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_prefix_defaults_new_models_to_reasoning_temperature() {
+    fn deepseek_prefix_defaults_new_models_to_reasoning_profile() {
         let options = resolve_request_options("openai", "default", "deepseek-v5-pro");
 
-        assert_eq!(options.temperature, Some(0.6));
+        assert_eq!(options.temperature, None);
+        assert_eq!(
+            options.extra_body,
+            serde_json::json!({
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": "max"
+            })
+        );
     }
 
     #[test]
-    fn deepseek_provider_defaults_aliases_to_reasoning_temperature() {
+    fn deepseek_provider_defaults_aliases_to_reasoning_profile() {
         let options = resolve_request_options("deepseek", "default", "enterprise-reasoner");
 
-        assert_eq!(options.temperature, Some(0.6));
+        assert_eq!(options.temperature, None);
+        assert_eq!(
+            options.extra_body,
+            serde_json::json!({
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": "max"
+            })
+        );
     }
 
     #[test]

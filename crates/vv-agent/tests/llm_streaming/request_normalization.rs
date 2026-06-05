@@ -72,8 +72,8 @@ fn vv_llm_client_preserves_reasoning_and_tool_extra_content_through_vv_llm() {
     let probe = chat_client.clone();
     let llm = VvLlmClient::new(
         "deepseek",
-        "deepseek-v4-pro",
-        "deepseek-v4-pro",
+        "deepseek-v5-pro",
+        "deepseek-v5-pro",
         Box::new(chat_client),
         90.0,
     );
@@ -138,7 +138,7 @@ fn vv_llm_client_preserves_reasoning_chain_for_deepseek_tool_turns() {
 
     let _ = llm
         .complete(LlmRequest::new(
-            "deepseek-v4-pro",
+            "deepseek-v5-pro",
             vec![
                 Message::user("start"),
                 assistant_with_reasoning,
@@ -163,26 +163,28 @@ fn vv_llm_client_preserves_reasoning_chain_for_deepseek_tool_turns() {
 }
 
 #[test]
-fn vv_llm_client_applies_deepseek_reasoning_temperature() {
+fn vv_llm_client_applies_deepseek_reasoning_profile() {
     let chat_client = RecordingMessagesChatClient::default();
     let probe = chat_client.clone();
     let llm = VvLlmClient::new(
         "deepseek",
-        "deepseek-v4-pro",
-        "deepseek-v4-pro",
+        "deepseek-v5-pro",
+        "deepseek-v5-pro",
         Box::new(chat_client),
         90.0,
     );
 
     let _ = llm
         .complete(LlmRequest::new(
-            "deepseek-v4-pro",
-            vec![Message::user("use reasoning temp")],
+            "deepseek-v5-pro",
+            vec![Message::user("use reasoning profile")],
         ))
         .expect("deepseek request");
 
     let request = probe.last_request().expect("recorded request");
-    assert_eq!(request.options.temperature, Some(0.6));
+    assert_eq!(request.options.temperature, None);
+    assert_eq!(request.extra_body["thinking"], json!({"type": "enabled"}));
+    assert_eq!(request.extra_body["reasoning_effort"], json!("max"));
 }
 
 #[test]
@@ -191,20 +193,20 @@ fn vv_llm_client_normalizes_supported_thinking_model_options() {
     let claude_probe = claude_client.clone();
     let claude = VvLlmClient::new(
         "anthropic",
-        "claude-opus-4-6-thinking",
-        "claude-opus-4-6-thinking",
+        "claude-opus-4-7-thinking",
+        "claude-opus-4-7-thinking",
         Box::new(claude_client),
         90.0,
     );
     let _ = claude
         .complete(LlmRequest::new(
-            "claude-opus-4-6-thinking",
+            "claude-opus-4-7-thinking",
             vec![Message::user("think")],
         ))
         .expect("claude thinking request");
 
     let claude_request = claude_probe.last_request().expect("claude request");
-    assert_eq!(claude_request.model, "claude-opus-4-6");
+    assert_eq!(claude_request.model, "claude-opus-4-7");
     assert_eq!(claude_request.options.temperature, Some(1.0));
     assert_eq!(claude_request.options.max_tokens, Some(20_000));
     assert_eq!(
