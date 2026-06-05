@@ -26,6 +26,7 @@ jobs:
     environment: crates-io
     env:
       VV_AGENT_RUN_LIVE_TESTS: "0"
+      CARGO_BUILD_JOBS: "1"
 
     steps:
       - name: Checkout
