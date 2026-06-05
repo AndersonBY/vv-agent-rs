@@ -10,6 +10,39 @@ use vv_agent::runtime::background_sessions::{
 use vv_agent::runtime::processes::{read_captured_output, start_captured_process};
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
+fn wait_for_background_payload<F>(description: &str, mut poll: F) -> Value
+where
+    F: FnMut() -> Value,
+{
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let payload = poll();
+        if payload["status"] != "running" {
+            return payload;
+        }
+        if Instant::now() >= deadline {
+            panic!("{description}: timed out waiting for background session: {payload}");
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn wait_until<F>(description: &str, mut is_ready: F)
+where
+    F: FnMut() -> bool,
+{
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if is_ready() {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!("{description}: timed out waiting for condition");
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 #[test]
 fn bash_tool_executes_command_in_workspace() {
     let workspace = tempfile::tempdir().expect("workspace");
@@ -141,8 +174,7 @@ fn background_command_lifecycle_can_be_polled() {
     assert_eq!(start_payload["status"], "running");
     assert!(start_payload.get("command").is_none());
 
-    let mut final_payload = None;
-    for _ in 0..20 {
+    let final_payload = wait_for_background_payload("background command finished", || {
         let probe = registry
             .execute(
                 &ToolCall::new(
@@ -154,18 +186,13 @@ fn background_command_lifecycle_can_be_polled() {
             )
             .expect("check background command");
         let payload: Value = serde_json::from_str(&probe.content).expect("probe payload");
-        if probe.status == ToolResultStatus::Running {
-            thread::sleep(Duration::from_millis(50));
-            continue;
+        if probe.status != ToolResultStatus::Running {
+            assert_eq!(probe.status, ToolResultStatus::Success);
+            assert_eq!(probe.metadata["status"], json!("completed"));
+            assert_eq!(probe.metadata["exit_code"], json!(0));
         }
-        assert_eq!(probe.status, ToolResultStatus::Success);
-        assert_eq!(probe.metadata["status"], json!("completed"));
-        assert_eq!(probe.metadata["exit_code"], json!(0));
-        final_payload = Some(payload);
-        break;
-    }
-
-    let final_payload = final_payload.expect("background command finished");
+        payload
+    });
     assert_eq!(final_payload["status"], "completed");
     assert_eq!(final_payload["exit_code"], 0);
     assert!(final_payload["command"]
@@ -236,22 +263,22 @@ fn background_command_listener_receives_terminal_event() {
         }),
     );
 
-    for _ in 0..20 {
-        let probe = registry
-            .execute(
-                &ToolCall::new(
-                    "bash_bg_check_listener",
-                    "check_background_command",
-                    BTreeMap::from([("session_id".to_string(), json!(session_id))]),
-                ),
-                &mut context,
-            )
-            .expect("check background command");
-        if probe.status != ToolResultStatus::Running {
-            break;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
+    wait_until(
+        "background command listener receives terminal event",
+        || {
+            let probe = registry
+                .execute(
+                    &ToolCall::new(
+                        "bash_bg_check_listener",
+                        "check_background_command",
+                        BTreeMap::from([("session_id".to_string(), json!(session_id))]),
+                    ),
+                    &mut context,
+                )
+                .expect("check background command");
+            probe.status != ToolResultStatus::Running
+        },
+    );
 
     let events = events.lock().expect("events");
     assert_eq!(events.len(), 1);
@@ -294,12 +321,9 @@ fn background_command_listener_is_notified_without_polling() {
         }),
     );
 
-    for _ in 0..20 {
-        if !events.lock().expect("events").is_empty() {
-            break;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
+    wait_until("background command listener is notified", || {
+        !events.lock().expect("events").is_empty()
+    });
 
     let events = events.lock().expect("events");
     assert_eq!(events.len(), 1);
@@ -328,18 +352,9 @@ fn background_session_manager_can_start_process() {
 
     assert!(session_id.starts_with("bg_"));
 
-    let mut final_payload = None;
-    for _ in 0..20 {
-        let payload = background_session_manager().check(&session_id);
-        if payload["status"] == "running" {
-            thread::sleep(Duration::from_millis(50));
-            continue;
-        }
-        final_payload = Some(payload);
-        break;
-    }
-
-    let final_payload = final_payload.expect("background manager task finished");
+    let final_payload = wait_for_background_payload("background manager task finished", || {
+        background_session_manager().check(&session_id)
+    });
     assert_eq!(final_payload["status"], "completed");
     assert_eq!(final_payload["exit_code"], 0);
     assert_eq!(final_payload["output"], "from-manager-start");
@@ -367,19 +382,14 @@ fn background_session_snapshot_keeps_null_shell() {
         None,
     );
 
-    let mut final_payload = None;
-    for _ in 0..20 {
+    let final_payload = wait_for_background_payload("background manager task finished", || {
         let payload = background_session_manager().check(&session_id);
         if payload["status"] == "running" {
             assert_eq!(payload.get("shell"), Some(&Value::Null));
-            thread::sleep(Duration::from_millis(50));
-            continue;
         }
-        final_payload = Some(payload);
-        break;
-    }
+        payload
+    });
 
-    let final_payload = final_payload.expect("background manager task finished");
     assert_eq!(final_payload["status"], "completed");
     assert_eq!(final_payload["output"], "null-shell");
     assert_eq!(final_payload.get("shell"), Some(&Value::Null));
@@ -430,12 +440,9 @@ fn background_session_timeout_kills_process_and_preserves_output() {
     ];
     let started = start_captured_process(&command, workspace.path(), None).expect("start process");
     let output_path = started.output_path.clone();
-    for _ in 0..20 {
-        if read_captured_output(&output_path, 100).contains("background-partial") {
-            break;
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
+    wait_until("background timeout command emits partial output", || {
+        read_captured_output(&output_path, 100).contains("background-partial")
+    });
     assert!(
         read_captured_output(&output_path, 100).contains("background-partial"),
         "test setup should wait until the background process has emitted partial output"
