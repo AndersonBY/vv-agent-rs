@@ -17,7 +17,7 @@ FILTERS:
 - A single file path searches that file directly, even if it is hidden or under an ignored root.
 - `type`: language/file-type shortcut (py/js/ts/md/json/...).
 - default matching uses smart-case: all-lowercase patterns search case-insensitively and patterns containing uppercase stay case-sensitive.
-- `i`: force case-insensitive search.
+- `case_sensitive`: explicitly override smart-case behavior.
 - `multiline`: let `.` match newlines and allow multi-line patterns.
 - `include_hidden`: include hidden files/directories.
 - `include_ignored`: include common dependency/cache roots at workspace root.
@@ -30,12 +30,10 @@ CONTENT OPTIONS (only for `content` mode):
 
 LIMITING:
 - `head_limit`: return only first N output rows/entries
-- `max_results`: same behavior as `head_limit`
 
 Returns:
 - Matching content rows, file paths, or counts according to `output_mode`.
-- Truncation metadata such as `content_truncated`, `structured_truncated`, `structured_item_limit`, and `structured_char_limit` when output is capped.
-- `head_limit` and `max_results` both limit the first N output rows or entries."#;
+- Truncation metadata such as `content_truncated`, `structured_truncated`, `structured_item_limit`, and `structured_char_limit` when output is capped."#;
 
 pub(in crate::tools::schemas) fn workspace_grep_schema() -> Value {
     json!({
@@ -56,12 +54,10 @@ pub(in crate::tools::schemas) fn workspace_grep_schema() -> Value {
                     "a": {"type": "integer", "description": "Lines after each match. Only used in content mode. Use when each match needs following context, such as a function body, config value, stack trace continuation, or adjacent TODO detail."},
                     "c": {"type": "integer", "description": "Context lines before and after each match. Overrides b/a. Use this instead of separate b/a values when symmetric context is enough to decide the next read or edit."},
                     "n": {"type": "boolean", "description": "Whether to include line numbers in content output. Default true."},
-                    "i": {"type": "boolean", "description": "Force case-insensitive search. Use only when smart-case is not enough, such as user-facing copy, mixed provider names, or inconsistent casing across files."},
                     "type": {"type": "string", "description": "File type shortcut (e.g. py/js/ts/md/json). Unsupported or unknown shortcuts return a structured error listing supported values."},
                     "head_limit": {"type": "integer", "minimum": 1, "description": "Cap output to the first N rows or entries. Use this for broad searches, then run a narrower follow-up query if matches are truncated."},
                     "multiline": {"type": "boolean", "description": "Enable multiline regex mode. Use for patterns that intentionally span line breaks, such as adjacent JSON fields, multi-line imports, or repeated prompt blocks."},
-                    "case_sensitive": {"type": "boolean", "description": "Explicitly override smart-case behavior and `i`. Set true when literal casing matters, false when you need forced case-insensitive matching."},
-                    "max_results": {"type": "integer", "minimum": 1, "description": "Same behavior as `head_limit`; cap output rows or entries before planning a narrower follow-up search."}
+                    "case_sensitive": {"type": "boolean", "description": "Explicitly override smart-case behavior. Set true when literal casing matters, false when you need forced case-insensitive matching."}
                 },
                 "required": ["pattern"]
             }

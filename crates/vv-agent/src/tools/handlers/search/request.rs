@@ -71,9 +71,7 @@ pub(super) fn parse_workspace_grep_request(
         Some(value) => value,
         None => parse_optional_usize(arguments, "a", 0)?.unwrap_or(0),
     };
-    let head_limit_raw = arguments
-        .get("head_limit")
-        .or_else(|| arguments.get("max_results"));
+    let head_limit_raw = arguments.get("head_limit");
     let head_limit = match head_limit_raw {
         Some(value) => match parse_integer_arg(value) {
             Ok(parsed) => Some(parsed.max(1) as usize),
@@ -83,8 +81,6 @@ pub(super) fn parse_workspace_grep_request(
     };
     let case_insensitive = if arguments.contains_key("case_sensitive") {
         !coerce_truthy_arg(arguments.get("case_sensitive"), false)
-    } else if arguments.contains_key("i") {
-        coerce_truthy_arg(arguments.get("i"), false)
     } else {
         !pattern.chars().any(char::is_uppercase)
     };

@@ -304,11 +304,6 @@ fn high_impact_tool_parameters_include_operational_guidance() {
             vec!["cap", "rows", "follow-up"],
         ),
         (
-            "workspace_grep",
-            "max_results",
-            vec!["same behavior", "head_limit", "cap"],
-        ),
-        (
             "bash",
             "run_in_background",
             vec!["long-running", "session_id", "poll"],

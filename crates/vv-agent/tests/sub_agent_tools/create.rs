@@ -273,56 +273,41 @@ fn create_sub_task_coerces_scalar_text_arguments() {
 }
 
 #[test]
-fn create_sub_task_falls_back_to_agent_name_when_agent_id_is_empty() {
+fn create_sub_task_rejects_removed_agent_name_alias() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
-    let captured = Arc::new(Mutex::new(Vec::new()));
-    let captured_for_runner = captured.clone();
-    context.sub_task_runner = Some(Arc::new(move |request| {
-        captured_for_runner
-            .lock()
-            .expect("captured")
-            .push(request.agent_name.clone());
-        SubTaskOutcome {
-            task_id: "sub_agent_fallback".to_string(),
-            agent_name: request.agent_name,
-            status: AgentStatus::Completed,
-            session_id: None,
-            final_answer: Some("done".to_string()),
-            wait_reason: None,
-            error: None,
-            cycles: 1,
-            todo_list: Vec::new(),
-            resolved: BTreeMap::new(),
-        }
+    context.sub_task_runner = Some(Arc::new(move |request| SubTaskOutcome {
+        task_id: "unused".to_string(),
+        agent_name: request.agent_name,
+        status: AgentStatus::Completed,
+        session_id: None,
+        final_answer: None,
+        wait_reason: None,
+        error: None,
+        cycles: 0,
+        todo_list: Vec::new(),
+        resolved: BTreeMap::new(),
     }));
 
-    for (call_id, agent_id, expected) in [
-        ("empty_agent_id", json!(""), "fallback-empty"),
-        ("null_agent_id", Value::Null, "fallback-null"),
-    ] {
-        let result = registry
-            .execute(
-                &ToolCall::new(
-                    call_id,
-                    "create_sub_task",
-                    BTreeMap::from([
-                        ("agent_id".to_string(), agent_id),
-                        ("agent_name".to_string(), json!(expected)),
-                        ("task_description".to_string(), json!("Check fallback")),
-                    ]),
-                ),
-                &mut context,
-            )
-            .expect("create_sub_task agent fallback");
-        assert_eq!(result.status, ToolResultStatus::Success);
-    }
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "legacy_agent_name",
+                "create_sub_task",
+                BTreeMap::from([
+                    ("agent_name".to_string(), json!("researcher")),
+                    ("task_description".to_string(), json!("Check fallback")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("create_sub_task legacy agent_name");
 
-    assert_eq!(
-        captured.lock().expect("captured").as_slice(),
-        ["fallback-empty", "fallback-null"]
-    );
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("agent_id_required"));
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["error_code"], json!("agent_id_required"));
 }
 
 #[test]

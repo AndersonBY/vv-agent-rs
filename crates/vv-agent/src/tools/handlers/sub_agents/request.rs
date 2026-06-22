@@ -46,17 +46,11 @@ pub(super) enum SubTaskPayload {
 pub(super) fn resolve_agent_name(
     arguments: &ToolArguments,
 ) -> Result<String, SubTaskArgumentError> {
-    let agent_name = ["agent_id", "agent_name"]
-        .into_iter()
-        .find_map(|key| {
-            let raw = arguments.get(key)?;
-            if raw.is_null() {
-                return None;
-            }
-            let value = stringify_tool_arg(Some(raw), "");
-            let value = value.trim().to_string();
-            (!value.is_empty()).then_some(value)
-        })
+    let agent_name = arguments
+        .get("agent_id")
+        .filter(|raw| !raw.is_null())
+        .map(|raw| stringify_tool_arg(Some(raw), "").trim().to_string())
+        .filter(|value| !value.is_empty())
         .unwrap_or_default();
 
     if agent_name.is_empty() {

@@ -562,6 +562,33 @@ fn workspace_grep_accepts_string_limits_and_context() {
 }
 
 #[test]
+fn workspace_grep_ignores_removed_max_results_alias() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("hits.txt"), "hit one\nhit two").expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "grep_removed_max_results",
+                "workspace_grep",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("hit")),
+                    ("output_mode".to_string(), json!("content")),
+                    ("max_results".to_string(), json!(1)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("workspace_grep removed max_results");
+
+    let rows = result.metadata["matches"].as_array().expect("matches");
+    assert_eq!(rows.len(), 2);
+    assert_ne!(result.metadata["head_limit"], json!(1));
+}
+
+#[test]
 fn workspace_grep_rejects_paths_outside_workspace_by_default() {
     let workspace = tempfile::tempdir().expect("workspace");
     let outside = tempfile::tempdir().expect("outside");

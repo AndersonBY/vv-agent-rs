@@ -30,8 +30,10 @@ fn default_tool_schemas_include_actionable_descriptions() {
         .contains("Use when each match needs following context"));
     assert!(property_description(&registry, "workspace_grep", "c")
         .contains("Use this instead of separate b/a values"));
-    assert!(property_description(&registry, "workspace_grep", "i")
-        .contains("Use only when smart-case is not enough"));
+    assert!(
+        property_description(&registry, "workspace_grep", "case_sensitive")
+            .contains("Explicitly override smart-case behavior")
+    );
     assert!(
         property_description(&registry, "workspace_grep", "multiline")
             .contains("Use for patterns that intentionally span line breaks")
@@ -268,7 +270,6 @@ fn default_tool_schema_wording_is_preserved() {
             "FILTERS:",
             "CONTENT OPTIONS (only for `content` mode):",
             "LIMITING:",
-            "`max_results`: same behavior as `head_limit`",
             "Prefer this tool over ad-hoc shell grep for direct content search.",
         ],
     );
