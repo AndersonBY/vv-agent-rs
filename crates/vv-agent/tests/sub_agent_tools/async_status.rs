@@ -99,6 +99,65 @@ fn create_sub_task_can_start_async_task_and_query_status() {
 }
 
 #[test]
+fn sub_task_status_can_wait_for_background_task_completion() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let manager = SubTaskManager::default();
+    let mut context = ToolContext::new(workspace.path());
+    context.sub_task_manager = Some(manager.clone());
+    manager
+        .submit(
+            "sub-wait",
+            "session-wait",
+            "researcher",
+            "Wait for background completion",
+            || {
+                thread::sleep(Duration::from_millis(200));
+                SubTaskOutcome {
+                    task_id: "sub-wait".to_string(),
+                    agent_name: "researcher".to_string(),
+                    status: AgentStatus::Completed,
+                    session_id: Some("session-wait".to_string()),
+                    final_answer: Some("waited done".to_string()),
+                    wait_reason: None,
+                    error: None,
+                    cycles: 1,
+                    todo_list: Vec::new(),
+                    resolved: BTreeMap::new(),
+                }
+            },
+        )
+        .expect("submit waiting sub-task");
+
+    let started_at = std::time::Instant::now();
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_status_wait",
+                "sub_task_status",
+                BTreeMap::from([
+                    ("task_ids".to_string(), json!(["sub-wait"])),
+                    ("wait_for_completion".to_string(), json!(true)),
+                    ("check_interval_seconds".to_string(), json!(300)),
+                    ("max_wait_seconds".to_string(), json!(3600)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("sub_task_status wait");
+
+    assert!(started_at.elapsed() < Duration::from_secs(1));
+    assert_eq!(result.status, ToolResultStatus::Success);
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["wait_for_completion"], true);
+    assert_eq!(payload["wait_exceeded"], false);
+    assert_eq!(payload["running_task_ids"], json!([]));
+    assert_eq!(payload["suggested_next_check_after_seconds"], 300);
+    assert_eq!(payload["tasks"][0]["status"], "completed");
+    assert_eq!(payload["tasks"][0]["final_answer"], "waited done");
+}
+
+#[test]
 fn sub_task_manager_rejects_duplicate_running_submit() {
     let manager = SubTaskManager::default();
     manager

@@ -129,6 +129,9 @@ fn builtin_tool_properties_and_enums_match_agent_schema_contract() {
                 "detail_level",
                 "workspace_file_limit",
                 "wait_for_response",
+                "wait_for_completion",
+                "check_interval_seconds",
+                "max_wait_seconds",
             ],
         ),
         (
@@ -285,6 +288,8 @@ fn builtin_tool_property_types_match_agent_schema_contract() {
         ("sub_task_status", "detail_level", "string"),
         ("sub_task_status", "workspace_file_limit", "integer"),
         ("sub_task_status", "wait_for_response", "boolean"),
+        ("sub_task_status", "wait_for_completion", "boolean"),
+        ("sub_task_status", "check_interval_seconds", "integer"),
         ("task_finish", "message", "string"),
         ("task_finish", "require_all_todos_completed", "boolean"),
         ("task_finish", "exposed_files", "array"),
@@ -315,6 +320,13 @@ fn builtin_tool_property_types_match_agent_schema_contract() {
             "{tool_name}.{property_name} type should match the agent schema contract"
         );
     }
+
+    let sub_task_status = registry.get_schema("sub_task_status").expect("schema");
+    assert_eq!(
+        sub_task_status["function"]["parameters"]["properties"]["max_wait_seconds"]["type"],
+        json!(["integer", "null"]),
+        "sub_task_status.max_wait_seconds should accept an integer timeout or null"
+    );
 
     for (tool_name, property_path, expected_type) in [
         ("ask_user", vec!["options", "items"], "string"),

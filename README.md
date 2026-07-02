@@ -262,7 +262,7 @@ runtime version with event logging.
 | SDK | `Agent`, `Runner`, `RunConfig`, `ModelSettings`, typed tools, `Agent::as_tool()`, `RunEvent`, providers, and `Session`. |
 | Memory | Token budgeting, prompt-too-long retries, micro and full compaction, artifact-backed large tool results, image trimming, session memory, and external provider hooks. |
 | Hooks | Rust `RuntimeHook` implementations can inspect or patch LLM calls, tool calls, memory compaction, and run lifecycle behavior. |
-| Sub-agents | Runtime-backed sub-task creation, batch submission, background status polling, continuation, steering, and inherited streaming callbacks. |
+| Sub-agents | Runtime-backed sub-task creation, batch submission, background status queries with wait-for-completion support, continuation, steering, and inherited streaming callbacks. |
 | Skills | Skill directory discovery, frontmatter parsing, validation, prompt rendering with budget limits, activation, and activation history. |
 | Workspace | Local, in-memory, and S3 object-store backends behind one `WorkspaceBackend` boundary. |
 
@@ -332,7 +332,7 @@ cargo test -p vv-agent --test live_deepseek -- --ignored
 
 The live suite exercises direct runtime completion, SDK completion,
 `ask_user`, todo updates, memory notes, skill activation, workspace tools,
-image reading, foreground and background shell commands, sub-agent polling, and
+image reading, foreground and background shell commands, sub-agent waiting/status checks, and
 configured sub-agent delegation.
 
 ## Verification

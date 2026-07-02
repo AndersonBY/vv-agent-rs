@@ -79,10 +79,10 @@ pub fn render_sub_agents(
 ) -> String {
     let header = match language {
         "zh-CN" => {
-            "如果已配置子 Agent, 可使用 `create_sub_task` 委派任务: 用 `agent_id` 指定目标子 Agent, 单任务用 `task_description`, 同一子 Agent 的并行任务用 `tasks`, 后台执行用 `wait_for_completion=false`; 需要查询进度或追加消息时使用 `sub_task_status`。"
+            "如果已配置子 Agent, 可使用 `create_sub_task` 委派任务: 用 `agent_id` 指定目标子 Agent, 单任务用 `task_description`, 同一子 Agent 的并行任务用 `tasks`, 后台执行用 `wait_for_completion=false`; 需要查询进度或追加消息时使用 `sub_task_status`。如果后台任务完成前主任务无法继续, 请调用 `sub_task_status` 并设置 `wait_for_completion=true` 和较长的 `check_interval_seconds`, 不要连续轮询。"
         }
         _ => {
-            "If sub-agents are configured, delegate work with `create_sub_task`. Use `agent_id` to select the target sub-agent, `task_description` for one task, `tasks` for multiple independent tasks of the same sub-agent, `wait_for_completion=false` for background execution, and `sub_task_status` to query progress or send follow-up messages."
+            "If sub-agents are configured, delegate work with `create_sub_task`. Use `agent_id` to select the target sub-agent, `task_description` for one task, `tasks` for multiple independent tasks of the same sub-agent, `wait_for_completion=false` for background execution, and `sub_task_status` to query progress or send follow-up messages. If background work must finish before you can continue, call `sub_task_status` with `wait_for_completion=true` and a longer `check_interval_seconds` instead of repeatedly polling."
         }
     };
     let list_header = if language == "zh-CN" {

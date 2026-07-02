@@ -72,6 +72,7 @@ fn default_tool_schemas_include_actionable_descriptions() {
 
     let sub_task_status = description(&registry, "sub_task_status");
     assert!(sub_task_status.contains("Capabilities:"));
+    assert!(sub_task_status.contains("without repeated polling"));
     assert!(sub_task_status.contains("Continuation rules:"));
     assert!(sub_task_status.contains("detail_level=snapshot"));
     assert!(sub_task_status.contains("first task id"));
@@ -89,6 +90,17 @@ fn default_tool_schemas_include_actionable_descriptions() {
     assert!(
         property_description(&registry, "sub_task_status", "wait_for_response")
             .contains("Use true after sending `message`")
+    );
+    assert!(
+        property_description(&registry, "sub_task_status", "wait_for_completion")
+            .contains("long-running")
+    );
+    assert!(
+        property_description(&registry, "sub_task_status", "check_interval_seconds")
+            .contains("Suggested")
+    );
+    assert!(
+        property_description(&registry, "sub_task_status", "max_wait_seconds").contains("maximum")
     );
 
     let todo_write = description(&registry, "todo_write");
