@@ -5,7 +5,7 @@ const READ_FILE_DESCRIPTION: &str = r#"Read file contents from workspace.
 When to use:
 - Inspect source files, configs, logs, docs, generated artifacts, or exact snippets without shelling out to cat/head/tail.
 - Read large files in chunks after using `file_info` or after a truncated response suggests a narrower line range.
-- Use `show_line_numbers=true` when you need to quote lines, plan precise edits, or coordinate with `file_str_replace`.
+- Use `show_line_numbers=true` when you need to quote lines, plan precise edits, or coordinate with `edit_file`.
 
 Supported behavior:
 - Reads plain UTF-8 text files and returns a content slice.
@@ -49,9 +49,9 @@ PARAMETERS:
 When to use:
 - Create a new file, replace an entire generated artifact, or append a clearly bounded section to an existing file.
 - Use `append=true` only when preserving all existing content is intentional and the appended block boundary is clear.
-- Prefer `file_str_replace` for small or surgical edits to existing files.
+- Prefer `edit_file` for small or surgical edits to existing files.
 
-Do not use this for surgical edits to existing source files; prefer `file_str_replace` after `read_file` so exact context and whitespace are preserved.
+Do not use this for surgical edits to existing source files; prefer `edit_file` after `read_file` so exact context and whitespace are preserved.
 
 Returns:
 - Structured write metadata including normalized path, append mode, character count, and newline flags.

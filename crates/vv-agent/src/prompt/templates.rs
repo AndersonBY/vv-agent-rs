@@ -29,10 +29,10 @@ pub fn todo_prompt(language: &str) -> &'static str {
 pub fn tool_priority_prompt(language: &str) -> &'static str {
     match language {
         "zh-CN" => {
-            "工具优先级: 优先使用专用工具而不是 shell. 读取用 `read_file`, 写入用 `write_file`, 编辑用 `file_str_replace`, 搜索用 `workspace_grep`. 仅在专用工具不足时使用 `bash`."
+            "工具优先级: 优先使用专用工具而不是 shell. 读取用 `read_file`, 写入用 `write_file`, 编辑用 `edit_file`, 搜索用 `workspace_grep`. 仅在专用工具不足时使用 `bash`."
         }
         _ => {
-            "Tool priority: prefer specialized tools over shell commands. Read with `read_file`, write with `write_file`, edit with `file_str_replace`, search with `workspace_grep`. Use `bash` only when specialized tools are insufficient."
+            "Tool priority: prefer specialized tools over shell commands. Read with `read_file`, write with `write_file`, edit with `edit_file`, search with `workspace_grep`. Use `bash` only when specialized tools are insufficient."
         }
     }
 }
@@ -60,7 +60,7 @@ pub fn render_workspace_tools(language: &str) -> String {
         "file_info",
         "read_file",
         "write_file",
-        "file_str_replace",
+        "edit_file",
         "workspace_grep",
         "read_image",
         "bash",

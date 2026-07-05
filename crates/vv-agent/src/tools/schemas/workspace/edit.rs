@@ -1,38 +1,38 @@
 use serde_json::{json, Value};
 
-const FILE_STR_REPLACE_DESCRIPTION: &str = r#"Replace text in a workspace file.
+const EDIT_FILE_DESCRIPTION: &str = r#"Safely edit an existing workspace file by replacing exact text.
 
-Use exact `old_str` matching.
+Use exact `old_string` matching.
 
 Workflow:
-- Call `read_file` first so you can copy the exact surrounding text, including indentation and line endings.
+- Call `read_file` for the full file first so the runtime can verify the file was not changed before editing.
 - Use this for focused edits where a precise old/new string is safer than rewriting a whole file.
-- Include enough context in `old_str` to make the target unique; never guess whitespace or punctuation from memory.
-- The operation fails if `old_str` is not found, which protects against stale assumptions.
-- By default only one match is replaced; use `replace_all=true` or `max_replacements` intentionally after confirming scope.
+- Include enough context in `old_string` to make the target unique; never guess whitespace or punctuation from memory.
+- The operation fails if `old_string` is not found, if it matches multiple locations, or if the file changed since it was read.
+- By default `old_string` must match exactly one location; use `replace_all=true` only after confirming every match should change.
 
 Returns:
-- Structured edit metadata including normalized path, replacements made, and whether the file changed.
+- Short JSON content with replacement count.
+- Structured edit metadata including changed files, bounded diff, additions, deletions, operation, and line ending.
 - Clear failure details when the target string is missing, ambiguous, outside the workspace, or rejected by the backend.
 
 Prefer this over shell-based sed/perl for repository edits because it is exact, structured, and safer for Agent-driven changes."#;
 
-pub(in crate::tools::schemas) fn file_str_replace_schema() -> Value {
+pub(in crate::tools::schemas) fn edit_file_schema() -> Value {
     json!({
         "type": "function",
         "function": {
-            "name": "file_str_replace",
-            "description": FILE_STR_REPLACE_DESCRIPTION,
+            "name": "edit_file",
+            "description": EDIT_FILE_DESCRIPTION,
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
-                    "old_str": {"type": "string", "description": "The source text to replace. This must be the exact source text, with enough context to make the match unique."},
-                    "new_str": {"type": "string", "description": "Replacement text. Preserve intended indentation, line endings, surrounding whitespace, and unchanged context from the `read_file` snippet."},
-                    "replace_all": {"type": "boolean", "description": "Replace all matches when true after confirming every match is intended. Default false to keep focused edits narrow."},
-                    "max_replacements": {"type": "integer", "minimum": 1, "description": "Optional cap when replace_all=false. Default 1; raise only to avoid accidental broad edits after reading the target context."}
+                    "old_string": {"type": "string", "description": "Exact source text to replace. Must be non-empty and unique unless replace_all=true."},
+                    "new_string": {"type": "string", "description": "Replacement text. May be empty; preserve intended indentation, line endings, and surrounding whitespace."},
+                    "replace_all": {"type": "boolean", "description": "Replace all matches when true after confirming every match is intended. Default false to keep focused edits narrow."}
                 },
-                "required": ["path", "old_str", "new_str"]
+                "required": ["path", "old_string", "new_string"]
             }
         }
     })

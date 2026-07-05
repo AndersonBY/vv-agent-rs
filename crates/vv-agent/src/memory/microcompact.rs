@@ -9,7 +9,7 @@ pub const CLEARED_MARKER: &str = "[Old tool result content cleared by microcompa
 pub const COMPACTABLE_TOOLS: &[&str] = &[
     "read_file",
     "write_file",
-    "file_str_replace",
+    "edit_file",
     "list_files",
     "workspace_grep",
     "bash",

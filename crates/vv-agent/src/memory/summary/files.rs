@@ -48,7 +48,7 @@ pub(super) fn collect_file_actions(messages: &[Message]) -> Vec<FileAction> {
 fn tool_action(tool_name: &str) -> Option<&'static str> {
     match tool_name {
         "read_file" | "file_info" => Some("read"),
-        "write_file" | "file_str_replace" => Some("modified"),
+        "write_file" | "edit_file" => Some("modified"),
         _ => None,
     }
 }
@@ -70,7 +70,7 @@ fn summarize_file_action(tool_name: &str, path: &str) -> String {
         "read_file" => format!("Read {path}"),
         "file_info" => format!("Inspected {path}"),
         "write_file" => format!("Updated {path}"),
-        "file_str_replace" => format!("Modified {path}"),
+        "edit_file" => format!("Modified {path}"),
         _ => format!("Touched {path}"),
     }
 }

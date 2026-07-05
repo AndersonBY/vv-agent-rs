@@ -131,7 +131,7 @@ fn default_tool_specs_keep_full_schema_descriptions() {
         "file_info",
         "read_file",
         "write_file",
-        "file_str_replace",
+        "edit_file",
         "workspace_grep",
         "bash",
         "check_background_command",
@@ -180,7 +180,7 @@ fn default_tool_schema_order_matches_builtin_runtime_contract() {
             "file_info",
             "read_file",
             "write_file",
-            "file_str_replace",
+            "edit_file",
             "workspace_grep",
             "bash",
             "check_background_command",
@@ -316,20 +316,24 @@ fn default_tool_schema_wording_is_preserved() {
 
     assert_description_contains(
         &registry,
-        "file_str_replace",
-        &["Replace text in a workspace file."],
+        "edit_file",
+        &[
+            "Safely edit an existing workspace file by replacing exact text.",
+            "Call `read_file` for the full file first",
+            "By default `old_string` must match exactly one location",
+        ],
     );
     assert_property_contains(
         &registry,
-        "file_str_replace",
-        "old_str",
-        &["The source text to replace."],
+        "edit_file",
+        "old_string",
+        &["Exact source text to replace."],
     );
     assert_property_contains(
         &registry,
-        "file_str_replace",
-        "max_replacements",
-        &["avoid accidental broad edits"],
+        "edit_file",
+        "replace_all",
+        &["Replace all matches", "Default false"],
     );
 
     assert_description_contains(

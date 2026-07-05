@@ -9,6 +9,7 @@ use crate::tools::common::{
 };
 use crate::types::{ToolArguments, ToolExecutionResult};
 
+use super::super::edit::{record_file_baseline, workspace_tool_error};
 use super::super::workspace_backend_error;
 use super::{READ_FILE_MAX_CHARS, READ_FILE_MAX_LINES};
 
@@ -50,8 +51,25 @@ pub(crate) fn read_file_tool() -> ToolSpec {
                 None => None,
             };
             let show_line_numbers = coerce_truthy_arg(arguments.get("show_line_numbers"), false);
-            match backend.read_text(&path) {
-                Ok(text) => read_text_result(&path, &text, start_line, end_line, show_line_numbers),
+            match backend.read_bytes(&path) {
+                Ok(raw) => {
+                    let text = match String::from_utf8(raw.clone()) {
+                        Ok(text) => text,
+                        Err(_) => {
+                            return workspace_tool_error(
+                                "Unsupported file encoding for read_file.",
+                                "unsupported_encoding",
+                                &path,
+                            )
+                        }
+                    };
+                    let is_partial_request = start_line != 1 || end_line.is_some();
+                    let selection = read_selection(&text, start_line, end_line, show_line_numbers);
+                    let is_oversized = selection.selected_line_count > READ_FILE_MAX_LINES
+                        || selection.selected_char_count > READ_FILE_MAX_CHARS;
+                    record_file_baseline(context, &path, &raw, is_partial_request || is_oversized);
+                    read_text_result(&path, &text, selection)
+                }
                 Err(error) => workspace_backend_error(error),
             }
         }),
@@ -62,13 +80,12 @@ pub(crate) fn read_file_tool() -> ToolSpec {
     spec
 }
 
-fn read_text_result(
-    path: &str,
+fn read_selection(
     text: &str,
     start_line: usize,
     end_line: Option<usize>,
     show_line_numbers: bool,
-) -> ToolExecutionResult {
+) -> ReadSelection {
     let lines = text.lines().collect::<Vec<_>>();
     let requested_start_index = start_line.saturating_sub(1);
     let slice_start_index = requested_start_index.min(lines.len());
@@ -92,28 +109,31 @@ fn read_text_result(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    if selected_line_count > READ_FILE_MAX_LINES || content.len() > READ_FILE_MAX_CHARS {
-        return oversized_read_result(
-            path,
-            text,
-            ReadSelection {
-                start_line,
-                actual_start_line,
-                actual_end_line,
-                selected_line_count,
-                selected_char_count: content.len(),
-                show_line_numbers,
-            },
-        );
+    ReadSelection {
+        start_line,
+        actual_start_line,
+        actual_end_line,
+        selected_line_count,
+        selected_char_count: content.len(),
+        show_line_numbers,
+        content,
+    }
+}
+
+fn read_text_result(path: &str, text: &str, selection: ReadSelection) -> ToolExecutionResult {
+    if selection.selected_line_count > READ_FILE_MAX_LINES
+        || selection.selected_char_count > READ_FILE_MAX_CHARS
+    {
+        return oversized_read_result(path, text, selection);
     }
     ToolExecutionResult::success(
         "",
         json!({
             "path": path,
-            "start_line": actual_start_line,
-            "end_line": actual_end_line,
-            "show_line_numbers": show_line_numbers,
-            "content": content,
+            "start_line": selection.actual_start_line,
+            "end_line": selection.actual_end_line,
+            "show_line_numbers": selection.show_line_numbers,
+            "content": selection.content,
         })
         .to_string(),
     )
@@ -126,6 +146,7 @@ struct ReadSelection {
     selected_line_count: usize,
     selected_char_count: usize,
     show_line_numbers: bool,
+    content: String,
 }
 
 fn oversized_read_result(path: &str, text: &str, selection: ReadSelection) -> ToolExecutionResult {

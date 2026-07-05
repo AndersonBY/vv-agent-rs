@@ -14,10 +14,10 @@ fn critical_tool_schemas_include_actionable_agent_guidance() {
     assert!(task_finish.contains("unfinished TODO"));
     assert!(task_finish.contains("runtime rejects premature finish by default"));
 
-    let file_str_replace = description(&registry, "file_str_replace");
-    assert!(file_str_replace.contains("exact `old_str`"));
-    assert!(file_str_replace.contains("Call `read_file` first"));
-    assert!(file_str_replace.contains("fails if `old_str` is not found"));
+    let edit_file = description(&registry, "edit_file");
+    assert!(edit_file.contains("exact `old_string`"));
+    assert!(edit_file.contains("Call `read_file` for the full file first"));
+    assert!(edit_file.contains("fails if `old_string` is not found"));
 
     let compress_memory = description(&registry, "compress_memory");
     assert!(compress_memory.contains("durable memory note"));
@@ -42,7 +42,7 @@ fn high_impact_tool_descriptions_use_operational_sections() {
         "list_files",
         "file_info",
         "workspace_grep",
-        "file_str_replace",
+        "edit_file",
         "bash",
         "check_background_command",
         "compress_memory",
@@ -90,10 +90,10 @@ fn high_impact_tool_descriptions_use_operational_sections() {
     assert!(file_info.contains("before deciding read ranges"));
     assert!(file_info.contains("Returns:"));
 
-    let file_str_replace = description(&registry, "file_str_replace");
-    assert!(file_str_replace.contains("Workflow:"));
-    assert!(file_str_replace.contains("never guess whitespace"));
-    assert!(file_str_replace.contains("Returns:"));
+    let edit_file = description(&registry, "edit_file");
+    assert!(edit_file.contains("Workflow:"));
+    assert!(edit_file.contains("never guess whitespace"));
+    assert!(edit_file.contains("Returns:"));
 
     let check_background = description(&registry, "check_background_command");
     assert!(check_background.contains("When to use:"));
@@ -163,7 +163,7 @@ fn every_builtin_tool_schema_has_operational_guidance_not_just_labels() {
     );
 
     let write_file = description(&registry, "write_file");
-    assert!(write_file.contains("Prefer `file_str_replace`"));
+    assert!(write_file.contains("Prefer `edit_file`"));
     assert!(write_file.contains("create parent directories"));
     assert!(write_file.contains("append=true"));
 
@@ -212,8 +212,8 @@ fn high_impact_tool_parameters_include_operational_guidance() {
             vec!["shortcut", "supported", "unknown"],
         ),
         (
-            "file_str_replace",
-            "new_str",
+            "edit_file",
+            "new_string",
             vec!["replacement", "preserve", "line endings"],
         ),
         (
@@ -396,15 +396,9 @@ fn tool_parameter_descriptions_are_operational_not_terse_labels() {
     );
     assert_property_contains(
         &registry,
-        "file_str_replace",
+        "edit_file",
         "replace_all",
         &["confirming every match", "Default false"],
-    );
-    assert_property_contains(
-        &registry,
-        "file_str_replace",
-        "max_replacements",
-        &["replace_all=false", "avoid accidental broad edits"],
     );
     assert_nested_property_contains(
         &registry,

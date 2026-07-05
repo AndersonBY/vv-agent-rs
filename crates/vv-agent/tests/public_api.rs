@@ -338,8 +338,8 @@ fn tools_handlers_module_reexports_agent_handler_functions() {
     assert_handler(vv_agent::tools::handlers::check_background_command);
     assert_handler(vv_agent::tools::handlers::compress_memory);
     assert_handler(vv_agent::tools::handlers::create_sub_task);
+    assert_handler(vv_agent::tools::handlers::edit_file);
     assert_handler(vv_agent::tools::handlers::file_info);
-    assert_handler(vv_agent::tools::handlers::file_str_replace);
     assert_handler(vv_agent::tools::handlers::list_files);
     assert_handler(vv_agent::tools::handlers::read_file);
     assert_handler(vv_agent::tools::handlers::read_image);
@@ -361,7 +361,7 @@ fn tools_handlers_module_reexports_agent_handler_functions() {
     assert_handler(vv_agent::tools::handlers::skills::activate_skill);
     assert_handler(vv_agent::tools::handlers::sub_agents::create_sub_task);
     assert_handler(vv_agent::tools::handlers::sub_task_status::sub_task_status);
-    assert_handler(vv_agent::tools::handlers::workspace::edit::file_str_replace);
+    assert_handler(vv_agent::tools::handlers::workspace::edit::edit_file);
     assert_handler(vv_agent::tools::handlers::workspace::file_io::file_info);
     assert_handler(vv_agent::tools::handlers::workspace::file_io::read_file);
     assert_handler(vv_agent::tools::handlers::workspace::file_io::write_file);
@@ -378,7 +378,7 @@ fn constants_module_exports_agent_tool_names_and_workspace_tool_list() {
     assert_eq!(constants::READ_FILE_TOOL_NAME, "read_file");
     assert_eq!(constants::WRITE_FILE_TOOL_NAME, "write_file");
     assert_eq!(constants::LIST_FILES_TOOL_NAME, "list_files");
-    assert_eq!(constants::FILE_STR_REPLACE_TOOL_NAME, "file_str_replace");
+    assert_eq!(constants::EDIT_FILE_TOOL_NAME, "edit_file");
     assert_eq!(constants::WORKSPACE_GREP_TOOL_NAME, "workspace_grep");
     assert_eq!(constants::BASH_TOOL_NAME, "bash");
     assert_eq!(
@@ -399,7 +399,7 @@ fn constants_module_exports_agent_tool_names_and_workspace_tool_list() {
             constants::FILE_INFO_TOOL_NAME,
             constants::READ_FILE_TOOL_NAME,
             constants::WRITE_FILE_TOOL_NAME,
-            constants::FILE_STR_REPLACE_TOOL_NAME,
+            constants::EDIT_FILE_TOOL_NAME,
             constants::WORKSPACE_GREP_TOOL_NAME,
             constants::COMPRESS_MEMORY_TOOL_NAME,
             constants::TODO_WRITE_TOOL_NAME,

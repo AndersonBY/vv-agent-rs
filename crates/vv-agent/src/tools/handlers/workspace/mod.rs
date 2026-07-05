@@ -2,7 +2,7 @@ pub mod edit;
 pub mod file_io;
 pub mod listing;
 
-pub use edit::file_str_replace;
+pub use edit::edit_file;
 pub use file_io::{file_info, read_file, write_file};
 pub use listing::list_files;
 

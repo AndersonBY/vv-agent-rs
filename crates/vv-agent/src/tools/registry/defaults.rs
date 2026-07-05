@@ -10,7 +10,7 @@ use crate::tools::handlers::{
     sub_task_status::sub_task_status_tool,
     todo::todo_write_tool,
     workspace::{
-        edit::file_str_replace_tool, file_io::file_info_tool, file_io::read_file_tool,
+        edit::edit_file_tool, file_io::file_info_tool, file_io::read_file_tool,
         file_io::write_file_tool, listing::list_files_tool,
     },
 };
@@ -47,8 +47,8 @@ pub fn build_default_registry() -> ToolRegistry {
         .register(write_file_tool())
         .expect("default write_file registration");
     registry
-        .register(file_str_replace_tool())
-        .expect("default file_str_replace registration");
+        .register(edit_file_tool())
+        .expect("default edit_file registration");
     registry
         .register(workspace_grep_tool())
         .expect("default workspace_grep registration");

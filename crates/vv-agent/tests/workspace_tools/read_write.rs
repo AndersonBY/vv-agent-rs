@@ -182,3 +182,101 @@ fn write_file_uses_json_truthiness_for_append_flags() {
         "alpha\nbeta\n"
     );
 }
+
+#[test]
+fn write_file_overwrite_existing_requires_read_baseline() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("overwrite.txt"), "old").expect("file");
+
+    let rejected = registry
+        .execute(
+            &ToolCall::new(
+                "overwrite_without_read",
+                "write_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("overwrite.txt")),
+                    ("content".to_string(), json!("new")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("write_file");
+    assert_eq!(rejected.status, ToolResultStatus::Error);
+    assert_eq!(rejected.error_code.as_deref(), Some("file_not_read"));
+
+    registry
+        .execute(
+            &ToolCall::new(
+                "read_before_overwrite",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!("overwrite.txt"))]),
+            ),
+            &mut context,
+        )
+        .expect("read_file");
+    let written = registry
+        .execute(
+            &ToolCall::new(
+                "overwrite_after_read",
+                "write_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("overwrite.txt")),
+                    ("content".to_string(), json!("new")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("write_file");
+    assert_eq!(written.status, ToolResultStatus::Success);
+    assert_eq!(written.metadata["operation"], json!("write_file"));
+    assert_eq!(written.metadata["changed_files"], json!(["overwrite.txt"]));
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("overwrite.txt")).expect("file"),
+        "new"
+    );
+}
+
+#[test]
+fn write_file_overwrite_rejects_file_changed_since_read() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("stale.txt"), "old").expect("file");
+    registry
+        .execute(
+            &ToolCall::new(
+                "read_stale",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!("stale.txt"))]),
+            ),
+            &mut context,
+        )
+        .expect("read_file");
+    std::fs::write(workspace.path().join("stale.txt"), "user change").expect("file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "overwrite_stale",
+                "write_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("stale.txt")),
+                    ("content".to_string(), json!("new")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("write_file");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("file_changed_since_read")
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("stale.txt")).expect("file"),
+        "user change"
+    );
+}
