@@ -328,12 +328,15 @@ credentials. By default they read the untracked
 ```bash
 VV_AGENT_RUN_LIVE_TESTS=1 \
 cargo test -p vv-agent --test live_deepseek -- --ignored
+
+VV_AGENT_RUN_LIVE_TESTS=1 \
+cargo test -p vv-agent --test live_edit_file -- --ignored --test-threads=1
 ```
 
 The live suite exercises direct runtime completion, SDK completion,
 `ask_user`, todo updates, memory notes, skill activation, workspace tools,
-image reading, foreground and background shell commands, sub-agent waiting/status checks, and
-configured sub-agent delegation.
+image reading, safe `edit_file` recovery, foreground and background shell
+commands, sub-agent waiting/status checks, and configured sub-agent delegation.
 
 ## Verification
 

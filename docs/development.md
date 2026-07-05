@@ -63,6 +63,7 @@ Live tests are skipped by default and require real provider credentials:
 ```bash
 VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored
 VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_moonshot -- --ignored
+VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_edit_file -- --ignored --test-threads=1
 ```
 
 Common environment variables:
@@ -83,7 +84,7 @@ Common environment variables:
 | Runtime hooks | `tests/runtime_cycle/hooks.rs` |
 | Execution backends and state stores | `tests/runtime_backends.rs`, `tests/state_store.rs` |
 | Tools and schemas | `tests/tools_dispatcher.rs`, `tests/tool_schema_contract.rs`, `tests/tool_planner.rs` |
-| Workspace tools/backends | `tests/workspace_tools.rs`, `tests/search_tools.rs` |
+| Workspace tools/backends | `tests/workspace_tools.rs`, `tests/search_tools.rs`, `tests/live_edit_file.rs` |
 | Memory and compaction | `tests/memory_tools.rs`, `tests/microcompact.rs`, `tests/post_compact_restore.rs` |
 | External memory provider contract | `tests/memory_provider.rs` |
 | Run events and replay | `tests/run_events_v1.rs`, `tests/event_store.rs`, `tests/session_graph_events.rs` |
