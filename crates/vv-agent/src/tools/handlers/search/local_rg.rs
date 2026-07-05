@@ -7,7 +7,7 @@ mod types;
 
 use std::process::Command;
 
-use crate::tools::common::command_output_with_executable_busy_retry;
+use crate::tools::common::{command_output_with_executable_busy_retry, sensitive_rg_exclude_globs};
 
 use command::rg_file_type_globs;
 use parse::parse_rg_json_output;
@@ -15,10 +15,10 @@ use paths::local_ignored_root_names;
 
 pub(super) use command::resolve_rg_executable;
 pub(super) use paths::is_workspace_root_path;
-pub(super) use types::{RgGrepResult, RgWorkspaceGrepRequest};
+pub(super) use types::{RgGrepResult, RgSearchFilesRequest};
 
-pub(super) fn workspace_grep_local_rg(request: RgWorkspaceGrepRequest<'_>) -> Option<RgGrepResult> {
-    let RgWorkspaceGrepRequest {
+pub(super) fn search_files_local_rg(request: RgSearchFilesRequest<'_>) -> Option<RgGrepResult> {
+    let RgSearchFilesRequest {
         context,
         path,
         glob_pattern,
@@ -26,11 +26,13 @@ pub(super) fn workspace_grep_local_rg(request: RgWorkspaceGrepRequest<'_>) -> Op
         output_mode,
         file_type,
         case_insensitive,
+        literal,
         multiline,
         before_context,
         after_context,
         include_hidden,
         include_ignored,
+        include_sensitive,
         rg_executable,
     } = request;
 
@@ -62,6 +64,9 @@ pub(super) fn workspace_grep_local_rg(request: RgWorkspaceGrepRequest<'_>) -> Op
     if case_insensitive {
         command.arg("-i");
     }
+    if literal {
+        command.arg("--fixed-strings");
+    }
     if multiline {
         command.arg("--multiline").arg("--multiline-dotall");
     }
@@ -77,6 +82,11 @@ pub(super) fn workspace_grep_local_rg(request: RgWorkspaceGrepRequest<'_>) -> Op
     }
     if !glob_pattern.trim().is_empty() && glob_pattern != "**/*" {
         command.arg("--glob").arg(glob_pattern);
+    }
+    if !include_sensitive {
+        for sensitive_glob in sensitive_rg_exclude_globs() {
+            command.arg("--glob").arg(sensitive_glob);
+        }
     }
     if base_is_workspace_root && !include_ignored {
         for root in &ignored_root_names {

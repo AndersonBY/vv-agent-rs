@@ -10,8 +10,8 @@ pub const COMPACTABLE_TOOLS: &[&str] = &[
     "read_file",
     "write_file",
     "edit_file",
-    "list_files",
-    "workspace_grep",
+    "find_files",
+    "search_files",
     "bash",
     "file_info",
 ];

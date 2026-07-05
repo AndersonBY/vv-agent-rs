@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-const WORKSPACE_GREP_DESCRIPTION: &str = r#"Search workspace files with regex (backend-style grep semantics).
+const SEARCH_FILES_DESCRIPTION: &str = r#"Search workspace file contents with regex or literal text.
 
 When to use:
 - Find symbols, text, config keys, error strings, TODOs, or call sites before deciding which files to read or edit.
@@ -8,8 +8,8 @@ When to use:
 - Narrow broad searches with `path`, `glob`, or `type` so results stay useful and fast.
 
 OUTPUT MODES:
-- `content` (default): show matching lines with optional context and line numbers.
-- `files_with_matches`: show only matching file paths.
+- `files_with_matches` (default): show only matching file paths.
+- `content`: show matching lines with optional context and line numbers.
 - `count`: show per-file match counts.
 
 FILTERS:
@@ -19,8 +19,10 @@ FILTERS:
 - default matching uses smart-case: all-lowercase patterns search case-insensitively and patterns containing uppercase stay case-sensitive.
 - `case_sensitive`: explicitly override smart-case behavior.
 - `multiline`: let `.` match newlines and allow multi-line patterns.
+- `literal`: search for exact text instead of regex.
 - `include_hidden`: include hidden files/directories.
 - `include_ignored`: include common dependency/cache roots at workspace root.
+- `include_sensitive`: include paths that look like secrets or credentials. Default false.
 
 CONTENT OPTIONS (only for `content` mode):
 - `b`: lines before each match.
@@ -29,33 +31,37 @@ CONTENT OPTIONS (only for `content` mode):
 - `n`: include line numbers.
 
 LIMITING:
-- `head_limit`: return only first N output rows/entries
+- `offset`: skip the first N result rows/entries.
+- `head_limit`: return only first N output rows/entries. Default 250; 0 means unlimited subject to hard caps.
 
 Returns:
 - Matching content rows, file paths, or counts according to `output_mode`.
 - Truncation metadata such as `content_truncated`, `structured_truncated`, `structured_item_limit`, and `structured_char_limit` when output is capped."#;
 
-pub(in crate::tools::schemas) fn workspace_grep_schema() -> Value {
+pub(in crate::tools::schemas) fn search_files_schema() -> Value {
     json!({
         "type": "function",
         "function": {
-            "name": "workspace_grep",
-            "description": WORKSPACE_GREP_DESCRIPTION,
+            "name": "search_files",
+            "description": SEARCH_FILES_DESCRIPTION,
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "description": "Regex pattern to search for; escape regex metacharacters when searching for literal text such as dots, brackets, or file extensions."},
+                    "pattern": {"type": "string", "description": "Regex pattern to search for, or exact text when `literal=true`. Escape regex metacharacters when `literal=false` and searching for literal dots, brackets, or file extensions."},
                     "path": {"type": "string", "description": "Optional search root or single file path. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'. A single file path searches that file directly, even if it is hidden or under an ignored root."},
                     "glob": {"type": "string", "description": "Optional file glob filter such as `**/*.rs` or `docs/**/*.md`. Use it to narrow by filename, path segment, or extension before running broad regex searches. Default **/*."},
                     "include_hidden": {"type": "boolean", "description": "Whether hidden files and dotfiles are included. Default false; set true only when explicitly searching hidden project files such as .env.example, .github, or dot-directories."},
                     "include_ignored": {"type": "boolean", "description": "When searching workspace root, include files under common dependency/cache directories. Default false; set true only when explicitly inspecting generated, dependency, cache, or build-output paths."},
-                    "output_mode": {"type": "string", "enum": ["content", "files_with_matches", "count"], "description": "Search output mode. `content` returns matching lines for inspection, `files_with_matches` returns matching paths for a follow-up read/search, and `count` returns per-file match counts. Default is 'content'."},
+                    "include_sensitive": {"type": "boolean", "description": "Include files whose paths look like secrets, credentials, keys, tokens, or private config. Default false."},
+                    "output_mode": {"type": "string", "enum": ["files_with_matches", "content", "count"], "description": "Search output mode. `files_with_matches` returns matching paths for a follow-up read/search, `content` returns matching lines for inspection, and `count` returns per-file match counts. Default is 'files_with_matches'."},
+                    "literal": {"type": "boolean", "description": "Search for the exact pattern text instead of interpreting it as a regex. Default false."},
                     "b": {"type": "integer", "description": "Lines before each match. Only used in content mode. Use when each match needs leading context, such as a function signature, heading, import block, or preceding error line."},
                     "a": {"type": "integer", "description": "Lines after each match. Only used in content mode. Use when each match needs following context, such as a function body, config value, stack trace continuation, or adjacent TODO detail."},
                     "c": {"type": "integer", "description": "Context lines before and after each match. Overrides b/a. Use this instead of separate b/a values when symmetric context is enough to decide the next read or edit."},
                     "n": {"type": "boolean", "description": "Whether to include line numbers in content output. Default true."},
                     "type": {"type": "string", "description": "File type shortcut (e.g. py/js/ts/md/json). Unsupported or unknown shortcuts return a structured error listing supported values."},
-                    "head_limit": {"type": "integer", "minimum": 1, "description": "Cap output to the first N rows or entries. Use this for broad searches, then run a narrower follow-up query if matches are truncated."},
+                    "offset": {"type": "integer", "minimum": 0, "description": "Number of result rows or entries to skip before returning results. Default 0."},
+                    "head_limit": {"type": "integer", "minimum": 0, "description": "Cap output to the first N rows or entries. Default 250. Use 0 for unlimited output subject to hard caps. Use this for broad searches, then run a narrower follow-up query if matches are truncated."},
                     "multiline": {"type": "boolean", "description": "Enable multiline regex mode. Use for patterns that intentionally span line breaks, such as adjacent JSON fields, multi-line imports, or repeated prompt blocks."},
                     "case_sensitive": {"type": "boolean", "description": "Explicitly override smart-case behavior. Set true when literal casing matters, false when you need forced case-insensitive matching."}
                 },

@@ -12,27 +12,27 @@ use crate::tools::base::{ToolContext, ToolSpec};
 use crate::types::{ToolArguments, ToolExecutionResult};
 
 use error::grep_error;
-use execution::execute_workspace_grep;
-use request::parse_workspace_grep_request;
+use execution::execute_search_files;
+use request::parse_search_files_request;
 
-pub fn workspace_grep(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
-    let spec = workspace_grep_tool();
+pub fn search_files(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
+    let spec = search_files_tool();
     (spec.handler)(context, arguments)
 }
 
-pub(crate) fn workspace_grep_tool() -> ToolSpec {
+pub(crate) fn search_files_tool() -> ToolSpec {
     let mut spec = ToolSpec::new(
-        "workspace_grep",
-        "Search workspace files with grep-style semantics.",
+        "search_files",
+        "Search workspace file contents with grep-style semantics.",
         Arc::new(|context, arguments| {
-            let request = match parse_workspace_grep_request(arguments) {
+            let request = match parse_search_files_request(arguments) {
                 Ok(request) => request,
                 Err(error) => return grep_error(error),
             };
-            execute_workspace_grep(context, request)
+            execute_search_files(context, request)
         }),
     );
-    if let Some(schema) = crate::tools::schemas::schema_for("workspace_grep") {
+    if let Some(schema) = crate::tools::schemas::schema_for("search_files") {
         spec.schema = schema;
     }
     spec

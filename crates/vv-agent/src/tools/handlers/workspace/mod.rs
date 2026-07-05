@@ -4,7 +4,7 @@ pub mod listing;
 
 pub use edit::edit_file;
 pub use file_io::{file_info, read_file, write_file};
-pub use listing::list_files;
+pub use listing::find_files;
 
 use std::io::ErrorKind;
 

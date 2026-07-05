@@ -1,23 +1,24 @@
 use std::process::Command;
 
 use crate::tools::common::{
-    command_output_with_executable_busy_retry, workspace_relative_path_or_absolute,
+    command_output_with_executable_busy_retry, is_sensitive_path,
+    workspace_relative_path_or_absolute,
 };
 use crate::workspace::{glob_match, normalized_glob_pattern};
 
 use super::paths::normalize_rg_relative_path;
-use super::types::{RgListFilesRequest, RgListFilesResult};
+use super::types::{RgFindFilesRequest, RgFindFilesResult};
 
-pub(super) fn list_files_local_rg(request: RgListFilesRequest<'_>) -> Option<RgListFilesResult> {
-    let RgListFilesRequest {
+pub(super) fn find_files_local_rg(request: RgFindFilesRequest<'_>) -> Option<RgFindFilesResult> {
+    let RgFindFilesRequest {
         context,
         base_path,
         base_is_workspace_root,
         glob,
         include_hidden,
         include_ignored,
+        include_sensitive,
         ignored_root_names,
-        max_results,
         scan_limit,
         rg_executable,
     } = request;
@@ -50,6 +51,7 @@ pub(super) fn list_files_local_rg(request: RgListFilesRequest<'_>) -> Option<RgL
     let mut files = Vec::new();
     let mut matched_count = 0usize;
     let mut scanned_count = 0usize;
+    let mut sensitive_files_omitted = 0usize;
     let mut scan_limited = false;
 
     for raw_entry in output.stdout.split(|byte| *byte == b'\0') {
@@ -65,22 +67,24 @@ pub(super) fn list_files_local_rg(request: RgListFilesRequest<'_>) -> Option<RgL
         if rel_from_base.is_empty() || !glob_match(&rel_from_base, &glob_pattern) {
             continue;
         }
-        matched_count += 1;
-        if files.len() < max_results {
-            let output_path = workspace_relative_path_or_absolute(
-                &context.workspace,
-                &base_path.join(&rel_from_base),
-            );
-            files.push(output_path);
+        let output_path = workspace_relative_path_or_absolute(
+            &context.workspace,
+            &base_path.join(&rel_from_base),
+        );
+        if !include_sensitive && is_sensitive_path(&output_path) {
+            sensitive_files_omitted += 1;
+            continue;
         }
+        matched_count += 1;
+        files.push(output_path);
     }
 
-    files.sort();
     let truncated = matched_count > files.len() || scan_limited;
-    Some(RgListFilesResult {
+    Some(RgFindFilesResult {
         files,
         total_count: matched_count,
         truncated,
         scan_limited,
+        sensitive_files_omitted,
     })
 }

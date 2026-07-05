@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::tools::base::ToolContext;
 
-use super::{workspace_grep_local_rg, RgWorkspaceGrepRequest};
+use super::{search_files_local_rg, RgSearchFilesRequest};
 
 fn write_fake_rg(workspace: &Path, script: &str) -> PathBuf {
     let fake_rg = workspace.join("fake-rg");
@@ -22,8 +22,8 @@ fn rg_request<'a>(
     context: &'a ToolContext,
     rg_executable: &'a Path,
     output_mode: &'a str,
-) -> RgWorkspaceGrepRequest<'a> {
-    RgWorkspaceGrepRequest {
+) -> RgSearchFilesRequest<'a> {
+    RgSearchFilesRequest {
         context,
         path: ".",
         glob_pattern: "**/*",
@@ -31,17 +31,19 @@ fn rg_request<'a>(
         output_mode,
         file_type: Some("py"),
         case_insensitive: true,
+        literal: false,
         multiline: false,
         before_context: 0,
         after_context: 0,
         include_hidden: false,
         include_ignored: false,
+        include_sensitive: false,
         rg_executable,
     }
 }
 
 #[test]
-fn workspace_grep_rg_fast_path_parses_json_and_type_filter() {
+fn search_files_rg_fast_path_parses_json_and_type_filter() {
     let workspace = tempfile::tempdir().expect("workspace");
     std::fs::write(workspace.path().join("a.py"), "token = 1\n").expect("a");
     std::fs::write(workspace.path().join("b.py"), "token = 2\n").expect("b");
@@ -55,23 +57,23 @@ printf '%s\n' \
 '{"type":"begin","data":{"path":{"text":"b.py"}}}' \
 '{"type":"match","data":{"path":{"text":"b.py"},"lines":{"text":"token = 2\n"},"line_number":1,"submatches":[{"start":0,"end":5}]}}' \
 '{"type":"end","data":{"path":{"text":"b.py"}}}' \
-'{"type":"summary","data":{}}'
+'{"type":"summary","data":{"stats":{"searches":7}}}'
 "#,
     );
 
     let context = ToolContext::new(workspace.path());
-    let result = workspace_grep_local_rg(rg_request(&context, &fake_rg, "files_with_matches"))
+    let result = search_files_local_rg(rg_request(&context, &fake_rg, "files_with_matches"))
         .expect("rg result");
 
     assert_eq!(result.files_with_matches, vec!["a.py", "b.py"]);
     assert_eq!(result.total_matches, 2);
-    assert_eq!(result.files_searched, 2);
+    assert_eq!(result.files_searched, 7);
     assert_eq!(result.file_counts["a.py"], 1);
     assert_eq!(result.file_counts["b.py"], 1);
 }
 
 #[test]
-fn workspace_grep_rg_fast_path_accepts_returncode_2_with_results() {
+fn search_files_rg_fast_path_accepts_returncode_2_with_results() {
     let workspace = tempfile::tempdir().expect("workspace");
     std::fs::write(workspace.path().join("a.py"), "no token here\n").expect("a");
     let fake_rg = write_fake_rg(
@@ -88,7 +90,7 @@ exit 2
     let context = ToolContext::new(workspace.path());
     let mut request = rg_request(&context, &fake_rg, "content");
     request.pattern = "Agent";
-    let result = workspace_grep_local_rg(request).expect("rg result");
+    let result = search_files_local_rg(request).expect("rg result");
 
     assert_eq!(result.total_matches, 1);
     assert_eq!(result.rows[0]["path"], "a.py");
@@ -96,12 +98,12 @@ exit 2
 }
 
 #[test]
-fn workspace_grep_rg_fast_path_returns_none_on_hard_error() {
+fn search_files_rg_fast_path_returns_none_on_hard_error() {
     let workspace = tempfile::tempdir().expect("workspace");
     let fake_rg = write_fake_rg(workspace.path(), "#!/bin/sh\nexit 3\n");
 
     let context = ToolContext::new(workspace.path());
-    let result = workspace_grep_local_rg(rg_request(&context, &fake_rg, "content"));
+    let result = search_files_local_rg(rg_request(&context, &fake_rg, "content"));
 
     assert!(result.is_none());
 }

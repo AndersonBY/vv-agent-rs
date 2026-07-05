@@ -293,7 +293,7 @@ development and tests. See `crates/vv-agent/examples/23_distributed_backend.rs`.
 All built-in file tools go through `WorkspaceBackend`. That keeps local files,
 memory-backed files, and S3-compatible object storage on the same tool contract.
 
-`list_files` and `workspace_grep` include safety defaults for large workspaces:
+`find_files` and `search_files` include safety defaults for large workspaces:
 bounded result counts, hidden/dependency directory filtering, explicit ignored
 path inclusion, and local `rg` acceleration when available.
 

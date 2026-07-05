@@ -29,10 +29,10 @@ pub fn todo_prompt(language: &str) -> &'static str {
 pub fn tool_priority_prompt(language: &str) -> &'static str {
     match language {
         "zh-CN" => {
-            "工具优先级: 优先使用专用工具而不是 shell. 读取用 `read_file`, 写入用 `write_file`, 编辑用 `edit_file`, 搜索用 `workspace_grep`. 仅在专用工具不足时使用 `bash`."
+            "工具优先级: 优先使用专用工具而不是 shell. 查找候选文件用 `find_files`, 读取用 `read_file`, 搜索文件内容用 `search_files`, 写入用 `write_file`, 编辑用 `edit_file`. 仅在专用工具不足时使用 `bash`."
         }
         _ => {
-            "Tool priority: prefer specialized tools over shell commands. Read with `read_file`, write with `write_file`, edit with `edit_file`, search with `workspace_grep`. Use `bash` only when specialized tools are insufficient."
+            "Tool priority: prefer specialized tools over shell commands. Find candidate files with `find_files`, read with `read_file`, search file contents with `search_files`, write with `write_file`, edit with `edit_file`. Use `bash` only when specialized tools are insufficient."
         }
     }
 }
@@ -56,12 +56,12 @@ pub fn current_time_prompt(language: &str) -> &'static str {
 
 pub fn render_workspace_tools(language: &str) -> String {
     let tools = [
-        "list_files",
+        "find_files",
         "file_info",
         "read_file",
         "write_file",
         "edit_file",
-        "workspace_grep",
+        "search_files",
         "read_image",
         "bash",
         "check_background_command",

@@ -7,10 +7,10 @@ use super::format::{
     MAX_STRUCTURED_CHARS, MAX_STRUCTURED_ITEMS,
 };
 use super::local_rg::RgGrepResult;
-use super::request::WorkspaceGrepRequest;
+use super::request::SearchFilesRequest;
 
-pub(super) fn workspace_grep_success_response(
-    request: &WorkspaceGrepRequest,
+pub(super) fn search_files_success_response(
+    request: &SearchFilesRequest,
     mut result: RgGrepResult,
 ) -> ToolExecutionResult {
     result.files_with_matches.sort();
@@ -20,26 +20,32 @@ pub(super) fn workspace_grep_success_response(
         "count" => result.file_counts.len(),
         _ => result.rows.len(),
     };
-    let mut head_limited = false;
-    let structured_capped;
-    if let Some(limit) = request.head_limit {
-        match request.output_mode.as_str() {
-            "files_with_matches" => {
-                head_limited = result.files_with_matches.len() > limit;
-                result.files_with_matches.truncate(limit);
-            }
-            "count" => {
-                head_limited = result.file_counts.len() > limit;
-                if head_limited {
-                    result.file_counts = result.file_counts.into_iter().take(limit).collect();
-                }
-            }
-            _ => {
-                head_limited = result.rows.len() > limit;
-                result.rows.truncate(limit);
-            }
+    let head_limited;
+    match request.output_mode.as_str() {
+        "files_with_matches" => {
+            let (start, end, limited) = slice_bounds(
+                result.files_with_matches.len(),
+                request.offset,
+                request.head_limit,
+            );
+            head_limited = limited;
+            result.files_with_matches = result.files_with_matches[start..end].to_vec();
+        }
+        "count" => {
+            let count_items = result.file_counts.into_iter().collect::<Vec<_>>();
+            let (start, end, limited) =
+                slice_bounds(count_items.len(), request.offset, request.head_limit);
+            head_limited = limited;
+            result.file_counts = count_items[start..end].iter().cloned().collect();
+        }
+        _ => {
+            let (start, end, limited) =
+                slice_bounds(result.rows.len(), request.offset, request.head_limit);
+            head_limited = limited;
+            result.rows = result.rows[start..end].to_vec();
         }
     }
+    let structured_capped;
     match request.output_mode.as_str() {
         "files_with_matches" => {
             let (capped_files, capped) = cap_file_paths(result.files_with_matches);
@@ -67,7 +73,12 @@ pub(super) fn workspace_grep_success_response(
     let mut payload = json!({
         "summary": summary,
         "pattern": request.pattern.clone(),
+        "path": request.path.clone(),
+        "glob": request.glob_pattern.clone(),
+        "type": request.file_type.clone(),
         "output_mode": request.output_mode.clone(),
+        "literal": request.literal,
+        "offset": request.offset,
         "head_limit": request.head_limit,
         "head_limited": head_limited,
         "total_result_items": total_result_items,
@@ -79,6 +90,7 @@ pub(super) fn workspace_grep_success_response(
         "content_truncated": false,
         "structured_truncated": structured_truncated,
         "truncated": structured_truncated,
+        "sensitive_files_omitted": result.sensitive_files_omitted,
     });
     if structured_capped {
         payload["structured_item_limit"] = json!(MAX_STRUCTURED_ITEMS);
@@ -119,4 +131,15 @@ pub(super) fn workspace_grep_success_response(
         image_url: None,
         image_path: None,
     }
+}
+
+fn slice_bounds(total: usize, offset: usize, head_limit: usize) -> (usize, usize, bool) {
+    if offset >= total {
+        return (total, total, false);
+    }
+    if head_limit == 0 {
+        return (offset, total, false);
+    }
+    let end = offset.saturating_add(head_limit).min(total);
+    (offset, end, end < total)
 }

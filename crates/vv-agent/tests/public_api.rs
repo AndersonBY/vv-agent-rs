@@ -340,7 +340,7 @@ fn tools_handlers_module_reexports_agent_handler_functions() {
     assert_handler(vv_agent::tools::handlers::create_sub_task);
     assert_handler(vv_agent::tools::handlers::edit_file);
     assert_handler(vv_agent::tools::handlers::file_info);
-    assert_handler(vv_agent::tools::handlers::list_files);
+    assert_handler(vv_agent::tools::handlers::find_files);
     assert_handler(vv_agent::tools::handlers::read_file);
     assert_handler(vv_agent::tools::handlers::read_image);
     assert_handler(vv_agent::tools::handlers::run_bash_command);
@@ -348,7 +348,7 @@ fn tools_handlers_module_reexports_agent_handler_functions() {
     assert_handler(vv_agent::tools::handlers::task_finish);
     assert_handler(vv_agent::tools::handlers::todo_read);
     assert_handler(vv_agent::tools::handlers::todo_write);
-    assert_handler(vv_agent::tools::handlers::workspace_grep);
+    assert_handler(vv_agent::tools::handlers::search_files);
     assert_handler(vv_agent::tools::handlers::write_file);
 
     assert_handler(vv_agent::tools::handlers::background::check_background_command);
@@ -357,7 +357,7 @@ fn tools_handlers_module_reexports_agent_handler_functions() {
     assert_handler(vv_agent::tools::handlers::control::task_finish);
     assert_handler(vv_agent::tools::handlers::image::read_image);
     assert_handler(vv_agent::tools::handlers::memory::compress_memory);
-    assert_handler(vv_agent::tools::handlers::search::workspace_grep);
+    assert_handler(vv_agent::tools::handlers::search::search_files);
     assert_handler(vv_agent::tools::handlers::skills::activate_skill);
     assert_handler(vv_agent::tools::handlers::sub_agents::create_sub_task);
     assert_handler(vv_agent::tools::handlers::sub_task_status::sub_task_status);
@@ -365,7 +365,7 @@ fn tools_handlers_module_reexports_agent_handler_functions() {
     assert_handler(vv_agent::tools::handlers::workspace::file_io::file_info);
     assert_handler(vv_agent::tools::handlers::workspace::file_io::read_file);
     assert_handler(vv_agent::tools::handlers::workspace::file_io::write_file);
-    assert_handler(vv_agent::tools::handlers::workspace::listing::list_files);
+    assert_handler(vv_agent::tools::handlers::workspace::listing::find_files);
 }
 
 #[test]
@@ -377,9 +377,9 @@ fn constants_module_exports_agent_tool_names_and_workspace_tool_list() {
     assert_eq!(constants::TASK_FINISH_TOOL_NAME, "task_finish");
     assert_eq!(constants::READ_FILE_TOOL_NAME, "read_file");
     assert_eq!(constants::WRITE_FILE_TOOL_NAME, "write_file");
-    assert_eq!(constants::LIST_FILES_TOOL_NAME, "list_files");
+    assert_eq!(constants::FIND_FILES_TOOL_NAME, "find_files");
     assert_eq!(constants::EDIT_FILE_TOOL_NAME, "edit_file");
-    assert_eq!(constants::WORKSPACE_GREP_TOOL_NAME, "workspace_grep");
+    assert_eq!(constants::SEARCH_FILES_TOOL_NAME, "search_files");
     assert_eq!(constants::BASH_TOOL_NAME, "bash");
     assert_eq!(
         constants::CHECK_BACKGROUND_COMMAND_TOOL_NAME,
@@ -395,12 +395,12 @@ fn constants_module_exports_agent_tool_names_and_workspace_tool_list() {
     assert_eq!(
         constants::WORKSPACE_TOOLS,
         [
-            constants::LIST_FILES_TOOL_NAME,
+            constants::FIND_FILES_TOOL_NAME,
             constants::FILE_INFO_TOOL_NAME,
             constants::READ_FILE_TOOL_NAME,
             constants::WRITE_FILE_TOOL_NAME,
             constants::EDIT_FILE_TOOL_NAME,
-            constants::WORKSPACE_GREP_TOOL_NAME,
+            constants::SEARCH_FILES_TOOL_NAME,
             constants::COMPRESS_MEMORY_TOOL_NAME,
             constants::TODO_WRITE_TOOL_NAME,
         ]
@@ -434,7 +434,7 @@ fn constants_module_exports_agent_tool_names_and_workspace_tool_list() {
     );
     assert_eq!(
         constants::workspace::WORKSPACE_TOOLS[0],
-        constants::LIST_FILES_TOOL_NAME
+        constants::FIND_FILES_TOOL_NAME
     );
     assert!(constants::workspace::get_default_tool_schemas()
         .contains_key(constants::TASK_FINISH_TOOL_NAME));
@@ -465,7 +465,8 @@ fn constants_module_exports_agent_tool_names_and_workspace_tool_list() {
 #[test]
 fn memory_module_exports_compactable_tools() {
     assert!(vv_agent::memory::COMPACTABLE_TOOLS.contains(&"read_file"));
-    assert!(vv_agent::memory::COMPACTABLE_TOOLS.contains(&"workspace_grep"));
+    assert!(vv_agent::memory::COMPACTABLE_TOOLS.contains(&"find_files"));
+    assert!(vv_agent::memory::COMPACTABLE_TOOLS.contains(&"search_files"));
 }
 
 #[test]
@@ -474,7 +475,8 @@ fn memory_submodules_match_agent_import_paths() {
         vv_agent::memory::errors::CompactionExhaustedError::new(2, Some("last".to_string()));
     let _manager_config = vv_agent::memory::manager::MemoryManagerConfig::default();
     let _microcompact_config = vv_agent::memory::microcompact::MicrocompactConfig::default();
-    assert!(vv_agent::memory::microcompact::COMPACTABLE_TOOLS.contains(&"workspace_grep"));
+    assert!(vv_agent::memory::microcompact::COMPACTABLE_TOOLS.contains(&"find_files"));
+    assert!(vv_agent::memory::microcompact::COMPACTABLE_TOOLS.contains(&"search_files"));
     let _restore_config =
         vv_agent::memory::post_compact_restore::PostCompactRestoreConfig::default();
     let _session_config = vv_agent::memory::session_memory::SessionMemoryConfig::default();

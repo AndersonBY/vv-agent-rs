@@ -14,6 +14,7 @@ pub(super) struct RgJsonState {
     file_counts: BTreeMap<String, usize>,
     line_rows: BTreeMap<(String, u64), Value>,
     content_rows: Vec<Value>,
+    summary_searches: Option<usize>,
 }
 
 impl RgJsonState {
@@ -26,11 +27,15 @@ impl RgJsonState {
             file_counts: BTreeMap::new(),
             line_rows: BTreeMap::new(),
             content_rows: Vec::new(),
+            summary_searches: None,
         }
     }
 
     pub fn record(&mut self, event: RgJsonEvent) {
         match event {
+            RgJsonEvent::Summary { searches } => {
+                self.summary_searches = searches;
+            }
             RgJsonEvent::Begin { path } => {
                 self.searched_files.insert(path);
             }
@@ -58,7 +63,9 @@ impl RgJsonState {
 
         let files_with_matches = self.files_with_matches.into_iter().collect::<Vec<_>>();
         let total_matches = self.file_counts.values().sum();
-        let files_searched = if self.searched_files.is_empty() {
+        let files_searched = if let Some(searches) = self.summary_searches {
+            searches
+        } else if self.searched_files.is_empty() {
             files_with_matches.len()
         } else {
             self.searched_files.len()
@@ -70,6 +77,7 @@ impl RgJsonState {
             files_with_matches,
             file_counts: self.file_counts,
             rows: self.content_rows,
+            sensitive_files_omitted: 0,
         }
     }
 

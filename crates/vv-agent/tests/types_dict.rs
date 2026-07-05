@@ -233,7 +233,7 @@ fn message_dict_round_trips_agent_openai_style_tool_calls() {
                 "id": "call_1",
                 "type": "function",
                 "function": {
-                    "name": "default_api:list_files",
+                    "name": "default_api:find_files",
                     "arguments": "{\"path\":\".\"}"
                 },
                 "extra_content": {
@@ -246,7 +246,7 @@ fn message_dict_round_trips_agent_openai_style_tool_calls() {
     let message = Message::from_dict(&payload).expect("message from dict");
 
     assert_eq!(message.tool_calls[0].id, "call_1");
-    assert_eq!(message.tool_calls[0].name, "default_api:list_files");
+    assert_eq!(message.tool_calls[0].name, "default_api:find_files");
     assert_eq!(message.tool_calls[0].arguments["path"], json!("."));
     assert_eq!(
         message.tool_calls[0]
@@ -259,7 +259,7 @@ fn message_dict_round_trips_agent_openai_style_tool_calls() {
     let serialized = message.to_dict();
     assert_eq!(
         serialized["tool_calls"][0]["function"]["name"],
-        json!("default_api:list_files")
+        json!("default_api:find_files")
     );
     assert_eq!(
         serialized["tool_calls"][0]["function"]["arguments"],

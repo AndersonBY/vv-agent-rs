@@ -5,6 +5,7 @@ mod grep;
 mod paths;
 mod process;
 mod result;
+mod sensitive_paths;
 
 pub(crate) use args::{coerce_bool, coerce_truthy_arg, parse_integer_arg, stringify_tool_arg};
 pub(crate) use edit::replace_n;
@@ -18,4 +19,7 @@ pub(crate) use paths::{
 pub(crate) use process::command_output_with_executable_busy_retry;
 pub(crate) use result::{
     path_escapes_workspace_error, tool_error, tool_error_with_code, tool_result,
+};
+pub(crate) use sensitive_paths::{
+    is_sensitive_path, sensitive_path_is_covered_by_rg_excludes, sensitive_rg_exclude_globs,
 };

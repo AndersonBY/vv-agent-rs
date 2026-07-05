@@ -81,7 +81,7 @@ fn vv_llm_client_preserves_reasoning_and_tool_extra_content_through_vv_llm() {
     assistant.reasoning_content = Some("old-thought".to_string());
     let mut call = vv_agent::ToolCall::new(
         "call_1",
-        "default_api:list_files",
+        "default_api:find_files",
         [("path".to_string(), json!("."))].into_iter().collect(),
     );
     call.extra_content = Some(json!({"google": {"thought_signature": "sig_123"}}));

@@ -4,14 +4,14 @@ use crate::tools::handlers::{
     control::{ask_user_tool, task_finish_tool},
     image::read_image_tool,
     memory::compress_memory_tool,
-    search::workspace_grep_tool,
+    search::search_files_tool,
     skills::activate_skill_tool,
     sub_agents::create_sub_task_tool,
     sub_task_status::sub_task_status_tool,
     todo::todo_write_tool,
     workspace::{
         edit::edit_file_tool, file_io::file_info_tool, file_io::read_file_tool,
-        file_io::write_file_tool, listing::list_files_tool,
+        file_io::write_file_tool, listing::find_files_tool,
     },
 };
 
@@ -35,8 +35,8 @@ pub fn build_default_registry() -> ToolRegistry {
         .register(compress_memory_tool())
         .expect("default compress_memory registration");
     registry
-        .register(list_files_tool())
-        .expect("default list_files registration");
+        .register(find_files_tool())
+        .expect("default find_files registration");
     registry
         .register(file_info_tool())
         .expect("default file_info registration");
@@ -50,8 +50,8 @@ pub fn build_default_registry() -> ToolRegistry {
         .register(edit_file_tool())
         .expect("default edit_file registration");
     registry
-        .register(workspace_grep_tool())
-        .expect("default workspace_grep registration");
+        .register(search_files_tool())
+        .expect("default search_files registration");
     registry
         .register(bash_tool())
         .expect("default bash registration");

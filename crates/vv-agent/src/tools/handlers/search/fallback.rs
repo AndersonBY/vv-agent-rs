@@ -1,15 +1,16 @@
 use crate::tools::common::{
-    grep_text, is_hidden_path, is_ignored_root, matches_file_type, GrepTextOptions,
+    grep_text, is_hidden_path, is_ignored_root, is_sensitive_path, matches_file_type,
+    GrepTextOptions,
 };
 use crate::workspace::WorkspaceBackend;
 
 use super::execution::empty_grep_result;
 use super::local_rg::{is_workspace_root_path, RgGrepResult};
-use super::request::WorkspaceGrepRequest;
+use super::request::SearchFilesRequest;
 
-pub(super) fn workspace_grep_fallback(
+pub(super) fn search_files_fallback(
     backend: &dyn WorkspaceBackend,
-    request: &WorkspaceGrepRequest,
+    request: &SearchFilesRequest,
     explicit_file_target: bool,
 ) -> Result<RgGrepResult, String> {
     let candidate_files = if explicit_file_target {
@@ -34,6 +35,10 @@ pub(super) fn workspace_grep_fallback(
 
     let mut result = empty_grep_result();
     for (read_path, relative_path) in candidate_files {
+        if !request.include_sensitive && is_sensitive_path(&relative_path) {
+            result.sensitive_files_omitted += 1;
+            continue;
+        }
         if !explicit_file_target && !request.include_hidden && is_hidden_path(&relative_path) {
             continue;
         }

@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn default_workspace_tools_can_write_read_edit_and_list_files() {
+fn default_workspace_tools_can_write_read_edit_and_find_files() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -63,7 +63,7 @@ fn default_workspace_tools_can_write_read_edit_and_list_files() {
 
     let list = registry
         .execute(
-            &ToolCall::new("list_1", "list_files", BTreeMap::new()),
+            &ToolCall::new("list_1", "find_files", BTreeMap::new()),
             &mut context,
         )
         .expect("list tool");
@@ -261,7 +261,7 @@ fn workspace_file_tools_coerce_scalar_path_and_glob() {
         .execute(
             &ToolCall::new(
                 "list_scalar_path_glob",
-                "list_files",
+                "find_files",
                 BTreeMap::from([
                     ("path".to_string(), json!(456)),
                     ("glob".to_string(), json!(123)),
@@ -269,7 +269,7 @@ fn workspace_file_tools_coerce_scalar_path_and_glob() {
             ),
             &mut context,
         )
-        .expect("list_files");
+        .expect("find_files");
     let list_payload: Value = serde_json::from_str(&list.content).expect("list payload");
     assert_eq!(list_payload["files"], json!(["456/123"]));
 }

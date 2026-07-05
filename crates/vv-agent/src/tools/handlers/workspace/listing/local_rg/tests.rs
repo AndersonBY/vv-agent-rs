@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use crate::tools::base::ToolContext;
 
-use super::scan::list_files_local_rg;
-use super::types::RgListFilesRequest;
+use super::scan::find_files_local_rg;
+use super::types::RgFindFilesRequest;
 
 fn write_fake_rg(workspace: &Path, script: &str) -> PathBuf {
     use std::io::Write as _;
@@ -21,7 +21,7 @@ fn write_fake_rg(workspace: &Path, script: &str) -> PathBuf {
 }
 
 #[test]
-fn list_files_rg_fast_path_normalizes_dot_slash_glob_matches() {
+fn find_files_rg_fast_path_normalizes_dot_slash_glob_matches() {
     let workspace = tempfile::tempdir().expect("workspace");
     let fake_rg = write_fake_rg(
         workspace.path(),
@@ -29,15 +29,15 @@ fn list_files_rg_fast_path_normalizes_dot_slash_glob_matches() {
     );
 
     let context = ToolContext::new(workspace.path());
-    let result = list_files_local_rg(RgListFilesRequest {
+    let result = find_files_local_rg(RgFindFilesRequest {
         context: &context,
         base_path: workspace.path(),
         base_is_workspace_root: true,
         glob: "*.md",
         include_hidden: false,
         include_ignored: false,
+        include_sensitive: false,
         ignored_root_names: &[],
-        max_results: 10,
         scan_limit: 100,
         rg_executable: &fake_rg,
     })
@@ -50,7 +50,7 @@ fn list_files_rg_fast_path_normalizes_dot_slash_glob_matches() {
 }
 
 #[test]
-fn list_files_rg_scan_limited_count_reports_matched_items() {
+fn find_files_rg_scan_limited_count_reports_matched_items() {
     let workspace = tempfile::tempdir().expect("workspace");
     let fake_rg = write_fake_rg(
         workspace.path(),
@@ -58,15 +58,15 @@ fn list_files_rg_scan_limited_count_reports_matched_items() {
     );
 
     let context = ToolContext::new(workspace.path());
-    let result = list_files_local_rg(RgListFilesRequest {
+    let result = find_files_local_rg(RgFindFilesRequest {
         context: &context,
         base_path: workspace.path(),
         base_is_workspace_root: true,
         glob: "*.md",
         include_hidden: false,
         include_ignored: false,
+        include_sensitive: false,
         ignored_root_names: &[],
-        max_results: 10,
         scan_limit: 3,
         rg_executable: &fake_rg,
     })

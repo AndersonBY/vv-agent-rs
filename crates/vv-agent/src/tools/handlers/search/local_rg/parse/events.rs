@@ -9,6 +9,9 @@ use super::decode::decode_rg_field;
 use super::paths::normalize_rg_relative_path;
 
 pub(super) enum RgJsonEvent {
+    Summary {
+        searches: Option<usize>,
+    },
     Begin {
         path: String,
     },
@@ -42,10 +45,17 @@ impl RgJsonEvent {
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if event_type == "summary" {
-            return None;
-        }
         let data = event.get("data").and_then(Value::as_object)?;
+        if event_type == "summary" {
+            return Some(Self::Summary {
+                searches: data
+                    .get("stats")
+                    .and_then(Value::as_object)
+                    .and_then(|stats| stats.get("searches"))
+                    .and_then(Value::as_u64)
+                    .map(|value| value as usize),
+            });
+        }
         let path = event_workspace_path(context, base_path, file_type, data.get("path"))?;
         match event_type {
             "begin" => Some(Self::Begin { path }),

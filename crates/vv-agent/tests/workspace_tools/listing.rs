@@ -1,7 +1,106 @@
 use super::*;
 
 #[test]
-fn list_files_skips_common_dependency_roots_by_default() {
+fn find_files_supports_offset_sort_and_sensitive_filter() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("first.txt"), "1").expect("first");
+    std::fs::write(workspace.path().join("second.txt"), "2").expect("second");
+    std::fs::write(workspace.path().join(".env"), "SECRET=1").expect("env");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "find_page",
+                "find_files",
+                BTreeMap::from([
+                    ("glob".to_string(), json!("*.txt")),
+                    ("sort".to_string(), json!("path_asc")),
+                    ("offset".to_string(), json!(1)),
+                    ("max_results".to_string(), json!(1)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("find page");
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(payload["files"], json!(["second.txt"]));
+    assert_eq!(payload["sort"], "path_asc");
+    assert_eq!(payload["offset"], 1);
+
+    let hidden_default = registry
+        .execute(
+            &ToolCall::new(
+                "find_sensitive_default",
+                "find_files",
+                BTreeMap::from([
+                    ("include_hidden".to_string(), json!(true)),
+                    ("sort".to_string(), json!("path_asc")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("find sensitive default");
+    let hidden_payload: Value =
+        serde_json::from_str(&hidden_default.content).expect("hidden payload");
+    assert!(!hidden_payload["files"]
+        .as_array()
+        .expect("files")
+        .contains(&json!(".env")));
+    assert_eq!(hidden_payload["sensitive_files_omitted"], 1);
+
+    let hidden_included = registry
+        .execute(
+            &ToolCall::new(
+                "find_sensitive_included",
+                "find_files",
+                BTreeMap::from([
+                    ("include_hidden".to_string(), json!(true)),
+                    ("include_sensitive".to_string(), json!(true)),
+                    ("sort".to_string(), json!("path_asc")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("find sensitive included");
+    let included_payload: Value =
+        serde_json::from_str(&hidden_included.content).expect("included payload");
+    assert!(included_payload["files"]
+        .as_array()
+        .expect("files")
+        .contains(&json!(".env")));
+}
+
+#[test]
+fn find_files_rejects_pattern_argument() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "find_pattern",
+                "find_files",
+                BTreeMap::from([("pattern".to_string(), json!("*.rs"))]),
+            ),
+            &mut context,
+        )
+        .expect("find pattern rejection");
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("invalid_arguments"));
+    assert_eq!(payload["error_code"], json!("invalid_arguments"));
+    assert!(payload["error"]
+        .as_str()
+        .expect("error")
+        .contains("`pattern` is not supported"));
+}
+
+#[test]
+fn find_files_skips_common_dependency_roots_by_default() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -12,7 +111,7 @@ fn list_files_skips_common_dependency_roots_by_default() {
 
     let list = registry
         .execute(
-            &ToolCall::new("list_1", "list_files", BTreeMap::new()),
+            &ToolCall::new("list_1", "find_files", BTreeMap::new()),
             &mut context,
         )
         .expect("list tool");
@@ -23,7 +122,7 @@ fn list_files_skips_common_dependency_roots_by_default() {
 }
 
 #[test]
-fn list_files_can_list_inside_ignored_root_when_targeted_directly() {
+fn find_files_can_list_inside_ignored_root_when_targeted_directly() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -34,12 +133,12 @@ fn list_files_can_list_inside_ignored_root_when_targeted_directly() {
         .execute(
             &ToolCall::new(
                 "list_targeted_ignored_root",
-                "list_files",
+                "find_files",
                 BTreeMap::from([("path".to_string(), json!("node_modules"))]),
             ),
             &mut context,
         )
-        .expect("list_files");
+        .expect("find_files");
     let payload: Value = serde_json::from_str(&list.content).expect("list payload");
 
     assert_eq!(payload["files"], json!(["node_modules/pkg/a.js"]));
@@ -47,7 +146,7 @@ fn list_files_can_list_inside_ignored_root_when_targeted_directly() {
 }
 
 #[test]
-fn list_files_combines_scan_limit_and_ignored_root_messages() {
+fn find_files_combines_scan_limit_and_ignored_root_messages() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -65,7 +164,7 @@ fn list_files_combines_scan_limit_and_ignored_root_messages() {
         .execute(
             &ToolCall::new(
                 "list_limited_with_ignored",
-                "list_files",
+                "find_files",
                 BTreeMap::from([
                     ("max_results".to_string(), json!(1)),
                     ("scan_limit".to_string(), json!(2)),
@@ -73,7 +172,7 @@ fn list_files_combines_scan_limit_and_ignored_root_messages() {
             ),
             &mut context,
         )
-        .expect("list_files");
+        .expect("find_files");
     let payload: Value = serde_json::from_str(&list.content).expect("list payload");
     let message = payload["message"].as_str().expect("combined message");
 
@@ -90,7 +189,7 @@ fn list_files_combines_scan_limit_and_ignored_root_messages() {
 }
 
 #[test]
-fn list_files_empty_path_is_workspace_root() {
+fn find_files_empty_path_is_workspace_root() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -103,7 +202,7 @@ fn list_files_empty_path_is_workspace_root() {
         .execute(
             &ToolCall::new(
                 "list_empty_path",
-                "list_files",
+                "find_files",
                 BTreeMap::from([("path".to_string(), json!(""))]),
             ),
             &mut context,
@@ -116,7 +215,7 @@ fn list_files_empty_path_is_workspace_root() {
 }
 
 #[test]
-fn list_files_non_local_backend_does_not_summarize_ignored_roots() {
+fn find_files_non_local_backend_does_not_summarize_ignored_roots() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let backend = MemoryWorkspaceBackend::default();
@@ -129,7 +228,7 @@ fn list_files_non_local_backend_does_not_summarize_ignored_roots() {
 
     let list = registry
         .execute(
-            &ToolCall::new("list_memory_root", "list_files", BTreeMap::new()),
+            &ToolCall::new("list_memory_root", "find_files", BTreeMap::new()),
             &mut context,
         )
         .expect("list tool");
@@ -140,7 +239,7 @@ fn list_files_non_local_backend_does_not_summarize_ignored_roots() {
 }
 
 #[test]
-fn list_files_excludes_hidden_by_default_and_can_include_them() {
+fn find_files_excludes_hidden_by_default_and_can_include_them() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -149,7 +248,7 @@ fn list_files_excludes_hidden_by_default_and_can_include_them() {
 
     let default_list = registry
         .execute(
-            &ToolCall::new("list_hidden_default", "list_files", BTreeMap::new()),
+            &ToolCall::new("list_hidden_default", "find_files", BTreeMap::new()),
             &mut context,
         )
         .expect("default list");
@@ -161,7 +260,7 @@ fn list_files_excludes_hidden_by_default_and_can_include_them() {
         .execute(
             &ToolCall::new(
                 "list_hidden_included",
-                "list_files",
+                "find_files",
                 BTreeMap::from([("include_hidden".to_string(), json!(true))]),
             ),
             &mut context,
@@ -176,7 +275,7 @@ fn list_files_excludes_hidden_by_default_and_can_include_them() {
 }
 
 #[test]
-fn list_files_reports_estimated_count_when_scan_limit_is_reached() {
+fn find_files_reports_estimated_count_when_scan_limit_is_reached() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -189,7 +288,7 @@ fn list_files_reports_estimated_count_when_scan_limit_is_reached() {
         .execute(
             &ToolCall::new(
                 "list_scan_limit",
-                "list_files",
+                "find_files",
                 BTreeMap::from([
                     ("max_results".to_string(), json!(10)),
                     ("scan_limit".to_string(), json!(12)),
@@ -207,7 +306,7 @@ fn list_files_reports_estimated_count_when_scan_limit_is_reached() {
 }
 
 #[test]
-fn list_files_accepts_string_limits() {
+fn find_files_accepts_string_limits() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -219,7 +318,7 @@ fn list_files_accepts_string_limits() {
         .execute(
             &ToolCall::new(
                 "list_string_limits",
-                "list_files",
+                "find_files",
                 BTreeMap::from([
                     ("max_results".to_string(), json!("2")),
                     ("scan_limit".to_string(), json!("3")),

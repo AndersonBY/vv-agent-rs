@@ -147,7 +147,7 @@ fn skills_public_api_parses_and_loads_skill_dirs() {
 name: review-code
 description: Review code safely
 license: MIT
-allowed-tools: read_file, workspace_grep
+allowed-tools: read_file, search_files
 metadata:
   owner: agent
   retries: 2
@@ -182,7 +182,7 @@ Use these instructions.
     assert_eq!(properties.license.as_deref(), Some("MIT"));
     assert_eq!(
         properties.allowed_tools.as_deref(),
-        Some("read_file, workspace_grep")
+        Some("read_file, search_files")
     );
     assert_eq!(properties.metadata["owner"], "agent");
     assert_eq!(properties.metadata["retries"], "2");

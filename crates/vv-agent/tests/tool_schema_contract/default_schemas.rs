@@ -15,29 +15,27 @@ fn default_tool_schemas_include_actionable_descriptions() {
     assert!(read_file.contains("max 2000 lines or 50000 characters"));
     assert!(property_description(&registry, "read_file", "path").contains("workspace-relative"));
 
-    let workspace_grep = description(&registry, "workspace_grep");
-    assert!(workspace_grep.contains("OUTPUT MODES:"));
-    assert!(workspace_grep.contains("default matching uses smart-case"));
+    let search_files = description(&registry, "search_files");
+    assert!(search_files.contains("OUTPUT MODES:"));
+    assert!(search_files.contains("default matching uses smart-case"));
     assert!(
-        property_description(&registry, "workspace_grep", "output_mode")
-            .contains("Default is 'content'")
+        property_description(&registry, "search_files", "output_mode")
+            .contains("Default is 'files_with_matches'")
     );
-    assert!(property_description(&registry, "workspace_grep", "path")
+    assert!(property_description(&registry, "search_files", "path")
         .contains("single file path searches that file directly"));
-    assert!(property_description(&registry, "workspace_grep", "b")
+    assert!(property_description(&registry, "search_files", "b")
         .contains("Use when each match needs leading context"));
-    assert!(property_description(&registry, "workspace_grep", "a")
+    assert!(property_description(&registry, "search_files", "a")
         .contains("Use when each match needs following context"));
-    assert!(property_description(&registry, "workspace_grep", "c")
+    assert!(property_description(&registry, "search_files", "c")
         .contains("Use this instead of separate b/a values"));
     assert!(
-        property_description(&registry, "workspace_grep", "case_sensitive")
+        property_description(&registry, "search_files", "case_sensitive")
             .contains("Explicitly override smart-case behavior")
     );
-    assert!(
-        property_description(&registry, "workspace_grep", "multiline")
-            .contains("Use for patterns that intentionally span line breaks")
-    );
+    assert!(property_description(&registry, "search_files", "multiline")
+        .contains("Use for patterns that intentionally span line breaks"));
 
     let bash = description(&registry, "bash");
     assert!(bash.contains("Guidelines:"));
@@ -127,12 +125,12 @@ fn default_tool_specs_keep_full_schema_descriptions() {
         "activate_skill",
         "todo_write",
         "compress_memory",
-        "list_files",
+        "find_files",
         "file_info",
         "read_file",
         "write_file",
         "edit_file",
-        "workspace_grep",
+        "search_files",
         "bash",
         "check_background_command",
         "create_sub_task",
@@ -176,12 +174,12 @@ fn default_tool_schema_order_matches_builtin_runtime_contract() {
             "activate_skill",
             "todo_write",
             "compress_memory",
-            "list_files",
+            "find_files",
             "file_info",
             "read_file",
             "write_file",
             "edit_file",
-            "workspace_grep",
+            "search_files",
             "bash",
             "check_background_command",
             "create_sub_task",
@@ -252,17 +250,18 @@ fn default_tool_schema_wording_is_preserved() {
 
     assert_description_contains(
         &registry,
-        "list_files",
+        "find_files",
         &[
-            "List files in workspace with optional path and glob filtering.",
+            "Find files in workspace with optional path and glob filtering.",
             "Large results are truncated, and common dependency/cache directories",
             "(like node_modules/.venv) are summarized by default when listing from workspace root.",
+            "Use `offset` for pagination and `sort` to choose `modified_desc` or `path_asc`.",
         ],
     );
-    assert_property_contains(&registry, "list_files", "path", &["Default '.'."]);
+    assert_property_contains(&registry, "find_files", "path", &["Default '.'."]);
     assert_property_contains(
         &registry,
-        "list_files",
+        "find_files",
         "scan_limit",
         &["If reached, response includes `count_is_estimate=true`."],
     );
@@ -275,25 +274,26 @@ fn default_tool_schema_wording_is_preserved() {
 
     assert_description_contains(
         &registry,
-        "workspace_grep",
+        "search_files",
         &[
-            "Search workspace files with regex (backend-style grep semantics).",
+            "Search workspace file contents with regex or literal text.",
             "OUTPUT MODES:",
             "FILTERS:",
             "CONTENT OPTIONS (only for `content` mode):",
             "LIMITING:",
+            "`files_with_matches` (default): show only matching file paths.",
             "Prefer this tool over ad-hoc shell grep for direct content search.",
         ],
     );
     assert_property_contains(
         &registry,
-        "workspace_grep",
+        "search_files",
         "path",
         &["Optional search root or single file path. Use workspace-relative path by default; absolute path is allowed when outside-workspace access is enabled. Default '.'."],
     );
     assert_property_contains(
         &registry,
-        "workspace_grep",
+        "search_files",
         "glob",
         &[
             "Optional file glob filter such as `**/*.rs` or `docs/**/*.md`.",
@@ -303,13 +303,13 @@ fn default_tool_schema_wording_is_preserved() {
     );
     assert_property_contains(
         &registry,
-        "workspace_grep",
+        "search_files",
         "output_mode",
         &["`files_with_matches` returns matching paths"],
     );
     assert_property_contains(
         &registry,
-        "workspace_grep",
+        "search_files",
         "type",
         &["File type shortcut (e.g. py/js/ts/md/json)."],
     );

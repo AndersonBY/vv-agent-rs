@@ -11,12 +11,12 @@ mod todo;
 mod workspace;
 
 pub const WORKSPACE_TOOLS: &[&str] = &[
-    "list_files",
+    "find_files",
     "file_info",
     "read_file",
     "write_file",
     "edit_file",
-    "workspace_grep",
+    "search_files",
     "compress_memory",
     "todo_write",
 ];
@@ -29,9 +29,9 @@ pub fn default_tool_schemas() -> BTreeMap<String, Value> {
         ("activate_skill", control::activate_skill_schema()),
         ("read_file", workspace::read_file_schema()),
         ("write_file", workspace::write_file_schema()),
-        ("list_files", workspace::list_files_schema()),
+        ("find_files", workspace::find_files_schema()),
         ("file_info", workspace::file_info_schema()),
-        ("workspace_grep", workspace::workspace_grep_schema()),
+        ("search_files", workspace::search_files_schema()),
         ("edit_file", workspace::edit_file_schema()),
         ("compress_memory", memory::compress_memory_schema()),
         ("todo_write", todo::todo_write_schema()),

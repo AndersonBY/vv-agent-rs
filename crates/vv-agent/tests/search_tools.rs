@@ -5,8 +5,149 @@ use serde_json::json;
 use vv_agent::workspace::{MemoryWorkspaceBackend, WorkspaceBackend};
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
+#[cfg(unix)]
+#[path = "search_tools/sensitive_fast_path.rs"]
+mod sensitive_fast_path;
+
 #[test]
-fn workspace_grep_finds_content_with_smart_case() {
+fn old_search_tool_names_are_not_registered() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let old_grep = registry.execute(
+        &ToolCall::new(
+            "old_grep",
+            "workspace_grep",
+            BTreeMap::from([("pattern".to_string(), json!("token"))]),
+        ),
+        &mut context,
+    );
+    assert!(old_grep.is_err());
+
+    let old_list = registry.execute(
+        &ToolCall::new("old_list", "list_files", BTreeMap::new()),
+        &mut context,
+    );
+    assert!(old_list.is_err());
+}
+
+#[test]
+fn search_files_defaults_to_files_with_matches() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("a.txt"), "token one").expect("a");
+    std::fs::write(workspace.path().join("b.txt"), "token two").expect("b");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "search_default",
+                "search_files",
+                BTreeMap::from([("pattern".to_string(), json!("token"))]),
+            ),
+            &mut context,
+        )
+        .expect("search_files");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.metadata["output_mode"], "files_with_matches");
+    assert_eq!(result.metadata["files"], json!(["a.txt", "b.txt"]));
+    assert!(!result.metadata.contains_key("matches"));
+}
+
+#[test]
+fn search_files_literal_offset_and_unlimited_head_limit() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    for index in 0..4 {
+        std::fs::write(
+            workspace.path().join(format!("file_{index}.txt")),
+            "a.b token",
+        )
+        .expect("file");
+    }
+
+    let paged = registry
+        .execute(
+            &ToolCall::new(
+                "search_literal_page",
+                "search_files",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("a.b")),
+                    ("literal".to_string(), json!(true)),
+                    ("offset".to_string(), json!(1)),
+                    ("head_limit".to_string(), json!(2)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("search literal page");
+    assert_eq!(paged.metadata["files"], json!(["file_1.txt", "file_2.txt"]));
+    assert_eq!(paged.metadata["offset"], 1);
+    assert_eq!(paged.metadata["head_limit"], 2);
+    assert_eq!(paged.metadata["total_result_items"], 4);
+    assert_eq!(paged.metadata["returned_count"], 2);
+
+    let unlimited = registry
+        .execute(
+            &ToolCall::new(
+                "search_literal_unlimited",
+                "search_files",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("a.b")),
+                    ("literal".to_string(), json!(true)),
+                    ("head_limit".to_string(), json!(0)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("search literal unlimited");
+    assert_eq!(unlimited.metadata["returned_count"], 4);
+}
+
+#[test]
+fn search_files_omits_sensitive_paths_by_default() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join(".env"), "TOKEN=secret").expect("env");
+    std::fs::write(workspace.path().join("visible.txt"), "TOKEN=public").expect("visible");
+
+    let default_result = registry
+        .execute(
+            &ToolCall::new(
+                "search_sensitive_default",
+                "search_files",
+                BTreeMap::from([("pattern".to_string(), json!("TOKEN"))]),
+            ),
+            &mut context,
+        )
+        .expect("default sensitive search");
+    assert_eq!(default_result.metadata["files"], json!(["visible.txt"]));
+    assert_eq!(default_result.metadata["sensitive_files_omitted"], 1);
+
+    let included = registry
+        .execute(
+            &ToolCall::new(
+                "search_sensitive_included",
+                "search_files",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("TOKEN")),
+                    ("include_hidden".to_string(), json!(true)),
+                    ("include_sensitive".to_string(), json!(true)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("included sensitive search");
+    assert_eq!(included.metadata["files"], json!([".env", "visible.txt"]));
+}
+
+#[test]
+fn search_files_finds_content_with_smart_case() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -16,12 +157,15 @@ fn workspace_grep_finds_content_with_smart_case() {
         .execute(
             &ToolCall::new(
                 "grep_1",
-                "workspace_grep",
-                BTreeMap::from([("pattern".to_string(), json!("update"))]),
+                "search_files",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("update")),
+                    ("output_mode".to_string(), json!("content")),
+                ]),
             ),
             &mut context,
         )
-        .expect("workspace_grep");
+        .expect("search_files");
 
     assert_eq!(result.status, ToolResultStatus::Success);
     assert_eq!(result.metadata["summary"]["total_matches"], 2);
@@ -30,7 +174,7 @@ fn workspace_grep_finds_content_with_smart_case() {
 }
 
 #[test]
-fn workspace_grep_uses_regex_patterns() {
+fn search_files_uses_regex_patterns() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -44,12 +188,15 @@ fn workspace_grep_uses_regex_patterns() {
         .execute(
             &ToolCall::new(
                 "grep_regex",
-                "workspace_grep",
-                BTreeMap::from([("pattern".to_string(), json!(r"error \d+"))]),
+                "search_files",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!(r"error \d+")),
+                    ("output_mode".to_string(), json!("content")),
+                ]),
             ),
             &mut context,
         )
-        .expect("workspace_grep regex");
+        .expect("search_files regex");
 
     assert_eq!(result.metadata["summary"]["total_matches"], 2);
     let rows = result.metadata["matches"].as_array().expect("matches");
@@ -59,7 +206,7 @@ fn workspace_grep_uses_regex_patterns() {
 }
 
 #[test]
-fn workspace_grep_coerces_scalar_pattern() {
+fn search_files_coerces_scalar_pattern() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -69,12 +216,15 @@ fn workspace_grep_coerces_scalar_pattern() {
         .execute(
             &ToolCall::new(
                 "grep_scalar_pattern",
-                "workspace_grep",
-                BTreeMap::from([("pattern".to_string(), json!(123))]),
+                "search_files",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!(123)),
+                    ("output_mode".to_string(), json!("content")),
+                ]),
             ),
             &mut context,
         )
-        .expect("workspace_grep scalar pattern");
+        .expect("search_files scalar pattern");
 
     assert_eq!(result.status, ToolResultStatus::Success);
     assert_eq!(result.metadata["summary"]["total_matches"], 1);
@@ -82,7 +232,7 @@ fn workspace_grep_coerces_scalar_pattern() {
 }
 
 #[test]
-fn workspace_grep_returns_agent_text_content_and_structured_metadata() {
+fn search_files_returns_agent_text_content_and_structured_metadata() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -92,12 +242,15 @@ fn workspace_grep_returns_agent_text_content_and_structured_metadata() {
         .execute(
             &ToolCall::new(
                 "grep_text_content",
-                "workspace_grep",
-                BTreeMap::from([("pattern".to_string(), json!("Agent"))]),
+                "search_files",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("Agent")),
+                    ("output_mode".to_string(), json!("content")),
+                ]),
             ),
             &mut context,
         )
-        .expect("workspace_grep");
+        .expect("search_files");
 
     assert!(result.content.contains("Found 1 matches in 1 files"));
     assert!(!result.content.contains("\"matches\""));
@@ -106,7 +259,7 @@ fn workspace_grep_returns_agent_text_content_and_structured_metadata() {
 }
 
 #[test]
-fn workspace_grep_caps_structured_payload_without_duplication() {
+fn search_files_caps_structured_payload_without_duplication() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -122,7 +275,7 @@ fn workspace_grep_caps_structured_payload_without_duplication() {
         .execute(
             &ToolCall::new(
                 "grep_structured_cap",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("token")),
                     ("output_mode".to_string(), json!("content")),
@@ -130,7 +283,7 @@ fn workspace_grep_caps_structured_payload_without_duplication() {
             ),
             &mut context,
         )
-        .expect("workspace_grep");
+        .expect("search_files");
 
     assert_eq!(result.metadata["total_result_items"], 205);
     assert_eq!(result.metadata["returned_count"], 200);
@@ -150,7 +303,7 @@ fn workspace_grep_caps_structured_payload_without_duplication() {
 }
 
 #[test]
-fn workspace_grep_truncates_large_text_content() {
+fn search_files_truncates_large_text_content() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -164,12 +317,15 @@ fn workspace_grep_truncates_large_text_content() {
         .execute(
             &ToolCall::new(
                 "grep_text_truncation",
-                "workspace_grep",
-                BTreeMap::from([("pattern".to_string(), json!("token"))]),
+                "search_files",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("token")),
+                    ("output_mode".to_string(), json!("content")),
+                ]),
             ),
             &mut context,
         )
-        .expect("workspace_grep");
+        .expect("search_files");
 
     assert_eq!(result.status, ToolResultStatus::Success);
     assert_eq!(result.metadata["summary"]["total_matches"], 1);
@@ -184,7 +340,7 @@ fn workspace_grep_truncates_large_text_content() {
 }
 
 #[test]
-fn workspace_grep_reports_supported_types_for_unknown_type() {
+fn search_files_reports_supported_types_for_unknown_type() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -193,7 +349,7 @@ fn workspace_grep_reports_supported_types_for_unknown_type() {
         .execute(
             &ToolCall::new(
                 "grep_unknown_type",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("token")),
                     ("type".to_string(), json!("unknown")),
@@ -201,7 +357,7 @@ fn workspace_grep_reports_supported_types_for_unknown_type() {
             ),
             &mut context,
         )
-        .expect("workspace_grep");
+        .expect("search_files");
 
     assert_eq!(result.status, ToolResultStatus::Error);
     assert!(result
@@ -213,7 +369,7 @@ fn workspace_grep_reports_supported_types_for_unknown_type() {
 }
 
 #[test]
-fn workspace_grep_reports_scalar_type_as_unsupported() {
+fn search_files_reports_scalar_type_as_unsupported() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -222,7 +378,7 @@ fn workspace_grep_reports_scalar_type_as_unsupported() {
         .execute(
             &ToolCall::new(
                 "grep_scalar_type",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("token")),
                     ("type".to_string(), json!(123)),
@@ -230,7 +386,7 @@ fn workspace_grep_reports_scalar_type_as_unsupported() {
             ),
             &mut context,
         )
-        .expect("workspace_grep");
+        .expect("search_files");
 
     assert_eq!(result.status, ToolResultStatus::Error);
     assert!(result
@@ -240,7 +396,7 @@ fn workspace_grep_reports_scalar_type_as_unsupported() {
 }
 
 #[test]
-fn workspace_grep_supports_files_and_count_modes_with_type_filter() {
+fn search_files_supports_files_and_count_modes_with_type_filter() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -252,7 +408,7 @@ fn workspace_grep_supports_files_and_count_modes_with_type_filter() {
         .execute(
             &ToolCall::new(
                 "grep_files",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("token")),
                     ("output_mode".to_string(), json!("files_with_matches")),
@@ -261,7 +417,7 @@ fn workspace_grep_supports_files_and_count_modes_with_type_filter() {
             ),
             &mut context,
         )
-        .expect("workspace_grep files");
+        .expect("search_files files");
     assert_eq!(files.metadata["files"], json!(["a.py", "b.py"]));
     assert_eq!(files.metadata["summary"]["total_matches"], 2);
 
@@ -269,7 +425,7 @@ fn workspace_grep_supports_files_and_count_modes_with_type_filter() {
         .execute(
             &ToolCall::new(
                 "grep_count",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("token")),
                     ("output_mode".to_string(), json!("count")),
@@ -278,13 +434,13 @@ fn workspace_grep_supports_files_and_count_modes_with_type_filter() {
             ),
             &mut context,
         )
-        .expect("workspace_grep count");
+        .expect("search_files count");
     assert_eq!(count.metadata["file_counts"]["a.py"], 1);
     assert_eq!(count.metadata["file_counts"]["b.py"], 1);
 }
 
 #[test]
-fn workspace_grep_applies_glob_relative_to_search_path() {
+fn search_files_applies_glob_relative_to_search_path() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -296,16 +452,17 @@ fn workspace_grep_applies_glob_relative_to_search_path() {
         .execute(
             &ToolCall::new(
                 "grep_glob",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("token")),
                     ("path".to_string(), json!("src")),
                     ("glob".to_string(), json!("*.rs")),
+                    ("output_mode".to_string(), json!("content")),
                 ]),
             ),
             &mut context,
         )
-        .expect("workspace_grep glob");
+        .expect("search_files glob");
 
     assert_eq!(result.status, ToolResultStatus::Success);
     assert_eq!(result.metadata["summary"]["total_matches"], 1);
@@ -315,7 +472,7 @@ fn workspace_grep_applies_glob_relative_to_search_path() {
 }
 
 #[test]
-fn workspace_grep_uses_configured_workspace_backend() {
+fn search_files_uses_configured_workspace_backend() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let backend = MemoryWorkspaceBackend::default();
@@ -333,16 +490,17 @@ fn workspace_grep_uses_configured_workspace_backend() {
         .execute(
             &ToolCall::new(
                 "grep_memory_backend",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("token")),
                     ("path".to_string(), json!("src")),
                     ("glob".to_string(), json!("*.rs")),
+                    ("output_mode".to_string(), json!("content")),
                 ]),
             ),
             &mut context,
         )
-        .expect("workspace_grep memory backend");
+        .expect("search_files memory backend");
 
     assert_eq!(result.status, ToolResultStatus::Success);
     assert_eq!(result.metadata["summary"]["files_searched"], 1);
@@ -351,7 +509,7 @@ fn workspace_grep_uses_configured_workspace_backend() {
 }
 
 #[test]
-fn workspace_grep_respects_hidden_and_ignored_defaults() {
+fn search_files_respects_hidden_and_ignored_defaults() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -367,19 +525,19 @@ fn workspace_grep_respects_hidden_and_ignored_defaults() {
         .execute(
             &ToolCall::new(
                 "grep_default",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([("pattern".to_string(), json!("Agent"))]),
             ),
             &mut context,
         )
-        .expect("workspace_grep default");
+        .expect("search_files default");
     assert_eq!(default.metadata["summary"]["total_matches"], 0);
 
     let included = registry
         .execute(
             &ToolCall::new(
                 "grep_included",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("Agent")),
                     ("include_hidden".to_string(), json!(true)),
@@ -388,12 +546,12 @@ fn workspace_grep_respects_hidden_and_ignored_defaults() {
             ),
             &mut context,
         )
-        .expect("workspace_grep included");
+        .expect("search_files included");
     assert_eq!(included.metadata["summary"]["total_matches"], 2);
 }
 
 #[test]
-fn workspace_grep_uses_json_truthiness_for_hidden_and_line_flags() {
+fn search_files_uses_json_truthiness_for_hidden_and_line_flags() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -403,7 +561,7 @@ fn workspace_grep_uses_json_truthiness_for_hidden_and_line_flags() {
         .execute(
             &ToolCall::new(
                 "grep_truthy_hidden",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("Agent")),
                     ("include_hidden".to_string(), json!("false")),
@@ -411,7 +569,7 @@ fn workspace_grep_uses_json_truthiness_for_hidden_and_line_flags() {
             ),
             &mut context,
         )
-        .expect("workspace_grep hidden");
+        .expect("search_files hidden");
 
     assert_eq!(hidden.metadata["summary"]["total_matches"], 1);
 
@@ -419,22 +577,23 @@ fn workspace_grep_uses_json_truthiness_for_hidden_and_line_flags() {
         .execute(
             &ToolCall::new(
                 "grep_falsey_line_numbers",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("Agent")),
                     ("path".to_string(), json!(".hidden.txt")),
+                    ("output_mode".to_string(), json!("content")),
                     ("n".to_string(), json!("")),
                 ]),
             ),
             &mut context,
         )
-        .expect("workspace_grep line numbers");
+        .expect("search_files line numbers");
 
     assert!(no_line_numbers.metadata["matches"][0].get("line").is_none());
 }
 
 #[test]
-fn workspace_grep_file_path_target_can_read_hidden_file() {
+fn search_files_file_path_target_can_read_hidden_file() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -444,15 +603,16 @@ fn workspace_grep_file_path_target_can_read_hidden_file() {
         .execute(
             &ToolCall::new(
                 "grep_hidden_file_target",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("Agent")),
                     ("path".to_string(), json!(".hidden.txt")),
+                    ("output_mode".to_string(), json!("content")),
                 ]),
             ),
             &mut context,
         )
-        .expect("workspace_grep hidden file target");
+        .expect("search_files hidden file target");
 
     assert_eq!(result.metadata["summary"]["files_searched"], 1);
     assert_eq!(result.metadata["summary"]["total_matches"], 1);
@@ -460,7 +620,7 @@ fn workspace_grep_file_path_target_can_read_hidden_file() {
 }
 
 #[test]
-fn workspace_grep_file_path_target_can_read_inside_ignored_root() {
+fn search_files_file_path_target_can_read_inside_ignored_root() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -475,7 +635,7 @@ fn workspace_grep_file_path_target_can_read_inside_ignored_root() {
         .execute(
             &ToolCall::new(
                 "grep_file_ignored_root_target",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("Agent")),
                     ("path".to_string(), json!("node_modules/pkg/x.js")),
@@ -484,7 +644,7 @@ fn workspace_grep_file_path_target_can_read_inside_ignored_root() {
             ),
             &mut context,
         )
-        .expect("workspace_grep ignored-root file target");
+        .expect("search_files ignored-root file target");
 
     assert_eq!(result.status, ToolResultStatus::Success);
     assert_eq!(result.metadata["files"], json!(["node_modules/pkg/x.js"]));
@@ -493,7 +653,7 @@ fn workspace_grep_file_path_target_can_read_inside_ignored_root() {
 }
 
 #[test]
-fn workspace_grep_supports_context_lines_and_file_targets() {
+fn search_files_supports_context_lines_and_file_targets() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -508,16 +668,17 @@ fn workspace_grep_supports_context_lines_and_file_targets() {
         .execute(
             &ToolCall::new(
                 "grep_context",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("Agent")),
                     ("path".to_string(), json!("articles/essay.md")),
+                    ("output_mode".to_string(), json!("content")),
                     ("c".to_string(), json!(1)),
                 ]),
             ),
             &mut context,
         )
-        .expect("workspace_grep context");
+        .expect("search_files context");
 
     assert_eq!(result.metadata["summary"]["files_searched"], 1);
     assert_eq!(result.metadata["summary"]["total_matches"], 1);
@@ -528,7 +689,7 @@ fn workspace_grep_supports_context_lines_and_file_targets() {
 }
 
 #[test]
-fn workspace_grep_accepts_string_limits_and_context() {
+fn search_files_accepts_string_limits_and_context() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -542,16 +703,17 @@ fn workspace_grep_accepts_string_limits_and_context() {
         .execute(
             &ToolCall::new(
                 "grep_string_limits",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("hit")),
+                    ("output_mode".to_string(), json!("content")),
                     ("c".to_string(), json!("1")),
                     ("head_limit".to_string(), json!("2")),
                 ]),
             ),
             &mut context,
         )
-        .expect("workspace_grep string limits");
+        .expect("search_files string limits");
 
     assert_eq!(result.metadata["head_limit"], 2);
     assert_eq!(result.metadata["head_limited"], true);
@@ -562,7 +724,7 @@ fn workspace_grep_accepts_string_limits_and_context() {
 }
 
 #[test]
-fn workspace_grep_ignores_removed_max_results_alias() {
+fn search_files_ignores_removed_max_results_alias() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -572,7 +734,7 @@ fn workspace_grep_ignores_removed_max_results_alias() {
         .execute(
             &ToolCall::new(
                 "grep_removed_max_results",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("hit")),
                     ("output_mode".to_string(), json!("content")),
@@ -581,7 +743,7 @@ fn workspace_grep_ignores_removed_max_results_alias() {
             ),
             &mut context,
         )
-        .expect("workspace_grep removed max_results");
+        .expect("search_files removed max_results");
 
     let rows = result.metadata["matches"].as_array().expect("matches");
     assert_eq!(rows.len(), 2);
@@ -589,7 +751,7 @@ fn workspace_grep_ignores_removed_max_results_alias() {
 }
 
 #[test]
-fn workspace_grep_rejects_paths_outside_workspace_by_default() {
+fn search_files_rejects_paths_outside_workspace_by_default() {
     let workspace = tempfile::tempdir().expect("workspace");
     let outside = tempfile::tempdir().expect("outside");
     std::fs::write(outside.path().join("secret.txt"), "Agent outside").expect("outside file");
@@ -600,7 +762,7 @@ fn workspace_grep_rejects_paths_outside_workspace_by_default() {
         .execute(
             &ToolCall::new(
                 "grep_escape",
-                "workspace_grep",
+                "search_files",
                 BTreeMap::from([
                     ("pattern".to_string(), json!("Agent")),
                     ("path".to_string(), json!(outside.path())),
@@ -608,7 +770,7 @@ fn workspace_grep_rejects_paths_outside_workspace_by_default() {
             ),
             &mut context,
         )
-        .expect("workspace_grep");
+        .expect("search_files");
 
     assert_eq!(result.status, ToolResultStatus::Error);
     assert_eq!(result.error_code.as_deref(), Some("path_escapes_workspace"));

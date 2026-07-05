@@ -39,9 +39,9 @@ fn high_impact_tool_descriptions_use_operational_sections() {
     for tool_name in [
         "read_file",
         "write_file",
-        "list_files",
+        "find_files",
         "file_info",
-        "workspace_grep",
+        "search_files",
         "edit_file",
         "bash",
         "check_background_command",
@@ -80,10 +80,10 @@ fn high_impact_tool_descriptions_use_operational_sections() {
     assert!(write_file.contains("Do not use this for surgical edits"));
     assert!(write_file.contains("Returns:"));
 
-    let list_files = description(&registry, "list_files");
-    assert!(list_files.contains("When to use:"));
-    assert!(list_files.contains("Narrow first"));
-    assert!(list_files.contains("Returns:"));
+    let find_files = description(&registry, "find_files");
+    assert!(find_files.contains("When to use:"));
+    assert!(find_files.contains("Narrow first"));
+    assert!(find_files.contains("Returns:"));
 
     let file_info = description(&registry, "file_info");
     assert!(file_info.contains("When to use:"));
@@ -134,7 +134,7 @@ fn tool_descriptions_do_not_repeat_operational_guidance() {
         ("file_info", vec!["before reading large or binary files"]),
         ("write_file", vec!["Parent directories may be created"]),
         (
-            "workspace_grep",
+            "search_files",
             vec!["Prefer this tool over ad-hoc shell grep"],
         ),
     ] {
@@ -154,12 +154,12 @@ fn tool_descriptions_do_not_repeat_operational_guidance() {
 fn every_builtin_tool_schema_has_operational_guidance_not_just_labels() {
     let registry = build_default_registry();
 
-    let list_files = description(&registry, "list_files");
-    assert!(list_files.contains("Use `path`"));
-    assert!(list_files.contains("ignored_roots"));
-    assert!(list_files.contains("truncated"));
+    let find_files = description(&registry, "find_files");
+    assert!(find_files.contains("Use `path`"));
+    assert!(find_files.contains("ignored_roots"));
+    assert!(find_files.contains("truncated"));
     assert!(
-        property_description(&registry, "list_files", "scan_limit").contains("count_is_estimate")
+        property_description(&registry, "find_files", "scan_limit").contains("count_is_estimate")
     );
 
     let write_file = description(&registry, "write_file");
@@ -202,12 +202,12 @@ fn high_impact_tool_parameters_include_operational_guidance() {
             vec!["non-interactive", "yes", "destructive"],
         ),
         (
-            "workspace_grep",
+            "search_files",
             "pattern",
             vec!["regex", "escape", "literal"],
         ),
         (
-            "workspace_grep",
+            "search_files",
             "type",
             vec!["shortcut", "supported", "unknown"],
         ),
@@ -267,39 +267,39 @@ fn high_impact_tool_parameters_include_operational_guidance() {
             "workspace_file_limit",
             vec!["snapshot", "files", "noise"],
         ),
-        ("list_files", "glob", vec!["filter", "extensions", "narrow"]),
+        ("find_files", "glob", vec!["filter", "extensions", "narrow"]),
         (
-            "list_files",
+            "find_files",
             "include_hidden",
             vec!["hidden", "dotfiles", "explicitly"],
         ),
         (
-            "list_files",
+            "find_files",
             "include_ignored",
             vec!["dependency", "cache", "explicitly"],
         ),
         (
-            "list_files",
+            "find_files",
             "max_results",
             vec!["returned", "follow-up", "narrow"],
         ),
         (
-            "workspace_grep",
+            "search_files",
             "glob",
             vec!["filter", "extension", "narrow"],
         ),
         (
-            "workspace_grep",
+            "search_files",
             "include_hidden",
             vec!["hidden", "dotfiles", "explicitly"],
         ),
         (
-            "workspace_grep",
+            "search_files",
             "include_ignored",
             vec!["dependency", "cache", "explicitly"],
         ),
         (
-            "workspace_grep",
+            "search_files",
             "head_limit",
             vec!["cap", "rows", "follow-up"],
         ),
@@ -384,13 +384,13 @@ fn tool_parameter_descriptions_are_operational_not_terse_labels() {
     );
     assert_property_contains(
         &registry,
-        "workspace_grep",
+        "search_files",
         "output_mode",
         &["content", "files_with_matches", "count", "follow-up"],
     );
     assert_property_contains(
         &registry,
-        "workspace_grep",
+        "search_files",
         "case_sensitive",
         &["smart-case", "literal casing"],
     );
