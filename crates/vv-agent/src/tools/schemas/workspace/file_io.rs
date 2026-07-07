@@ -51,7 +51,8 @@ When to use:
 - Use `append=true` only when preserving all existing content is intentional and the appended block boundary is clear.
 - Prefer `edit_file` for small or surgical edits to existing files.
 
-Do not use this for surgical edits to existing source files; prefer `edit_file` after `read_file` so exact context and whitespace are preserved.
+Do not use this for surgical edits to existing source files; prefer `edit_file` when full current context is known through `read_file`, a full `write_file`, or a previous successful `edit_file`.
+Appending to an unknown existing file does not create a full edit baseline; call `read_file` before editing after that case.
 
 Returns:
 - Structured write metadata including normalized path, append mode, character count, and newline flags.

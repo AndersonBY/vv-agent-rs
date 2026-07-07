@@ -277,7 +277,7 @@ cargo test -p vv-agent --features apalis --test apalis_backend
 所有内置文件工具都会走 `WorkspaceBackend`。这样本地文件、内存文件和 S3-compatible
 object storage 可以共享同一套工具契约。
 
-`list_files` 和 `workspace_grep` 针对大 workspace 内置了安全默认值：结果数上限、隐藏目录和依赖目录过滤、
+`find_files` 和 `search_files` 针对大 workspace 内置了安全默认值：结果数上限、隐藏目录和依赖目录过滤、
 显式 include ignored path，以及本地可用时用 `rg` 加速。
 
 ## 示例

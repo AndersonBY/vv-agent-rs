@@ -9,7 +9,7 @@ use crate::tools::common::{
 };
 use crate::types::{ToolArguments, ToolExecutionResult};
 
-use super::super::edit::{record_file_baseline, workspace_tool_error};
+use super::super::edit::{record_file_baseline, workspace_tool_error, READ_FILE_BASELINE_SOURCE};
 use super::super::workspace_backend_error;
 use super::{READ_FILE_MAX_CHARS, READ_FILE_MAX_LINES};
 
@@ -67,7 +67,13 @@ pub(crate) fn read_file_tool() -> ToolSpec {
                     let selection = read_selection(&text, start_line, end_line, show_line_numbers);
                     let is_oversized = selection.selected_line_count > READ_FILE_MAX_LINES
                         || selection.selected_char_count > READ_FILE_MAX_CHARS;
-                    record_file_baseline(context, &path, &raw, is_partial_request || is_oversized);
+                    record_file_baseline(
+                        context,
+                        &path,
+                        &raw,
+                        is_partial_request || is_oversized,
+                        READ_FILE_BASELINE_SOURCE,
+                    );
                     read_text_result(&path, &text, selection)
                 }
                 Err(error) => workspace_backend_error(error),

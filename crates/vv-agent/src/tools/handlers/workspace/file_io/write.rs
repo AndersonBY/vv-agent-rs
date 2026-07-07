@@ -10,7 +10,7 @@ use crate::types::{ToolArguments, ToolExecutionResult};
 
 use super::super::edit::{
     baseline_issue, changed_file_metadata, detect_line_ending, record_file_baseline,
-    workspace_tool_error,
+    workspace_tool_error, WRITE_FILE_ALLOWED_BASELINE_SOURCES, WRITE_FILE_BASELINE_SOURCE,
 };
 use super::super::workspace_backend_error;
 
@@ -51,8 +51,14 @@ pub(crate) fn write_file_tool() -> ToolSpec {
             } else {
                 Vec::new()
             };
+            let mut known_full_before_write = !existing_file;
             if existing_file && !append {
-                if let Some(issue) = baseline_issue(context, &path, &before_raw) {
+                if let Some(issue) = baseline_issue(
+                    context,
+                    &path,
+                    &before_raw,
+                    WRITE_FILE_ALLOWED_BASELINE_SOURCES,
+                ) {
                     let message = if issue == "file_changed_since_read" {
                         "File changed since it was last read. Re-read it before overwriting."
                     } else {
@@ -60,6 +66,15 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                     };
                     return workspace_tool_error(message, issue, &path);
                 }
+                known_full_before_write = true;
+            } else if existing_file && append {
+                known_full_before_write = baseline_issue(
+                    context,
+                    &path,
+                    &before_raw,
+                    WRITE_FILE_ALLOWED_BASELINE_SOURCES,
+                )
+                .is_none();
             }
             let before_text = String::from_utf8_lossy(&before_raw).to_string();
             let write_content = format!(
@@ -75,7 +90,13 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                         Err(error) => return workspace_backend_error(error),
                     };
                     let updated_text = String::from_utf8_lossy(&updated_raw).to_string();
-                    record_file_baseline(context, &path, &updated_raw, false);
+                    record_file_baseline(
+                        context,
+                        &path,
+                        &updated_raw,
+                        append && existing_file && !known_full_before_write,
+                        WRITE_FILE_BASELINE_SOURCE,
+                    );
                     let line_ending = detect_line_ending(&updated_text);
                     let mut result = ToolExecutionResult::success(
                         "",

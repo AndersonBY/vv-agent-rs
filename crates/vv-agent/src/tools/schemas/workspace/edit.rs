@@ -5,9 +5,10 @@ const EDIT_FILE_DESCRIPTION: &str = r#"Safely edit an existing workspace file by
 Use exact `old_string` matching.
 
 Workflow:
-- Call `read_file` for the full file first so the runtime can verify the file was not changed before editing.
+- Call `read_file` first unless the file was just fully written with `write_file` or updated by a previous successful `edit_file`/`write_file` operation that preserved full context.
 - Use this for focused edits where a precise old/new string is safer than rewriting a whole file.
 - Include enough context in `old_string` to make the target unique; never guess whitespace or punctuation from memory.
+- Appending to an unknown existing file does not create a full current-file baseline; call `read_file` before editing after that case.
 - The operation fails if `old_string` is not found, if it matches multiple locations, or if the file changed since it was read.
 - By default `old_string` must match exactly one location; use `replace_all=true` only after confirming every match should change.
 

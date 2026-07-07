@@ -319,7 +319,8 @@ fn default_tool_schema_wording_is_preserved() {
         "edit_file",
         &[
             "Safely edit an existing workspace file by replacing exact text.",
-            "Call `read_file` for the full file first",
+            "Call `read_file` first unless the file was just fully written with `write_file`",
+            "previous successful `edit_file`",
             "By default `old_string` must match exactly one location",
         ],
     );

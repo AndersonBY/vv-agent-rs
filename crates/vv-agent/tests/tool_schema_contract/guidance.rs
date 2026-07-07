@@ -16,7 +16,8 @@ fn critical_tool_schemas_include_actionable_agent_guidance() {
 
     let edit_file = description(&registry, "edit_file");
     assert!(edit_file.contains("exact `old_string`"));
-    assert!(edit_file.contains("Call `read_file` for the full file first"));
+    assert!(edit_file.contains("just fully written with `write_file`"));
+    assert!(edit_file.contains("previous successful `edit_file`"));
     assert!(edit_file.contains("fails if `old_string` is not found"));
 
     let compress_memory = description(&registry, "compress_memory");

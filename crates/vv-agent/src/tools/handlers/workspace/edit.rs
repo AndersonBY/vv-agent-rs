@@ -13,6 +13,19 @@ use crate::types::{Metadata, ToolArguments, ToolExecutionResult, ToolResultStatu
 use super::workspace_backend_error;
 
 const FILE_BASELINES_STATE_KEY: &str = "_workspace_file_baselines";
+pub(crate) const READ_FILE_BASELINE_SOURCE: &str = "read_file";
+pub(crate) const WRITE_FILE_BASELINE_SOURCE: &str = "write_file";
+pub(crate) const EDIT_FILE_BASELINE_SOURCE: &str = "edit_file";
+pub(crate) const EDIT_FILE_ALLOWED_BASELINE_SOURCES: &[&str] = &[
+    READ_FILE_BASELINE_SOURCE,
+    WRITE_FILE_BASELINE_SOURCE,
+    EDIT_FILE_BASELINE_SOURCE,
+];
+pub(crate) const WRITE_FILE_ALLOWED_BASELINE_SOURCES: &[&str] = &[
+    READ_FILE_BASELINE_SOURCE,
+    WRITE_FILE_BASELINE_SOURCE,
+    EDIT_FILE_BASELINE_SOURCE,
+];
 const MAX_DIFF_CHARS: usize = 8_000;
 
 pub fn edit_file(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
@@ -82,7 +95,9 @@ pub(crate) fn edit_file_tool() -> ToolSpec {
                             )
                         }
                     };
-                    if let Some(issue) = baseline_issue(context, &path, &raw) {
+                    if let Some(issue) =
+                        baseline_issue(context, &path, &raw, EDIT_FILE_ALLOWED_BASELINE_SOURCES)
+                    {
                         let message = if issue == "file_changed_since_read" {
                             "File changed since it was last read. Re-read it before editing."
                         } else {
@@ -127,7 +142,13 @@ pub(crate) fn edit_file_tool() -> ToolSpec {
                     };
                     match backend.write_text(&path, &replaced_text, false) {
                         Ok(_) => {
-                            record_file_baseline(context, &path, replaced_text.as_bytes(), false);
+                            record_file_baseline(
+                                context,
+                                &path,
+                                replaced_text.as_bytes(),
+                                false,
+                                EDIT_FILE_BASELINE_SOURCE,
+                            );
                             edit_success_result(
                                 &path,
                                 &text,
@@ -180,6 +201,7 @@ pub(crate) fn record_file_baseline(
     path: &str,
     raw: &[u8],
     is_partial: bool,
+    source: &str,
 ) {
     let line_ending = String::from_utf8(raw.to_vec())
         .map(|text| detect_line_ending(&text).to_string())
@@ -189,6 +211,7 @@ pub(crate) fn record_file_baseline(
         "size": raw.len(),
         "line_ending": line_ending,
         "is_partial": is_partial,
+        "source": source,
     });
     let baselines = context
         .shared_state
@@ -207,6 +230,7 @@ pub(crate) fn baseline_issue(
     context: &ToolContext,
     path: &str,
     current_raw: &[u8],
+    allowed_sources: &[&str],
 ) -> Option<&'static str> {
     let Some(baseline) = context
         .shared_state
@@ -222,6 +246,12 @@ pub(crate) fn baseline_issue(
         .and_then(Value::as_bool)
         .unwrap_or(true)
     {
+        return Some("file_not_read");
+    }
+    let Some(source) = baseline.get("source").and_then(Value::as_str) else {
+        return Some("file_not_read");
+    };
+    if !allowed_sources.contains(&source) {
         return Some("file_not_read");
     }
     let baseline_hash = baseline.get("hash").and_then(Value::as_str);

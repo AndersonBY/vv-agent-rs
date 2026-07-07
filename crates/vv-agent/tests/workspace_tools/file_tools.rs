@@ -389,6 +389,206 @@ fn edit_file_rejects_file_changed_since_read() {
 }
 
 #[test]
+fn edit_file_allows_consecutive_edits_after_full_read() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("consecutive.txt"), "alpha beta gamma").expect("file");
+    registry
+        .execute(
+            &ToolCall::new(
+                "read_consecutive",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!("consecutive.txt"))]),
+            ),
+            &mut context,
+        )
+        .expect("read_file");
+
+    let first = registry
+        .execute(
+            &ToolCall::new(
+                "edit_consecutive_first",
+                "edit_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("consecutive.txt")),
+                    ("old_string".to_string(), json!("alpha")),
+                    ("new_string".to_string(), json!("one")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("first edit_file");
+    let second = registry
+        .execute(
+            &ToolCall::new(
+                "edit_consecutive_second",
+                "edit_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("consecutive.txt")),
+                    ("old_string".to_string(), json!("beta")),
+                    ("new_string".to_string(), json!("two")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("second edit_file");
+
+    assert_eq!(first.status, ToolResultStatus::Success);
+    assert_eq!(second.status, ToolResultStatus::Success);
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("consecutive.txt")).expect("file"),
+        "one two gamma"
+    );
+}
+
+#[test]
+fn edit_file_accepts_full_write_file_baseline() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    let write = registry
+        .execute(
+            &ToolCall::new(
+                "write_before_edit",
+                "write_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("write_only.txt")),
+                    ("content".to_string(), json!("created by write_file")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("write_file");
+    assert_eq!(write.status, ToolResultStatus::Success);
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "edit_after_write_only",
+                "edit_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("write_only.txt")),
+                    ("old_string".to_string(), json!("write_file")),
+                    ("new_string".to_string(), json!("read_file")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("edit_file");
+
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("write_only.txt")).expect("file"),
+        "created by read_file"
+    );
+}
+
+#[test]
+fn edit_file_rejects_append_to_unknown_existing_file_baseline() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("append_unknown.txt"), "known? ").expect("file");
+    let append = registry
+        .execute(
+            &ToolCall::new(
+                "append_unknown",
+                "write_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("append_unknown.txt")),
+                    ("content".to_string(), json!("append")),
+                    ("append".to_string(), json!(true)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("write_file");
+    assert_eq!(append.status, ToolResultStatus::Success);
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "edit_after_unknown_append",
+                "edit_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("append_unknown.txt")),
+                    ("old_string".to_string(), json!("append")),
+                    ("new_string".to_string(), json!("changed")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("edit_file");
+
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("file_not_read"));
+    assert_eq!(payload["error_code"], json!("file_not_read"));
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("append_unknown.txt")).expect("file"),
+        "known? append"
+    );
+}
+
+#[test]
+fn edit_file_accepts_append_to_known_existing_file_baseline() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("append_known.txt"), "before ").expect("file");
+    registry
+        .execute(
+            &ToolCall::new(
+                "read_before_append",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!("append_known.txt"))]),
+            ),
+            &mut context,
+        )
+        .expect("read_file");
+
+    let append = registry
+        .execute(
+            &ToolCall::new(
+                "append_known",
+                "write_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("append_known.txt")),
+                    ("content".to_string(), json!("after")),
+                    ("append".to_string(), json!(true)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("write_file");
+    assert_eq!(append.status, ToolResultStatus::Success);
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "edit_after_known_append",
+                "edit_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("append_known.txt")),
+                    ("old_string".to_string(), json!("after")),
+                    ("new_string".to_string(), json!("changed")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("edit_file");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("append_known.txt")).expect("file"),
+        "before changed"
+    );
+}
+
+#[test]
 fn edit_file_requires_unique_match_by_default_and_supports_replace_all() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
