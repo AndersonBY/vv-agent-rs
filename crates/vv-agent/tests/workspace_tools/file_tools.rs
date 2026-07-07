@@ -307,7 +307,7 @@ fn edit_file_requires_full_read_before_edit() {
 }
 
 #[test]
-fn edit_file_rejects_partial_read_baseline() {
+fn edit_file_accepts_partial_read_baseline() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -342,8 +342,11 @@ fn edit_file_rejects_partial_read_baseline() {
         )
         .expect("edit_file");
 
-    assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.error_code.as_deref(), Some("file_not_read"));
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(payload["ok"], json!(true));
+    let updated = std::fs::read_to_string(workspace.path().join("partial.txt")).expect("updated");
+    assert_eq!(updated, "line1\nchanged\nline3");
 }
 
 #[test]

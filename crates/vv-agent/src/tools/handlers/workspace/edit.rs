@@ -95,13 +95,17 @@ pub(crate) fn edit_file_tool() -> ToolSpec {
                             )
                         }
                     };
-                    if let Some(issue) =
-                        baseline_issue(context, &path, &raw, EDIT_FILE_ALLOWED_BASELINE_SOURCES)
-                    {
+                    if let Some(issue) = baseline_issue(
+                        context,
+                        &path,
+                        &raw,
+                        EDIT_FILE_ALLOWED_BASELINE_SOURCES,
+                        true,
+                    ) {
                         let message = if issue == "file_changed_since_read" {
                             "File changed since it was last read. Re-read it before editing."
                         } else {
-                            "Read the full file with read_file before editing."
+                            "Read the file with read_file before editing."
                         };
                         return workspace_tool_error(message, issue, &path);
                     }
@@ -231,6 +235,7 @@ pub(crate) fn baseline_issue(
     path: &str,
     current_raw: &[u8],
     allowed_sources: &[&str],
+    allow_partial: bool,
 ) -> Option<&'static str> {
     let Some(baseline) = context
         .shared_state
@@ -241,17 +246,16 @@ pub(crate) fn baseline_issue(
     else {
         return Some("file_not_read");
     };
-    if baseline
-        .get("is_partial")
-        .and_then(Value::as_bool)
-        .unwrap_or(true)
-    {
+    let Some(is_partial) = baseline.get("is_partial").and_then(Value::as_bool) else {
         return Some("file_not_read");
-    }
+    };
     let Some(source) = baseline.get("source").and_then(Value::as_str) else {
         return Some("file_not_read");
     };
     if !allowed_sources.contains(&source) {
+        return Some("file_not_read");
+    }
+    if is_partial && !(allow_partial && source == READ_FILE_BASELINE_SOURCE) {
         return Some("file_not_read");
     }
     let baseline_hash = baseline.get("hash").and_then(Value::as_str);

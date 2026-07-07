@@ -58,6 +58,7 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                     &path,
                     &before_raw,
                     WRITE_FILE_ALLOWED_BASELINE_SOURCES,
+                    false,
                 ) {
                     let message = if issue == "file_changed_since_read" {
                         "File changed since it was last read. Re-read it before overwriting."
@@ -73,6 +74,7 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                     &path,
                     &before_raw,
                     WRITE_FILE_ALLOWED_BASELINE_SOURCES,
+                    false,
                 )
                 .is_none();
             }

@@ -32,7 +32,7 @@ fn live_edit_file_recovers_after_edit_before_read_error() {
 Work only on before_read.txt.
 Follow this exact order:
 1. First call edit_file without calling read_file. Replace old_string `color = "red"` with new_string `color = "blue"`.
-2. If edit_file reports file_not_read or says the file must be read first, call read_file for the full file.
+2. If edit_file reports file_not_read or says the file must be read first, call read_file for the relevant lines or the full file.
 3. Then call edit_file again to make the replacement.
 4. Finish by calling task_finish with message exactly `LIVE_EDIT_BEFORE_READ_OK`.
 
@@ -111,9 +111,9 @@ fn live_edit_file_recovers_after_file_changed_since_read_error() {
 
 Work only on stale.txt.
 Follow this exact order:
-1. First call read_file for the full file.
+1. First call read_file for the relevant lines or the full file.
 2. Then call edit_file replacing old_string `status = "stale-base"` with new_string `status = "agent-final"`.
-3. If edit_file reports file_changed_since_read, call read_file again for the full file.
+3. If edit_file reports file_changed_since_read, call read_file again for the relevant lines or the full file.
 4. Then call edit_file replacing the current latest text `status = "external-change"` with `status = "agent-final"`.
 5. Finish by calling task_finish with message exactly `LIVE_STALE_BASELINE_OK`.
 
