@@ -26,6 +26,7 @@ fn create_sub_task_can_start_async_task_and_query_status() {
             final_answer: Some(format!("done: {}", request.task_description)),
             wait_reason: None,
             error: None,
+            error_code: None,
             cycles: 2,
             todo_list: Vec::new(),
             resolved: BTreeMap::from([("backend".to_string(), "deepseek".to_string())]),
@@ -121,6 +122,7 @@ fn sub_task_status_can_wait_for_background_task_completion() {
                     final_answer: Some("waited done".to_string()),
                     wait_reason: None,
                     error: None,
+                    error_code: None,
                     cycles: 1,
                     todo_list: Vec::new(),
                     resolved: BTreeMap::new(),
@@ -171,6 +173,7 @@ fn sub_task_manager_rejects_duplicate_running_submit() {
                 final_answer: Some("done".to_string()),
                 wait_reason: None,
                 error: None,
+                error_code: None,
                 cycles: 1,
                 todo_list: Vec::new(),
                 resolved: BTreeMap::new(),
@@ -192,6 +195,7 @@ fn sub_task_manager_rejects_duplicate_running_submit() {
                 final_answer: Some("should not run".to_string()),
                 wait_reason: None,
                 error: None,
+                error_code: None,
                 cycles: 1,
                 todo_list: Vec::new(),
                 resolved: BTreeMap::new(),
@@ -222,6 +226,7 @@ fn sub_task_manager_get_and_wait_return_agent_record_snapshot() {
                     final_answer: Some("record done".to_string()),
                     wait_reason: None,
                     error: None,
+                    error_code: None,
                     cycles: 3,
                     todo_list: Vec::new(),
                     resolved: BTreeMap::from([("backend".to_string(), "deepseek".to_string())]),
@@ -289,7 +294,7 @@ fn sub_task_status_reports_missing_and_invalid_task_ids() {
 }
 
 #[test]
-fn sub_task_status_coerces_task_ids_message_and_workspace_limit() {
+fn sub_task_status_rejects_non_string_task_ids_and_message() {
     let _registry_lock = isolated_sub_agent_registry();
     let workspace = tempfile::tempdir().expect("workspace");
     std::fs::write(workspace.path().join("a.txt"), "a").expect("a");
@@ -315,6 +320,7 @@ fn sub_task_status_coerces_task_ids_message_and_workspace_limit() {
                 final_answer: Some("done".to_string()),
                 wait_reason: None,
                 error: None,
+                error_code: None,
                 cycles: 1,
                 todo_list: Vec::new(),
                 resolved: BTreeMap::new(),
@@ -347,26 +353,15 @@ fn sub_task_status_coerces_task_ids_message_and_workspace_limit() {
         .expect("sub_task_status argument normalization");
 
     unregister_sub_agent_session("session-42");
-    assert_eq!(result.status, ToolResultStatus::Success);
-    assert_eq!(received.lock().expect("received").as_slice(), ["12345"]);
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("invalid_task_ids"));
+    assert!(received.lock().expect("received").is_empty());
     let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["tasks"].as_array().expect("tasks").len(), 1);
-    assert_eq!(payload["tasks"][0]["task_id"], "42");
-    assert_eq!(
-        payload["tasks"][0]["snapshot"]["workspace_files"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
-    );
-    assert_eq!(
-        payload["tasks"][0]["snapshot"]["workspace_files_truncated"],
-        true
-    );
+    assert_eq!(payload["error_code"], "invalid_task_ids");
 }
 
 #[test]
-fn sub_task_status_uses_json_truthiness_for_ids_and_limit_defaults() {
+fn sub_task_status_rejects_json_truthiness_for_ids() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -386,15 +381,10 @@ fn sub_task_status_uses_json_truthiness_for_ids_and_limit_defaults() {
         )
         .expect("sub_task_status truthiness");
 
-    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("invalid_task_ids"));
     let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    let task_ids = payload["tasks"]
-        .as_array()
-        .expect("tasks")
-        .iter()
-        .map(|task| task["task_id"].as_str().unwrap().to_string())
-        .collect::<Vec<_>>();
-    assert_eq!(task_ids, vec!["known"]);
+    assert_eq!(payload["error_code"], "invalid_task_ids");
 }
 
 #[test]
@@ -406,12 +396,10 @@ fn sub_task_status_can_steer_registered_running_session() {
     let mut context = ToolContext::new(workspace.path());
     context.sub_task_manager = Some(manager.clone());
     let received = Arc::new(Mutex::new(Vec::<String>::new()));
-    register_sub_agent_session(
-        "sub-session-1",
-        Arc::new(RecordingSubAgentSession {
-            received: Arc::clone(&received),
-        }),
-    );
+    let session: Arc<dyn SubAgentSession> = Arc::new(RecordingSubAgentSession {
+        received: Arc::clone(&received),
+    });
+    register_sub_agent_session("sub-session-1", session.clone());
     manager
         .submit(
             "sub-task-1",
@@ -428,6 +416,7 @@ fn sub_task_status_can_steer_registered_running_session() {
                     final_answer: Some("done".to_string()),
                     wait_reason: None,
                     error: None,
+                    error_code: None,
                     cycles: 1,
                     todo_list: Vec::new(),
                     resolved: BTreeMap::new(),
@@ -435,6 +424,14 @@ fn sub_task_status_can_steer_registered_running_session() {
             },
         )
         .expect("submit running sub-task");
+    manager.attach_session(
+        "sub-task-1",
+        "sub-session-1",
+        "researcher",
+        "Collect facts",
+        context.workspace_backend.clone(),
+        session,
+    );
 
     let result = registry
         .execute(
@@ -459,6 +456,67 @@ fn sub_task_status_can_steer_registered_running_session() {
     let payload: Value = serde_json::from_str(&result.content).expect("payload");
     assert_eq!(payload["interaction"]["task_id"], "sub-task-1");
     assert_eq!(payload["interaction"]["action"], "message_queued");
+}
+
+#[test]
+fn sub_task_status_reports_session_not_ready_before_async_session_attaches() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let manager = SubTaskManager::default();
+    let mut context = ToolContext::new(workspace.path());
+    context.sub_task_manager = Some(manager.clone());
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    manager
+        .submit(
+            "sub-task-pending-session",
+            "sub-session-pending",
+            "researcher",
+            "Initialize session",
+            move || {
+                release_rx.recv().expect("release pending session");
+                SubTaskOutcome {
+                    task_id: "sub-task-pending-session".to_string(),
+                    agent_name: "researcher".to_string(),
+                    status: AgentStatus::Completed,
+                    session_id: Some("sub-session-pending".to_string()),
+                    final_answer: Some("done".to_string()),
+                    wait_reason: None,
+                    error: None,
+                    error_code: None,
+                    cycles: 1,
+                    todo_list: Vec::new(),
+                    resolved: BTreeMap::new(),
+                }
+            },
+        )
+        .expect("submit pending-session sub-task");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sub_status_pending_session",
+                "sub_task_status",
+                BTreeMap::from([
+                    ("task_ids".to_string(), json!(["sub-task-pending-session"])),
+                    ("message".to_string(), json!("focus github")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("sub_task_status pending session");
+
+    release_tx.send(()).expect("release sub-task");
+    assert!(manager.wait("sub-task-pending-session", Some(Duration::from_secs(1))));
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(
+        result.error_code.as_deref(),
+        Some("sub_task_session_not_ready")
+    );
+    let payload: Value = serde_json::from_str(&result.content).expect("error payload");
+    assert_eq!(
+        payload["error"],
+        "Sub-task sub-task-pending-session session is not ready yet."
+    );
 }
 
 #[test]

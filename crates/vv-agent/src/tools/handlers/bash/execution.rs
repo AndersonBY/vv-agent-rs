@@ -10,9 +10,9 @@ use crate::runtime::shell::prepare_shell_execution;
 use crate::tools::base::ToolContext;
 use crate::tools::common::{
     coerce_truthy_arg, parse_integer_arg, path_escapes_workspace_error, stringify_tool_arg,
-    tool_error_with_code, tool_result, workspace_relative_path_or_absolute,
+    tool_error_with_code, tool_result_with_metadata, workspace_relative_path_or_absolute,
 };
-use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
+use crate::types::{Metadata, ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 use super::env::build_process_env;
 use super::shell_defaults::read_shell_defaults;
@@ -59,6 +59,7 @@ pub(super) fn execute_bash_command(
         Ok(defaults) => defaults,
         Err(error) => return tool_error_with_code(error, "invalid_shell_config"),
     };
+    let configured_shell = shell.clone();
     let process_env = build_process_env(bash_env.as_ref());
     let prepared = match prepare_shell_execution(
         &command,
@@ -79,7 +80,10 @@ pub(super) fn execute_bash_command(
     let mut started = match started {
         Ok(started) => started,
         Err(error) => {
-            let shell = prepared.shell.unwrap_or_else(|| "shell".to_string());
+            let shell = configured_shell
+                .as_deref()
+                .or(prepared.shell.as_deref())
+                .unwrap_or("shell");
             return tool_error_with_code(
                 format!("Failed to start {shell}: {error}"),
                 "command_failed",
@@ -94,17 +98,22 @@ pub(super) fn execute_bash_command(
             timeout_seconds,
             started.child,
             started.output_path,
-            prepared.shell,
+            configured_shell.clone(),
         );
-        let payload = json!({
+        let mut payload = json!({
             "status": "running",
             "session_id": session_id,
         });
-        return tool_result(
+        if let Some(shell) = configured_shell {
+            payload["shell"] = Value::String(shell);
+        }
+        let metadata = selected_metadata(&payload, &["status", "session_id", "shell"]);
+        return tool_result_with_metadata(
             ToolResultStatus::Running,
             payload,
             None,
             ToolDirective::Continue,
+            metadata,
         );
     }
 
@@ -118,17 +127,28 @@ pub(super) fn execute_bash_command(
                 "exit_code": exit_code,
                 "output": output,
             });
-            if let Some(shell) = prepared.shell {
+            if let Some(shell) = configured_shell {
                 payload["shell"] = Value::String(shell);
             }
+            let metadata = selected_metadata(&payload, &["cwd", "exit_code", "shell"]);
             if exit_code == 0 {
-                ToolExecutionResult::success("", payload.to_string())
+                tool_result_with_metadata(
+                    ToolResultStatus::Success,
+                    payload,
+                    None,
+                    ToolDirective::Continue,
+                    metadata,
+                )
             } else {
-                tool_result(
+                payload["ok"] = Value::Bool(false);
+                payload["error"] = Value::String(format!("command exited with code {exit_code}"));
+                payload["error_code"] = Value::String("command_failed".to_string());
+                tool_result_with_metadata(
                     ToolResultStatus::Error,
                     payload,
                     Some("command_failed"),
                     ToolDirective::Continue,
+                    metadata,
                 )
             }
         }
@@ -140,7 +160,7 @@ pub(super) fn execute_bash_command(
                 timeout_seconds,
                 started.child,
                 started.output_path,
-                prepared.shell.clone(),
+                configured_shell.clone(),
             );
             let mut payload = json!({
                 "status": "running",
@@ -152,18 +172,41 @@ pub(super) fn execute_bash_command(
                 "output": output,
                 "transitioned_to_background": true,
             });
-            if let Some(shell) = prepared.shell {
+            if let Some(shell) = configured_shell {
                 payload["shell"] = Value::String(shell);
             }
-            tool_result(
+            let metadata = selected_metadata(
+                &payload,
+                &[
+                    "status",
+                    "session_id",
+                    "cwd",
+                    "shell",
+                    "transitioned_to_background",
+                ],
+            );
+            tool_result_with_metadata(
                 ToolResultStatus::Running,
                 payload,
                 None,
                 ToolDirective::Continue,
+                metadata,
             )
         }
         Err(error) => tool_error_with_code(error.to_string(), "command_failed"),
     }
+}
+
+fn selected_metadata(payload: &Value, keys: &[&str]) -> Metadata {
+    let Some(object) = payload.as_object() else {
+        return Metadata::new();
+    };
+    keys.iter()
+        .filter_map(|key| {
+            let value = object.get(*key)?;
+            (!value.is_null()).then(|| ((*key).to_string(), value.clone()))
+        })
+        .collect()
 }
 
 fn blocked_dangerous_snippet(command: &str) -> Option<&'static str> {

@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
 
+use crate::runtime::sub_task_manager::SubTaskTurnSnapshot;
 use crate::types::SubTaskOutcome;
 
 pub type SubAgentSessionListener =
@@ -12,12 +13,24 @@ pub type SubAgentSessionUnsubscribe = Box<dyn FnOnce() + Send + 'static>;
 pub trait SubAgentSession: Send + Sync {
     fn steer(&self, prompt: &str) -> Result<(), String>;
 
+    fn cancel(&self) -> bool {
+        false
+    }
+
     fn sanitize_for_resume(&self) -> usize {
         0
     }
 
     fn continue_run(&self, _prompt: &str) -> Result<SubTaskOutcome, String> {
         Err("Sub-agent session continuation is not supported.".to_string())
+    }
+
+    fn continue_run_with_snapshot(
+        &self,
+        prompt: &str,
+        _snapshot: SubTaskTurnSnapshot,
+    ) -> Result<SubTaskOutcome, String> {
+        self.continue_run(prompt)
     }
 
     fn subscribe(&self, _listener: SubAgentSessionListener) -> Option<SubAgentSessionUnsubscribe> {
@@ -39,7 +52,7 @@ impl SubAgentSessionRegistry {
         }
         self.sessions
             .lock()
-            .expect("sub-agent session registry poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(session_id.to_string(), session);
     }
 
@@ -50,7 +63,7 @@ impl SubAgentSessionRegistry {
         }
         self.sessions
             .lock()
-            .expect("sub-agent session registry poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(session_id);
     }
 
@@ -66,7 +79,7 @@ impl SubAgentSessionRegistry {
         let mut sessions = self
             .sessions
             .lock()
-            .expect("sub-agent session registry poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let Some(registered) = sessions.get(session_id) else {
             return false;
         };
@@ -85,7 +98,7 @@ impl SubAgentSessionRegistry {
         }
         self.sessions
             .lock()
-            .expect("sub-agent session registry poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(session_id)
             .cloned()
     }
@@ -93,7 +106,7 @@ impl SubAgentSessionRegistry {
     pub fn clear(&self) {
         self.sessions
             .lock()
-            .expect("sub-agent session registry poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clear();
     }
 }

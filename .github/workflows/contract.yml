@@ -1,0 +1,41 @@
+name: Contract conformance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    env:
+      VV_AGENT_RUN_LIVE_TESTS: "0"
+      CARGO_BUILD_JOBS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Install test tools
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Verify vendored contract snapshot
+        run: python3 scripts/contract_snapshot.py check
+
+      - name: Rebuild canonical producer evidence
+        run: |
+          cargo test -p vv-agent \
+            --test parity_evidence_manifests \
+            --test tool_schema_contract \
+            --test app_server_contract_parity \
+            --test runner_producer_parity

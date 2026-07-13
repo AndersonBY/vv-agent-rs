@@ -11,11 +11,16 @@ use vv_agent::{
 #[derive(Clone, Default)]
 struct RecordingMemoryProvider {
     calls: Arc<Mutex<Vec<String>>>,
+    search_requests: Arc<Mutex<Vec<MemorySearchRequest>>>,
 }
 
 impl MemoryProvider for RecordingMemoryProvider {
-    fn search(&self, _request: MemorySearchRequest) -> MemoryFuture<Vec<MemorySearchResult>> {
-        Box::pin(async { Ok(Vec::new()) })
+    fn search(&self, request: MemorySearchRequest) -> MemoryFuture<Vec<MemorySearchResult>> {
+        let search_requests = self.search_requests.clone();
+        Box::pin(async move {
+            search_requests.lock().expect("lock").push(request);
+            Ok(Vec::new())
+        })
     }
 
     fn save(&self, _request: MemorySaveRequest) -> MemoryFuture<MemorySaveResult> {
@@ -45,6 +50,34 @@ impl MemoryProvider for RecordingMemoryProvider {
             Ok(())
         })
     }
+}
+
+#[tokio::test]
+async fn memory_provider_receives_default_and_explicit_search_limits() {
+    let provider = RecordingMemoryProvider::default();
+
+    provider
+        .search(MemorySearchRequest {
+            query: "default limit".to_string(),
+            ..MemorySearchRequest::default()
+        })
+        .await
+        .expect("default search");
+    provider
+        .search(MemorySearchRequest {
+            query: "explicit limit".to_string(),
+            limit: 25,
+            ..MemorySearchRequest::default()
+        })
+        .await
+        .expect("explicit search");
+
+    let requests = provider.search_requests.lock().expect("lock");
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].query, "default limit");
+    assert_eq!(requests[0].limit, 10);
+    assert_eq!(requests[1].query, "explicit limit");
+    assert_eq!(requests[1].limit, 25);
 }
 
 #[test]

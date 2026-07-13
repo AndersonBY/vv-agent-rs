@@ -340,6 +340,46 @@ fn search_files_truncates_large_text_content() {
 }
 
 #[test]
+fn search_files_uses_unicode_output_budget_and_omits_zero_sensitive_count() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let backend = MemoryWorkspaceBackend::default();
+    backend
+        .write_text(
+            "search.txt",
+            &format!("token {}", "中".repeat(40_000)),
+            false,
+        )
+        .expect("write");
+    let mut context = ToolContext::new(workspace.path());
+    context.workspace_backend = Arc::new(backend);
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "search_unicode_budget",
+                "search_files",
+                BTreeMap::from([
+                    ("pattern".to_string(), json!("token")),
+                    ("output_mode".to_string(), json!("content")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("search_files");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.directive, vv_agent::ToolDirective::Continue);
+    assert_eq!(result.error_code, None);
+    assert_eq!(result.metadata["content_truncated"], true);
+    assert!(result
+        .content
+        .starts_with("Found 1 matches in 1 files for pattern 'token'"));
+    assert!(result.content.contains("Shown: 3 lines, 30000 characters"));
+    assert!(!result.metadata.contains_key("sensitive_files_omitted"));
+}
+
+#[test]
 fn search_files_reports_supported_types_for_unknown_type() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

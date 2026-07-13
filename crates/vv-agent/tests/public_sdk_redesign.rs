@@ -5,9 +5,9 @@ use serde::Deserialize;
 use serde_json::json;
 use vv_agent::{
     handoff, Agent, AgentStatus, ApprovalPolicy, ExecutionMode, FunctionTool, LLMResponse,
-    MemorySession, MessageRole, ModelRef, ModelSettings, NormalizedInput, RunConfig, RunContext,
-    RunEvent, RunEventPayload, Runner, ScriptStep, ScriptedModelProvider, Session, SessionItem,
-    SubTaskRequest, Tool, ToolCall, ToolContext, ToolOutput, ToolPolicy,
+    MemorySession, Message, MessageRole, ModelRef, ModelSettings, NormalizedInput, RunConfig,
+    RunContext, RunEvent, RunEventPayload, Runner, ScriptStep, ScriptedModelProvider, Session,
+    SessionItem, SubTaskRequest, Tool, ToolCall, ToolContext, ToolOutput, ToolPolicy,
 };
 
 #[tokio::test]
@@ -34,8 +34,9 @@ async fn agent_runner_facade_runs_one_shot_with_scripted_provider() {
     assert_eq!(result.status(), AgentStatus::Completed);
     assert_eq!(result.final_output(), Some("facade final answer"));
     assert_eq!(result.agent_name(), "assistant");
-    assert_eq!(result.resolved_model().backend, "scripted");
-    assert_eq!(result.resolved_model().selected_model, "demo-model");
+    let resolved = result.resolved_model().expect("resolved model");
+    assert_eq!(resolved.backend, "scripted");
+    assert_eq!(resolved.selected_model, "demo-model");
 }
 
 #[tokio::test]
@@ -77,22 +78,26 @@ async fn run_config_overrides_agent_model_settings_and_workspace() {
         .expect("run agent with config");
 
     assert_eq!(result.final_output(), Some("override answer"));
-    assert_eq!(result.resolved_model().selected_model, "override-model");
+    assert_eq!(
+        result
+            .resolved_model()
+            .expect("resolved model")
+            .selected_model,
+        "override-model"
+    );
     let requests = captured_requests.lock().expect("lock");
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].model, "override-model");
-    let temperature = requests[0].metadata["model_settings"]["temperature"]
-        .as_f64()
-        .expect("temperature");
+    let settings = requests[0].model_settings.as_ref().expect("model settings");
+    let temperature = settings.temperature.expect("temperature");
     assert!((temperature - 0.1).abs() < 0.0001);
+    assert_eq!(settings.max_tokens, Some(512));
     assert_eq!(
-        requests[0].metadata["model_settings"]["max_output_tokens"],
-        json!(512)
+        settings.extra_body.get("reasoning"),
+        Some(&json!({"effort": "low"}))
     );
-    assert_eq!(
-        requests[0].metadata["model_settings"]["extra_body"]["reasoning"],
-        json!({"effort": "low"})
-    );
+    assert!(requests[0].metadata.get("model_settings").is_none());
+    assert!(requests[0].metadata.get("runtime_model").is_none());
 }
 
 #[tokio::test]
@@ -262,6 +267,31 @@ async fn sqlite_session_store_persists_items_across_reopen() {
     );
 }
 
+#[tokio::test]
+async fn session_item_round_trips_complete_message_content() {
+    let mut message = Message::assistant("answer");
+    message.name = Some("assistant".to_string());
+    message.reasoning_content = Some("reasoning".to_string());
+    message.image_url = Some("data:image/png;base64,AA==".to_string());
+    message.tool_calls = vec![ToolCall::new(
+        "call_1",
+        "lookup",
+        BTreeMap::from([("id".to_string(), json!(1))]),
+    )];
+    message.metadata.insert("source".to_string(), json!("test"));
+    let item = SessionItem::from_message(&message).expect("session item");
+
+    assert_eq!(item.to_message(), message);
+
+    let db = tempfile::NamedTempFile::new().expect("temp sqlite db");
+    let store = vv_agent::SqliteSessionStore::open(db.path()).expect("store");
+    let session = store.session("rich-message");
+    session.add_items(vec![item]).await.expect("append");
+    let restored = session.get_items(None).await.expect("items");
+
+    assert_eq!(restored[0].to_message(), message);
+}
+
 #[test]
 fn model_ref_and_run_event_are_serializable_public_contracts() {
     assert_eq!(ModelRef::named("demo").model(), "demo");
@@ -429,10 +459,9 @@ async fn runner_stream_returns_typed_runtime_events_before_result() {
         .iter()
         .any(|event| event.agent_name() == Some("stream-agent")
             && matches!(event.payload(), RunEventPayload::RunStarted { .. })));
-    assert!(events.iter().any(|event| matches!(
-        event.payload(),
-        RunEventPayload::AssistantDelta { delta } if delta == "calling tool"
-    )));
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event.payload(), RunEventPayload::AssistantDelta { .. })));
     assert!(events.iter().any(|event| matches!(
         event.payload(),
         RunEventPayload::ToolCallCompleted { tool_name, .. } if tool_name == "echo_json"
@@ -499,9 +528,22 @@ async fn memory_session_persists_context_across_runner_calls() {
     assert!(items
         .iter()
         .any(|item| matches!(item, SessionItem::User { content } if content == "first prompt")));
-    assert!(items
-        .iter()
-        .any(|item| matches!(item, SessionItem::Assistant { content } if content == "second")));
+    assert!(items.iter().any(|item| {
+        let message = item.to_message();
+        message.role == MessageRole::Assistant
+            && message.tool_calls.iter().any(|call| {
+                call.name == "task_finish"
+                    && call.arguments.get("message") == Some(&json!("second"))
+            })
+    }));
+    assert!(items.iter().any(|item| {
+        let message = item.to_message();
+        message.role == MessageRole::Tool
+            && serde_json::from_str::<serde_json::Value>(&message.content)
+                .ok()
+                .and_then(|payload| payload.get("message").cloned())
+                == Some(json!("second"))
+    }));
     assert_eq!(captured_requests.lock().expect("lock").len(), 1);
 }
 
@@ -635,12 +677,13 @@ async fn agent_background_task_returns_pollable_task_handle() {
         "string"
     );
 
-    let mut context = ToolContext::new("./workspace");
+    let context = ToolContext::new("./workspace");
     let start = background_tool
         .start(
             &runner,
-            &mut context,
+            &context,
             json!({"task_description": "draft the sdk redesign report"}),
+            None,
         )
         .expect("start background task");
     assert_eq!(start.agent_name(), "drafter");

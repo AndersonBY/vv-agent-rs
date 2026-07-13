@@ -1,8 +1,11 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::sessions::Session;
 use crate::types::Metadata;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -12,6 +15,7 @@ pub struct ContextFragment {
     pub stable: bool,
     pub priority: i32,
     pub source: Option<String>,
+    pub cache_hint: Option<String>,
     pub metadata: Metadata,
 }
 
@@ -23,6 +27,7 @@ impl ContextFragment {
             stable: false,
             priority: 100,
             source: None,
+            cache_hint: None,
             metadata: Metadata::new(),
         }
     }
@@ -43,8 +48,7 @@ impl ContextFragment {
     }
 
     pub fn cache_hint(mut self, cache_hint: impl Into<String>) -> Self {
-        self.metadata
-            .insert("cache_hint".to_string(), Value::String(cache_hint.into()));
+        self.cache_hint = Some(cache_hint.into());
         self
     }
 
@@ -57,6 +61,11 @@ impl ContextFragment {
 pub struct ContextRequest<'a> {
     pub agent_name: &'a str,
     pub input: &'a str,
+    pub model: Option<String>,
+    pub trace_id: Option<String>,
+    pub session: Option<Arc<dyn Session>>,
+    pub workspace: Option<PathBuf>,
+    pub context: Option<Arc<dyn std::any::Any + Send + Sync>>,
     pub max_prompt_chars: Option<usize>,
     pub metadata: Metadata,
 }
@@ -66,6 +75,11 @@ impl<'a> ContextRequest<'a> {
         Self {
             agent_name,
             input,
+            model: None,
+            trace_id: None,
+            session: None,
+            workspace: None,
+            context: None,
             max_prompt_chars: None,
             metadata: Metadata::new(),
         }
@@ -80,6 +94,31 @@ impl<'a> ContextRequest<'a> {
         self
     }
 
+    pub fn model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
+        self
+    }
+
+    pub fn trace_id(mut self, trace_id: impl Into<String>) -> Self {
+        self.trace_id = Some(trace_id.into());
+        self
+    }
+
+    pub fn session(mut self, session: Arc<dyn Session>) -> Self {
+        self.session = Some(session);
+        self
+    }
+
+    pub fn workspace(mut self, workspace: impl Into<PathBuf>) -> Self {
+        self.workspace = Some(workspace.into());
+        self
+    }
+
+    pub fn context(mut self, context: Arc<dyn std::any::Any + Send + Sync>) -> Self {
+        self.context = Some(context);
+        self
+    }
+
     pub fn metadata(mut self, key: impl Into<String>, value: Value) -> Self {
         self.metadata.insert(key.into(), value);
         self
@@ -91,7 +130,33 @@ pub struct ContextSection {
     pub id: String,
     pub text: String,
     pub stable: bool,
+    pub priority: i32,
+    pub source: Option<String>,
+    pub cache_hint: Option<String>,
     pub metadata: Metadata,
+}
+
+impl ContextSection {
+    pub fn to_metadata(&self) -> Value {
+        let mut payload = serde_json::Map::from_iter([
+            ("id".to_string(), Value::String(self.id.clone())),
+            ("text".to_string(), Value::String(self.text.clone())),
+            ("stable".to_string(), Value::Bool(self.stable)),
+        ]);
+        if let Some(source) = self.source.as_deref().filter(|value| !value.is_empty()) {
+            payload.insert("source".to_string(), Value::String(source.to_string()));
+        }
+        if let Some(cache_hint) = &self.cache_hint {
+            payload.insert("cache_hint".to_string(), Value::String(cache_hint.clone()));
+        }
+        if !self.metadata.is_empty() {
+            payload.insert(
+                "metadata".to_string(),
+                serde_json::to_value(&self.metadata).unwrap_or(Value::Null),
+            );
+        }
+        Value::Object(payload)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -100,7 +165,17 @@ pub struct ContextBundle {
     pub sections: Vec<ContextSection>,
     pub stable_hash: String,
     pub sources: BTreeMap<String, String>,
+    pub total_chars: usize,
     pub omitted_section_ids: Vec<String>,
+}
+
+impl ContextBundle {
+    pub fn metadata_sections(&self) -> Vec<Value> {
+        self.sections
+            .iter()
+            .map(ContextSection::to_metadata)
+            .collect()
+    }
 }
 
 pub trait ContextProvider: Send + Sync {
@@ -152,6 +227,7 @@ pub fn assemble_context_fragments(
     });
 
     let mut prompt_parts = Vec::new();
+    let mut total_chars = 0usize;
     let mut sections = Vec::new();
     let mut stable_parts = Vec::new();
     let mut sources = BTreeMap::new();
@@ -162,11 +238,8 @@ pub fn assemble_context_fragments(
         if text.is_empty() {
             continue;
         }
-        let candidate_len = if prompt_parts.is_empty() {
-            text.len()
-        } else {
-            prompt_parts.join("\n\n").len() + 2 + text.len()
-        };
+        let separator_chars = usize::from(!prompt_parts.is_empty()) * 2;
+        let candidate_len = total_chars + separator_chars + text.chars().count();
         if request
             .max_prompt_chars
             .is_some_and(|max_chars| candidate_len > max_chars)
@@ -181,10 +254,14 @@ pub fn assemble_context_fragments(
             stable_parts.push(text.clone());
         }
         prompt_parts.push(text.clone());
+        total_chars = candidate_len;
         sections.push(ContextSection {
             id: fragment.id,
             text,
             stable: fragment.stable,
+            priority: fragment.priority,
+            source: fragment.source,
+            cache_hint: fragment.cache_hint,
             metadata: fragment.metadata,
         });
     }
@@ -194,6 +271,7 @@ pub fn assemble_context_fragments(
         sections,
         stable_hash: sha256_hex(stable_parts.join("").as_bytes()),
         sources,
+        total_chars,
         omitted_section_ids,
     })
 }

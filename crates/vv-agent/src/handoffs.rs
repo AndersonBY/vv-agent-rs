@@ -11,6 +11,7 @@ pub struct Handoff {
     target: Arc<Agent>,
     description: Option<String>,
     tool_name: String,
+    metadata: std::collections::BTreeMap<String, Value>,
 }
 
 impl Handoff {
@@ -26,6 +27,10 @@ impl Handoff {
         &self.tool_name
     }
 
+    pub fn metadata(&self) -> &std::collections::BTreeMap<String, Value> {
+        &self.metadata
+    }
+
     pub fn as_tool_spec(&self, from_agent: &str) -> ToolSpec {
         let target = self.target.name().to_string();
         let description = self
@@ -34,10 +39,18 @@ impl Handoff {
             .unwrap_or_else(|| format!("Transfer the conversation to {target}."));
         let from_agent = from_agent.to_string();
         let tool_name = self.tool_name.clone();
+        let tool_name_for_handler = tool_name.clone();
+        let handoff_metadata = self.metadata.clone();
         let target_for_handler = target.clone();
         let handler: ToolHandler = Arc::new(
             move |_context: &mut ToolContext, arguments: &ToolArguments| {
-                handoff_tool_result(&from_agent, &target_for_handler, arguments)
+                handoff_tool_result(
+                    &from_agent,
+                    &target_for_handler,
+                    &tool_name_for_handler,
+                    arguments,
+                    &handoff_metadata,
+                )
             },
         );
         let mut spec = ToolSpec::new(tool_name.clone(), description.clone(), handler);
@@ -52,10 +65,12 @@ impl Handoff {
                     "properties": {
                         "input": {
                             "type": "string",
-                            "description": "Input or handoff summary for the target agent."
+                            "description": "Input or handoff summary for the target agent.",
+                            "minLength": 1
                         }
                     },
-                    "required": ["input"]
+                    "required": ["input"],
+                    "additionalProperties": false
                 }
             }
         });
@@ -68,6 +83,7 @@ pub fn handoff(agent: &Agent) -> HandoffBuilder {
         target: Arc::new(agent.clone()),
         description: None,
         tool_name: None,
+        metadata: std::collections::BTreeMap::new(),
     }
 }
 
@@ -75,6 +91,7 @@ pub struct HandoffBuilder {
     target: Arc<Agent>,
     description: Option<String>,
     tool_name: Option<String>,
+    metadata: std::collections::BTreeMap<String, Value>,
 }
 
 impl HandoffBuilder {
@@ -88,6 +105,11 @@ impl HandoffBuilder {
         self
     }
 
+    pub fn metadata(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.metadata.insert(key.into(), value);
+        self
+    }
+
     pub fn build(self) -> Handoff {
         let target_name = self.target.name().to_string();
         Handoff {
@@ -95,7 +117,8 @@ impl HandoffBuilder {
             description: self.description,
             tool_name: self
                 .tool_name
-                .unwrap_or_else(|| format!("transfer_to_{target_name}")),
+                .unwrap_or_else(|| format!("transfer_to_{}", slugify(&target_name))),
+            metadata: self.metadata,
         }
     }
 }
@@ -109,23 +132,47 @@ impl From<HandoffBuilder> for Handoff {
 fn handoff_tool_result(
     from_agent: &str,
     to_agent: &str,
+    tool_name: &str,
     arguments: &ToolArguments,
+    handoff_metadata: &std::collections::BTreeMap<String, Value>,
 ) -> ToolExecutionResult {
     let input = arguments
         .get("input")
-        .and_then(value_as_string)
-        .unwrap_or_default();
-    let mut metadata = std::collections::BTreeMap::new();
-    metadata.insert("handoff".to_string(), Value::Bool(true));
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if arguments.len() != 1 || input.is_none() {
+        return ToolExecutionResult {
+            tool_call_id: String::new(),
+            content: json!({
+                "ok": false,
+                "error": "handoff requires a non-empty input string and no additional arguments",
+                "error_code": "invalid_handoff_arguments",
+            })
+            .to_string(),
+            status: ToolResultStatus::Error,
+            directive: ToolDirective::Continue,
+            error_code: Some("invalid_handoff_arguments".to_string()),
+            metadata: std::collections::BTreeMap::new(),
+            image_url: None,
+            image_path: None,
+        };
+    }
+    let input = input.expect("validated handoff input").to_string();
+    let mut metadata = handoff_metadata.clone();
+    metadata.insert("mode".to_string(), Value::String("handoff".to_string()));
     metadata.insert(
-        "from_agent".to_string(),
+        "handoff_from".to_string(),
         Value::String(from_agent.to_string()),
     );
-    metadata.insert("to_agent".to_string(), Value::String(to_agent.to_string()));
+    metadata.insert(
+        "handoff_to".to_string(),
+        Value::String(to_agent.to_string()),
+    );
     metadata.insert("handoff_input".to_string(), Value::String(input.clone()));
     metadata.insert(
-        "final_message".to_string(),
-        Value::String(format!("Handing off to {to_agent}.")),
+        "handoff_tool_name".to_string(),
+        Value::String(tool_name.to_string()),
     );
     ToolExecutionResult {
         tool_call_id: String::new(),
@@ -146,15 +193,24 @@ fn handoff_tool_result(
     }
 }
 
-fn value_as_string(value: &Value) -> Option<String> {
-    match value {
-        Value::String(value) => {
-            let value = value.trim();
-            (!value.is_empty()).then(|| value.to_string())
+fn slugify(value: &str) -> String {
+    let mut normalized = String::new();
+    let mut pending_separator = false;
+    for character in value.chars() {
+        if character.is_ascii_alphanumeric() || character == '_' {
+            if pending_separator && !normalized.is_empty() && !normalized.ends_with('_') {
+                normalized.push('_');
+            }
+            pending_separator = false;
+            normalized.push(character.to_ascii_lowercase());
+        } else {
+            pending_separator = true;
         }
-        other => {
-            let value = other.to_string();
-            (!value.is_empty()).then_some(value)
-        }
+    }
+    let normalized = normalized.trim_matches('_').to_string();
+    if normalized.is_empty() {
+        "agent".to_string()
+    } else {
+        normalized
     }
 }

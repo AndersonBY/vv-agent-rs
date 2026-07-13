@@ -206,7 +206,9 @@ fn runtime_emits_lifecycle_log_events() {
         event_names,
         vec![
             "run_started",
+            "agent_started",
             "cycle_started",
+            "llm_started",
             "cycle_llm_response",
             "tool_call_started",
             "tool_result",
@@ -215,14 +217,14 @@ fn runtime_emits_lifecycle_log_events() {
     );
     assert_eq!(events[0].1["task_id"], "log_task");
     assert_eq!(events[0].1["model"], "demo");
-    assert_eq!(events[2].1["assistant_message"], "assistant log");
-    assert_eq!(events[2].1["tool_call_count"], 1);
-    assert_eq!(events[3].1["tool_name"], "task_finish");
-    assert_eq!(events[3].1["tool_call_id"], "log_finish");
-    assert_eq!(events[4].1["tool_name"], "task_finish");
-    assert_eq!(events[4].1["tool_call_id"], "log_finish");
-    assert_eq!(events[4].1["directive"], "finish");
-    assert_eq!(events[5].1["final_answer"], "logged finish");
+    assert_eq!(events[4].1["assistant_message"], "assistant log");
+    assert_eq!(events[4].1["tool_call_count"], 1);
+    assert_eq!(events[5].1["tool_name"], "task_finish");
+    assert_eq!(events[5].1["tool_call_id"], "log_finish");
+    assert_eq!(events[6].1["tool_name"], "task_finish");
+    assert_eq!(events[6].1["tool_call_id"], "log_finish");
+    assert_eq!(events[6].1["directive"], "finish");
+    assert_eq!(events[7].1["final_answer"], "logged finish");
 }
 
 #[test]

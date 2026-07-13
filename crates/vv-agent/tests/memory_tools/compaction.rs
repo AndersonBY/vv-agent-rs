@@ -129,8 +129,11 @@ fn memory_manager_uses_provider_tokens_and_recent_tool_ids() {
     );
 
     assert!(changed);
-    assert_eq!(compacted.len(), 2);
-    assert!(compacted[1].content.contains("<Compressed Agent Memory>"));
+    assert_eq!(compacted.len(), 4);
+    assert!(compacted[3].content.contains("<Tool Result Compact>"));
+    assert!(compacted
+        .iter()
+        .all(|message| !message.content.contains("<Compressed Agent Memory>")));
 }
 
 #[test]

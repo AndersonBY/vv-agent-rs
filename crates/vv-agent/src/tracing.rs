@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -5,7 +6,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 
 pub trait TraceSink: Send + Sync {
     fn on_span_start(&self, span: &Span);
@@ -16,30 +17,46 @@ pub trait TraceSink: Send + Sync {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Span {
+    pub name: String,
     pub trace_id: String,
     pub span_id: String,
-    pub name: String,
-    pub run_id: String,
-    pub agent_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    pub started_at: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<f64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, Value>,
 }
 
 impl Span {
-    pub fn new(
-        run_id: impl Into<String>,
-        name: impl Into<String>,
-        agent_name: Option<String>,
-    ) -> Self {
-        let run_id = run_id.into();
-        let name = name.into();
+    pub fn new(trace_id: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
-            trace_id: run_id.clone(),
-            span_id: format!("{}_{}", name, timestamp_millis()),
-            name,
-            run_id,
-            agent_name,
+            name: name.into(),
+            trace_id: trace_id.into(),
+            span_id: format!("span_{}", uuid::Uuid::new_v4().simple()),
+            parent_id: None,
+            started_at: timestamp_seconds(),
+            ended_at: None,
+            metadata: BTreeMap::new(),
         }
+    }
+
+    pub fn with_parent_id(mut self, parent_id: impl Into<String>) -> Self {
+        self.parent_id = Some(parent_id.into());
+        self
+    }
+
+    pub fn with_metadata(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.metadata.insert(key.into(), value);
+        self
+    }
+
+    pub fn finish(mut self) -> Self {
+        self.ended_at = Some(timestamp_seconds());
+        self
     }
 }
 
@@ -66,7 +83,7 @@ impl JsonlTraceExporter {
                 "{}",
                 json!({
                     "event": event,
-                    "timestamp_ms": timestamp_millis(),
+                    "timestamp": timestamp_seconds(),
                     "span": span,
                 })
             );
@@ -92,9 +109,9 @@ impl TraceSink for JsonlTraceExporter {
     }
 }
 
-fn timestamp_millis() -> u128 {
+fn timestamp_seconds() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
+        .map(|duration| duration.as_secs_f64())
         .unwrap_or_default()
 }

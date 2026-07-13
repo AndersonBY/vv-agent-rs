@@ -8,7 +8,10 @@ pub(crate) fn coerce_bool(value: Option<&Value>, default: bool) -> bool {
             Some(1) => true,
             _ => default,
         },
-        Some(Value::String(value)) => match value.trim().to_ascii_lowercase().as_str() {
+        Some(Value::String(value)) => match trim_portable_whitespace(value)
+            .to_ascii_lowercase()
+            .as_str()
+        {
             "1" | "true" | "yes" | "on" => true,
             "0" | "false" | "no" | "off" => false,
             _ => default,
@@ -32,9 +35,17 @@ pub(crate) fn coerce_truthy_arg(value: Option<&Value>, default: bool) -> bool {
 pub(crate) fn parse_integer_arg(value: &Value) -> Result<i64, ()> {
     match value {
         Value::Number(number) => number.as_i64().ok_or(()),
-        Value::String(text) => text.trim().parse::<i64>().map_err(|_| ()),
+        Value::String(text) => trim_portable_whitespace(text)
+            .parse::<i64>()
+            .map_err(|_| ()),
         _ => Err(()),
     }
+}
+
+pub(crate) fn trim_portable_whitespace(value: &str) -> &str {
+    value.trim_matches(|character: char| {
+        character.is_whitespace() || matches!(character, '\u{001c}'..='\u{001f}')
+    })
 }
 
 pub(crate) fn stringify_tool_arg(value: Option<&Value>, default: &str) -> String {

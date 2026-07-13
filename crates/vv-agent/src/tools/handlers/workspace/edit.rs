@@ -13,6 +13,7 @@ use crate::types::{Metadata, ToolArguments, ToolExecutionResult, ToolResultStatu
 use super::workspace_backend_error;
 
 const FILE_BASELINES_STATE_KEY: &str = "_workspace_file_baselines";
+const UTF8_BOM: &[u8] = b"\xef\xbb\xbf";
 pub(crate) const READ_FILE_BASELINE_SOURCE: &str = "read_file";
 pub(crate) const WRITE_FILE_BASELINE_SOURCE: &str = "write_file";
 pub(crate) const EDIT_FILE_BASELINE_SOURCE: &str = "edit_file";
@@ -26,7 +27,7 @@ pub(crate) const WRITE_FILE_ALLOWED_BASELINE_SOURCES: &[&str] = &[
     WRITE_FILE_BASELINE_SOURCE,
     EDIT_FILE_BASELINE_SOURCE,
 ];
-const MAX_DIFF_CHARS: usize = 8_000;
+const MAX_DIFF_CHARS: usize = 12_000;
 
 pub fn edit_file(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
     let spec = edit_file_tool();
@@ -38,15 +39,15 @@ pub(crate) fn edit_file_tool() -> ToolSpec {
         "edit_file",
         "Safely edit an existing workspace file.",
         Arc::new(|context, arguments| {
-            if !arguments.contains_key("path")
-                || !arguments.contains_key("old_string")
-                || !arguments.contains_key("new_string")
-            {
-                let path = stringify_tool_arg(arguments.get("path"), "");
-                return workspace_tool_error(
+            let missing_arguments = ["path", "old_string", "new_string"]
+                .into_iter()
+                .filter(|name| !arguments.contains_key(*name))
+                .collect::<Vec<_>>();
+            if !missing_arguments.is_empty() {
+                return workspace_tool_error_with_details(
                     "`path`, `old_string`, and `new_string` are required.",
                     "invalid_arguments",
-                    &path,
+                    Metadata::from([("missing_arguments".to_string(), json!(missing_arguments))]),
                 );
             }
             let path = stringify_tool_arg(arguments.get("path"), "");
@@ -85,8 +86,8 @@ pub(crate) fn edit_file_tool() -> ToolSpec {
 
             match backend.read_bytes(&path) {
                 Ok(raw) => {
-                    let text = match String::from_utf8(raw.clone()) {
-                        Ok(text) => text,
+                    let (text, has_bom) = match decode_workspace_text(&raw) {
+                        Ok(decoded) => decoded,
                         Err(_) => {
                             return workspace_tool_error(
                                 "Unsupported file encoding for edit_file.",
@@ -130,12 +131,13 @@ pub(crate) fn edit_file_tool() -> ToolSpec {
                         );
                     }
                     if occurrence_count > 1 && !replace_all {
-                        return workspace_tool_error(
-                            format!(
-                                "`old_string` matched {occurrence_count} locations; make it unique or set replace_all=true."
-                            ),
+                        return workspace_tool_error_with_details(
+                            "`old_string` matched multiple locations; make it unique or set replace_all=true.",
                             "old_string_not_unique",
-                            &path,
+                            Metadata::from([
+                                ("path".to_string(), json!(path)),
+                                ("match_count".to_string(), json!(occurrence_count)),
+                            ]),
                         );
                     }
                     let replaced_count = if replace_all { occurrence_count } else { 1 };
@@ -144,12 +146,17 @@ pub(crate) fn edit_file_tool() -> ToolSpec {
                     } else {
                         replace_n(&text, &actual_old, &actual_new, 1)
                     };
-                    match backend.write_text(&path, &replaced_text, false) {
+                    let encoded_text = if has_bom {
+                        format!("\u{feff}{replaced_text}")
+                    } else {
+                        replaced_text.clone()
+                    };
+                    match backend.write_text(&path, &encoded_text, false) {
                         Ok(_) => {
                             record_file_baseline(
                                 context,
                                 &path,
-                                replaced_text.as_bytes(),
+                                encoded_text.as_bytes(),
                                 false,
                                 EDIT_FILE_BASELINE_SOURCE,
                             );
@@ -179,25 +186,46 @@ pub(crate) fn workspace_tool_error(
     error_code: impl Into<String>,
     path: &str,
 ) -> ToolExecutionResult {
+    workspace_tool_error_with_details(
+        message,
+        error_code,
+        Metadata::from([("path".to_string(), json!(path))]),
+    )
+}
+
+pub(crate) fn workspace_tool_error_with_details(
+    message: impl Into<String>,
+    error_code: impl Into<String>,
+    details: Metadata,
+) -> ToolExecutionResult {
     let message = message.into();
     let error_code = error_code.into();
+    let mut payload = serde_json::Map::new();
+    payload.insert("ok".to_string(), Value::Bool(false));
+    payload.insert("error".to_string(), Value::String(message.clone()));
+    payload.insert("error_code".to_string(), Value::String(error_code.clone()));
+    payload.insert("message".to_string(), Value::String(message));
+    payload.extend(details.clone());
+    let mut metadata = details;
+    metadata.insert("error_code".to_string(), Value::String(error_code.clone()));
     ToolExecutionResult {
         tool_call_id: String::new(),
-        content: json!({
-            "ok": false,
-            "error": message,
-            "message": message,
-            "error_code": error_code,
-            "path": path,
-        })
-        .to_string(),
+        content: Value::Object(payload).to_string(),
         status: ToolResultStatus::Error,
         directive: crate::types::ToolDirective::Continue,
         error_code: Some(error_code),
-        metadata: Metadata::new(),
+        metadata,
         image_url: None,
         image_path: None,
     }
+}
+
+pub(crate) fn decode_workspace_text(raw: &[u8]) -> Result<(String, bool), ()> {
+    let has_bom = raw.starts_with(UTF8_BOM);
+    let payload = if has_bom { &raw[UTF8_BOM.len()..] } else { raw };
+    String::from_utf8(payload.to_vec())
+        .map(|text| (text, has_bom))
+        .map_err(|_| ())
 }
 
 pub(crate) fn record_file_baseline(
@@ -286,9 +314,7 @@ pub(crate) fn changed_file_metadata(
         "line_ending".to_string(),
         Value::String(line_ending.to_string()),
     );
-    if diff_truncated {
-        metadata.insert("diff_truncated".to_string(), Value::Bool(true));
-    }
+    metadata.insert("diff_truncated".to_string(), Value::Bool(diff_truncated));
     metadata
 }
 
@@ -334,8 +360,8 @@ fn content_hash(raw: &[u8]) -> String {
 }
 
 fn bounded_diff(path: &str, before: &str, after: &str) -> (String, bool, usize, usize) {
-    let before_lines = before.lines().collect::<Vec<_>>();
-    let after_lines = after.lines().collect::<Vec<_>>();
+    let before_lines = split_unified_diff_lines(before);
+    let after_lines = split_unified_diff_lines(after);
     let mut prefix = 0;
     while prefix < before_lines.len()
         && prefix < after_lines.len()
@@ -351,22 +377,87 @@ fn bounded_diff(path: &str, before: &str, after: &str) -> (String, bool, usize, 
     {
         suffix += 1;
     }
-    let before_changed = &before_lines[prefix..before_lines.len().saturating_sub(suffix)];
-    let after_changed = &after_lines[prefix..after_lines.len().saturating_sub(suffix)];
-    let mut diff = format!("--- {path}\n+++ {path}\n@@\n");
-    for line in before_changed {
-        diff.push('-');
-        diff.push_str(line);
-        diff.push('\n');
+    let before_changed_end = before_lines.len().saturating_sub(suffix);
+    let after_changed_end = after_lines.len().saturating_sub(suffix);
+    let additions = after_changed_end.saturating_sub(prefix);
+    let deletions = before_changed_end.saturating_sub(prefix);
+    if additions == 0 && deletions == 0 {
+        return (String::new(), false, 0, 0);
     }
-    for line in after_changed {
-        diff.push('+');
-        diff.push_str(line);
-        diff.push('\n');
+
+    let context_start = prefix.saturating_sub(3);
+    let before_hunk_end = before_changed_end.saturating_add(3).min(before_lines.len());
+    let after_hunk_end = after_changed_end.saturating_add(3).min(after_lines.len());
+    let before_hunk_count = before_hunk_end.saturating_sub(context_start);
+    let after_hunk_count = after_hunk_end.saturating_sub(context_start);
+    let mut diff = format!(
+        "--- {path}\n+++ {path}\n@@ -{} +{} @@\n",
+        format_unified_range(context_start, before_hunk_count),
+        format_unified_range(context_start, after_hunk_count),
+    );
+    for line in &before_lines[context_start..prefix] {
+        render_unified_line(&mut diff, ' ', line);
     }
-    let truncated = diff.len() > MAX_DIFF_CHARS;
+    for line in &before_lines[prefix..before_changed_end] {
+        render_unified_line(&mut diff, '-', line);
+    }
+    for line in &after_lines[prefix..after_changed_end] {
+        render_unified_line(&mut diff, '+', line);
+    }
+    for line in &after_lines[after_changed_end..after_hunk_end] {
+        render_unified_line(&mut diff, ' ', line);
+    }
+
+    let truncated = diff.chars().count() > MAX_DIFF_CHARS;
     if truncated {
-        diff.truncate(MAX_DIFF_CHARS);
+        diff = diff.chars().take(MAX_DIFF_CHARS).collect();
     }
-    (diff, truncated, after_changed.len(), before_changed.len())
+    (diff, truncated, additions, deletions)
+}
+
+fn split_unified_diff_lines(text: &str) -> Vec<&str> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for (index, character) in text.char_indices() {
+        if character == '\n' {
+            let end = index + character.len_utf8();
+            lines.push(&text[start..end]);
+            start = end;
+        }
+    }
+    if start < text.len() {
+        lines.push(&text[start..]);
+    }
+    lines
+}
+
+fn format_unified_range(start_index: usize, count: usize) -> String {
+    let start_line = if count == 0 {
+        start_index
+    } else {
+        start_index + 1
+    };
+    if count == 1 {
+        start_line.to_string()
+    } else {
+        format!("{start_line},{count}")
+    }
+}
+
+fn render_unified_line(output: &mut String, marker: char, line: &str) {
+    let has_newline = line.ends_with('\n');
+    let mut body = if has_newline {
+        &line[..line.len() - 1]
+    } else {
+        line
+    };
+    if has_newline && body.ends_with('\r') {
+        body = &body[..body.len() - 1];
+    }
+    output.push(marker);
+    output.push_str(body);
+    output.push('\n');
+    if !has_newline {
+        output.push_str("\\ No newline at end of file\n");
+    }
 }

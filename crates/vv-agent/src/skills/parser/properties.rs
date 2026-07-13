@@ -16,6 +16,7 @@ pub(crate) fn build_properties(
         name,
         description,
         license: optional_string(metadata.get("license")),
+        compatibility: optional_string(metadata.get("compatibility")),
         allowed_tools: optional_string(metadata.get("allowed-tools")),
         metadata: metadata
             .get("metadata")

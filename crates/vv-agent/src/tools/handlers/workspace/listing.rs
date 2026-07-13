@@ -13,6 +13,7 @@ use crate::workspace::LocalWorkspaceBackend;
 
 use request::FindFilesRequest;
 
+use super::edit::workspace_tool_error;
 use super::workspace_backend_error;
 
 pub fn find_files(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
@@ -45,6 +46,20 @@ fn handle_find_files(context: &mut ToolContext, arguments: &ToolArguments) -> To
     let backend = context.effective_workspace_backend();
     let root_listing = request.is_workspace_root();
     let is_local_backend = backend.as_any().is::<LocalWorkspaceBackend>();
+    if is_local_backend && !resolved_path.exists() {
+        return workspace_tool_error(
+            format!("path not found: {}", request.path),
+            "path_not_found",
+            &request.path,
+        );
+    }
+    if is_local_backend && !resolved_path.is_dir() {
+        return workspace_tool_error(
+            format!("not a directory: {}", request.path),
+            "not_a_directory",
+            &request.path,
+        );
+    }
     let rg_outcome = backend
         .as_any()
         .downcast_ref::<LocalWorkspaceBackend>()

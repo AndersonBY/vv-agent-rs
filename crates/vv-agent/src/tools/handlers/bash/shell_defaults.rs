@@ -13,16 +13,25 @@ pub(super) type ShellDefaults = (
 pub(super) fn read_shell_defaults(
     metadata: &BTreeMap<String, Value>,
 ) -> Result<ShellDefaults, String> {
-    let shell = metadata.get("bash_shell").and_then(normalize_shell_value);
+    let shell = normalize_shell_value(metadata.get("bash_shell"))?;
     let windows_shell_priority =
         normalize_windows_shell_priority(metadata.get("windows_shell_priority"))?;
     let bash_env = normalize_bash_env(metadata.get("bash_env"))?;
     Ok((shell, windows_shell_priority, bash_env))
 }
 
-fn normalize_shell_value(value: &Value) -> Option<String> {
-    let value = value_to_string(value).trim().to_string();
-    (!value.is_empty()).then_some(value)
+fn normalize_shell_value(value: Option<&Value>) -> Result<Option<String>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let Some(value) = value.as_str() else {
+        return Err("`bash_shell` must be a string shell name".to_string());
+    };
+    let value = value.trim().to_string();
+    Ok((!value.is_empty()).then_some(value))
 }
 
 fn normalize_bash_env(raw: Option<&Value>) -> Result<Option<BTreeMap<String, String>>, String> {

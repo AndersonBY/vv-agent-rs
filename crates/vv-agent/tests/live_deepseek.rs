@@ -70,13 +70,14 @@ async fn live_deepseek_v4_pro_starts_background_agent_task() {
         .expect("background task");
     let workspace = std::env::temp_dir().join("vv-agent-live-background");
     std::fs::create_dir_all(&workspace).expect("workspace");
-    let mut context = vv_agent::ToolContext::new(workspace);
+    let context = vv_agent::ToolContext::new(workspace);
 
     let handle = task
         .start(
             &runner,
-            &mut context,
+            &context,
             serde_json::json!({"task_description": "用一句话说明后台任务已经启动"}),
+            None,
         )
         .expect("start background task");
 

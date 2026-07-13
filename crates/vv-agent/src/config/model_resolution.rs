@@ -74,4 +74,9 @@ fn resolved_from_vv_llm(
         resolved.model.context_length.map(u64::from),
         resolved.model.max_output_tokens.map(u64::from),
     )
+    .with_capabilities(
+        resolved.model.function_call_available.unwrap_or(false),
+        resolved.model.response_format_available.unwrap_or(false),
+        resolved.model.native_multimodal.unwrap_or(false),
+    )
 }

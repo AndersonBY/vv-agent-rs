@@ -6,6 +6,7 @@ use ts_rs::TS;
 #[serde(rename_all = "camelCase")]
 pub struct InitializeParams {
     pub client_info: AppClientInfo,
+    #[serde(default)]
     pub capabilities: AppClientCapabilities,
 }
 
@@ -31,25 +32,16 @@ pub struct AppClientCapabilities {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeResponse {
-    pub server_info: AppServerInfo,
+    pub user_agent: String,
     pub protocol_version: String,
-    pub supported_transports: Vec<String>,
     pub capabilities: AppServerCapabilities,
 }
 
 impl InitializeResponse {
-    pub fn new(
-        name: impl Into<String>,
-        version: impl Into<String>,
-        capabilities: AppServerCapabilities,
-    ) -> Self {
+    pub fn new(capabilities: AppServerCapabilities) -> Self {
         Self {
-            server_info: AppServerInfo {
-                name: name.into(),
-                version: version.into(),
-            },
-            protocol_version: "2026-06-02".to_string(),
-            supported_transports: vec!["stdio".to_string()],
+            user_agent: "vv-agent-app-server".to_string(),
+            protocol_version: "v1".to_string(),
             capabilities,
         }
     }
@@ -57,31 +49,22 @@ impl InitializeResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct AppServerInfo {
-    pub name: String,
-    pub version: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
 pub struct AppServerCapabilities {
-    pub thread: bool,
-    pub turn: bool,
-    pub item_stream: bool,
-    pub approval_requests: bool,
-    pub event_replay: bool,
+    pub model_list: bool,
+    pub thread_lifecycle: bool,
+    pub notification_opt_out: bool,
     pub schema_export: bool,
+    pub approval_resolve: bool,
 }
 
 impl AppServerCapabilities {
-    pub fn mvp() -> Self {
+    pub fn for_runtime(runtime_configured: bool) -> Self {
         Self {
-            thread: true,
-            turn: true,
-            item_stream: true,
-            approval_requests: true,
-            event_replay: true,
+            model_list: true,
+            thread_lifecycle: runtime_configured,
+            notification_opt_out: true,
             schema_export: true,
+            approval_resolve: true,
         }
     }
 }

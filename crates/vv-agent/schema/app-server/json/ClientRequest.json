@@ -1,260 +1,252 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "ClientRequest",
-  "oneOf": [
-    {
-      "type": "object",
-      "properties": {
-        "method": {
-          "type": "string",
-          "const": "initialize"
-        },
-        "params": {
-          "$ref": "#/$defs/InitializeParams"
-        }
-      },
-      "required": [
-        "method",
-        "params"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "method": {
-          "type": "string",
-          "const": "thread/start"
-        },
-        "params": {
-          "$ref": "#/$defs/ThreadStartParams"
-        }
-      },
-      "required": [
-        "method",
-        "params"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "method": {
-          "type": "string",
-          "const": "thread/resume"
-        },
-        "params": {
-          "$ref": "#/$defs/ThreadResumeParams"
-        }
-      },
-      "required": [
-        "method",
-        "params"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "method": {
-          "type": "string",
-          "const": "thread/read"
-        },
-        "params": {
-          "$ref": "#/$defs/ThreadReadParams"
-        }
-      },
-      "required": [
-        "method",
-        "params"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "method": {
-          "type": "string",
-          "const": "thread/list"
-        },
-        "params": {
-          "$ref": "#/$defs/ThreadListParams"
-        }
-      },
-      "required": [
-        "method",
-        "params"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "method": {
-          "type": "string",
-          "const": "thread/archive"
-        },
-        "params": {
-          "$ref": "#/$defs/ThreadArchiveParams"
-        }
-      },
-      "required": [
-        "method",
-        "params"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "method": {
-          "type": "string",
-          "const": "turn/start"
-        },
-        "params": {
-          "$ref": "#/$defs/TurnStartParams"
-        }
-      },
-      "required": [
-        "method",
-        "params"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "method": {
-          "type": "string",
-          "const": "turn/interrupt"
-        },
-        "params": {
-          "$ref": "#/$defs/TurnInterruptParams"
-        }
-      },
-      "required": [
-        "method",
-        "params"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "method": {
-          "type": "string",
-          "const": "turn/steer"
-        },
-        "params": {
-          "$ref": "#/$defs/TurnSteerParams"
-        }
-      },
-      "required": [
-        "method",
-        "params"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "method": {
-          "type": "string",
-          "const": "approval/resolve"
-        },
-        "params": {
-          "$ref": "#/$defs/ApprovalResolveParams"
-        }
-      },
-      "required": [
-        "method",
-        "params"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "method": {
-          "type": "string",
-          "const": "model/list"
-        },
-        "params": {
-          "$ref": "#/$defs/ModelListParams"
-        }
-      },
-      "required": [
-        "method",
-        "params"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "method": {
-          "type": "string",
-          "const": "schema/export"
-        }
-      },
-      "required": [
-        "method"
-      ]
-    },
-    {
-      "type": "object",
-      "properties": {
-        "method": {
-          "type": "string",
-          "const": "initialized"
-        }
-      },
-      "required": [
-        "method"
-      ]
-    }
-  ],
   "$defs": {
-    "AppClientCapabilities": {
-      "type": "object",
+    "AgentMessageDeltaParams": {
+      "additionalProperties": false,
       "properties": {
-        "experimentalApi": {
-          "type": "boolean",
-          "default": false
+        "createdAt": {
+          "type": "number"
         },
-        "optOutNotificationMethods": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    "AppClientInfo": {
-      "type": "object",
-      "properties": {
-        "name": {
+        "delta": {
           "type": "string"
         },
-        "title": {
+        "itemId": {
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "status": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "itemId",
+        "threadId",
+        "turnId",
+        "type",
+        "status",
+        "payload",
+        "createdAt",
+        "updatedAt",
+        "delta"
+      ],
+      "type": "object"
+    },
+    "AppItem": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "type": "number"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "status": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "itemId",
+        "threadId",
+        "turnId",
+        "type",
+        "status",
+        "payload",
+        "createdAt",
+        "updatedAt"
+      ],
+      "type": "object"
+    },
+    "AppThread": {
+      "additionalProperties": false,
+      "properties": {
+        "agentKey": {
+          "type": "string"
+        },
+        "archivedAt": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "type": "number"
+        },
+        "cwd": {
           "type": [
             "string",
             "null"
           ]
         },
-        "version": {
+        "metadata": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "status": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "threadId",
+        "agentKey",
+        "cwd",
+        "createdAt",
+        "updatedAt",
+        "archivedAt",
+        "status",
+        "metadata"
+      ],
+      "type": "object"
+    },
+    "AppTurn": {
+      "additionalProperties": false,
+      "properties": {
+        "completedAt": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "input": {
+          "items": {
+            "$ref": "#/$defs/InputItem"
+          },
+          "type": "array"
+        },
+        "result": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "runId": {
           "type": [
             "string",
             "null"
           ]
+        },
+        "startedAt": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
         }
       },
       "required": [
-        "name"
-      ]
+        "turnId",
+        "threadId",
+        "runId",
+        "status",
+        "startedAt",
+        "completedAt",
+        "input",
+        "result"
+      ],
+      "type": "object"
     },
     "ApprovalDecision": {
-      "type": "string",
       "enum": [
         "allow",
-        "deny"
-      ]
+        "allow_session",
+        "deny",
+        "timeout"
+      ],
+      "type": "string"
+    },
+    "ApprovalRequestParams": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "preview": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "toolCallId": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "threadId",
+        "turnId",
+        "toolCallId",
+        "toolName",
+        "preview",
+        "arguments"
+      ],
+      "type": "object"
     },
     "ApprovalResolveParams": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
         "decision": {
-          "$ref": "#/$defs/ApprovalDecision"
+          "enum": [
+            "allow",
+            "allow_session",
+            "deny",
+            "timeout"
+          ],
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "reason": {
+          "type": "string"
         },
         "requestId": {
           "type": "string"
@@ -267,88 +259,299 @@
         }
       },
       "required": [
+        "requestId",
         "threadId",
         "turnId",
-        "requestId",
         "decision"
-      ]
+      ],
+      "type": "object"
+    },
+    "ApprovalResolveResponse": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "ClientCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "experimentalApi": {
+          "type": "boolean"
+        },
+        "optOutNotificationMethods": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "ClientInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "EmptyParams": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
     },
     "InitializeParams": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
         "capabilities": {
-          "$ref": "#/$defs/AppClientCapabilities"
+          "$ref": "#/$defs/ClientCapabilities"
         },
         "clientInfo": {
-          "$ref": "#/$defs/AppClientInfo"
+          "$ref": "#/$defs/ClientInfo"
         }
       },
       "required": [
-        "clientInfo",
+        "clientInfo"
+      ],
+      "type": "object"
+    },
+    "InitializeResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/ServerCapabilities"
+        },
+        "protocolVersion": {
+          "const": "v1"
+        },
+        "userAgent": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "userAgent",
+        "protocolVersion",
         "capabilities"
-      ]
+      ],
+      "type": "object"
+    },
+    "InputItem": {
+      "additionalProperties": true,
+      "properties": {},
+      "type": "object"
     },
     "ModelListParams": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
+        "agentKey": {
+          "type": "string"
+        },
         "provider": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      }
-    },
-    "ThreadArchiveParams": {
-      "type": "object",
-      "properties": {
-        "threadId": {
           "type": "string"
         }
       },
-      "required": [
-        "threadId"
-      ]
+      "type": "object"
     },
-    "ThreadListParams": {
-      "type": "object",
+    "ModelListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "models": {
+          "items": {
+            "$ref": "#/$defs/ModelSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "models"
+      ],
+      "type": "object"
+    },
+    "ModelSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "contextLength": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "supportsTools": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "supportsTools"
+      ],
+      "type": "object"
+    },
+    "SchemaExportResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "jsonSchema": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "typescript": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "jsonSchema",
+        "typescript"
+      ],
+      "type": "object"
+    },
+    "ServerCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "approvalResolve": {
+          "type": "boolean"
+        },
+        "modelList": {
+          "type": "boolean"
+        },
+        "notificationOptOut": {
+          "type": "boolean"
+        },
+        "schemaExport": {
+          "type": "boolean"
+        },
+        "threadLifecycle": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "modelList",
+        "threadLifecycle",
+        "notificationOptOut",
+        "schemaExport",
+        "approvalResolve"
+      ],
+      "type": "object"
+    },
+    "ThreadArchiveResponse": {
+      "additionalProperties": false,
       "properties": {
         "archived": {
-          "type": [
-            "boolean",
-            "null"
-          ]
+          "type": "boolean"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "archived"
+      ],
+      "type": "object"
+    },
+    "ThreadArchivedParams": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "type": "boolean"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "archived"
+      ],
+      "type": "object"
+    },
+    "ThreadClosedParams": {
+      "additionalProperties": false,
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadIdParams": {
+      "additionalProperties": false,
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadListParams": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "type": "boolean"
         },
         "includeArchived": {
-          "type": "boolean",
-          "default": false
+          "type": "boolean"
         },
         "limit": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint",
-          "minimum": 0
+          "minimum": 0,
+          "type": "integer"
         },
         "offset": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint",
-          "minimum": 0
+          "minimum": 0,
+          "type": "integer"
         }
-      }
+      },
+      "type": "object"
+    },
+    "ThreadListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "threads": {
+          "items": {
+            "$ref": "#/$defs/AppThread"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "threads"
+      ],
+      "type": "object"
     },
     "ThreadReadParams": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
         "afterItemId": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "string"
         },
         "threadId": {
           "type": "string"
@@ -356,14 +559,14 @@
       },
       "required": [
         "threadId"
-      ]
+      ],
+      "type": "object"
     },
     "ThreadResumeParams": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
         "subscribe": {
-          "type": "boolean",
-          "default": true
+          "type": "boolean"
         },
         "threadId": {
           "type": "string"
@@ -371,37 +574,338 @@
       },
       "required": [
         "threadId"
-      ]
+      ],
+      "type": "object"
+    },
+    "ThreadSnapshotResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/AppItem"
+          },
+          "type": "array"
+        },
+        "thread": {
+          "$ref": "#/$defs/AppThread"
+        },
+        "turns": {
+          "items": {
+            "$ref": "#/$defs/AppTurn"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "thread",
+        "turns",
+        "items"
+      ],
+      "type": "object"
     },
     "ThreadStartParams": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
+        "agentKey": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "ThreadStartResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "agentKey": {
+          "type": "string"
+        },
         "cwd": {
           "type": [
             "string",
             "null"
           ]
         },
-        "ephemeral": {
-          "type": "boolean",
-          "default": false
+        "status": {
+          "type": "string"
         },
-        "model": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "title": {
-          "type": [
-            "string",
-            "null"
-          ]
+        "threadId": {
+          "type": "string"
         }
-      }
+      },
+      "required": [
+        "threadId",
+        "agentKey",
+        "cwd",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ThreadStartedParams": {
+      "additionalProperties": false,
+      "properties": {
+        "agentKey": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "agentKey",
+        "cwd",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ThreadStatusChangedParams": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ThreadUnsubscribeResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "closed": {
+          "type": "boolean"
+        },
+        "subscribed": {
+          "type": "boolean"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "subscribed",
+        "closed"
+      ],
+      "type": "object"
+    },
+    "ToolCallDeltaParams": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "type": "number"
+        },
+        "delta": {},
+        "itemId": {
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "status": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "itemId",
+        "threadId",
+        "turnId",
+        "type",
+        "status",
+        "payload",
+        "createdAt",
+        "updatedAt",
+        "delta"
+      ],
+      "type": "object"
+    },
+    "TurnCompletedParams": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "finalOutput": {},
+        "runId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "tokenUsage": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "TurnFollowUpParams": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedTurnId": {
+          "type": "string"
+        },
+        "input": {
+          "items": {
+            "$ref": "#/$defs/InputItem"
+          },
+          "type": "array"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
     },
     "TurnInterruptParams": {
-      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "expectedTurnId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "TurnInterruptResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "cancelled": {
+          "type": "boolean"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "cancelled"
+      ],
+      "type": "object"
+    },
+    "TurnQueueResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "queued": {
+          "type": "boolean"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "queued"
+      ],
+      "type": "object"
+    },
+    "TurnStartParams": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "items": {
+            "$ref": "#/$defs/InputItem"
+          },
+          "type": "array"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "TurnStartResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "TurnStartedParams": {
+      "additionalProperties": false,
       "properties": {
         "threadId": {
           "type": "string"
@@ -413,64 +917,537 @@
       "required": [
         "threadId",
         "turnId"
-      ]
-    },
-    "TurnStartParams": {
-      "type": "object",
-      "properties": {
-        "input": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/UserInput"
-          }
-        },
-        "model": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "threadId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "threadId",
-        "input"
-      ]
+      ],
+      "type": "object"
     },
     "TurnSteerParams": {
-      "type": "object",
+      "additionalProperties": false,
       "properties": {
+        "expectedTurnId": {
+          "type": "string"
+        },
         "input": {
-          "type": "array",
           "items": {
-            "$ref": "#/$defs/UserInput"
-          }
+            "$ref": "#/$defs/InputItem"
+          },
+          "type": "array"
         },
         "threadId": {
           "type": "string"
-        },
-        "turnId": {
-          "type": "string"
         }
       },
       "required": [
-        "threadId",
-        "turnId",
-        "input"
-      ]
+        "threadId"
+      ],
+      "type": "object"
     },
-    "UserInput": {
-      "type": "object",
+    "WarningParams": {
+      "additionalProperties": false,
       "properties": {
-        "text": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
           "type": "string"
         }
       },
       "required": [
-        "text"
-      ]
+        "message"
+      ],
+      "type": "object"
     }
-  }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            }
+          ]
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "initialize"
+        },
+        "params": {
+          "$ref": "#/$defs/InitializeParams"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "initialized"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "method"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            }
+          ]
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "model/list"
+        },
+        "params": {
+          "$ref": "#/$defs/ModelListParams"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            }
+          ]
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "thread/start"
+        },
+        "params": {
+          "$ref": "#/$defs/ThreadStartParams"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            }
+          ]
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "thread/resume"
+        },
+        "params": {
+          "$ref": "#/$defs/ThreadResumeParams"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            }
+          ]
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "thread/read"
+        },
+        "params": {
+          "$ref": "#/$defs/ThreadReadParams"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            }
+          ]
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "thread/list"
+        },
+        "params": {
+          "$ref": "#/$defs/ThreadListParams"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            }
+          ]
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "thread/archive"
+        },
+        "params": {
+          "$ref": "#/$defs/ThreadIdParams"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            }
+          ]
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "thread/unsubscribe"
+        },
+        "params": {
+          "$ref": "#/$defs/ThreadIdParams"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            }
+          ]
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "turn/start"
+        },
+        "params": {
+          "$ref": "#/$defs/TurnStartParams"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            }
+          ]
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "turn/steer"
+        },
+        "params": {
+          "$ref": "#/$defs/TurnSteerParams"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            }
+          ]
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "turn/followUp"
+        },
+        "params": {
+          "$ref": "#/$defs/TurnFollowUpParams"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            }
+          ]
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "turn/interrupt"
+        },
+        "params": {
+          "$ref": "#/$defs/TurnInterruptParams"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            }
+          ]
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "approval/resolve"
+        },
+        "params": {
+          "$ref": "#/$defs/ApprovalResolveParams"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "maximum": 9223372036854775807,
+              "minimum": -9223372036854775808,
+              "type": "integer"
+            }
+          ]
+        },
+        "jsonrpc": {
+          "const": "2.0",
+          "type": "string"
+        },
+        "method": {
+          "const": "schema/export"
+        },
+        "params": {
+          "$ref": "#/$defs/EmptyParams"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "ClientRequest"
 }

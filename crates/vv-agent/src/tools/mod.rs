@@ -24,12 +24,13 @@ pub use base::{
 };
 pub use dispatcher::dispatch_tool_call;
 pub use executor::{
-    ApprovalRequirement, ToolError, ToolExecutor, ToolExposure, ToolFuture, ToolRunContext,
-    ToolSpecContext, ToolSpecExecutor,
+    ApprovalPredicate, ApprovalRequirement, ToolApprovalRule, ToolEnablementContext,
+    ToolEnablementPredicate, ToolEnablementRule, ToolError, ToolExecutor, ToolExposure, ToolFuture,
+    ToolRunContext, ToolSpecContext, ToolSpecExecutor,
 };
-pub use function::FunctionTool;
+pub use function::{FunctionTool, ToolErrorMapper};
 pub use orchestrator::{ToolOrchestrator, ToolRunOptions};
 pub use outputs::ToolOutput;
-pub use policy::{ApprovalDecision, ApprovalPolicy, ToolPolicy};
+pub use policy::{ApprovalDecision, ApprovalPolicy, CanUseToolPredicate, ToolPolicy};
 pub use public_tool::{StaticTool, Tool};
 pub use registry::{build_default_registry, ToolRegistry};

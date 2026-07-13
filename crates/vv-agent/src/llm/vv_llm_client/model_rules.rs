@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+use crate::model_settings::{ModelSettings, ToolChoice};
+
 const REASONING_CHAIN_PROVIDERS: &[&str] = &["deepseek", "minimax", "moonshot"];
 const REASONING_CHAIN_MODEL_PREFIXES: &[&str] = &["deepseek-", "minimax-", "kimi-", "moonshot-"];
 const QWEN_THINKING_KEEP_SUFFIX_MODELS: &[&str] = &[
@@ -15,6 +17,8 @@ pub(super) struct ResolvedRequestOptions {
     pub(super) model: String,
     pub(super) temperature: Option<f32>,
     pub(super) max_tokens: Option<u32>,
+    pub(super) tool_choice: Option<ToolChoice>,
+    pub(super) timeout: Option<std::time::Duration>,
     pub(super) extra_body: Value,
 }
 
@@ -22,11 +26,14 @@ pub(super) fn resolve_request_options(
     backend: &str,
     endpoint_provider: &str,
     model: &str,
+    model_settings: Option<&ModelSettings>,
 ) -> ResolvedRequestOptions {
     let mut resolved_model = model.to_string();
     let mut normalized_model = resolved_model.to_ascii_lowercase();
     let mut temperature = None;
     let mut max_tokens = None;
+    let mut tool_choice = None;
+    let mut timeout = None;
     let mut extra_body = Value::Null;
 
     if uses_deepseek_model(backend, endpoint_provider, &normalized_model) {
@@ -105,11 +112,73 @@ pub(super) fn resolve_request_options(
         });
     }
 
+    if let Some(settings) = model_settings {
+        if settings.temperature.is_some() {
+            temperature = settings.temperature.map(|value| value as f32);
+        }
+        if settings.max_tokens.is_some() {
+            max_tokens = settings.max_tokens;
+        }
+        if let Some(choice) = settings.tool_choice.as_ref() {
+            tool_choice = Some(choice.clone());
+        }
+        timeout = settings.timeout;
+
+        let body = ensure_object(&mut extra_body);
+        if let Some(top_p) = settings.top_p {
+            body.insert("top_p".to_string(), serde_json::json!(top_p));
+        }
+        if let Some(parallel_tool_calls) = settings.parallel_tool_calls {
+            body.insert(
+                "parallel_tool_calls".to_string(),
+                Value::Bool(parallel_tool_calls),
+            );
+        }
+        if let Some(response_format) = settings.response_format.as_ref() {
+            body.insert(
+                "response_format".to_string(),
+                serde_json::to_value(response_format).unwrap_or(Value::Null),
+            );
+        }
+        if let Some(reasoning) = settings.reasoning.as_ref() {
+            project_reasoning(body, reasoning);
+        }
+        body.extend(settings.extra_body.clone());
+    }
+
     ResolvedRequestOptions {
         model: resolved_model,
         temperature,
         max_tokens,
+        tool_choice,
+        timeout,
         extra_body,
+    }
+}
+
+fn ensure_object(value: &mut Value) -> &mut serde_json::Map<String, Value> {
+    if !value.is_object() {
+        *value = Value::Object(serde_json::Map::new());
+    }
+    value
+        .as_object_mut()
+        .expect("value was converted to object")
+}
+
+fn project_reasoning(target: &mut serde_json::Map<String, Value>, reasoning: &Value) {
+    let Value::Object(reasoning) = reasoning else {
+        target.insert("reasoning".to_string(), reasoning.clone());
+        return;
+    };
+    let mut thinking = reasoning.clone();
+    let effort = thinking
+        .remove("effort")
+        .or_else(|| thinking.remove("reasoning_effort"));
+    if let Some(effort) = effort {
+        target.insert("reasoning_effort".to_string(), effort);
+    }
+    if !thinking.is_empty() {
+        target.insert("thinking".to_string(), Value::Object(thinking));
     }
 }
 
@@ -173,7 +242,7 @@ mod tests {
 
     #[test]
     fn deepseek_prefix_defaults_new_models_to_reasoning_profile() {
-        let options = resolve_request_options("openai", "default", "deepseek-v5-pro");
+        let options = resolve_request_options("openai", "default", "deepseek-v5-pro", None);
 
         assert_eq!(options.temperature, None);
         assert_eq!(
@@ -187,7 +256,7 @@ mod tests {
 
     #[test]
     fn deepseek_provider_defaults_aliases_to_reasoning_profile() {
-        let options = resolve_request_options("deepseek", "default", "enterprise-reasoner");
+        let options = resolve_request_options("deepseek", "default", "enterprise-reasoner", None);
 
         assert_eq!(options.temperature, None);
         assert_eq!(
@@ -214,5 +283,19 @@ mod tests {
             &["custom-reasoner"]
         ));
         assert!(!should_preserve_reasoning_chain("openai", &["gpt-4o-mini"]));
+    }
+
+    #[test]
+    fn named_tool_choice_is_projected_only_from_typed_model_settings() {
+        let settings = ModelSettings::builder()
+            .tool_choice(ToolChoice::Tool("lookup".to_string()))
+            .build();
+
+        let options = resolve_request_options("openai", "default", "demo", Some(&settings));
+
+        assert_eq!(
+            options.tool_choice,
+            Some(ToolChoice::Tool("lookup".to_string()))
+        );
     }
 }

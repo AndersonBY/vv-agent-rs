@@ -1,13 +1,13 @@
 use serde_json::json;
 use vv_agent::app_server::protocol::{
     AppClientCapabilities, AppClientInfo, AppServerCapabilities, AppServerErrorCode,
-    ApprovalDecision, ApprovalRequestParams, ClientRequest, InitializeParams, InitializeResponse,
-    JsonRpcError, JsonRpcMessage, JsonRpcRequest, RequestId, ServerNotification, ServerRequest,
-    ThreadStartParams,
+    ApprovalDecision, ApprovalRequestParams, ApprovalResolveParams, ClientRequest,
+    InitializeParams, InitializeResponse, JsonRpcError, JsonRpcMessage, JsonRpcRequest, RequestId,
+    ServerNotification, ServerRequest, ThreadStartParams,
 };
 
 #[test]
-fn json_rpc_request_round_trips_without_jsonrpc_header() {
+fn json_rpc_request_round_trips_with_jsonrpc_header() {
     let request = JsonRpcRequest {
         id: RequestId::Integer(1),
         method: "initialize".to_string(),
@@ -17,7 +17,7 @@ fn json_rpc_request_round_trips_without_jsonrpc_header() {
     let value = serde_json::to_value(&request).expect("serialize");
     assert_eq!(value["id"], 1);
     assert_eq!(value["method"], "initialize");
-    assert!(value.get("jsonrpc").is_none());
+    assert_eq!(value["jsonrpc"], "2.0");
 
     let decoded: JsonRpcRequest = serde_json::from_value(value).expect("deserialize");
     assert_eq!(decoded.id, RequestId::Integer(1));
@@ -26,23 +26,43 @@ fn json_rpc_request_round_trips_without_jsonrpc_header() {
 #[test]
 fn json_rpc_message_decodes_request_notification_response_and_error() {
     let request: JsonRpcMessage =
-        serde_json::from_value(json!({"id": 1, "method": "initialize"})).expect("request");
+        serde_json::from_value(json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
+            .expect("request");
     assert!(matches!(request, JsonRpcMessage::Request(_)));
 
     let notification: JsonRpcMessage =
-        serde_json::from_value(json!({"method": "initialized"})).expect("notification");
+        serde_json::from_value(json!({"jsonrpc": "2.0", "method": "initialized"}))
+            .expect("notification");
     assert!(matches!(notification, JsonRpcMessage::Notification(_)));
 
     let response: JsonRpcMessage =
-        serde_json::from_value(json!({"id": 1, "result": {}})).expect("response");
+        serde_json::from_value(json!({"jsonrpc": "2.0", "id": 1, "result": {}})).expect("response");
     assert!(matches!(response, JsonRpcMessage::Response(_)));
 
     let error: JsonRpcMessage = serde_json::from_value(json!({
+        "jsonrpc": "2.0",
         "id": 1,
         "error": {"code": -32010, "message": "Not initialized"}
     }))
     .expect("error");
     assert!(matches!(error, JsonRpcMessage::Error(_)));
+}
+
+#[test]
+fn json_rpc_message_rejects_unknown_top_level_fields() {
+    for value in [
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "extra": true}),
+        json!({"jsonrpc": "2.0", "method": "initialized", "extra": true}),
+        json!({"jsonrpc": "2.0", "id": 1, "result": {}, "extra": true}),
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {"code": -32603, "message": "failed"},
+            "extra": true
+        }),
+    ] {
+        assert!(serde_json::from_value::<JsonRpcMessage>(value).is_err());
+    }
 }
 
 #[test]
@@ -70,16 +90,18 @@ fn error_response_preserves_code_message_and_data() {
 #[test]
 fn stable_client_request_methods_cover_mvp_surface() {
     let methods = ClientRequest::stable_method_names();
-    assert_eq!(methods.len(), 13);
+    assert_eq!(methods.len(), 15);
     assert!(methods.contains(&"initialize"));
     assert!(methods.contains(&"thread/start"));
     assert!(methods.contains(&"thread/resume"));
     assert!(methods.contains(&"thread/read"));
     assert!(methods.contains(&"thread/list"));
     assert!(methods.contains(&"thread/archive"));
+    assert!(methods.contains(&"thread/unsubscribe"));
     assert!(methods.contains(&"turn/start"));
     assert!(methods.contains(&"turn/interrupt"));
     assert!(methods.contains(&"turn/steer"));
+    assert!(methods.contains(&"turn/followUp"));
     assert!(methods.contains(&"approval/resolve"));
     assert!(methods.contains(&"model/list"));
     assert!(methods.contains(&"schema/export"));
@@ -108,18 +130,15 @@ fn stable_server_requests_include_approval_request() {
 
 #[test]
 fn initialize_response_advertises_mvp_capabilities() {
-    let response = InitializeResponse::new(
-        "vv-agent-rs",
-        env!("CARGO_PKG_VERSION"),
-        AppServerCapabilities::mvp(),
-    );
+    let response = InitializeResponse::new(AppServerCapabilities::for_runtime(true));
 
-    assert_eq!(response.protocol_version, "2026-06-02");
-    assert!(response.capabilities.thread);
-    assert!(response.capabilities.turn);
-    assert!(response.capabilities.item_stream);
-    assert!(response.capabilities.approval_requests);
-    assert!(response.supported_transports.contains(&"stdio".to_string()));
+    assert_eq!(response.protocol_version, "v1");
+    assert_eq!(response.user_agent, "vv-agent-app-server");
+    assert!(response.capabilities.model_list);
+    assert!(response.capabilities.thread_lifecycle);
+    assert!(response.capabilities.notification_opt_out);
+    assert!(response.capabilities.schema_export);
+    assert!(response.capabilities.approval_resolve);
 }
 
 #[test]
@@ -148,16 +167,18 @@ fn initialize_params_use_camel_case_wire_shape() {
 #[test]
 fn client_request_serializes_with_stable_method_name() {
     let request = ClientRequest::ThreadStart(ThreadStartParams {
+        agent_key: "assistant".to_string(),
         cwd: Some("/tmp/project".into()),
-        title: Some("Investigate".to_string()),
-        model: Some("kimi-k2".to_string()),
-        ephemeral: false,
+        metadata: std::collections::BTreeMap::from([(
+            "source".to_string(),
+            json!("protocol-test"),
+        )]),
     });
 
     let value = serde_json::to_value(&request).expect("serialize");
     assert_eq!(value["method"], "thread/start");
-    assert_eq!(value["params"]["title"], "Investigate");
-    assert_eq!(value["params"]["ephemeral"], false);
+    assert_eq!(value["params"]["agentKey"], "assistant");
+    assert_eq!(value["params"]["metadata"]["source"], "protocol-test");
 }
 
 #[test]
@@ -166,13 +187,49 @@ fn server_request_serializes_approval_request_payload() {
         thread_id: "thread_1".to_string(),
         turn_id: "turn_1".to_string(),
         request_id: "approval_1".to_string(),
+        tool_call_id: "call_1".to_string(),
         tool_name: "bash".to_string(),
         preview: "Run cargo test".to_string(),
-        choices: vec![ApprovalDecision::Allow, ApprovalDecision::Deny],
+        arguments: json!({"cmd": "cargo test"}),
     });
 
     let value = serde_json::to_value(&request).expect("serialize");
     assert_eq!(value["method"], "approval/request");
     assert_eq!(value["params"]["threadId"], "thread_1");
-    assert_eq!(value["params"]["choices"], json!(["allow", "deny"]));
+    assert_eq!(value["params"]["toolCallId"], "call_1");
+    assert_eq!(value["params"]["arguments"], json!({"cmd": "cargo test"}));
+    assert!(value["params"].get("choices").is_none());
+}
+
+#[test]
+fn approval_decisions_round_trip_all_canonical_wire_values() {
+    for (decision, expected) in [
+        (ApprovalDecision::Allow, "allow"),
+        (ApprovalDecision::AllowSession, "allow_session"),
+        (ApprovalDecision::Deny, "deny"),
+        (ApprovalDecision::Timeout, "timeout"),
+    ] {
+        let params = ApprovalResolveParams {
+            thread_id: "thread_1".to_string(),
+            turn_id: "turn_1".to_string(),
+            request_id: "approval_1".to_string(),
+            decision,
+            reason: "approved by owner".to_string(),
+            metadata: json!({"ticket": 7})
+                .as_object()
+                .expect("metadata object")
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        };
+        let value = serde_json::to_value(&params).expect("serialize approval decision");
+        assert_eq!(value["decision"], expected);
+        assert_eq!(value["reason"], "approved by owner");
+        assert_eq!(value["metadata"], json!({"ticket": 7}));
+        let decoded: ApprovalResolveParams =
+            serde_json::from_value(value).expect("deserialize approval decision");
+        assert_eq!(decoded.decision, decision);
+        assert_eq!(decoded.reason, "approved by owner");
+        assert_eq!(decoded.metadata["ticket"], 7);
+    }
 }

@@ -15,6 +15,7 @@ pub struct ToolRegistry {
     tools: BTreeMap<String, ToolSpec>,
     schemas: BTreeMap<String, Value>,
     tool_order: Vec<String>,
+    planner_extra_tool_names: Vec<String>,
 }
 
 impl ToolRegistry {
@@ -68,6 +69,10 @@ impl ToolRegistry {
         self.schemas.contains_key(name)
     }
 
+    pub fn list_planner_extra_tool_names(&self) -> Vec<String> {
+        self.planner_extra_tool_names.clone()
+    }
+
     pub fn get_schema(&self, name: &str) -> Option<Value> {
         self.schemas.get(name).cloned()
     }
@@ -76,6 +81,7 @@ impl ToolRegistry {
         match tool_names {
             Some(names) => names
                 .iter()
+                .filter(|name| self.is_model_visible(name))
                 .map(|name| {
                     self.get_schema(name)
                         .ok_or_else(|| format!("Schema not registered: {name}"))
@@ -84,6 +90,7 @@ impl ToolRegistry {
             None => self
                 .tool_order
                 .iter()
+                .filter(|name| self.is_model_visible(name))
                 .map(|name| {
                     self.get_schema(name)
                         .ok_or_else(|| format!("Schema not registered: {name}"))
@@ -94,6 +101,12 @@ impl ToolRegistry {
 
     pub fn planned_tool_names(&self, task: &AgentTask) -> Vec<String> {
         crate::runtime::tool_planner::plan_tool_names(task, None)
+    }
+
+    fn is_model_visible(&self, name: &str) -> bool {
+        self.tools
+            .get(name)
+            .is_none_or(|spec| spec.exposure != crate::tools::ToolExposure::Hidden)
     }
 
     pub fn planned_openai_schemas(&self, task: &AgentTask) -> Vec<Value> {
@@ -132,7 +145,9 @@ impl ToolRegistry {
                     "parameters": parameters,
                 }
         });
-        self.register(spec)
+        self.register(spec)?;
+        self.planner_extra_tool_names.push(name);
+        Ok(())
     }
 
     pub fn execute(
@@ -141,6 +156,7 @@ impl ToolRegistry {
         context: &mut ToolContext,
     ) -> Result<ToolExecutionResult, ToolNotFoundError> {
         let tool = self.get(&call.name)?;
+        context.begin_tool_call(call);
         Ok((tool.handler)(context, &call.arguments))
     }
 

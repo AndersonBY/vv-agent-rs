@@ -1,6 +1,178 @@
 use super::*;
 
 #[test]
+fn read_file_counts_unicode_characters_and_preserves_result_contract() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    let content = "中".repeat(20_000);
+    std::fs::write(workspace.path().join("cjk.txt"), &content).expect("cjk file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "read_cjk",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!("cjk.txt"))]),
+            ),
+            &mut context,
+        )
+        .expect("read_file");
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.directive, vv_agent::ToolDirective::Continue);
+    assert_eq!(result.error_code, None);
+    assert!(result.metadata.is_empty());
+    assert_eq!(
+        payload,
+        json!({
+            "path": "cjk.txt",
+            "start_line": 1,
+            "end_line": 1,
+            "show_line_numbers": false,
+            "content": content,
+        })
+    );
+}
+
+#[test]
+fn read_file_too_large_counts_unicode_characters() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("large-cjk.txt"), "中".repeat(50_001))
+        .expect("large cjk file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "read_large_cjk",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!("large-cjk.txt"))]),
+            ),
+            &mut context,
+        )
+        .expect("read_file");
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.directive, vv_agent::ToolDirective::Continue);
+    assert_eq!(result.error_code, None);
+    assert!(result.metadata.is_empty());
+    assert_eq!(payload["content"], Value::Null);
+    assert_eq!(
+        payload["file_info"],
+        json!({"total_lines": 1, "total_chars": 50_001})
+    );
+    assert_eq!(
+        payload["requested"],
+        json!({"line_count": 1, "char_count": 50_001})
+    );
+}
+
+#[test]
+fn read_file_validation_and_not_found_errors_are_structured() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let missing_path = registry
+        .execute(
+            &ToolCall::new("read_missing_path", "read_file", BTreeMap::new()),
+            &mut context,
+        )
+        .expect("read_file validation");
+    let missing_payload: Value =
+        serde_json::from_str(&missing_path.content).expect("missing payload");
+    assert_eq!(missing_path.status, ToolResultStatus::Error);
+    assert_eq!(missing_path.directive, vv_agent::ToolDirective::Continue);
+    assert_eq!(
+        missing_path.error_code.as_deref(),
+        Some("invalid_arguments")
+    );
+    assert_eq!(
+        missing_path.metadata,
+        BTreeMap::from([
+            ("error_code".to_string(), json!("invalid_arguments")),
+            ("missing_arguments".to_string(), json!(["path"])),
+        ])
+    );
+    assert_eq!(
+        missing_payload,
+        json!({
+            "ok": false,
+            "error": "`path` is required.",
+            "error_code": "invalid_arguments",
+            "message": "`path` is required.",
+            "missing_arguments": ["path"],
+        })
+    );
+
+    let not_found = registry
+        .execute(
+            &ToolCall::new(
+                "read_not_found",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!("missing.txt"))]),
+            ),
+            &mut context,
+        )
+        .expect("read_file not found");
+    let not_found_payload: Value =
+        serde_json::from_str(&not_found.content).expect("not found payload");
+    assert_eq!(not_found.status, ToolResultStatus::Error);
+    assert_eq!(not_found.directive, vv_agent::ToolDirective::Continue);
+    assert_eq!(not_found.error_code.as_deref(), Some("file_not_found"));
+    assert_eq!(
+        not_found.metadata,
+        BTreeMap::from([
+            ("error_code".to_string(), json!("file_not_found")),
+            ("path".to_string(), json!("missing.txt")),
+        ])
+    );
+    assert_eq!(not_found_payload["ok"], false);
+    assert_eq!(not_found_payload["error_code"], "file_not_found");
+    assert_eq!(not_found_payload["path"], "missing.txt");
+}
+
+#[test]
+fn write_file_reports_utf8_bytes_and_compatible_unicode_chars() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "write_cjk",
+                "write_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("written.txt")),
+                    ("content".to_string(), json!("中文")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("write_file");
+    let payload: Value = serde_json::from_str(&result.content).expect("payload");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.directive, vv_agent::ToolDirective::Continue);
+    assert_eq!(result.error_code, None);
+    assert_eq!(payload["written_bytes"], 6);
+    assert_eq!(payload["written_chars"], 2);
+    assert_eq!(
+        result.metadata,
+        BTreeMap::from([
+            ("append".to_string(), json!(false)),
+            ("changed_files".to_string(), json!(["written.txt"])),
+            ("operation".to_string(), json!("write_file")),
+        ])
+    );
+}
+
+#[test]
 fn read_file_returns_file_info_when_requested_slice_exceeds_limits() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();

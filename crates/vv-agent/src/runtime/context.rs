@@ -9,7 +9,7 @@ use crate::llm::LlmStreamCallback;
 use crate::memory::MemoryProvider;
 
 use super::state::StateStore;
-use super::CancellationToken;
+use super::{CancellationToken, CancelledError};
 
 pub type StreamCallback = LlmStreamCallback;
 
@@ -22,6 +22,7 @@ pub struct ExecutionContext {
     pub approval_broker: Option<ApprovalBroker>,
     pub approval_timeout: Option<Duration>,
     pub memory_providers: Vec<Arc<dyn MemoryProvider>>,
+    pub app_state: Option<Arc<dyn std::any::Any + Send + Sync>>,
     pub metadata: BTreeMap<String, Value>,
 }
 
@@ -35,6 +36,7 @@ impl std::fmt::Debug for ExecutionContext {
             .field("has_approval_provider", &self.approval_provider.is_some())
             .field("has_approval_broker", &self.approval_broker.is_some())
             .field("memory_provider_count", &self.memory_providers.len())
+            .field("has_app_state", &self.app_state.is_some())
             .field("metadata", &self.metadata)
             .finish()
     }
@@ -76,12 +78,25 @@ impl ExecutionContext {
         self
     }
 
+    pub fn with_app_state<T>(mut self, app_state: T) -> Self
+    where
+        T: Send + Sync + 'static,
+    {
+        self.app_state = Some(Arc::new(app_state));
+        self
+    }
+
+    pub fn with_app_state_arc(mut self, app_state: Arc<dyn std::any::Any + Send + Sync>) -> Self {
+        self.app_state = Some(app_state);
+        self
+    }
+
     pub fn with_metadata(mut self, metadata: BTreeMap<String, Value>) -> Self {
         self.metadata = metadata;
         self
     }
 
-    pub fn check_cancelled(&self) -> Result<(), String> {
+    pub fn check_cancelled(&self) -> Result<(), CancelledError> {
         if let Some(token) = &self.cancellation_token {
             token.check()
         } else {

@@ -440,6 +440,16 @@ fn default_tool_schema_wording_is_preserved() {
     assert_property_contains(
         &registry,
         "create_sub_task",
+        "exclude_files_pattern",
+        &[
+            "child discovery only",
+            "Direct known-path access",
+            "not an access-control boundary or sandbox",
+        ],
+    );
+    assert_property_contains(
+        &registry,
+        "create_sub_task",
         "wait_for_completion",
         &["Whether to wait for completion. Default true; false starts background execution."],
     );

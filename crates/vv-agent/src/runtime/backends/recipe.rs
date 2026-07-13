@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::runtime::stores::sqlite::SqliteStateStore;
+use crate::runtime::state::{StateStore, StateStoreSpec};
+
+use super::distributed::DistributedCapabilities;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeRecipe {
@@ -14,6 +16,9 @@ pub struct RuntimeRecipe {
     pub workspace: String,
     pub timeout_seconds: f64,
     pub log_preview_chars: Option<usize>,
+    #[serde(default)]
+    pub state_store: Option<StateStoreSpec>,
+    pub capabilities: DistributedCapabilities,
 }
 
 impl RuntimeRecipe {
@@ -30,6 +35,8 @@ impl RuntimeRecipe {
             workspace: workspace.into(),
             timeout_seconds: 90.0,
             log_preview_chars: None,
+            state_store: None,
+            capabilities: DistributedCapabilities::default(),
         }
     }
 
@@ -41,6 +48,8 @@ impl RuntimeRecipe {
             "workspace": self.workspace,
             "timeout_seconds": self.timeout_seconds,
             "log_preview_chars": self.log_preview_chars,
+            "state_store": self.state_store.as_ref().map(StateStoreSpec::to_dict),
+            "capabilities": self.capabilities.to_dict(),
         })
     }
 
@@ -62,7 +71,39 @@ impl RuntimeRecipe {
                 .filter(|value| !value.is_null())
                 .and_then(Value::as_u64)
                 .and_then(|value| usize::try_from(value).ok()),
+            state_store: object
+                .get("state_store")
+                .filter(|value| !value.is_null())
+                .map(StateStoreSpec::from_dict)
+                .transpose()
+                .map_err(|error| error.to_string())?,
+            capabilities: DistributedCapabilities::from_dict(
+                object
+                    .get("capabilities")
+                    .ok_or_else(|| "capabilities must be an object".to_string())?,
+            )?,
         })
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for (field_name, value) in [
+            ("settings_file", self.settings_file.as_str()),
+            ("backend", self.backend.as_str()),
+            ("model", self.model.as_str()),
+            ("workspace", self.workspace.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!(
+                    "runtime_recipe.{field_name} must be a non-empty string"
+                ));
+            }
+        }
+        if !self.timeout_seconds.is_finite() || self.timeout_seconds <= 0.0 {
+            return Err(
+                "runtime_recipe.timeout_seconds must be a finite positive number".to_string(),
+            );
+        }
+        self.capabilities.validate()
     }
 
     pub fn default_sqlite_checkpoint_path(&self) -> PathBuf {
@@ -71,12 +112,14 @@ impl RuntimeRecipe {
             .join("checkpoints.db")
     }
 
-    pub fn build_default_state_store(&self) -> io::Result<SqliteStateStore> {
-        let db_path = self.default_sqlite_checkpoint_path();
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        SqliteStateStore::new(db_path)
+    pub fn build_state_store(&self) -> io::Result<std::sync::Arc<dyn StateStore>> {
+        let spec = self.state_store.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "distributed RuntimeRecipe is missing state_store",
+            )
+        })?;
+        spec.build()
     }
 }
 

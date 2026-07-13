@@ -1,6 +1,3 @@
-fn main() {
-    if let Err(err) = vv_agent::cli::main() {
-        eprintln!("{err}");
-        std::process::exit(1);
-    }
+fn main() -> std::process::ExitCode {
+    vv_agent::cli::process_main()
 }

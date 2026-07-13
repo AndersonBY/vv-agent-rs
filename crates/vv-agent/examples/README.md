@@ -77,6 +77,7 @@ cargo run -p vv-agent --example 03_sdk_client
 | `26_agent_runner_facade` | `Agent` + `Runner` with `VvLlmModelProvider`. |
 | `27_facade_handoff` | Handoff flow that transfers control to another agent. |
 | `28_facade_approval_background_trace` | Live approval provider, background agent task, and JSONL trace exporter. |
+| `29_typed_final_output` | Deserialize a JSON final output into a Rust type. |
 
 Advanced integration: the App Server protocol is documented in
 `crates/vv-agent/docs/app_server.md`. It is the supported path for product

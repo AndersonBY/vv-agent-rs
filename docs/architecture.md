@@ -41,7 +41,8 @@ from an assistant prose message.
 | `crates/vv-agent/src/agent.rs` | Public `Agent` builder for instructions, model defaults, tools, handoffs, hooks, and metadata. |
 | `crates/vv-agent/src/runner.rs` | Public `Runner` that resolves models, compiles public inputs, starts live handles, streams typed events, and reuses the runtime engine. |
 | `crates/vv-agent/src/run_handle.rs` | Live run handle for event subscription, result synchronization, cancellation, state reads, and approval decisions. |
-| `crates/vv-agent/src/run_config.rs` | Per-run overrides for model, workspace, max cycles, tool policy, providers, session, hooks, cancellation, event store, and metadata. |
+| `crates/vv-agent/src/interactive.rs` | Embedded stateful session facade for stable identity, live steering, follow-ups, cancellation, and session events. |
+| `crates/vv-agent/src/run_config.rs` | Per-run overrides for model, workspace, bounds, tool registry/policy, runtime injection, diagnostics, providers, session, hooks, cancellation, event store, and metadata. |
 | `crates/vv-agent/src/approval.rs` | Host approval protocol, broker, request payload, async decision future, and approval errors. |
 | `crates/vv-agent/src/context_providers.rs` | Context fragment collection, ordering, prompt-budget assembly, source metadata, and stable fragment reporting. |
 | `crates/vv-agent/src/event_store.rs` | Append-only run event storage and replay query contract, including JSONL storage. |
@@ -70,6 +71,19 @@ from an assistant prose message.
 Distributed and checkpointed paths must preserve the same public result and
 checkpoint payload shape as inline execution.
 
+Distributed mode sends a versioned `DistributedRunEnvelope` for each cycle.
+Workers resolve all referenced capabilities before claiming state, then use a
+revision/token lease with heartbeat renewal and CAS commit. The scheduler
+accepts a result only after reconciling it with the durable checkpoint;
+terminal checkpoints are immutable and replayable until acknowledged. SQLite
+uses WAL, a bounded busy timeout, and in-place legacy-column migration.
+
+This is an at-least-once execution model. Apalis cancellation stops scheduler
+polling but queued or claimed work may still complete. The cycle idempotency
+key does not provide an event outbox, durable cancellation record, or
+idempotency for external tool side effects. See `parity-contract.md` for the
+complete cross-language contract.
+
 ## Public SDK
 
 The public path is `Agent` + `Runner`. Public types express user intent;
@@ -83,18 +97,29 @@ Core responsibilities:
   `Agent::as_tool()`, handoffs, hooks, and metadata.
 - `Runner`: model provider, workspace default, default tool registry, run and
   live entrypoints.
-- `RunConfig`: per-call model, model settings, workspace, max cycles, session,
+- `RunConfig`: per-call model, model settings, workspace, bounds, session,
+  tool registry/policy, runtime message injection and observers, diagnostics,
   hooks, cancellation, public `ExecutionMode`, providers, event store, and
-  metadata override.
+  metadata override. See `runtime-control.md` for the complete surface.
 - `RunHandle`: live event stream, cancellation, state, approval decisions, and
   final result synchronization.
+- `InteractiveAgentClient` / `InteractiveSession`: embedded stateful control over
+  `Runner`, `RunHandle`, and `Session`, including steering and queued follow-up
+  turns.
 - `RunEvent`: v1 envelope with stable identity fields and a typed payload.
-- `RunEventStore`: append-only event storage and replay by run lineage.
+- `RunEventStore`: append-only event storage and replay by run lineage. Replay
+  includes direct child runs by default; callers can explicitly request only
+  the selected run.
 - `ApprovalProvider`: host-driven live tool approval. `ask_user` remains the
   model-facing tool for asking a user to provide conversational input.
+- `ToolPolicy` approval modes are `Default`, `Always`, `Never`, and
+  `OnRequest`. `Default` is the unset merge sentinel; explicit `OnRequest`
+  follows tool declarations, while `Always` and `Never` bypass dynamic tool
+  approval predicates.
 - `ContextProvider`: source-tracked, budgeted context fragments assembled into
   agent instructions before the run starts.
-- `MemoryProvider`: external search/save and compaction lifecycle callbacks.
+- `MemoryProvider`: external search/save and compaction lifecycle callbacks;
+  `MemorySearchRequest.limit` defaults to `10`.
 - `ModelProvider`: exact model resolution plus LLM client construction. The
   built-in `VvLlmModelProvider` uses repository settings through `vv-llm`, and
   `ScriptedModelProvider` is for unit tests.

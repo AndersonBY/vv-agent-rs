@@ -69,6 +69,14 @@ fn runtime_executes_configured_sub_agent_with_real_runner() {
 
 #[test]
 fn runtime_forwards_stream_callback_to_runtime_backed_sub_agent() {
+    let contract: serde_json::Value = serde_json::from_str(include_str!(
+        "../fixtures/parity/configured_sub_agent_v1.json"
+    ))
+    .expect("configured sub-agent contract");
+    assert!(contract["capability_projection"]["inherited"]
+        .as_array()
+        .expect("inherited capabilities")
+        .contains(&json!("stream_sink")));
     let events = Arc::new(Mutex::new(Vec::new()));
     let stream_callback: LlmStreamCallback = {
         let events = Arc::clone(&events);
@@ -119,6 +127,8 @@ fn runtime_forwards_stream_callback_to_runtime_backed_sub_agent() {
                 .get("sub_agent_name")
                 .and_then(serde_json::Value::as_str)
                 == Some("researcher")
+            && event.get("task_id").and_then(serde_json::Value::as_str) != Some("spoofed-task")
+            && event.get("session_id") == event.get("task_id")
     }));
     let log_events = log_events.lock().expect("log events");
     let log_event_names = log_events
@@ -134,6 +144,7 @@ fn runtime_forwards_stream_callback_to_runtime_backed_sub_agent() {
     assert_eq!(sub_agent_delta.1["content_delta"], json!("checking"));
     assert_eq!(sub_agent_delta.1["sub_agent_name"], json!("researcher"));
     assert!(sub_agent_delta.1["task_id"].as_str().is_some());
+    assert_ne!(sub_agent_delta.1["task_id"], json!("spoofed-task"));
     assert_eq!(
         sub_agent_delta.1["session_id"],
         sub_agent_delta.1["task_id"]
@@ -387,6 +398,17 @@ fn runtime_sub_agent_identity_metadata_cannot_be_overridden_by_request() {
         "browser_scope_key".to_string(),
         json!("sub-agent-browser-override"),
     );
+    for key in [
+        "is_sub_task",
+        "parent_task_id",
+        "sub_agent_name",
+        "session_memory_enabled",
+        "workspace",
+    ] {
+        sub_agent
+            .metadata
+            .insert(key.to_string(), json!(format!("sub-agent-override-{key}")));
+    }
     task.sub_agents.insert("researcher".to_string(), sub_agent);
 
     let result = runtime.run(task).expect("run");
@@ -401,6 +423,11 @@ fn runtime_sub_agent_identity_metadata_cannot_be_overridden_by_request() {
     assert_ne!(session_id, "sub-agent-session-override");
     assert_eq!(session_id, task_id);
     assert_eq!(metadata["browser_scope_key"], metadata["session_id"]);
+    assert_eq!(metadata["is_sub_task"], true);
+    assert_eq!(metadata["parent_task_id"], "parent_identity");
+    assert_eq!(metadata["sub_agent_name"], "researcher");
+    assert_eq!(metadata["session_memory_enabled"], false);
+    assert_ne!(metadata["workspace"], "sub-agent-override-workspace");
 }
 #[derive(Clone)]
 struct InspectingSubAgentPromptLlmClient {
@@ -494,6 +521,9 @@ impl LlmClient for StreamingSubAgentLlmClient {
                     callback(&BTreeMap::from([
                         ("event".to_string(), json!("assistant_delta")),
                         ("content_delta".to_string(), json!("checking")),
+                        ("task_id".to_string(), json!("spoofed-task")),
+                        ("session_id".to_string(), json!("spoofed-session")),
+                        ("sub_agent_name".to_string(), json!("spoofed-agent")),
                     ]));
                     callback(&BTreeMap::from([
                         ("event".to_string(), json!("tool_call_started")),

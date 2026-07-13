@@ -3,8 +3,7 @@ use std::time::Duration;
 use vv_agent::app_server::outgoing::OutgoingEnvelope;
 use vv_agent::app_server::processor::MessageProcessor;
 use vv_agent::app_server::protocol::{
-    ApprovalDecision, ApprovalRequestParams, JsonRpcMessage, JsonRpcRequest, RequestId,
-    ServerRequest,
+    ApprovalRequestParams, JsonRpcMessage, JsonRpcRequest, RequestId, ServerRequest,
 };
 use vv_agent::app_server::transport::ConnectionId;
 
@@ -91,7 +90,7 @@ async fn model_list_request_returns_a_valid_model_list_response() {
 }
 
 #[tokio::test]
-async fn approval_resolve_request_resolves_matching_server_request() {
+async fn approval_resolve_request_preserves_allow_session() {
     let (mut processor, mut outgoing) = MessageProcessor::new_for_tests(16);
     let connection_id = ConnectionId::new(1);
     initialize(&mut processor, &mut outgoing, connection_id).await;
@@ -105,9 +104,10 @@ async fn approval_resolve_request_resolves_matching_server_request() {
                 thread_id: "thread_1".to_string(),
                 turn_id: "turn_1".to_string(),
                 request_id: "approval_1".to_string(),
+                tool_call_id: "call_1".to_string(),
                 tool_name: "bash".to_string(),
                 preview: "Run cargo test".to_string(),
-                choices: vec![ApprovalDecision::Allow, ApprovalDecision::Deny],
+                arguments: json!({}),
             }),
         )
         .await
@@ -124,7 +124,7 @@ async fn approval_resolve_request_resolves_matching_server_request() {
                     "threadId": "thread_1",
                     "turnId": "turn_1",
                     "requestId": "approval_1",
-                    "decision": "allow"
+                    "decision": "allow_session"
                 }),
             ),
         )
@@ -135,7 +135,7 @@ async fn approval_resolve_request_resolves_matching_server_request() {
         .expect("approval callback should resolve")
         .expect("callback")
         .expect("approval result");
-    assert_eq!(result["decision"], "allow");
+    assert_eq!(result["decision"], "allow_session");
     let JsonRpcMessage::Response(response) =
         recv_for_connection(&mut outgoing, connection_id).await
     else {
@@ -145,7 +145,7 @@ async fn approval_resolve_request_resolves_matching_server_request() {
 }
 
 #[tokio::test]
-async fn turn_steer_returns_explicit_unsupported_error() {
+async fn turn_steer_without_runtime_returns_configuration_error() {
     let (mut processor, mut outgoing) = MessageProcessor::new_for_tests(16);
     let connection_id = ConnectionId::new(1);
     initialize(&mut processor, &mut outgoing, connection_id).await;
@@ -167,9 +167,10 @@ async fn turn_steer_returns_explicit_unsupported_error() {
 
     let JsonRpcMessage::Error(error) = recv_for_connection(&mut outgoing, connection_id).await
     else {
-        panic!("expected unsupported error");
+        panic!("expected runtime configuration error");
     };
     assert_eq!(error.id, RequestId::Integer(2));
-    assert_eq!(error.error.code, -32013);
-    assert_eq!(error.error.data.expect("data")["method"], "turn/steer");
+    assert_eq!(error.error.code, -32603);
+    assert_eq!(error.error.message, "App Server runtime is not configured");
+    assert!(error.error.data.is_none());
 }

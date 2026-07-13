@@ -60,7 +60,7 @@ fn examples_and_tests_use_current_sdk_surface() {
 
     assert!(
         violations.is_empty(),
-        "examples and tests should use the current Agent/Runner SDK surface:\n{}",
+        "examples and tests should use the current Runner/interactive SDK surface:\n{}",
         violations.join("\n")
     );
 }

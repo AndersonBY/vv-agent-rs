@@ -8,15 +8,22 @@ use crate::types::{
 use super::request::BatchRequestEntry;
 
 pub(super) fn format_single_sync_result(outcome: SubTaskOutcome) -> ToolExecutionResult {
-    let payload = outcome.to_value();
+    let mut payload = outcome.to_value();
     if outcome.status == AgentStatus::Completed {
         return success(payload);
     }
-    let error_code = if outcome.status == AgentStatus::WaitUser {
-        "sub_task_wait_user"
-    } else {
-        "sub_task_failed"
-    };
+    let error_code = outcome
+        .error_code
+        .as_deref()
+        .filter(|error_code| !error_code.trim().is_empty())
+        .unwrap_or_else(|| {
+            if outcome.status == AgentStatus::WaitUser {
+                "sub_task_wait_user"
+            } else {
+                "sub_task_failed"
+            }
+        });
+    payload["error_code"] = Value::String(error_code.to_string());
     error(payload, error_code)
 }
 
@@ -77,7 +84,18 @@ pub(super) fn success(payload: Value) -> ToolExecutionResult {
     )
 }
 
-pub(super) fn error(payload: Value, error_code: &'static str) -> ToolExecutionResult {
+pub(super) fn error_message(message: impl Into<String>, error_code: &str) -> ToolExecutionResult {
+    error(
+        json!({
+            "ok": false,
+            "error": message.into(),
+            "error_code": error_code,
+        }),
+        error_code,
+    )
+}
+
+pub(super) fn error(payload: Value, error_code: &str) -> ToolExecutionResult {
     tool_result(
         ToolResultStatus::Error,
         payload,

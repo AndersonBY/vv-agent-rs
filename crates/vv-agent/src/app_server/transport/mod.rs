@@ -33,9 +33,19 @@ pub enum TransportEvent {
         connection_id: ConnectionId,
         message: JsonRpcMessage,
     },
+    ProtocolError {
+        connection_id: ConnectionId,
+        error: AppServerError,
+    },
     Closed {
         connection_id: ConnectionId,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportConnectionMode {
+    Single,
+    Multiple,
 }
 
 pub trait AppServerTransport {
@@ -47,4 +57,8 @@ pub trait AppServerTransport {
         connection_id: ConnectionId,
         message: JsonRpcMessage,
     ) -> TransportFuture<'_, Result<(), AppServerError>>;
+
+    fn connection_mode(&self) -> TransportConnectionMode {
+        TransportConnectionMode::Single
+    }
 }

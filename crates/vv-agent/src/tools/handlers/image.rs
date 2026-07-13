@@ -6,9 +6,10 @@ use serde_json::json;
 
 use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{
-    path_escapes_workspace_error, stringify_tool_arg, tool_error_with_code, tool_result,
+    path_escapes_workspace_error, stringify_tool_arg, tool_error_with_code,
+    tool_result_with_metadata,
 };
-use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
+use crate::types::{Metadata, ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 pub fn read_image(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
     let spec = read_image_tool();
@@ -31,11 +32,12 @@ pub(crate) fn read_image_tool() -> ToolSpec {
                     "source": "url",
                     "image_url": raw_path,
                 });
-                let mut result = tool_result(
+                let mut result = tool_result_with_metadata(
                     ToolResultStatus::Success,
                     payload,
                     None,
                     ToolDirective::Continue,
+                    Metadata::from([("source".to_string(), json!("url"))]),
                 );
                 result.image_url = Some(raw_path.to_string());
                 return result;
@@ -73,15 +75,21 @@ pub(crate) fn read_image_tool() -> ToolSpec {
             };
             const MAX_INLINE_IMAGE_BYTES: usize = 5 * 1024 * 1024;
             if bytes.len() > MAX_INLINE_IMAGE_BYTES {
-                return tool_result(
+                return tool_result_with_metadata(
                     ToolResultStatus::Error,
                     json!({
+                        "ok": false,
                         "error": "image is too large for inline message transport",
+                        "error_code": "image_too_large",
                         "max_bytes": MAX_INLINE_IMAGE_BYTES,
                         "actual_bytes": bytes.len(),
                     }),
                     Some("image_too_large"),
                     ToolDirective::Continue,
+                    Metadata::from([
+                        ("max_bytes".to_string(), json!(MAX_INLINE_IMAGE_BYTES)),
+                        ("actual_bytes".to_string(), json!(bytes.len())),
+                    ]),
                 );
             }
             let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
@@ -93,11 +101,16 @@ pub(crate) fn read_image_tool() -> ToolSpec {
                 "mime_type": mime_type,
                 "inline_transport": true,
             });
-            let mut result = tool_result(
+            let mut result = tool_result_with_metadata(
                 ToolResultStatus::Success,
                 payload,
                 None,
                 ToolDirective::Continue,
+                Metadata::from([
+                    ("source".to_string(), json!("workspace")),
+                    ("mime_type".to_string(), json!(mime_type)),
+                    ("inline_transport".to_string(), json!(true)),
+                ]),
             );
             result.image_url = Some(image_url);
             result.image_path = Some(raw_path.to_string());

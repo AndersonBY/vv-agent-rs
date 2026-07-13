@@ -93,6 +93,38 @@ fn planned_tool_schemas_exclude_tools() {
 }
 
 #[test]
+fn planned_tool_names_respect_allowed_tool_policy_metadata() {
+    let registry = build_default_registry();
+    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    task.extra_tool_names = vec!["allowed_custom".to_string(), "blocked_custom".to_string()];
+    task.metadata.insert(
+        "_vv_agent_allowed_tools".to_string(),
+        json!(["task_finish", "allowed_custom"]),
+    );
+
+    let names = plan_tool_names(&task, None);
+
+    assert_eq!(names, vec!["task_finish", "allowed_custom"]);
+    assert_eq!(registry.planned_tool_names(&task), names);
+}
+
+#[test]
+fn planned_tool_names_respect_disallowed_tool_policy_metadata() {
+    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    task.extra_tool_names = vec!["allowed_custom".to_string(), "blocked_custom".to_string()];
+    task.metadata.insert(
+        "_vv_agent_disallowed_tools".to_string(),
+        json!(["read_file", "blocked_custom"]),
+    );
+
+    let names = plan_tool_names(&task, None);
+
+    assert!(!names.contains(&"read_file".to_string()));
+    assert!(!names.contains(&"blocked_custom".to_string()));
+    assert!(names.contains(&"allowed_custom".to_string()));
+}
+
+#[test]
 fn planned_tool_names_keep_unregistered_extra_tools() {
     let registry = build_default_registry();
     let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");

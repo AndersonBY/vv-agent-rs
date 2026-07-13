@@ -7,6 +7,37 @@ pub(crate) fn needs_tool_call_id(value: &str) -> bool {
     stripped.is_empty() || stripped == "pending"
 }
 
+pub(crate) fn apply_tool_use_behavior(
+    task: &crate::types::AgentTask,
+    call: &ToolCall,
+    result: &mut ToolExecutionResult,
+) {
+    if result.directive != ToolDirective::Continue || result.status != ToolResultStatus::Success {
+        return;
+    }
+    let behavior = task
+        .metadata
+        .get("_vv_agent_tool_use_behavior")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("run_llm_again");
+    let should_stop = match behavior {
+        "stop_on_first_tool" => true,
+        "stop_at_tool_names" => task
+            .metadata
+            .get("_vv_agent_stop_at_tool_names")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|names| {
+                names
+                    .iter()
+                    .any(|name| name.as_str() == Some(call.name.as_str()))
+            }),
+        _ => false,
+    };
+    if should_stop {
+        result.directive = ToolDirective::Finish;
+    }
+}
+
 pub(crate) fn skipped_tool_result(
     call: &ToolCall,
     error_code: &str,

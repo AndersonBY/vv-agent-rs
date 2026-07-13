@@ -220,6 +220,7 @@ pub fn print_agent_result(
 }
 
 pub fn print_run_result(result: &RunResult) -> Result<(), Box<dyn std::error::Error>> {
+    let resolved = result.resolved_model();
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
@@ -231,9 +232,9 @@ pub fn print_run_result(result: &RunResult) -> Result<(), Box<dyn std::error::Er
             "cycles": result.result().cycles.len(),
             "token_usage": result.result().token_usage,
             "resolved": {
-                "backend": result.resolved_model().backend,
-                "selected_model": result.resolved_model().selected_model,
-                "model_id": result.resolved_model().model_id,
+                "backend": resolved.map(|model| &model.backend),
+                "selected_model": resolved.map(|model| &model.selected_model),
+                "model_id": resolved.map(|model| &model.model_id),
             },
         }))?
     );

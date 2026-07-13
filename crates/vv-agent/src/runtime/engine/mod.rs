@@ -1,3 +1,4 @@
+mod approval;
 mod completion;
 mod construction;
 mod controls;
@@ -9,33 +10,25 @@ mod planning;
 mod run_setup;
 mod state;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use futures_util::FutureExt;
 use serde_json::Value;
 
-use crate::approval::{block_on_approval_future, ApprovalRequest};
-use crate::events::RunEvent;
-use crate::llm::{LlmClient, LlmError, LlmRequest};
-use crate::memory::{
-    provider::block_on_memory_future, CompactionExhaustedError, MemoryManager, MemoryProvider,
-};
-use crate::tools::{
-    ApprovalDecision, ToolContext, ToolError, ToolOrchestrator, ToolRunOptions, ToolSpecKind,
-};
-use crate::types::{
-    AgentResult, AgentStatus, AgentTask, Message, ToolCall, ToolDirective, ToolExecutionResult,
-    ToolResultStatus,
-};
+use crate::llm::{LlmClient, LlmError, LlmRequest, LlmStreamCallback};
+use crate::memory::CompactionExhaustedError;
+use crate::tools::{ToolContext, ToolError, ToolOrchestrator, ToolRunOptions, ToolSpecKind};
+use crate::types::{AgentResult, AgentStatus, AgentTask, ToolDirective, ToolExecutionResult};
 
 use super::cancellation::CancellationToken;
-use super::context::ExecutionContext;
 
 use super::cycle_runner::{is_prompt_too_long_error, MAX_PROMPT_TOO_LONG_RETRIES};
 use super::results::assistant_message_from_response;
 use super::token_usage::normalize_token_usage;
-use super::tool_call_runner::{needs_tool_call_id, skipped_tool_result};
+use super::tool_call_runner::{apply_tool_use_behavior, needs_tool_call_id, skipped_tool_result};
 
+use self::approval::{approval_error_result, approval_provider_result, PendingToolApprovalCapture};
 use self::completion::{
     handle_directive_result, handle_no_tool_response, DirectiveResultRequest, NoToolResponseRequest,
 };
@@ -43,6 +36,10 @@ use self::helpers::{
     cancelled_agent_result, collect_interruption_messages, controls_cancelled,
     drain_steering_queue, failed_agent_result, image_notification_from_tool_result,
     previous_cycle_memory_usage,
+};
+use self::memory::{
+    memory_compact_completed_event, memory_compact_event_payload, memory_compact_started_event,
+    notify_memory_after_compact, notify_memory_before_compact,
 };
 use self::run_setup::{prepare_run_setup, PreparedRun};
 pub use self::state::AgentRuntime;
@@ -57,6 +54,10 @@ pub use controls::{
 };
 
 impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
+    pub fn set_tool_policy(&mut self, tool_policy: crate::tools::ToolPolicy) {
+        self.tool_policy = Some(tool_policy);
+    }
+
     pub fn run(&self, task: AgentTask) -> Result<AgentResult, LlmError> {
         self.run_with_controls(task, RuntimeRunControls::default())
     }
@@ -64,8 +65,13 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
     pub fn run_with_controls(
         &self,
         task: AgentTask,
-        controls: RuntimeRunControls,
+        mut controls: RuntimeRunControls,
     ) -> Result<AgentResult, LlmError> {
+        if let Some(context) = controls.execution_context.as_mut() {
+            if context.approval_provider.is_some() && context.approval_broker.is_none() {
+                context.approval_broker = Some(crate::approval::ApprovalBroker::default());
+            }
+        }
         let PreparedRun {
             task,
             messages,
@@ -77,6 +83,11 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             mut memory_manager,
         } = prepare_run_setup(self, task, &controls);
         self.emit_run_started(&controls, &task, &workspace_path);
+        self.emit_log(
+            &controls,
+            "agent_started",
+            BTreeMap::from([("model".to_string(), Value::String(task.model.clone()))]),
+        );
 
         if controls_cancelled(&controls) {
             self.emit_log(
@@ -93,11 +104,15 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         let effective_cancellation_token = controls.effective_cancellation_token();
         let effective_stream_callback = controls.effective_stream_callback();
         let mut pending_error = None;
-        let result = self.execution_backend.execute(
+        let cycle_index_start = controls.cycle_index_start.unwrap_or(1);
+        let cycle_count = controls.cycle_count.unwrap_or(task.max_cycles);
+        let result = self.execution_backend.execute_with_state(
             &task,
             messages,
+            cycles,
             shared_state,
             |cycle_index, messages, cycles, shared_state, cancellation_token| {
+                let _cancellation_scope = CancellationToken::enter_scope(cancellation_token);
                 if cancellation_token.is_some_and(CancellationToken::is_cancelled)
                     || controls_cancelled(&controls)
                 {
@@ -167,11 +182,22 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     &pre_compact_messages,
                     previous_prompt_tokens,
                     recent_tool_call_ids.as_ref(),
-                );
-                if let Some(event) = memory_compact_event.as_ref() {
-                    notify_memory_before_compact(controls.execution_context.as_ref(), event);
-                }
-                let (prepared_messages, memory_compacted) = memory_manager
+                    false,
+                )
+                .map(|event| {
+                    let event = notify_memory_before_compact(
+                        controls.execution_context.as_ref(),
+                        event,
+                        &pre_compact_messages,
+                    );
+                    self.emit_log(
+                        &controls,
+                        "memory_compact_started",
+                        memory_compact_event_payload(&event),
+                    );
+                    event
+                });
+                let (mut compacted_messages, memory_compacted) = memory_manager
                     .compact_for_cycle_with_usage(
                         &pre_compact_messages,
                         cycle_index,
@@ -179,26 +205,25 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         previous_prompt_tokens,
                         recent_tool_call_ids.as_ref(),
                     );
-                if memory_compacted {
-                    if let Some(started_event) = memory_compact_event.as_ref() {
-                        let completed = RunEvent::memory_compact_completed(
-                            started_event.run_id().to_string(),
-                            started_event.trace_id().to_string(),
-                            started_event.agent_name().unwrap_or("agent").to_string(),
-                            cycle_index,
-                            pre_compact_messages.len(),
-                            prepared_messages.len(),
-                            None,
-                        );
-                        notify_memory_after_compact(
-                            controls.execution_context.as_ref(),
-                            &completed,
-                        );
-                    }
+                if let Some(started_event) = memory_compact_event.as_ref() {
+                    let completed = memory_compact_completed_event(
+                        started_event,
+                        cycle_index,
+                        &pre_compact_messages,
+                        &compacted_messages,
+                        &memory_manager.config.model,
+                    );
+                    let completed =
+                        notify_memory_after_compact(controls.execution_context.as_ref(), completed);
+                    self.emit_log(
+                        &controls,
+                        "memory_compact_completed",
+                        memory_compact_event_payload(&completed),
+                    );
                 }
-                *messages = prepared_messages;
+                *messages = compacted_messages.clone();
                 let tool_schemas = self.planned_tool_schemas(&task);
-                let llm_messages = memory_manager.apply_session_memory_context(messages);
+                let llm_messages = memory_manager.apply_session_memory_context(&compacted_messages);
                 let (request_messages, request_tool_schemas) = hook_manager.apply_before_llm(
                     &task,
                     cycle_index,
@@ -210,16 +235,38 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 let mut request_tool_schemas = request_tool_schemas;
                 let mut memory_compacted = memory_compacted;
                 let mut prompt_too_long_retries = 0;
+                self.emit_log(
+                    &controls,
+                    "llm_started",
+                    BTreeMap::from([
+                        ("cycle".to_string(), Value::from(cycle_index)),
+                        ("model".to_string(), Value::String(task.model.clone())),
+                        (
+                            "message_count".to_string(),
+                            Value::from(request_messages.len()),
+                        ),
+                    ]),
+                );
+                let cycle_stream_callback = effective_stream_callback.as_ref().map(|callback| {
+                    let callback = callback.clone();
+                    Arc::new(move |event: &BTreeMap<String, Value>| {
+                        let mut event = event.clone();
+                        event.insert("cycle".to_string(), Value::from(cycle_index));
+                        callback(&event);
+                    }) as LlmStreamCallback
+                });
                 let response = loop {
                     let mut request = LlmRequest::new(task.model.clone(), request_messages.clone());
                     request.tools = request_tool_schemas.clone();
+                    let mut request_metadata = task.metadata.clone();
                     if let Some(execution_context) = controls.execution_context.as_ref() {
-                        request.metadata = serde_json::to_value(&execution_context.metadata)
-                            .unwrap_or(Value::Null);
+                        request_metadata.extend(execution_context.metadata.clone());
                     }
+                    request.metadata = Value::Object(request_metadata.into_iter().collect());
+                    request.model_settings = task.model_settings.clone();
                     match self
                         .llm_client
-                        .complete_with_stream(request, effective_stream_callback.clone())
+                        .complete_with_stream(request, cycle_stream_callback.clone())
                     {
                         Ok(response) => break response,
                         Err(error) if is_prompt_too_long_error(&error) => {
@@ -240,22 +287,60 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 ));
                             }
                             memory_compacted = true;
-                            let retry_messages = if prompt_too_long_retries == 1 {
+                            let before_retry_compact = compacted_messages.clone();
+                            let started = memory_compact_started_event(
+                                controls.execution_context.as_ref(),
+                                &memory_manager,
+                                &task,
+                                cycle_index,
+                                &before_retry_compact,
+                                None,
+                                recent_tool_call_ids.as_ref(),
+                                true,
+                            )
+                            .expect("forced memory compaction always starts a lifecycle");
+                            let started = notify_memory_before_compact(
+                                controls.execution_context.as_ref(),
+                                started,
+                                &before_retry_compact,
+                            );
+                            self.emit_log(
+                                &controls,
+                                "memory_compact_started",
+                                memory_compact_event_payload(&started),
+                            );
+                            compacted_messages = if prompt_too_long_retries == 1 {
                                 let (compacted, _) = memory_manager.compact_for_cycle(
-                                    &request_messages,
+                                    &compacted_messages,
                                     cycle_index,
                                     true,
                                 );
                                 compacted
                             } else {
                                 memory_manager.emergency_compact(
-                                    &request_messages,
+                                    &compacted_messages,
                                     (0.2 * prompt_too_long_retries as f64).min(0.95),
                                 )
                             };
+                            let completed = memory_compact_completed_event(
+                                &started,
+                                cycle_index,
+                                &before_retry_compact,
+                                &compacted_messages,
+                                &memory_manager.config.model,
+                            );
+                            let completed = notify_memory_after_compact(
+                                controls.execution_context.as_ref(),
+                                completed,
+                            );
+                            self.emit_log(
+                                &controls,
+                                "memory_compact_completed",
+                                memory_compact_event_payload(&completed),
+                            );
                             let retry_tool_schemas = self.planned_tool_schemas(&task);
                             let llm_messages =
-                                memory_manager.apply_session_memory_context(&retry_messages);
+                                memory_manager.apply_session_memory_context(&compacted_messages);
                             (request_messages, request_tool_schemas) = hook_manager
                                 .apply_before_llm(
                                     &task,
@@ -322,35 +407,137 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     workspace_backend.clone(),
                     shared_state.clone(),
                     sub_task_manager.clone(),
-                    super::sub_agents::SubTaskCallbacks {
+                    super::sub_agents::SubTaskRunControls {
+                        parent_cancellation_token: cancellation_token.cloned(),
                         stream_callback: effective_stream_callback.clone(),
                         parent_log_handler: self.log_handler.clone(),
                         parent_event_handler: controls.log_handler.clone(),
+                        parent_execution_context: controls.execution_context.clone(),
+                        model_provider: controls.model_provider.clone(),
+                        parent_run_context: controls.run_context.clone(),
+                        tool_policy: self.tool_policy.clone(),
                     },
                 );
-                let mut tool_metadata = controls
+                let mut tool_metadata = task.metadata.clone();
+                for key in [
+                    "_vv_agent_agent_name",
+                    "_vv_agent_parent_run_id",
+                    "_vv_agent_parent_tool_call_id",
+                    "_vv_agent_run_id",
+                    "_vv_agent_session_id",
+                    "_vv_agent_trace_id",
+                ] {
+                    tool_metadata.remove(key);
+                }
+                if let Some(execution_context) = controls.execution_context.as_ref() {
+                    tool_metadata.extend(execution_context.metadata.clone());
+                }
+                let trace_id = controls
                     .execution_context
                     .as_ref()
-                    .map(|context| context.metadata.clone())
-                    .unwrap_or_default();
-                tool_metadata.extend(task.metadata.clone());
+                    .and_then(|context| {
+                        ["_vv_agent_trace_id", "trace_id"]
+                            .into_iter()
+                            .find_map(|key| {
+                                context
+                                    .metadata
+                                    .get(key)
+                                    .and_then(Value::as_str)
+                                    .map(str::trim)
+                                    .filter(|value| !value.is_empty())
+                                    .map(str::to_string)
+                            })
+                    })
+                    .or_else(|| {
+                        controls.run_context.as_ref().and_then(|run| {
+                            ["_vv_agent_trace_id", "trace_id"]
+                                .into_iter()
+                                .find_map(|key| {
+                                    run.metadata
+                                        .get(key)
+                                        .and_then(Value::as_str)
+                                        .map(str::trim)
+                                        .filter(|value| !value.is_empty())
+                                        .map(str::to_string)
+                                })
+                        })
+                    })
+                    .or_else(|| {
+                        ["_vv_agent_trace_id", "trace_id"]
+                            .into_iter()
+                            .find_map(|key| {
+                                task.metadata
+                                    .get(key)
+                                    .and_then(Value::as_str)
+                                    .map(str::trim)
+                                    .filter(|value| !value.is_empty())
+                                    .map(str::to_string)
+                            })
+                    });
+                let parent_run_id = controls
+                    .run_context
+                    .as_ref()
+                    .map(|run| run.run_id.trim())
+                    .filter(|run_id| !run_id.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        controls.execution_context.as_ref().and_then(|context| {
+                            context
+                                .metadata
+                                .get("_vv_agent_run_id")
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(str::to_string)
+                        })
+                    });
                 let mut context = ToolContext {
                     workspace: workspace_path.clone(),
                     shared_state: shared_state.clone(),
                     cycle_index,
                     task_id: task.task_id.clone(),
+                    tool_call_id: String::new(),
+                    tool_name: String::new(),
+                    arguments: crate::types::ToolArguments::new(),
                     metadata: tool_metadata,
+                    app_state: controls
+                        .execution_context
+                        .as_ref()
+                        .and_then(|context| context.app_state.clone()),
                     workspace_backend: workspace_backend.clone(),
                     model_provider: controls.model_provider.clone(),
+                    run_context: controls.run_context.clone(),
                     sub_task_runner,
                     sub_task_manager: Some(sub_task_manager.clone()),
+                    sub_task_turn_snapshot: Some(super::sub_task_manager::SubTaskTurnSnapshot {
+                        cancellation_token: cancellation_token.cloned(),
+                        event_handler: controls.log_handler.clone(),
+                        stream_callback: effective_stream_callback.clone(),
+                        trace_id,
+                        parent_run_id,
+                        parent_tool_call_id: None,
+                        parent_execution_context: controls.execution_context.clone(),
+                        parent_run_context: controls.run_context.clone(),
+                        tool_policy: self.tool_policy.clone().unwrap_or_default(),
+                    }),
                     execution_backend: Some(self.execution_backend.clone()),
+                    background_parent_run_config: controls.background_parent_run_config.clone(),
                 };
 
                 let mut directive_result = None;
                 let mut image_notifications = Vec::new();
                 let tool_orchestrator =
                     ToolOrchestrator::from_tools(self.tool_registry.executors());
+                let planned_tool_names = request_tool_schemas
+                    .iter()
+                    .filter_map(|schema| schema["function"]["name"].as_str().map(str::to_string))
+                    .collect::<Vec<_>>();
+                let tool_run_options = self
+                    .tool_policy
+                    .as_ref()
+                    .map(ToolRunOptions::from_policy)
+                    .unwrap_or_default()
+                    .planned_names(planned_tool_names);
                 for (call_index, call) in response.tool_calls.iter().enumerate() {
                     if cancellation_token.is_some_and(CancellationToken::is_cancelled)
                         || controls_cancelled(&controls)
@@ -450,26 +637,61 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             ]),
                         );
                     }
-                    let provider_approval_result = approval_provider_result(
-                        self,
-                        &controls,
-                        &task,
-                        cycle_index,
-                        &patched_call,
-                    );
                     let mut result = if let Some(mut result) = short_circuit_result {
                         if needs_tool_call_id(&result.tool_call_id) {
                             result.tool_call_id = call.id.clone();
                         }
                         result
-                    } else if let Some(result) = provider_approval_result {
-                        result
                     } else {
-                        let mut result = match block_on_engine_tool_run(tool_orchestrator.run_one(
-                            patched_call.clone(),
-                            &mut context,
-                            ToolRunOptions::default(),
-                        )) {
+                        let mut approval_failure = None;
+                        let mut result = match block_on_engine_tool_run(
+                            tool_orchestrator.run_one_with_approval_and_metadata(
+                                patched_call.clone(),
+                                &mut context,
+                                tool_run_options.clone(),
+                                |call, effective_requirement, approval_context, tool_metadata| {
+                                    let result = match approval_provider_result(
+                                        self,
+                                        &controls,
+                                        &task,
+                                        cycle_index,
+                                        call,
+                                        effective_requirement,
+                                        tool_metadata,
+                                    ) {
+                                        Ok(result) => result,
+                                        Err(error) => {
+                                            approval_failure = Some(error);
+                                            return Some(approval_error_result(
+                                                call,
+                                                "approval_provider_error",
+                                                "Approval provider failed.",
+                                            ));
+                                        }
+                                    };
+                                    if result.as_ref().is_some_and(|result| {
+                                        result.error_code.as_deref()
+                                            == Some("tool_approval_required")
+                                    }) {
+                                        self.capture_pending_tool_approval(
+                                            PendingToolApprovalCapture {
+                                                task: &task,
+                                                hook_manager: &hook_manager,
+                                                cycle_index,
+                                                call,
+                                                context: approval_context,
+                                                options: &tool_run_options,
+                                                orchestrator: &tool_orchestrator,
+                                                result: result
+                                                    .as_ref()
+                                                    .expect("checked approval result"),
+                                            },
+                                        );
+                                    }
+                                    result
+                                },
+                            ),
+                        ) {
                             Ok(result) => result,
                             Err(error) => approval_error_result(
                                 &patched_call,
@@ -477,6 +699,24 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 error.to_string(),
                             ),
                         };
+                        if let Some(error) = approval_failure {
+                            *shared_state = context.shared_state.clone();
+                            cycles.push(cycle);
+                            self.emit_log(
+                                &controls,
+                                "cycle_failed",
+                                BTreeMap::from([
+                                    ("cycle".to_string(), Value::from(cycle_index)),
+                                    ("error".to_string(), Value::String(error.to_string())),
+                                ]),
+                            );
+                            return Some(failed_agent_result(
+                                messages.clone(),
+                                cycles.clone(),
+                                shared_state.clone(),
+                                error.to_string(),
+                            ));
+                        }
                         if needs_tool_call_id(&result.tool_call_id) {
                             result.tool_call_id = patched_call.id.clone();
                         }
@@ -492,6 +732,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     if needs_tool_call_id(&result.tool_call_id) {
                         result.tool_call_id = patched_call.id.clone();
                     }
+                    apply_tool_use_behavior(&task, &patched_call, &mut result);
                     if matches!(
                         tool_kind,
                         Some(ToolSpecKind::Agent | ToolSpecKind::BackgroundAgent)
@@ -522,7 +763,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 ),
                                 (
                                     "status".to_string(),
-                                    serde_json::to_value(result.status).unwrap_or(Value::Null),
+                                    self::logging::tool_result_status_value(result.status),
                                 ),
                                 (
                                     "final_output".to_string(),
@@ -652,7 +893,8 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 None
             },
             effective_cancellation_token.as_ref(),
-            task.max_cycles,
+            cycle_index_start,
+            cycle_count,
         );
         if let Some(error) = pending_error {
             return Err(error);
@@ -661,209 +903,6 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             self.emit_run_max_cycles(&controls, &result);
         }
         Ok(result)
-    }
-}
-
-fn approval_provider_result<C: LlmClient>(
-    runtime: &AgentRuntime<C>,
-    controls: &RuntimeRunControls,
-    task: &AgentTask,
-    cycle_index: u32,
-    call: &ToolCall,
-) -> Option<ToolExecutionResult> {
-    if call.name == "task_finish" {
-        return None;
-    }
-    let execution_context = controls.execution_context.as_ref()?;
-    let provider = execution_context.approval_provider.as_ref()?;
-    let broker = execution_context.approval_broker.as_ref()?;
-    let agent_name = task
-        .metadata
-        .get("agent_name")
-        .and_then(Value::as_str)
-        .unwrap_or(&task.task_id)
-        .to_string();
-    let request = ApprovalRequest::for_tool_call(
-        task.task_id.clone(),
-        task.task_id.clone(),
-        agent_name,
-        cycle_index,
-        call,
-    );
-    if !provider.should_request(&request) {
-        return None;
-    }
-
-    let decision = match block_on_approval_future(provider.decide(&request)) {
-        Ok(Some(ApprovalDecision::Approved)) => return None,
-        Ok(Some(ApprovalDecision::Denied(reason))) => ApprovalDecision::Denied(reason),
-        Ok(Some(ApprovalDecision::TimedOut(reason))) => ApprovalDecision::TimedOut(reason),
-        Ok(Some(ApprovalDecision::NeedsApproval)) | Ok(None) => {
-            if let Err(error) = broker.register(request.clone()) {
-                return Some(approval_error_result(
-                    call,
-                    "approval_broker_error",
-                    error.to_string(),
-                ));
-            }
-            runtime.emit_log(
-                controls,
-                "approval_requested",
-                BTreeMap::from([
-                    ("task_id".to_string(), Value::String(request.run_id.clone())),
-                    (
-                        "agent_name".to_string(),
-                        Value::String(request.agent_name.clone()),
-                    ),
-                    ("cycle".to_string(), Value::from(cycle_index)),
-                    (
-                        "request_id".to_string(),
-                        Value::String(request.request_id.clone()),
-                    ),
-                    (
-                        "tool_call_id".to_string(),
-                        Value::String(request.tool_call_id.clone()),
-                    ),
-                    (
-                        "tool_name".to_string(),
-                        Value::String(request.tool_name.clone()),
-                    ),
-                    (
-                        "preview".to_string(),
-                        Value::String(request.preview.clone()),
-                    ),
-                ]),
-            );
-            broker
-                .wait_blocking(&request.request_id, execution_context.approval_timeout)
-                .unwrap_or_else(|error| ApprovalDecision::deny(error.to_string()))
-        }
-        Err(error) => ApprovalDecision::deny(error.to_string()),
-    };
-
-    runtime.emit_log(
-        controls,
-        "approval_resolved",
-        BTreeMap::from([
-            ("task_id".to_string(), Value::String(request.run_id.clone())),
-            (
-                "agent_name".to_string(),
-                Value::String(request.agent_name.clone()),
-            ),
-            ("cycle".to_string(), Value::from(cycle_index)),
-            (
-                "request_id".to_string(),
-                Value::String(request.request_id.clone()),
-            ),
-            (
-                "tool_call_id".to_string(),
-                Value::String(request.tool_call_id.clone()),
-            ),
-            (
-                "tool_name".to_string(),
-                Value::String(request.tool_name.clone()),
-            ),
-            (
-                "approved".to_string(),
-                Value::Bool(matches!(decision, ApprovalDecision::Approved)),
-            ),
-        ]),
-    );
-
-    match decision {
-        ApprovalDecision::Approved => None,
-        ApprovalDecision::NeedsApproval => Some(approval_error_result(
-            call,
-            "approval_unresolved",
-            "Approval was not resolved.",
-        )),
-        ApprovalDecision::Denied(reason) => {
-            Some(approval_error_result(call, "approval_denied", reason))
-        }
-        ApprovalDecision::TimedOut(reason) => {
-            Some(approval_error_result(call, "approval_timeout", reason))
-        }
-    }
-}
-
-fn memory_compact_started_event(
-    execution_context: Option<&ExecutionContext>,
-    memory_manager: &MemoryManager,
-    task: &AgentTask,
-    cycle_index: u32,
-    messages: &[Message],
-    previous_prompt_tokens: Option<u64>,
-    recent_tool_call_ids: Option<&BTreeSet<String>>,
-) -> Option<RunEvent> {
-    let providers = memory_providers(execution_context);
-    if providers.is_empty() {
-        return None;
-    }
-    let usage = memory_manager.estimate_memory_usage_percentage(
-        messages,
-        previous_prompt_tokens,
-        recent_tool_call_ids,
-    );
-    if usage <= 100 {
-        return None;
-    }
-    let agent_name = task
-        .metadata
-        .get("agent_name")
-        .and_then(Value::as_str)
-        .unwrap_or(&task.task_id)
-        .to_string();
-    Some(RunEvent::memory_compact_started(
-        task.task_id.clone(),
-        task.task_id.clone(),
-        agent_name,
-        cycle_index,
-        messages.len(),
-        previous_prompt_tokens,
-    ))
-}
-
-fn notify_memory_before_compact(execution_context: Option<&ExecutionContext>, event: &RunEvent) {
-    for provider in memory_providers(execution_context) {
-        let _ = block_on_memory_future(provider.before_compact(event));
-    }
-}
-
-fn notify_memory_after_compact(execution_context: Option<&ExecutionContext>, event: &RunEvent) {
-    for provider in memory_providers(execution_context) {
-        let _ = block_on_memory_future(provider.after_compact(event));
-    }
-}
-
-fn memory_providers(
-    execution_context: Option<&ExecutionContext>,
-) -> Vec<&std::sync::Arc<dyn MemoryProvider>> {
-    execution_context
-        .map(|context| context.memory_providers.iter().collect())
-        .unwrap_or_default()
-}
-
-fn approval_error_result(
-    call: &ToolCall,
-    error_code: &str,
-    message: impl Into<String>,
-) -> ToolExecutionResult {
-    let message = message.into();
-    ToolExecutionResult {
-        tool_call_id: call.id.clone(),
-        content: serde_json::json!({
-            "ok": false,
-            "error": message,
-            "error_code": error_code,
-            "tool_name": call.name.clone(),
-        })
-        .to_string(),
-        status: ToolResultStatus::Error,
-        directive: ToolDirective::Continue,
-        error_code: Some(error_code.to_string()),
-        metadata: BTreeMap::new(),
-        image_url: None,
-        image_path: None,
     }
 }
 

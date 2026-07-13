@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::llm::LlmClient;
 use crate::memory::MemoryManager;
+use crate::model::{ModelProvider, VvLlmModelProvider};
 use crate::runtime::sub_task_manager::SubTaskManager;
 use crate::types::{AgentTask, CycleRecord, Message, Metadata};
 use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
@@ -33,11 +34,17 @@ where
     C: LlmClient + Clone + 'static,
 {
     let mut task = task;
-    let messages = build_initial_messages(&task);
+    let messages = controls
+        .initial_messages
+        .clone()
+        .unwrap_or_else(|| build_initial_messages(&task));
     crate::runtime::tool_planner::freeze_dynamic_tool_schema_hints(&mut task);
 
-    let cycles = Vec::new();
-    let mut shared_state = task.initial_shared_state.clone();
+    let cycles = controls.initial_cycles.clone().unwrap_or_default();
+    let mut shared_state = controls
+        .initial_shared_state
+        .clone()
+        .unwrap_or_else(|| task.initial_shared_state.clone());
     shared_state
         .entry("todo_list".to_string())
         .or_insert_with(|| Value::Array(Vec::new()));
@@ -56,10 +63,22 @@ where
         }
     });
     let sub_task_manager = controls.sub_task_manager.clone().unwrap_or_default();
+    let memory_model_provider = controls.model_provider.clone().or_else(|| {
+        let settings_file = runtime.settings_file.as_ref()?.clone();
+        if !settings_file.is_file() {
+            return None;
+        }
+        let mut provider = VvLlmModelProvider::from_settings_file(settings_file)
+            .with_timeout_seconds(runtime.sub_agent_timeout_seconds);
+        if let Some(default_backend) = runtime.default_backend.as_ref() {
+            provider = provider.with_default_backend(default_backend.clone());
+        }
+        Some(Arc::new(provider) as Arc<dyn ModelProvider>)
+    });
     let memory_manager = build_memory_manager(
         &task,
         workspace_path.clone(),
-        Some(runtime.llm_client.clone()),
+        memory_model_provider,
         runtime.settings_file.as_deref(),
         runtime.default_backend.as_deref(),
     );

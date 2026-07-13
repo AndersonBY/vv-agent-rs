@@ -38,25 +38,26 @@ pub fn render_skills_xml(entries: &[SkillEntry], budget: usize) -> String {
     }
 
     let full = render_all(entries, true);
-    if full.len() <= budget {
+    if full.chars().count() <= budget {
         return full;
     }
 
     let compact = render_all(entries, false);
-    if compact.len() <= budget {
+    if compact.chars().count() <= budget {
         return compact;
     }
 
-    let wrapper_overhead = "<available_skills>\n</available_skills>".len() + 80;
+    let wrapper_overhead = "<available_skills>\n</available_skills>".chars().count() + 80;
     let mut remaining = budget.saturating_sub(wrapper_overhead);
     let mut lines = vec!["<available_skills>".to_string()];
     let mut included = 0usize;
     for entry in entries {
         let xml = skill_entry_to_xml(entry, false);
-        if xml.len() + 1 > remaining {
+        let xml_chars = xml.chars().count();
+        if xml_chars + 1 > remaining {
             break;
         }
-        remaining = remaining.saturating_sub(xml.len() + 1);
+        remaining = remaining.saturating_sub(xml_chars + 1);
         lines.push(xml);
         included += 1;
     }
@@ -86,6 +87,7 @@ pub fn to_available_skills_xml(skill_dirs: &[PathBuf]) -> Result<String, SkillEr
             name: properties.name,
             description: properties.description,
             location: skill_md.map(|path| path.to_string_lossy().replace('\\', "/")),
+            compatibility: properties.compatibility,
             allowed_tools: properties.allowed_tools,
             metadata: properties.metadata,
             ..SkillEntry::default()

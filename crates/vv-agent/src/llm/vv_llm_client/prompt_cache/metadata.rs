@@ -6,11 +6,7 @@ use crate::types::MessageRole;
 pub(in crate::llm::vv_llm_client) fn request_metadata_for_prompt_cache(
     request: &LlmRequest,
 ) -> Value {
-    let mut metadata = request
-        .metadata
-        .as_object()
-        .cloned()
-        .unwrap_or_else(serde_json::Map::new);
+    let mut metadata = serde_json::Map::new();
     if let Some(system_metadata) = request
         .messages
         .iter()
@@ -19,6 +15,9 @@ pub(in crate::llm::vv_llm_client) fn request_metadata_for_prompt_cache(
         .filter(|metadata| !metadata.is_empty())
     {
         metadata.extend(system_metadata.clone());
+    }
+    if let Some(request_metadata) = request.metadata.as_object() {
+        metadata.extend(request_metadata.clone());
     }
     Value::Object(metadata)
 }

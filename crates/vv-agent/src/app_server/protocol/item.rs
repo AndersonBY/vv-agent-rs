@@ -3,60 +3,54 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::events::{RunEvent, RunEventPayload, ToolStatus};
-use crate::types::AgentStatus;
+use crate::events::{ApprovalAction, RunEvent, RunEventPayload, ToolStatus};
 
-use super::approval::{ApprovalDecision, ApprovalRequestParams};
-use super::turn::{AppTurn, TurnCompletedParams, TurnStatus};
+use super::approval::{ApprovalDecision, ApprovalRequestParams, ApprovalResolveParams};
 use super::ServerNotification;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemStartedParams {
-    pub thread_id: String,
-    pub turn_id: String,
+    #[serde(flatten)]
     pub item: AppItem,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentMessageDeltaParams {
-    pub thread_id: String,
-    pub turn_id: String,
-    pub item_id: String,
+    #[serde(flatten)]
+    pub item: AppItem,
     pub delta: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolCallDeltaParams {
-    pub thread_id: String,
-    pub turn_id: String,
-    pub item_id: String,
+    #[serde(flatten)]
+    pub item: AppItem,
     pub delta: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ItemCompletedParams {
-    pub thread_id: String,
-    pub turn_id: String,
+    #[serde(flatten)]
     pub item: AppItem,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AppItem {
-    pub id: String,
-    pub run_event_id: String,
+    pub item_id: String,
+    pub thread_id: String,
+    pub turn_id: String,
     #[serde(rename = "type")]
     pub kind: AppItemKind,
     pub status: AppItemStatus,
-    pub created_at_ms: u128,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub completed_at_ms: Option<u128>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub content: Option<Value>,
+    #[serde(default)]
+    pub payload: Value,
+    pub created_at: f64,
+    pub updated_at: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -65,8 +59,8 @@ pub enum AppItemKind {
     UserMessage,
     AgentMessage,
     ToolCall,
-    ApprovalRequest,
-    ApprovalResolved,
+    Approval,
+    Error,
     MemoryCompact,
     SubRun,
     Handoff,
@@ -77,6 +71,7 @@ pub enum AppItemKind {
 #[serde(rename_all = "camelCase")]
 pub enum AppItemStatus {
     Queued,
+    Started,
     InProgress,
     Completed,
     Failed,
@@ -89,12 +84,31 @@ pub fn map_run_event_to_notifications(
     event: &RunEvent,
 ) -> Vec<ServerNotification> {
     match event.payload() {
+        RunEventPayload::RunStarted { input } => {
+            let item = item(
+                thread_id,
+                turn_id,
+                event,
+                AppItemKind::UserMessage,
+                AppItemStatus::Completed,
+                serde_json::json!({ "text": input }),
+            );
+            vec![ServerNotification::ItemCompleted(ItemCompletedParams {
+                item,
+            })]
+        }
         RunEventPayload::AssistantDelta { delta } => {
+            let item = item(
+                thread_id,
+                turn_id,
+                event,
+                AppItemKind::AgentMessage,
+                AppItemStatus::InProgress,
+                serde_json::json!({ "delta": delta }),
+            );
             vec![ServerNotification::AgentMessageDelta(
                 AgentMessageDeltaParams {
-                    thread_id: thread_id.to_string(),
-                    turn_id: turn_id.to_string(),
-                    item_id: event.event_id().as_str().to_string(),
+                    item,
                     delta: delta.clone(),
                 },
             )]
@@ -103,112 +117,213 @@ pub fn map_run_event_to_notifications(
             tool_call_id,
             tool_name,
             arguments,
-        } => vec![ServerNotification::ItemStarted(ItemStartedParams {
-            thread_id: thread_id.to_string(),
-            turn_id: turn_id.to_string(),
-            item: AppItem {
-                id: event.event_id().as_str().to_string(),
-                run_event_id: event.event_id().as_str().to_string(),
-                kind: AppItemKind::ToolCall,
-                status: AppItemStatus::InProgress,
-                created_at_ms: event.created_at_ms(),
-                completed_at_ms: None,
-                content: Some(serde_json::json!({
+        } => {
+            let item = item(
+                thread_id,
+                turn_id,
+                event,
+                AppItemKind::ToolCall,
+                AppItemStatus::Started,
+                serde_json::json!({
                     "toolCallId": tool_call_id,
                     "toolName": tool_name,
-                    "arguments": arguments,
-                })),
-            },
-        })],
+                }),
+            );
+            vec![
+                ServerNotification::ItemStarted(ItemStartedParams { item: item.clone() }),
+                ServerNotification::ToolCallDelta(ToolCallDeltaParams {
+                    item,
+                    delta: arguments.clone(),
+                }),
+            ]
+        }
         RunEventPayload::ToolCallCompleted {
             tool_call_id,
             tool_name,
             status,
-        } => vec![ServerNotification::ItemCompleted(ItemCompletedParams {
-            thread_id: thread_id.to_string(),
-            turn_id: turn_id.to_string(),
-            item: AppItem {
-                id: event.event_id().as_str().to_string(),
-                run_event_id: event.event_id().as_str().to_string(),
-                kind: AppItemKind::ToolCall,
-                status: tool_status_to_item_status(*status),
-                created_at_ms: event.created_at_ms(),
-                completed_at_ms: Some(event.created_at_ms()),
-                content: Some(serde_json::json!({
+        } => {
+            let item = item(
+                thread_id,
+                turn_id,
+                event,
+                AppItemKind::ToolCall,
+                tool_status_to_item_status(*status),
+                serde_json::json!({
                     "toolCallId": tool_call_id,
                     "toolName": tool_name,
                     "status": status,
-                })),
-            },
-        })],
+                }),
+            );
+            vec![ServerNotification::ItemCompleted(ItemCompletedParams {
+                item,
+            })]
+        }
         RunEventPayload::ApprovalRequested {
             request_id,
+            tool_call_id,
             tool_name,
-            preview,
-            ..
-        } => vec![ServerNotification::ApprovalRequested(
-            ApprovalRequestParams {
-                thread_id: thread_id.to_string(),
-                turn_id: turn_id.to_string(),
-                request_id: request_id.clone(),
-                tool_name: tool_name.clone(),
-                preview: preview.clone(),
-                choices: vec![ApprovalDecision::Allow, ApprovalDecision::Deny],
-            },
-        )],
-        RunEventPayload::RunCompleted { status } => {
-            vec![ServerNotification::TurnCompleted(TurnCompletedParams {
-                turn: completed_turn(
+            message,
+        } => {
+            let item = item(
+                thread_id,
+                turn_id,
+                event,
+                AppItemKind::Approval,
+                AppItemStatus::Started,
+                serde_json::json!({
+                    "requestId": request_id,
+                    "toolCallId": tool_call_id,
+                    "toolName": tool_name,
+                    "message": message,
+                    "arguments": event
+                        .metadata()
+                        .get("arguments")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({})),
+                }),
+            );
+            vec![
+                ServerNotification::ItemStarted(ItemStartedParams { item }),
+                ServerNotification::ApprovalRequested(ApprovalRequestParams {
+                    request_id: request_id.clone(),
+                    thread_id: thread_id.to_string(),
+                    turn_id: turn_id.to_string(),
+                    tool_call_id: tool_call_id.clone(),
+                    tool_name: tool_name.clone(),
+                    preview: message.clone(),
+                    arguments: event
+                        .metadata()
+                        .get("arguments")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({})),
+                }),
+            ]
+        }
+        RunEventPayload::ApprovalResolved {
+            request_id,
+            tool_call_id,
+            tool_name,
+            approved,
+        } => {
+            let action = event
+                .approval_action()
+                .unwrap_or_else(|| ApprovalAction::from_approved(*approved));
+            let decision = match action {
+                ApprovalAction::Allow => ApprovalDecision::Allow,
+                ApprovalAction::AllowSession => ApprovalDecision::AllowSession,
+                ApprovalAction::Deny => ApprovalDecision::Deny,
+                ApprovalAction::Timeout => ApprovalDecision::Timeout,
+            };
+            let reason = event
+                .metadata()
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let decision_metadata = event
+                .metadata()
+                .get("decision_metadata")
+                .and_then(Value::as_object)
+                .map(|metadata| {
+                    metadata
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let item = item(
+                thread_id,
+                turn_id,
+                event,
+                AppItemKind::Approval,
+                AppItemStatus::Completed,
+                serde_json::json!({
+                    "requestId": request_id,
+                    "toolCallId": tool_call_id,
+                    "toolName": tool_name,
+                    "action": action.as_str(),
+                    "approved": approved,
+                    "reason": reason,
+                    "decisionMetadata": decision_metadata,
+                }),
+            );
+            vec![
+                ServerNotification::ItemCompleted(ItemCompletedParams { item }),
+                ServerNotification::ApprovalResolved(ApprovalResolveParams {
+                    thread_id: thread_id.to_string(),
+                    turn_id: turn_id.to_string(),
+                    request_id: request_id.clone(),
+                    decision,
+                    reason,
+                    metadata: decision_metadata,
+                }),
+            ]
+        }
+        RunEventPayload::RunCompleted { .. } => {
+            event.final_output().map_or_else(Vec::new, |output| {
+                let item = item(
                     thread_id,
                     turn_id,
                     event,
-                    agent_status_to_turn_status(status),
-                ),
-            })]
+                    AppItemKind::AgentMessage,
+                    AppItemStatus::Completed,
+                    serde_json::json!({ "text": output }),
+                );
+                vec![ServerNotification::ItemCompleted(ItemCompletedParams {
+                    item,
+                })]
+            })
         }
-        RunEventPayload::RunFailed { .. } => {
-            vec![ServerNotification::TurnCompleted(TurnCompletedParams {
-                turn: completed_turn(thread_id, turn_id, event, TurnStatus::Failed),
-            })]
-        }
-        RunEventPayload::RunCancelled { .. } => {
-            vec![ServerNotification::TurnCompleted(TurnCompletedParams {
-                turn: completed_turn(thread_id, turn_id, event, TurnStatus::Interrupted),
-            })]
+        RunEventPayload::RunFailed { error } => {
+            let item = item(
+                thread_id,
+                turn_id,
+                event,
+                AppItemKind::Error,
+                AppItemStatus::Completed,
+                serde_json::json!({ "message": error }),
+            );
+            vec![
+                ServerNotification::ItemCompleted(ItemCompletedParams { item }),
+                ServerNotification::ErrorWarning(super::WarningParams {
+                    message: error.clone(),
+                    code: Some("run_failed".to_string()),
+                }),
+            ]
         }
         _ => Vec::new(),
     }
 }
 
-fn completed_turn(thread_id: &str, turn_id: &str, event: &RunEvent, status: TurnStatus) -> AppTurn {
-    AppTurn {
-        id: turn_id.to_string(),
+fn item(
+    thread_id: &str,
+    turn_id: &str,
+    event: &RunEvent,
+    kind: AppItemKind,
+    status: AppItemStatus,
+    payload: Value,
+) -> AppItem {
+    AppItem {
+        item_id: format!("item_{}", event.event_id().as_str()),
         thread_id: thread_id.to_string(),
-        run_id: event.run_id().to_string(),
+        turn_id: turn_id.to_string(),
+        kind,
         status,
-        input: Vec::new(),
-        started_at_ms: None,
-        completed_at_ms: Some(event.created_at_ms()),
-        token_usage: None,
+        payload,
+        created_at: event_timestamp(event),
+        updated_at: event_timestamp(event),
     }
+}
+
+fn event_timestamp(event: &RunEvent) -> f64 {
+    event.created_at_ms() as f64 / 1000.0
 }
 
 fn tool_status_to_item_status(status: ToolStatus) -> AppItemStatus {
     match status {
-        ToolStatus::Started => AppItemStatus::InProgress,
+        ToolStatus::Started => AppItemStatus::Started,
         ToolStatus::Success => AppItemStatus::Completed,
         ToolStatus::Error => AppItemStatus::Failed,
         ToolStatus::WaitResponse => AppItemStatus::InProgress,
-    }
-}
-
-fn agent_status_to_turn_status(status: &AgentStatus) -> TurnStatus {
-    match status {
-        AgentStatus::Completed => TurnStatus::Completed,
-        AgentStatus::Failed => TurnStatus::Failed,
-        AgentStatus::Pending => TurnStatus::Queued,
-        AgentStatus::Running => TurnStatus::Running,
-        AgentStatus::WaitUser => TurnStatus::Running,
-        AgentStatus::MaxCycles => TurnStatus::Failed,
     }
 }

@@ -10,4 +10,7 @@ mod types;
 
 pub use manager::SubTaskManager;
 pub use record::ManagedSubTask;
-pub use types::{ManagedSubTaskSnapshot, SubTaskSessionAttachment};
+pub use types::{
+    ManagedSubTaskSnapshot, SubTaskLineage, SubTaskSessionAttachment, SubTaskSubmissionContext,
+    SubTaskTurnSnapshot,
+};

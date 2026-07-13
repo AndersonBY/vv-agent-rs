@@ -246,6 +246,11 @@ fn top_level_types_are_constructible() {
         messages: vec![],
         cycles: vec![],
         shared_state: BTreeMap::new(),
+        revision: 0,
+        claim_token: None,
+        claimed_cycle: None,
+        lease_expires_at_ms: None,
+        terminal_result: None,
     };
     let _state_store = InMemoryStateStore::default();
     let _state_store_ref: &dyn StateStore = &_state_store;
@@ -502,6 +507,11 @@ fn runtime_module_exports_agent_runtime_public_types() {
         messages: vec![],
         cycles: vec![],
         shared_state: BTreeMap::new(),
+        revision: 0,
+        claim_token: None,
+        claimed_cycle: None,
+        lease_expires_at_ms: None,
+        terminal_result: None,
     };
     let state_store = vv_agent::runtime::InMemoryStateStore::default();
     let _state_store_ref: &dyn vv_agent::runtime::StateStore = &state_store;

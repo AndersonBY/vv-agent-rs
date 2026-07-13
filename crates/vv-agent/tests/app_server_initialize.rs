@@ -4,8 +4,8 @@ use serde_json::json;
 use vv_agent::app_server::outgoing::OutgoingEnvelope;
 use vv_agent::app_server::processor::MessageProcessor;
 use vv_agent::app_server::protocol::{
-    AppItem, AppItemKind, AppItemStatus, AppThread, JsonRpcMessage, JsonRpcNotification,
-    JsonRpcRequest, RequestId, ServerNotification, ThreadStartedParams, ThreadStatus,
+    AppItem, AppItemKind, AppItemStatus, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
+    RequestId, ServerNotification, ThreadStartedParams, ThreadStatus,
 };
 use vv_agent::app_server::transport::ConnectionId;
 
@@ -67,8 +67,8 @@ async fn first_initialize_returns_capabilities() {
         panic!("expected response");
     };
     assert_eq!(response.id, RequestId::Integer(1));
-    assert_eq!(response.result["protocolVersion"], "2026-06-02");
-    assert_eq!(response.result["capabilities"]["thread"], true);
+    assert_eq!(response.result["protocolVersion"], "v1");
+    assert_eq!(response.result["capabilities"]["threadLifecycle"], false);
 }
 
 #[tokio::test]
@@ -91,7 +91,30 @@ async fn repeated_initialize_returns_already_initialized() {
 }
 
 #[tokio::test]
-async fn initialized_notification_marks_connection_ready_for_notifications() {
+async fn initialize_rejects_blank_client_name_without_marking_connection_initialized() {
+    let (mut processor, mut outgoing) = MessageProcessor::new_for_tests(8);
+    let connection_id = ConnectionId::new(1);
+
+    processor
+        .process_message(
+            connection_id,
+            request(1, "initialize", json!({"clientInfo": {"name": "   "}})),
+        )
+        .await;
+
+    let JsonRpcMessage::Error(error) = recv_message(&mut outgoing).await else {
+        panic!("expected error");
+    };
+    assert_eq!(error.error.code, -32602);
+    assert_eq!(error.error.message, "clientInfo.name is required");
+    assert!(!processor
+        .connection_state(connection_id)
+        .expect("connection state")
+        .initialized());
+}
+
+#[tokio::test]
+async fn initialize_marks_connection_ready_for_notifications() {
     let (mut processor, mut outgoing) = MessageProcessor::new_for_tests(8);
     let connection_id = ConnectionId::new(1);
     processor
@@ -103,8 +126,11 @@ async fn initialized_notification_marks_connection_ready_for_notifications() {
         .outgoing()
         .send_notification(connection_id, thread_started_notification())
         .await
-        .expect("send suppressed notification");
-    assert!(outgoing.try_recv().is_err());
+        .expect("send notification");
+    assert!(matches!(
+        recv_message(&mut outgoing).await,
+        JsonRpcMessage::Notification(_)
+    ));
 
     processor
         .process_message(
@@ -119,16 +145,6 @@ async fn initialized_notification_marks_connection_ready_for_notifications() {
         .connection_state(connection_id)
         .expect("state")
         .ready_for_notifications());
-
-    processor
-        .outgoing()
-        .send_notification(connection_id, thread_started_notification())
-        .await
-        .expect("send notification");
-    assert!(matches!(
-        recv_message(&mut outgoing).await,
-        JsonRpcMessage::Notification(_)
-    ));
 }
 
 #[tokio::test]
@@ -165,16 +181,15 @@ async fn notification_opt_out_suppresses_exact_method_names() {
         .send_notification(
             connection_id,
             ServerNotification::ItemStarted(vv_agent::app_server::protocol::ItemStartedParams {
-                thread_id: "thread_1".to_string(),
-                turn_id: "turn_1".to_string(),
                 item: AppItem {
-                    id: "item_1".to_string(),
-                    run_event_id: "evt_1".to_string(),
+                    item_id: "item_1".to_string(),
+                    thread_id: "thread_1".to_string(),
+                    turn_id: "turn_1".to_string(),
                     kind: AppItemKind::RunStatus,
                     status: AppItemStatus::Completed,
-                    created_at_ms: 1,
-                    completed_at_ms: Some(1),
-                    content: None,
+                    payload: json!({}),
+                    created_at: 1.0,
+                    updated_at: 1.0,
                 },
             }),
         )
@@ -188,17 +203,9 @@ async fn notification_opt_out_suppresses_exact_method_names() {
 
 fn thread_started_notification() -> ServerNotification {
     ServerNotification::ThreadStarted(ThreadStartedParams {
-        thread: AppThread {
-            id: "thread_1".to_string(),
-            title: None,
-            cwd: None,
-            model: None,
-            status: ThreadStatus::Idle,
-            archived: false,
-            ephemeral: false,
-            created_at_ms: 1,
-            updated_at_ms: 1,
-            active_turn_id: None,
-        },
+        thread_id: "thread_1".to_string(),
+        agent_key: "default".to_string(),
+        cwd: None,
+        status: ThreadStatus::Idle,
     })
 }

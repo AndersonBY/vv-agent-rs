@@ -1,4 +1,4 @@
-use super::execute_cycle_loop;
+use super::{execute_cycle_loop, execute_cycle_loop_with_state};
 use crate::runtime::CancellationToken;
 use crate::types::{AgentResult, AgentTask, CycleRecord, Message, Metadata};
 
@@ -30,6 +30,38 @@ impl InlineBackend {
             cycle_executor,
             cancellation_token,
             max_cycles,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn execute_with_state<F>(
+        &self,
+        _task: &AgentTask,
+        initial_messages: Vec<Message>,
+        initial_cycles: Vec<CycleRecord>,
+        shared_state: Metadata,
+        cycle_executor: F,
+        cancellation_token: Option<&CancellationToken>,
+        cycle_index_start: u32,
+        cycle_count: u32,
+    ) -> AgentResult
+    where
+        F: FnMut(
+            u32,
+            &mut Vec<Message>,
+            &mut Vec<CycleRecord>,
+            &mut Metadata,
+            Option<&CancellationToken>,
+        ) -> Option<AgentResult>,
+    {
+        execute_cycle_loop_with_state(
+            initial_messages,
+            initial_cycles,
+            shared_state,
+            cycle_executor,
+            cancellation_token,
+            cycle_index_start,
+            cycle_count,
         )
     }
 

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 
-use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
+use crate::types::{Metadata, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 pub(crate) fn tool_error(message: impl Into<String>) -> ToolExecutionResult {
     tool_error_with_code(message, "")
@@ -23,6 +23,21 @@ pub(crate) fn tool_result(
                 .collect::<BTreeMap<_, _>>()
         })
         .unwrap_or_default();
+    tool_result_with_metadata(status, content, error_code, directive, metadata)
+}
+
+pub(crate) fn tool_result_with_metadata(
+    status: ToolResultStatus,
+    content: Value,
+    error_code: Option<&str>,
+    directive: ToolDirective,
+    mut metadata: Metadata,
+) -> ToolExecutionResult {
+    if let Some(error_code) = error_code {
+        metadata
+            .entry("error_code".to_string())
+            .or_insert_with(|| Value::String(error_code.to_string()));
+    }
     ToolExecutionResult {
         tool_call_id: String::new(),
         content: content.to_string(),
@@ -40,21 +55,14 @@ pub(crate) fn tool_error_with_code(
     error_code: impl Into<String>,
 ) -> ToolExecutionResult {
     let error_code = error_code.into();
-    ToolExecutionResult {
-        tool_call_id: String::new(),
-        content: json!({"ok": false, "error": message.into(), "error_code": error_code})
-            .to_string(),
-        status: ToolResultStatus::Error,
-        directive: ToolDirective::Continue,
-        error_code: if error_code.is_empty() {
-            None
-        } else {
-            Some(error_code)
-        },
-        metadata: BTreeMap::new(),
-        image_url: None,
-        image_path: None,
-    }
+    let error_code_option = (!error_code.is_empty()).then_some(error_code.as_str());
+    tool_result_with_metadata(
+        ToolResultStatus::Error,
+        json!({"ok": false, "error": message.into(), "error_code": error_code}),
+        error_code_option,
+        ToolDirective::Continue,
+        Metadata::new(),
+    )
 }
 
 pub(crate) fn path_escapes_workspace_error(message: impl Into<String>) -> ToolExecutionResult {

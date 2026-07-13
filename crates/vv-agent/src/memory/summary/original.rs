@@ -14,22 +14,19 @@ pub(super) fn collect_original_user_messages(messages: &[Message]) -> Vec<String
         if content.is_empty() {
             continue;
         }
+        if let Some(original) = extract_original_user_request(content) {
+            push_unique_original(&mut collected, original.to_string());
+        }
         let compressed_originals = extract_compressed_original_user_messages(content);
-        if !compressed_originals.is_empty() {
-            for original in compressed_originals {
-                push_unique_original(&mut collected, original);
-            }
-            continue;
+        for original in compressed_originals {
+            push_unique_original(&mut collected, original);
         }
         if content.contains("<Compressed Agent Memory>") {
             continue;
         }
-        push_unique_original(
-            &mut collected,
-            extract_original_user_request(content)
-                .unwrap_or(content)
-                .to_string(),
-        );
+        if extract_original_user_request(content).is_none() {
+            push_unique_original(&mut collected, content.to_string());
+        }
     }
     collected
 }
@@ -49,11 +46,7 @@ fn extract_compressed_original_user_messages(content: &str) -> Vec<String> {
     ) else {
         return Vec::new();
     };
-    summary_block
-        .lines()
-        .map(str::trim)
-        .find(|line| line.starts_with('{'))
-        .and_then(|line| serde_json::from_str::<Value>(line).ok())
+    extract_first_json_object(summary_block)
         .and_then(|value| {
             value
                 .get("original_user_messages")
@@ -69,6 +62,18 @@ fn extract_compressed_original_user_messages(content: &str) -> Vec<String> {
                 })
         })
         .unwrap_or_default()
+}
+
+fn extract_first_json_object(raw: &str) -> Option<Value> {
+    raw.char_indices()
+        .filter(|(_, character)| *character == '{')
+        .find_map(|(index, _)| {
+            serde_json::Deserializer::from_str(&raw[index..])
+                .into_iter::<Value>()
+                .next()
+                .and_then(Result::ok)
+                .filter(Value::is_object)
+        })
 }
 
 fn push_unique_original(collected: &mut Vec<String>, original: String) {

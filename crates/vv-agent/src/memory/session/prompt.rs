@@ -61,7 +61,7 @@ fn message_to_text(message: &Message) -> serde_json::Value {
 }
 
 fn compact_long_content(content: &str) -> String {
-    if content.len() <= 2_000 {
+    if content.chars().count() <= 2_000 {
         return content.to_string();
     }
     let head = content.chars().take(1_200).collect::<String>();

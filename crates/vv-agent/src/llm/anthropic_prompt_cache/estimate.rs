@@ -11,20 +11,24 @@ pub(super) fn estimate_tokens(char_count: usize) -> usize {
 }
 
 pub(super) fn estimate_tool_chars(tool: &Value) -> usize {
-    sorted_json(tool).len()
+    sorted_json(tool).chars().count()
 }
 
 pub(super) fn estimate_block_chars(block: &Value) -> usize {
     let block_type = block_type(block);
     match block_type.as_str() {
         "text" => value_to_string(block.get("text")).chars().count(),
-        "tool_result" => json_string(block.get("content").unwrap_or(&Value::Null)).len(),
+        "tool_result" => json_string(block.get("content").unwrap_or(&Value::Null))
+            .chars()
+            .count(),
         "tool_use" => {
             value_to_string(block.get("name")).chars().count()
-                + json_string(block.get("input").unwrap_or(&Value::Null)).len()
+                + json_string(block.get("input").unwrap_or(&Value::Null))
+                    .chars()
+                    .count()
         }
         candidate if is_thinking_block_type(candidate) => 0,
-        _ => json_string(block).len(),
+        _ => json_string(block).chars().count(),
     }
 }
 
@@ -67,5 +71,33 @@ fn sort_value(value: &Value) -> Value {
                 .collect(),
         ),
         value => value.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{estimate_block_chars, estimate_tool_chars};
+
+    #[test]
+    fn cache_size_estimation_uses_compact_json_and_unicode_characters() {
+        let tool = json!({"name": "读取", "input_schema": {"type": "object", "a": 1}});
+        assert_eq!(
+            estimate_tool_chars(&tool),
+            serde_json::to_string(&tool)
+                .expect("serialize tool")
+                .chars()
+                .count()
+        );
+
+        let block = json!({"type": "tool_result", "content": {"文本": "你好"}});
+        assert_eq!(
+            estimate_block_chars(&block),
+            serde_json::to_string(&block["content"])
+                .expect("serialize content")
+                .chars()
+                .count()
+        );
     }
 }

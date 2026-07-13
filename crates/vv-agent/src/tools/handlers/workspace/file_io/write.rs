@@ -1,16 +1,14 @@
 use std::sync::Arc;
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{
-    coerce_truthy_arg, path_escapes_workspace_error, stringify_tool_arg, tool_error,
-};
-use crate::types::{ToolArguments, ToolExecutionResult};
+use crate::tools::common::{coerce_truthy_arg, path_escapes_workspace_error, stringify_tool_arg};
+use crate::types::{Metadata, ToolArguments, ToolExecutionResult};
 
 use super::super::edit::{
-    baseline_issue, changed_file_metadata, detect_line_ending, record_file_baseline,
-    workspace_tool_error, WRITE_FILE_ALLOWED_BASELINE_SOURCES, WRITE_FILE_BASELINE_SOURCE,
+    baseline_issue, record_file_baseline, workspace_tool_error, workspace_tool_error_with_details,
+    WRITE_FILE_ALLOWED_BASELINE_SOURCES, WRITE_FILE_BASELINE_SOURCE,
 };
 use super::super::workspace_backend_error;
 
@@ -25,7 +23,11 @@ pub(crate) fn write_file_tool() -> ToolSpec {
         "Write a text file in the current workspace.",
         Arc::new(|context, arguments| {
             if !arguments.contains_key("path") {
-                return tool_error("missing required argument: path");
+                return workspace_tool_error_with_details(
+                    "`path` is required.",
+                    "invalid_arguments",
+                    Metadata::from([("missing_arguments".to_string(), json!(["path"]))]),
+                );
             }
             let path = stringify_tool_arg(arguments.get("path"), "");
             if let Err(error) = context.resolve_workspace_path(&path) {
@@ -78,7 +80,6 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                 )
                 .is_none();
             }
-            let before_text = String::from_utf8_lossy(&before_raw).to_string();
             let write_content = format!(
                 "{}{}{}",
                 if leading_newline { "\n" } else { "" },
@@ -86,12 +87,11 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                 if trailing_newline { "\n" } else { "" }
             );
             match backend.write_text(&path, &write_content, append) {
-                Ok(written) => {
+                Ok(written_bytes) => {
                     let updated_raw = match backend.read_bytes(&path) {
                         Ok(raw) => raw,
                         Err(error) => return workspace_backend_error(error),
                     };
-                    let updated_text = String::from_utf8_lossy(&updated_raw).to_string();
                     record_file_baseline(
                         context,
                         &path,
@@ -99,7 +99,8 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                         append && existing_file && !known_full_before_write,
                         WRITE_FILE_BASELINE_SOURCE,
                     );
-                    let line_ending = detect_line_ending(&updated_text);
+                    // Compatibility field: written_chars counts Unicode code points, not bytes.
+                    let written_chars = write_content.chars().count();
                     let mut result = ToolExecutionResult::success(
                         "",
                         json!({
@@ -108,17 +109,19 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                             "append": append,
                             "leading_newline": leading_newline,
                             "trailing_newline": trailing_newline,
-                            "written_chars": written,
+                            "written_bytes": written_bytes,
+                            "written_chars": written_chars,
                         })
                         .to_string(),
                     );
-                    result.metadata = changed_file_metadata(
-                        &path,
-                        &before_text,
-                        &updated_text,
-                        "write_file",
-                        line_ending,
-                    );
+                    result.metadata = Metadata::from([
+                        ("changed_files".to_string(), json!([path])),
+                        (
+                            "operation".to_string(),
+                            Value::String("write_file".to_string()),
+                        ),
+                        ("append".to_string(), Value::Bool(append)),
+                    ]);
                     result
                 }
                 Err(error) => workspace_backend_error(error),

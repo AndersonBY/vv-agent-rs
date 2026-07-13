@@ -33,6 +33,7 @@ fn rust_examples_cover_agent_example_numbering() {
         "26_agent_runner_facade.rs",
         "27_facade_handoff.rs",
         "28_facade_approval_background_trace.rs",
+        "29_typed_final_output.rs",
     ];
 
     let missing = expected

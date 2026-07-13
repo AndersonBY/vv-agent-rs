@@ -3,6 +3,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use crate::constants::WORKSPACE_TOOLS;
 use crate::skills::{normalize_skill_list, render_skills_xml, MAX_SKILLS_PROMPT_CHARS};
 
 pub fn task_finish_prompt(language: &str) -> &'static str {
@@ -40,7 +41,7 @@ pub fn tool_priority_prompt(language: &str) -> &'static str {
 pub fn computer_agent_env_prompt(language: &str) -> String {
     let os = os_label();
     match language {
-        "zh-CN" => format!("{os} 工作区环境中, 可以用工具读取, 搜索, 修改文件."),
+        "zh-CN" => format!("你运行在 {os} 工作区环境中, 可以用工具读取, 搜索, 修改文件."),
         _ => format!(
             "You are running in a {os} workspace environment and can use tools to inspect and modify files."
         ),
@@ -55,18 +56,7 @@ pub fn current_time_prompt(language: &str) -> &'static str {
 }
 
 pub fn render_workspace_tools(language: &str) -> String {
-    let tools = [
-        "find_files",
-        "file_info",
-        "read_file",
-        "write_file",
-        "edit_file",
-        "search_files",
-        "read_image",
-        "bash",
-        "check_background_command",
-    ]
-    .join(", ");
+    let tools = WORKSPACE_TOOLS.join(", ");
     match language {
         "zh-CN" => format!("你可以使用这些工具操作工作区文件: {tools}."),
         _ => format!("You can operate workspace files with tools: {tools}."),
@@ -108,6 +98,9 @@ pub fn render_available_skills(
         "Available skills metadata (Agent Skills format):"
     };
     let entries = normalize_skill_list(Some(available_skills), workspace, false);
+    if entries.is_empty() {
+        return String::new();
+    }
     format!(
         "{header}\n{}",
         render_skills_xml(&entries, MAX_SKILLS_PROMPT_CHARS)

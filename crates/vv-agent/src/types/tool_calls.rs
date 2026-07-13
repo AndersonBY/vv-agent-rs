@@ -94,7 +94,7 @@ fn json_type_name(value: &Value) -> &'static str {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ToolExecutionResult {
     pub tool_call_id: String,
     pub content: String,
@@ -104,6 +104,25 @@ pub struct ToolExecutionResult {
     pub metadata: Metadata,
     pub image_url: Option<String>,
     pub image_path: Option<String>,
+}
+
+impl Serialize for ToolExecutionResult {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.to_dict().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolExecutionResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        Self::from_dict(&value).map_err(serde::de::Error::custom)
+    }
 }
 
 impl ToolExecutionResult {

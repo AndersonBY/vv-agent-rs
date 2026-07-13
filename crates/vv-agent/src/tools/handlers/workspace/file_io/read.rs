@@ -5,11 +5,13 @@ use serde_json::{json, Value};
 use crate::tools::base::{ToolContext, ToolSpec};
 use crate::tools::common::{
     coerce_truthy_arg, parse_integer_arg, path_escapes_workspace_error, stringify_tool_arg,
-    tool_error,
 };
-use crate::types::{ToolArguments, ToolExecutionResult};
+use crate::types::{Metadata, ToolArguments, ToolExecutionResult};
 
-use super::super::edit::{record_file_baseline, workspace_tool_error, READ_FILE_BASELINE_SOURCE};
+use super::super::edit::{
+    decode_workspace_text, record_file_baseline, workspace_tool_error,
+    workspace_tool_error_with_details, READ_FILE_BASELINE_SOURCE,
+};
 use super::super::workspace_backend_error;
 use super::{READ_FILE_MAX_CHARS, READ_FILE_MAX_LINES};
 
@@ -24,7 +26,11 @@ pub(crate) fn read_file_tool() -> ToolSpec {
         "Read a text file from the current workspace.",
         Arc::new(|context, arguments| {
             if !arguments.contains_key("path") {
-                return tool_error("missing required argument: path");
+                return workspace_tool_error_with_details(
+                    "`path` is required.",
+                    "invalid_arguments",
+                    Metadata::from([("missing_arguments".to_string(), json!(["path"]))]),
+                );
             }
             let path = stringify_tool_arg(arguments.get("path"), "");
             if let Err(error) = context.resolve_workspace_path(&path) {
@@ -33,28 +39,46 @@ pub(crate) fn read_file_tool() -> ToolSpec {
             let backend = context.effective_workspace_backend();
             match backend.file_info(&path) {
                 Ok(Some(info)) if info.is_file => {}
-                Ok(_) => return tool_error(format!("file not found: {path}")),
+                Ok(_) => {
+                    return workspace_tool_error(
+                        format!("file not found: {path}"),
+                        "file_not_found",
+                        &path,
+                    )
+                }
                 Err(error) => return workspace_backend_error(error),
             }
             let start_line = match arguments.get("start_line") {
                 Some(value) => match parse_integer_arg(value) {
                     Ok(line) => line.max(1) as usize,
-                    Err(_) => return tool_error("`start_line`/`end_line` must be integers"),
+                    Err(_) => {
+                        return workspace_tool_error(
+                            "`start_line`/`end_line` must be integers",
+                            "invalid_arguments",
+                            &path,
+                        )
+                    }
                 },
                 None => 1,
             };
             let end_line = match arguments.get("end_line") {
                 Some(value) => match parse_integer_arg(value) {
                     Ok(line) => Some(line.max(start_line as i64) as usize),
-                    Err(_) => return tool_error("`start_line`/`end_line` must be integers"),
+                    Err(_) => {
+                        return workspace_tool_error(
+                            "`start_line`/`end_line` must be integers",
+                            "invalid_arguments",
+                            &path,
+                        )
+                    }
                 },
                 None => None,
             };
             let show_line_numbers = coerce_truthy_arg(arguments.get("show_line_numbers"), false);
             match backend.read_bytes(&path) {
                 Ok(raw) => {
-                    let text = match String::from_utf8(raw.clone()) {
-                        Ok(text) => text,
+                    let text = match decode_workspace_text(&raw) {
+                        Ok((text, _has_bom)) => text,
                         Err(_) => {
                             return workspace_tool_error(
                                 "Unsupported file encoding for read_file.",
@@ -120,7 +144,7 @@ fn read_selection(
         actual_start_line,
         actual_end_line,
         selected_line_count,
-        selected_char_count: content.len(),
+        selected_char_count: content.chars().count(),
         show_line_numbers,
         content,
     }
@@ -157,7 +181,7 @@ struct ReadSelection {
 
 fn oversized_read_result(path: &str, text: &str, selection: ReadSelection) -> ToolExecutionResult {
     let total_lines = text.lines().count();
-    let total_chars = text.len();
+    let total_chars = text.chars().count();
     let suggested_start = selection.start_line.min(total_lines.max(1));
     let suggested_end = (suggested_start + READ_FILE_MAX_LINES - 1).min(total_lines);
     ToolExecutionResult::success(

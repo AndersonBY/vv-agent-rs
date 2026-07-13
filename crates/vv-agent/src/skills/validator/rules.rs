@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use serde_json::Value;
 use unicode_normalization::UnicodeNormalization;
 
 use super::diagnostics::{append_issue, IssueSeverity, ValidationDiagnostics};
@@ -7,10 +8,12 @@ use super::mode::ValidationMode;
 
 const MAX_SKILL_NAME_LENGTH: usize = 64;
 const MAX_DESCRIPTION_LENGTH: usize = 1024;
+const MAX_COMPATIBILITY_LENGTH: usize = 500;
 pub(super) const ALLOWED_FIELDS: &[&str] = &[
     "name",
     "description",
     "license",
+    "compatibility",
     "allowed-tools",
     "metadata",
 ];
@@ -99,4 +102,31 @@ pub(super) fn validate_description(description: &str, diagnostics: &mut Validati
             "Description exceeds {MAX_DESCRIPTION_LENGTH} character limit"
         ));
     }
+}
+
+pub(super) fn validate_compatibility(
+    compatibility: Option<&Value>,
+    mode: ValidationMode,
+    diagnostics: &mut ValidationDiagnostics,
+) {
+    let message = match compatibility {
+        None | Some(Value::Null) => return,
+        Some(Value::String(value)) if value.chars().count() > MAX_COMPATIBILITY_LENGTH => {
+            let length = value.chars().count();
+            format!(
+                "Compatibility exceeds {MAX_COMPATIBILITY_LENGTH} character limit ({length} chars)"
+            )
+        }
+        Some(Value::String(_)) => return,
+        Some(_) => "Field 'compatibility' must be a string".to_string(),
+    };
+    append_issue(
+        diagnostics,
+        message,
+        if mode == ValidationMode::Minimal {
+            IssueSeverity::Warning
+        } else {
+            IssueSeverity::Error
+        },
+    );
 }

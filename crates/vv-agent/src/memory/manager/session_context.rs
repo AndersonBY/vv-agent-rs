@@ -12,23 +12,23 @@ impl MemoryManager {
     }
 
     pub fn apply_session_memory_context(&self, messages: &[Message]) -> Vec<Message> {
-        let Some(session_context) = self
+        let session_context = self
             .session_memory
             .as_ref()
             .map(SessionMemory::render_as_system_context)
-            .filter(|context| !context.is_empty())
-        else {
-            return messages.to_vec();
-        };
-        let mut updated = messages.to_vec();
+            .unwrap_or_default();
+        let mut updated = self.strip_session_memory_context(messages);
+        if session_context.is_empty() {
+            return updated;
+        }
         if let Some(system_message) = updated
             .iter_mut()
             .find(|message| message.role == MessageRole::System)
         {
-            if !system_message.content.contains("<Session Memory>") {
+            if !system_message.content.is_empty() {
                 system_message.content.push_str("\n\n");
-                system_message.content.push_str(&session_context);
             }
+            system_message.content.push_str(&session_context);
             return updated;
         }
         let mut system_message = Message::system(session_context);

@@ -61,8 +61,20 @@ impl MemoryManager {
         );
         let original_request = extract_original_user_request(&messages).unwrap_or_default();
         let summary_prompt = self.build_compress_memory_prompt(&messages_for_summary);
-        let mut compressed_memory = self.generate_summary(&summary_prompt, &messages_for_summary);
-        if let Ok(summary_data) = serde_json::from_str(&compressed_memory) {
+        let artifact_facts = artifacts
+            .iter()
+            .filter(|artifact| !artifact.path.is_empty())
+            .map(|artifact| {
+                format!(
+                    "{} (tool={})",
+                    artifact.path,
+                    artifact.tool_name.as_deref().unwrap_or("unknown")
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut compressed_memory =
+            self.generate_summary(&summary_prompt, &messages_for_summary, artifact_facts);
+        if let Some(summary_data) = parse_first_json_object(&compressed_memory) {
             let restored_context = restore_key_files(
                 &summary_data,
                 self.config.workspace.as_deref(),
@@ -99,7 +111,12 @@ impl MemoryManager {
         )
     }
 
-    fn generate_summary(&self, prompt: &str, messages: &[Message]) -> String {
+    fn generate_summary(
+        &self,
+        prompt: &str,
+        messages: &[Message],
+        key_facts: Vec<String>,
+    ) -> String {
         if let Some(callback) = &self.config.summary_callback {
             let callback_result = catch_unwind(AssertUnwindSafe(|| {
                 callback(
@@ -115,7 +132,12 @@ impl MemoryManager {
                 }
             }
         }
-        LocalSummary::from_messages(messages, self.config.summary_event_limit).to_json_string()
+        LocalSummary::from_messages_with_key_facts(
+            messages,
+            self.config.summary_event_limit,
+            key_facts,
+        )
+        .to_json_string()
     }
 
     fn normalize_compaction_messages(&self, messages: &[Message]) -> (Vec<Message>, bool) {
@@ -125,4 +147,16 @@ impl MemoryManager {
             self.config.assistant_no_tool_keep_last,
         )
     }
+}
+
+fn parse_first_json_object(raw: &str) -> Option<serde_json::Value> {
+    raw.char_indices()
+        .filter(|(_, character)| *character == '{')
+        .find_map(|(index, _)| {
+            serde_json::Deserializer::from_str(&raw[index..])
+                .into_iter::<serde_json::Value>()
+                .next()
+                .and_then(Result::ok)
+                .filter(serde_json::Value::is_object)
+        })
 }

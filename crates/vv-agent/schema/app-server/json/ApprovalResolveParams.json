@@ -1,10 +1,22 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "ApprovalResolveParams",
-  "type": "object",
+  "additionalProperties": false,
   "properties": {
     "decision": {
-      "$ref": "#/$defs/ApprovalDecision"
+      "enum": [
+        "allow",
+        "allow_session",
+        "deny",
+        "timeout"
+      ],
+      "type": "string"
+    },
+    "metadata": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "reason": {
+      "type": "string"
     },
     "requestId": {
       "type": "string"
@@ -17,18 +29,11 @@
     }
   },
   "required": [
+    "requestId",
     "threadId",
     "turnId",
-    "requestId",
     "decision"
   ],
-  "$defs": {
-    "ApprovalDecision": {
-      "type": "string",
-      "enum": [
-        "allow",
-        "deny"
-      ]
-    }
-  }
+  "title": "ApprovalResolveParams",
+  "type": "object"
 }

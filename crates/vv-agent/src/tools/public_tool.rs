@@ -1,6 +1,9 @@
 use serde_json::Value;
+use std::time::Duration;
 
-use crate::tools::{ToolHandler, ToolSpec};
+use crate::tools::{
+    ToolApprovalRule, ToolEnablementContext, ToolEnablementRule, ToolHandler, ToolSpec,
+};
 use crate::types::ToolExecutionResult;
 
 pub trait Tool: Send + Sync {
@@ -9,6 +12,22 @@ pub trait Tool: Send + Sync {
     fn parameters_schema(&self) -> &Value;
 
     fn strict_schema(&self) -> bool {
+        true
+    }
+
+    fn exposure(&self) -> crate::tools::ToolExposure {
+        crate::tools::ToolExposure::Direct
+    }
+
+    fn timeout(&self) -> Option<Duration> {
+        None
+    }
+
+    fn approval_rule(&self) -> ToolApprovalRule {
+        ToolApprovalRule::default()
+    }
+
+    fn is_enabled(&self, _context: &ToolEnablementContext) -> bool {
         true
     }
 
@@ -21,6 +40,7 @@ pub struct StaticTool {
     description: String,
     parameters_schema: Value,
     handler: ToolHandler,
+    enablement: ToolEnablementRule,
 }
 
 impl StaticTool {
@@ -35,7 +55,21 @@ impl StaticTool {
             description: description.into(),
             parameters_schema,
             handler,
+            enablement: ToolEnablementRule::default(),
         }
+    }
+
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enablement = ToolEnablementRule::Static(enabled);
+        self
+    }
+
+    pub fn with_enabled_if<F>(mut self, predicate: F) -> Self
+    where
+        F: Fn(&ToolEnablementContext) -> bool + Send + Sync + 'static,
+    {
+        self.enablement = ToolEnablementRule::predicate(predicate);
+        self
     }
 }
 
@@ -52,6 +86,10 @@ impl Tool for StaticTool {
         &self.parameters_schema
     }
 
+    fn is_enabled(&self, context: &ToolEnablementContext) -> bool {
+        self.enablement.is_enabled(context)
+    }
+
     fn as_tool_spec(&self) -> ToolSpec {
         let mut spec = ToolSpec::new(
             self.name.clone(),
@@ -64,8 +102,13 @@ impl Tool for StaticTool {
                 "name": self.name,
                 "description": self.description,
                 "parameters": self.parameters_schema,
+                "strict": self.strict_schema(),
             }
         });
+        spec.strict_schema = self.strict_schema();
+        spec.exposure = self.exposure();
+        spec.timeout = self.timeout();
+        spec.approval = self.approval_rule();
         spec
     }
 }

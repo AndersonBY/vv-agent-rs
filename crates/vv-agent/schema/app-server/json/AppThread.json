@@ -1,21 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "AppThread",
-  "type": "object",
+  "additionalProperties": false,
   "properties": {
-    "activeTurnId": {
+    "agentKey": {
+      "type": "string"
+    },
+    "archivedAt": {
       "type": [
-        "string",
+        "number",
         "null"
       ]
     },
-    "archived": {
-      "type": "boolean"
-    },
-    "createdAtMs": {
-      "type": "integer",
-      "format": "uint128",
-      "minimum": 0
+    "createdAt": {
+      "type": "number"
     },
     "cwd": {
       "type": [
@@ -23,49 +20,30 @@
         "null"
       ]
     },
-    "ephemeral": {
-      "type": "boolean"
-    },
-    "id": {
-      "type": "string"
-    },
-    "model": {
-      "type": [
-        "string",
-        "null"
-      ]
+    "metadata": {
+      "additionalProperties": true,
+      "type": "object"
     },
     "status": {
-      "$ref": "#/$defs/ThreadStatus"
+      "type": "string"
     },
-    "title": {
-      "type": [
-        "string",
-        "null"
-      ]
+    "threadId": {
+      "type": "string"
     },
-    "updatedAtMs": {
-      "type": "integer",
-      "format": "uint128",
-      "minimum": 0
+    "updatedAt": {
+      "type": "number"
     }
   },
   "required": [
-    "id",
+    "threadId",
+    "agentKey",
+    "cwd",
+    "createdAt",
+    "updatedAt",
+    "archivedAt",
     "status",
-    "archived",
-    "ephemeral",
-    "createdAtMs",
-    "updatedAtMs"
+    "metadata"
   ],
-  "$defs": {
-    "ThreadStatus": {
-      "type": "string",
-      "enum": [
-        "idle",
-        "running",
-        "archived"
-      ]
-    }
-  }
+  "title": "AppThread",
+  "type": "object"
 }

@@ -46,6 +46,12 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Verify locked contract snapshot
+        run: python3 scripts/contract_snapshot.py check
+
+      - name: Require centrally verified contract adoption
+        run: python3 scripts/contract_snapshot.py adoption --implementation rust --revision "$(git rev-parse HEAD)"
+
       - name: Check tag matches crate version
         shell: bash
         env:

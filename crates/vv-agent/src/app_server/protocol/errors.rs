@@ -4,6 +4,7 @@ use super::jsonrpc::{JsonRpcError, JsonRpcErrorBody, RequestId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppServerErrorCode {
+    ParseError,
     ServerOverloaded,
     InvalidRequest,
     MethodNotFound,
@@ -11,6 +12,10 @@ pub enum AppServerErrorCode {
     InternalError,
     NotInitialized,
     AlreadyInitialized,
+    ThreadNotFound,
+    ThreadArchived,
+    ActiveTurnNotFound,
+    TurnIdMismatch,
     ExperimentalApiRequired,
     UnsupportedMethod,
 }
@@ -18,6 +23,7 @@ pub enum AppServerErrorCode {
 impl AppServerErrorCode {
     pub fn code(self) -> i64 {
         match self {
+            Self::ParseError => -32700,
             Self::ServerOverloaded => -32001,
             Self::InvalidRequest => -32600,
             Self::MethodNotFound => -32601,
@@ -25,6 +31,10 @@ impl AppServerErrorCode {
             Self::InternalError => -32603,
             Self::NotInitialized => -32010,
             Self::AlreadyInitialized => -32011,
+            Self::ThreadNotFound => -32020,
+            Self::ThreadArchived => -32021,
+            Self::ActiveTurnNotFound => -32030,
+            Self::TurnIdMismatch => -32031,
             Self::ExperimentalApiRequired => -32012,
             Self::UnsupportedMethod => -32013,
         }
@@ -45,6 +55,10 @@ impl AppServerError {
             message: message.into(),
             data: None,
         }
+    }
+
+    pub fn parse_error(message: impl Into<String>) -> Self {
+        Self::new(AppServerErrorCode::ParseError, message)
     }
 
     pub fn invalid_params(message: impl Into<String>) -> Self {
@@ -68,6 +82,25 @@ impl AppServerError {
             AppServerErrorCode::AlreadyInitialized,
             "Already initialized",
         )
+    }
+
+    pub fn thread_not_found() -> Self {
+        Self::new(AppServerErrorCode::ThreadNotFound, "Thread not found")
+    }
+
+    pub fn thread_archived() -> Self {
+        Self::new(AppServerErrorCode::ThreadArchived, "Thread archived")
+    }
+
+    pub fn active_turn_not_found() -> Self {
+        Self::new(
+            AppServerErrorCode::ActiveTurnNotFound,
+            "Active turn not found",
+        )
+    }
+
+    pub fn turn_id_mismatch() -> Self {
+        Self::new(AppServerErrorCode::TurnIdMismatch, "Turn id mismatch")
     }
 
     pub fn server_overloaded() -> Self {

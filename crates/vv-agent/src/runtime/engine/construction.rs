@@ -1,10 +1,11 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::llm::LlmClient;
 use crate::runtime::backends::RuntimeExecutionBackend;
+use crate::runtime::hooks::RuntimeHook;
 use crate::tools::{build_default_registry, ToolRegistry};
-use crate::workspace::LocalWorkspaceBackend;
+use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
 use super::AgentRuntime;
 
@@ -22,11 +23,28 @@ impl<C: LlmClient> AgentRuntime<C> {
             settings_file: None,
             default_backend: None,
             sub_agent_timeout_seconds: 90.0,
+            tool_policy: None,
+            pending_tool_approval: None,
         }
     }
 
     pub fn with_tool_registry(mut self, tool_registry: ToolRegistry) -> Self {
         self.tool_registry = tool_registry;
+        self
+    }
+
+    pub fn with_default_workspace(mut self, workspace: impl Into<PathBuf>) -> Self {
+        self.default_workspace = Some(workspace.into());
+        self
+    }
+
+    pub fn with_workspace_backend(mut self, backend: Arc<dyn WorkspaceBackend>) -> Self {
+        self.workspace_backend = backend;
+        self
+    }
+
+    pub fn with_hooks(mut self, hooks: Vec<Arc<dyn RuntimeHook>>) -> Self {
+        self.hooks = hooks;
         self
     }
 
@@ -55,6 +73,19 @@ impl<C: LlmClient> AgentRuntime<C> {
 
     pub fn with_sub_agent_timeout_seconds(mut self, timeout_seconds: f64) -> Self {
         self.sub_agent_timeout_seconds = timeout_seconds.max(1.0);
+        self
+    }
+
+    pub(crate) fn with_tool_policy(mut self, tool_policy: crate::tools::ToolPolicy) -> Self {
+        self.tool_policy = Some(tool_policy);
+        self
+    }
+
+    pub(crate) fn with_pending_tool_approval(
+        mut self,
+        pending: Arc<Mutex<Option<crate::result::PendingToolApproval>>>,
+    ) -> Self {
+        self.pending_tool_approval = Some(pending);
         self
     }
 }

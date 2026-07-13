@@ -17,6 +17,7 @@ pub mod execution_mode;
 pub mod guardrails;
 pub mod handoffs;
 pub mod integrations;
+pub mod interactive;
 pub mod llm;
 pub mod memory;
 pub mod model;
@@ -34,7 +35,11 @@ pub mod tracing;
 pub mod types;
 pub mod workspace;
 
-pub use agent::{Agent, ToolUseBehavior};
+pub use agent::{Agent, InstructionProvider, ToolUseBehavior};
+pub use app_server::{
+    AgentResolutionRequest, AppServerHost, AppServerHostError, DefaultAppServerHost,
+    RunConfigResolutionRequest,
+};
 pub use approval::{
     ApprovalBroker, ApprovalError, ApprovalFuture, ApprovalProvider, ApprovalRequest,
 };
@@ -58,6 +63,11 @@ pub use events::{
 pub use execution_mode::ExecutionMode;
 pub use guardrails::{GuardrailOutcome, InputGuardrail, OutputGuardrail};
 pub use handoffs::{handoff, Handoff};
+pub use interactive::{
+    create_interactive_session, InteractiveAgentClient, InteractiveSession,
+    InteractiveSessionError, InteractiveSessionEvent, InteractiveSessionOptions,
+    InteractiveSessionState,
+};
 pub use llm::{
     EndpointTarget, LlmClient, LlmError, LlmRequest, LlmStreamCallback, ScriptStep,
     ScriptStepCallback, ScriptedLlmClient, VvLlmClient,
@@ -69,14 +79,17 @@ pub use memory::{
     SessionMemoryEntry, SessionMemoryState, SummaryCallback,
 };
 pub use model::{ModelError, ModelProvider, ModelRef, ScriptedModelProvider, VvLlmModelProvider};
-pub use model_settings::{ModelSettings, ResponseFormat, RetryPolicy, ToolChoice};
-pub use result::{RunResult, RunState};
-pub use run_config::RunConfig;
+pub use model_settings::{ModelSettings, ResponseFormat, RetryPolicy, RetrySettings, ToolChoice};
+pub use result::{ApprovalSnapshot, FinalOutputError, RunResult, RunState};
+pub use run_config::{RunConfig, ToolRegistryFactory};
 pub use run_handle::{RunHandle, RunHandleState, RunHandleStatus};
 pub use runner::{NormalizedInput, RunEventStream, Runner};
 pub use runtime::backends::{
-    run_checkpointed_cycle, CycleDispatchResult, CycleDispatcher, DistributedBackend,
-    InlineBackend, RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
+    run_checkpointed_cycle, CapabilityRef, CycleDispatchResult, CycleDispatcher,
+    DistributedBackend, DistributedCapabilities, DistributedCapabilityError,
+    DistributedCapabilityRegistry, DistributedCycleWorker, DistributedRunEnvelope,
+    DistributedToolPolicy, InlineBackend, ResolvedDistributedCapabilities, RuntimeExecutionBackend,
+    RuntimeRecipe, ThreadBackend, ToolsetRef,
 };
 pub use runtime::background_sessions::{
     background_session_manager, BackgroundSessionAdoptOptions, BackgroundSessionListener,
@@ -91,6 +104,7 @@ pub use runtime::stores::redis::RedisStateStore;
 pub use runtime::stores::sqlite::SqliteStateStore;
 pub use runtime::sub_task_manager::{
     ManagedSubTask, ManagedSubTaskSnapshot, SubTaskManager, SubTaskSessionAttachment,
+    SubTaskTurnSnapshot,
 };
 pub use runtime::{
     _register_sub_agent_session, _unregister_sub_agent_session, continue_sub_agent_session,
@@ -105,24 +119,29 @@ pub use runtime::{
     ToolRunRequest, MAX_PROMPT_TOO_LONG_RETRIES, MAX_PTL_RETRIES,
 };
 pub use sessions::{
-    session_store_conformance, MemorySession, Session, SessionItem, SessionStore,
-    SqliteSessionStore,
+    session_store_conformance, MemorySession, MemorySessionStore, RedisSessionStore, Session,
+    SessionItem, SessionStore, SqliteSessionStore,
 };
 pub use tools::{
     build_default_registry, dispatch_tool_call, AgentTool, AgentToolBuilder, ApprovalDecision,
-    ApprovalPolicy, ApprovalRequirement, BackgroundAgentTask, BackgroundAgentTaskBuilder,
-    BackgroundAgentTaskHandle, BackgroundAgentTaskSnapshot, FunctionTool, StaticTool, Tool,
-    ToolContext, ToolError, ToolExecutor, ToolExposure, ToolFuture, ToolHandler, ToolNotFoundError,
-    ToolOrchestrator, ToolOutput, ToolPolicy, ToolRegistry, ToolRunContext, ToolRunOptions,
-    ToolSpec, ToolSpecContext, ToolSpecExecutor, ToolSpecKind,
+    ApprovalPolicy, ApprovalPredicate, ApprovalRequirement, BackgroundAgentTask,
+    BackgroundAgentTaskBuilder, BackgroundAgentTaskHandle, BackgroundAgentTaskSnapshot,
+    FunctionTool, StaticTool, Tool, ToolApprovalRule, ToolContext, ToolError, ToolExecutor,
+    ToolExposure, ToolFuture, ToolHandler, ToolNotFoundError, ToolOrchestrator, ToolOutput,
+    ToolPolicy, ToolRegistry, ToolRunContext, ToolRunOptions, ToolSpec, ToolSpecContext,
+    ToolSpecExecutor, ToolSpecKind,
 };
 pub use tracing::{JsonlTraceExporter, Span, TraceSink};
 pub use types::{
     AgentResult, AgentStatus, AgentTask, CycleRecord, CycleStatus, LLMResponse, Message,
-    MessageRole, NoToolPolicy, SubAgentConfig, SubTaskOutcome, SubTaskRequest, TaskTokenUsage,
-    TokenUsage, ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus,
+    MessageRole, NoToolPolicy, SubAgentConfig, SubAgentConfigValidationError, SubTaskOutcome,
+    SubTaskRequest, TaskTokenUsage, TokenUsage, ToolCall, ToolDirective, ToolExecutionResult,
+    ToolResultStatus, INVALID_SUB_AGENT_MODEL_CODE, INVALID_SUB_AGENT_MODEL_MESSAGE,
+    INVALID_SUB_AGENT_SYSTEM_PROMPT_CODE, INVALID_SUB_AGENT_SYSTEM_PROMPT_MESSAGE,
 };
 pub use workspace::{
-    FileInfo, LocalWorkspaceBackend, MemoryWorkspaceBackend, S3WorkspaceBackend, S3WorkspaceConfig,
-    WorkspaceBackend,
+    validate_portable_exclude_pattern, DiscoveryFilteredWorkspaceBackend, FileInfo,
+    LocalWorkspaceBackend, MemoryWorkspaceBackend, PortableRegexError, S3WorkspaceBackend,
+    S3WorkspaceConfig, WorkspaceBackend, INVALID_EXCLUDE_FILES_PATTERN_CODE,
+    INVALID_EXCLUDE_FILES_PATTERN_MESSAGE,
 };

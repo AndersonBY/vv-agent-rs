@@ -20,6 +20,7 @@ fn create_sub_task_runs_injected_runner_for_single_task() {
             final_answer: Some("sub-result".to_string()),
             wait_reason: None,
             error: None,
+            error_code: None,
             cycles: 1,
             todo_list: Vec::new(),
             resolved: BTreeMap::from([("backend".to_string(), "moonshot".to_string())]),
@@ -68,6 +69,7 @@ fn create_sub_task_batch_aggregates_results() {
         final_answer: Some(format!("done: {}", request.task_description)),
         wait_reason: None,
         error: None,
+        error_code: None,
         cycles: 1,
         todo_list: Vec::new(),
         resolved: BTreeMap::new(),
@@ -131,6 +133,7 @@ fn create_sub_task_batch_uses_execution_backend_parallel_map() {
             final_answer: Some(format!("done: {}", request.task_description)),
             wait_reason: None,
             error: None,
+            error_code: None,
             cycles: 1,
             todo_list: Vec::new(),
             resolved: BTreeMap::new(),
@@ -188,6 +191,7 @@ fn create_sub_task_coerces_agent_boolean_arguments() {
             final_answer: Some("done".to_string()),
             wait_reason: None,
             error: None,
+            error_code: None,
             cycles: 1,
             todo_list: Vec::new(),
             resolved: BTreeMap::new(),
@@ -223,7 +227,7 @@ fn create_sub_task_coerces_agent_boolean_arguments() {
 }
 
 #[test]
-fn create_sub_task_coerces_scalar_text_arguments() {
+fn create_sub_task_rejects_scalar_text_arguments() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -242,6 +246,7 @@ fn create_sub_task_coerces_scalar_text_arguments() {
             final_answer: Some("done".to_string()),
             wait_reason: None,
             error: None,
+            error_code: None,
             cycles: 1,
             todo_list: Vec::new(),
             resolved: BTreeMap::new(),
@@ -264,12 +269,10 @@ fn create_sub_task_coerces_scalar_text_arguments() {
         )
         .expect("create_sub_task scalar arguments");
 
-    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("invalid_agent_id"));
     let captured = captured.lock().expect("captured");
-    assert_eq!(captured[0].agent_name, "42");
-    assert_eq!(captured[0].task_description, "12345");
-    assert_eq!(captured[0].output_requirements, "False");
-    assert_eq!(captured[0].exclude_files_pattern.as_deref(), Some("99"));
+    assert!(captured.is_empty());
 }
 
 #[test]
@@ -285,6 +288,7 @@ fn create_sub_task_rejects_removed_agent_name_alias() {
         final_answer: None,
         wait_reason: None,
         error: None,
+        error_code: None,
         cycles: 0,
         todo_list: Vec::new(),
         resolved: BTreeMap::new(),
@@ -347,6 +351,7 @@ fn create_sub_task_rejects_non_array_batch_payload() {
         final_answer: Some("should not run".to_string()),
         wait_reason: None,
         error: None,
+        error_code: None,
         cycles: 0,
         todo_list: Vec::new(),
         resolved: BTreeMap::new(),
@@ -385,6 +390,7 @@ fn create_sub_task_batch_reports_invalid_items_and_errors_when_none_are_valid() 
         final_answer: Some("should not run".to_string()),
         wait_reason: None,
         error: None,
+        error_code: None,
         cycles: 0,
         todo_list: Vec::new(),
         resolved: BTreeMap::new(),
@@ -435,6 +441,7 @@ fn create_sub_task_batch_keeps_invalid_item_entries() {
         final_answer: Some(format!("done: {}", request.task_description)),
         wait_reason: None,
         error: None,
+        error_code: None,
         cycles: 1,
         todo_list: Vec::new(),
         resolved: BTreeMap::new(),
@@ -484,6 +491,7 @@ fn create_sub_task_batch_all_runtime_failures_uses_structured_error_envelope() {
         final_answer: None,
         wait_reason: None,
         error: Some(format!("failed: {}", request.task_description)),
+        error_code: None,
         cycles: 1,
         todo_list: Vec::new(),
         resolved: BTreeMap::new(),

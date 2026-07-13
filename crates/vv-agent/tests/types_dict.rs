@@ -8,6 +8,19 @@ use vv_agent::{
     ToolResultStatus,
 };
 
+fn sparse_agent_task_payload() -> Value {
+    json!({
+        "task_id": "task-1",
+        "model": "model-1",
+        "system_prompt": "system",
+        "user_prompt": "user"
+    })
+}
+
+fn assert_agent_task_defaults(task: &AgentTask) {
+    assert_eq!(task, &AgentTask::new("task-1", "model-1", "system", "user"));
+}
+
 #[test]
 fn tool_execution_result_dict_matches_status_shape() {
     let success = ToolExecutionResult::success("call-1", "ok");
@@ -143,6 +156,138 @@ fn agent_task_dict_round_trips_agent_runtime_recipe_payload_shape() {
     assert_eq!(restored.agent_type.as_deref(), Some("computer"));
     assert_eq!(restored.extra_tool_names, vec!["read_image"]);
     assert_eq!(restored.metadata["k"], json!("v"));
+}
+
+#[test]
+fn agent_task_sparse_wire_uses_new_defaults_for_dict_and_serde() {
+    let payload = sparse_agent_task_payload();
+
+    let from_dict = AgentTask::from_dict(&payload).expect("sparse AgentTask dict");
+    let from_serde: AgentTask = serde_json::from_value(payload).expect("sparse AgentTask serde");
+
+    assert_agent_task_defaults(&from_dict);
+    assert_agent_task_defaults(&from_serde);
+}
+
+#[test]
+fn agent_task_wire_requires_all_core_string_fields() {
+    for field_name in ["task_id", "model", "system_prompt", "user_prompt"] {
+        let mut missing = sparse_agent_task_payload();
+        missing
+            .as_object_mut()
+            .expect("AgentTask object")
+            .remove(field_name);
+        assert!(
+            AgentTask::from_dict(&missing).is_err(),
+            "from_dict accepted missing {field_name}"
+        );
+        assert!(
+            serde_json::from_value::<AgentTask>(missing).is_err(),
+            "serde accepted missing {field_name}"
+        );
+
+        let mut wrong_type = sparse_agent_task_payload();
+        wrong_type[field_name] = json!(123);
+        assert!(
+            AgentTask::from_dict(&wrong_type).is_err(),
+            "from_dict accepted non-string {field_name}"
+        );
+        assert!(
+            serde_json::from_value::<AgentTask>(wrong_type).is_err(),
+            "serde accepted non-string {field_name}"
+        );
+    }
+}
+
+#[test]
+fn agent_task_wire_rejects_wrong_types_ranges_and_container_items() {
+    let above_u64 = serde_json::from_str::<Value>("18446744073709551616")
+        .expect("JSON integer above u64 range");
+    let invalid_values = vec![
+        ("max_cycles", json!(true)),
+        ("max_cycles", json!(-1)),
+        ("max_cycles", json!(u64::from(u32::MAX) + 1)),
+        ("max_cycles", json!(1.5)),
+        ("memory_compact_threshold", json!(true)),
+        ("memory_compact_threshold", json!(-1)),
+        ("memory_compact_threshold", above_u64),
+        ("memory_compact_threshold", json!(1.5)),
+        ("memory_threshold_percentage", json!(true)),
+        ("memory_threshold_percentage", json!(-1)),
+        ("memory_threshold_percentage", json!(256)),
+        ("memory_threshold_percentage", json!(1.5)),
+        ("no_tool_policy", json!(1)),
+        ("no_tool_policy", json!("invalid")),
+        ("allow_interruption", json!(1)),
+        ("use_workspace", json!(1)),
+        ("has_sub_agents", json!(1)),
+        ("sub_agents", json!([])),
+        ("sub_agents", json!({"research": "not-an-object"})),
+        ("agent_type", json!(1)),
+        ("native_multimodal", json!(1)),
+        ("extra_tool_names", json!("read_file")),
+        ("extra_tool_names", json!(["read_file", 1])),
+        ("exclude_tools", json!("write_file")),
+        ("exclude_tools", json!(["write_file", 1])),
+        ("model_settings", json!([])),
+        ("initial_messages", json!({})),
+        ("initial_messages", json!([1])),
+        ("initial_shared_state", json!([])),
+        ("metadata", json!([])),
+    ];
+
+    for (field_name, invalid_value) in invalid_values {
+        let mut payload = sparse_agent_task_payload();
+        payload[field_name] = invalid_value;
+        assert!(
+            AgentTask::from_dict(&payload).is_err(),
+            "from_dict accepted invalid {field_name}: {}",
+            payload[field_name]
+        );
+        assert!(
+            serde_json::from_value::<AgentTask>(payload.clone()).is_err(),
+            "serde accepted invalid {field_name}: {}",
+            payload[field_name]
+        );
+    }
+}
+
+#[test]
+fn agent_task_wire_accepts_unsigned_boundaries() {
+    let mut payload = sparse_agent_task_payload();
+    payload["max_cycles"] = json!(u32::MAX);
+    payload["memory_compact_threshold"] = json!(u64::MAX);
+    payload["memory_threshold_percentage"] = json!(u8::MAX);
+
+    let from_dict = AgentTask::from_dict(&payload).expect("AgentTask dict boundaries");
+    let from_serde: AgentTask =
+        serde_json::from_value(payload).expect("AgentTask serde boundaries");
+
+    for task in [&from_dict, &from_serde] {
+        assert_eq!(task.max_cycles, u32::MAX);
+        assert_eq!(task.memory_compact_threshold, u64::MAX);
+        assert_eq!(task.memory_threshold_percentage, u8::MAX);
+    }
+}
+
+#[test]
+fn agent_task_round_trips_full_serde_and_compact_dict_wire() {
+    let mut task = AgentTask::new("task-full", "model", "system", "user");
+    task.model_settings = Some(vv_agent::ModelSettings::builder().max_tokens(512).build());
+    task.initial_messages = vec![Message::user("persisted")];
+    task.initial_shared_state
+        .insert("scope".to_string(), json!("child"));
+    task.metadata
+        .insert("trace_id".to_string(), json!("trace-1"));
+
+    let serde_payload = serde_json::to_value(&task).expect("serialize AgentTask");
+    let serde_restored: AgentTask =
+        serde_json::from_value(serde_payload).expect("deserialize AgentTask");
+    let dict_restored =
+        AgentTask::from_dict(&task.to_dict()).expect("deserialize compact AgentTask dict");
+
+    assert_eq!(serde_restored, task);
+    assert_eq!(dict_restored, task);
 }
 
 #[test]
@@ -300,6 +445,7 @@ fn sub_task_protocol_helpers_match_agent_defaults_and_dict_shape() {
         final_answer: Some("done".to_string()),
         wait_reason: None,
         error: None,
+        error_code: None,
         cycles: 2,
         todo_list: vec![json!({"title": "collect", "status": "completed"})],
         resolved: BTreeMap::from([("model".to_string(), "deepseek-v4-pro".to_string())]),

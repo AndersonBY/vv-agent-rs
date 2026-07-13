@@ -155,7 +155,7 @@ fn runtime_scopes_session_memory_by_session_id_metadata() {
 }
 
 #[test]
-fn runtime_uses_memory_summary_metadata_model_for_session_extraction() {
+fn runtime_does_not_reuse_main_client_for_metadata_memory_route_without_provider() {
     let workspace = tempfile::tempdir().expect("workspace");
     let settings_file = workspace.path().join("local_settings.json");
     fs::write(
@@ -198,14 +198,11 @@ fn runtime_uses_memory_summary_metadata_model_for_session_extraction() {
     let result = runtime.run(task).expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
-    assert_eq!(
-        inspector.extraction_model(),
-        Some("metadata-model".to_string())
-    );
+    assert_eq!(inspector.extraction_model(), None);
 }
 
 #[test]
-fn runtime_uses_local_memory_summary_model_defaults() {
+fn runtime_does_not_reuse_main_client_for_settings_memory_route_without_provider() {
     let workspace = tempfile::tempdir().expect("workspace");
     let settings_file = workspace.path().join("local_settings.json");
     fs::write(
@@ -241,10 +238,7 @@ DEFAULT_USER_MEMORY_SUMMARIZE_MODEL = "settings-model"
     let result = runtime.run(task).expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
-    assert_eq!(
-        inspector.extraction_model(),
-        Some("settings-model".to_string())
-    );
+    assert_eq!(inspector.extraction_model(), None);
 }
 
 #[test]
@@ -311,7 +305,7 @@ fn runtime_uses_settings_model_token_limits_for_direct_runtime_memory() {
     );
 }
 #[test]
-fn runtime_extracts_session_memory_with_default_llm_callback() {
+fn runtime_does_not_reuse_main_client_for_memory_extraction_without_provider() {
     let workspace = tempfile::tempdir().expect("workspace");
     let large_tool_payload = "tool output ".repeat(300);
     let llm = SessionMemoryExtractingLlmClient::new(large_tool_payload);
@@ -344,16 +338,16 @@ fn runtime_extracts_session_memory_with_default_llm_callback() {
     let result = runtime.run(task).expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
-    assert_eq!(inspector.extraction_prompt_count(), 2);
+    assert_eq!(inspector.extraction_prompt_count(), 0);
     let second_request = inspector.second_request_messages();
     assert!(
         second_request
-            .first()
-            .is_some_and(|message| message.content.contains("<Session Memory>")
-                && message
+            .iter()
+            .all(|message| !message.content.contains("<Session Memory>")
+                && !message
                     .content
                     .contains("default callback preserved this fact")),
-        "second request did not include extracted session memory: {second_request:#?}"
+        "main client must not be reused for session-memory extraction: {second_request:#?}"
     );
 }
 #[derive(Clone)]

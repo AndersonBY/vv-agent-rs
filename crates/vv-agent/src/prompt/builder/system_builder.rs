@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use super::hash::sha256_hex;
 use super::options::BuiltSystemPrompt;
@@ -66,11 +66,11 @@ impl SystemPromptBuilder {
                 continue;
             }
             prompt_parts.push(value.clone());
-            sections.push(json!({
-                "id": section.id,
-                "text": value,
-                "stable": section.stable(),
-            }));
+            sections.push(
+                section
+                    .to_metadata()
+                    .expect("non-empty prompt section has metadata"),
+            );
             if section.stable() {
                 stable_parts.push(value);
             }

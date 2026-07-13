@@ -2,38 +2,28 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use crate::llm::LlmClient;
-use crate::memory::{SessionMemory, SessionMemoryConfig};
+use crate::memory::{SessionMemory, SessionMemoryConfig, SessionMemoryExtractionCallback};
 use crate::types::AgentTask;
 
-use super::callbacks::build_session_memory_extraction_callback;
 use super::metadata::{
     metadata_path, parse_f64_metadata_value, read_optional_string_metadata, read_u64_metadata,
     read_usize_metadata, session_memory_enabled,
 };
 
-pub(super) fn build_session_memory<C>(
+pub(super) fn build_session_memory(
     task: &AgentTask,
     workspace: Option<PathBuf>,
-    memory_summary_client: Option<C>,
+    extraction_callback: Option<SessionMemoryExtractionCallback>,
     summary_backend: Option<String>,
     summary_model: String,
-) -> Option<SessionMemory>
-where
-    C: LlmClient + Clone + 'static,
-{
+) -> Option<SessionMemory> {
     if !session_memory_enabled(&task.metadata) && !task.metadata.contains_key("session_memory_seed")
     {
         return None;
     }
-    let extraction_model = task
-        .metadata
-        .get("session_memory_extraction_model")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or(summary_model);
-    let extraction_callback =
-        memory_summary_client.map(|client| build_session_memory_extraction_callback(client));
+    let extraction_model =
+        read_optional_string_metadata(&task.metadata, &["session_memory_extraction_model"])
+            .unwrap_or(summary_model);
     let storage_scope = read_optional_string_metadata(&task.metadata, &["session_id", "task_id"])
         .unwrap_or_else(|| task.task_id.clone());
     let mut session_memory = SessionMemory::with_workspace(
@@ -61,12 +51,11 @@ where
                 ".memory/session",
             ),
             extraction_callback,
-            extraction_backend: task
-                .metadata
-                .get("session_memory_extraction_backend")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .or(summary_backend),
+            extraction_backend: read_optional_string_metadata(
+                &task.metadata,
+                &["session_memory_extraction_backend"],
+            )
+            .or(summary_backend),
             extraction_model: Some(extraction_model),
             token_model: task.model.clone(),
         },

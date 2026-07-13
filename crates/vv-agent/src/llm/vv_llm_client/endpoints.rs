@@ -103,13 +103,11 @@ impl VvLlmClient {
         }
     }
 
-    pub(super) fn sleep_backoff(&self, attempt: usize) {
-        if self.backoff_seconds <= 0.0 {
+    pub(super) fn sleep_backoff(&self, backoff_seconds: f64, attempt: usize) {
+        if backoff_seconds <= 0.0 {
             return;
         }
-        std::thread::sleep(Duration::from_secs_f64(
-            self.backoff_seconds * attempt as f64,
-        ));
+        std::thread::sleep(Duration::from_secs_f64(backoff_seconds * attempt as f64));
     }
 
     fn next_endpoint_shuffle_seed(&self) -> u64 {

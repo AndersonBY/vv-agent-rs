@@ -21,10 +21,11 @@ fn count_tokens_returns_zero_for_empty_text() {
 }
 
 #[test]
-fn count_tokens_falls_back_to_cjk_aware_estimate_for_unknown_models() {
+fn count_tokens_uses_vv_llm_for_unknown_models() {
+    assert_eq!(count_tokens("hello world", "unknown-provider-model"), 2);
     assert_eq!(
-        count_tokens("你好hello", "demo"),
-        estimate_tokens("你好hello", "demo")
+        count_tokens("antidisestablishmentarianism", "unknown-provider-model"),
+        6
     );
 }
 
@@ -32,23 +33,20 @@ fn count_tokens_falls_back_to_cjk_aware_estimate_for_unknown_models() {
 fn count_tokens_accepts_json_payload() {
     let payload = json!({"role": "user", "content": "hello"});
     let expected_payload = serde_json::to_string(&payload).expect("json payload");
+    let expected = vv_llm::utilities::count_tokens(&expected_payload, "gpt-4o")
+        .expect("vv-llm json token count");
 
-    assert_eq!(
-        count_tokens(&payload, "demo"),
-        estimate_tokens(&expected_payload, "demo")
-    );
+    assert_eq!(count_tokens(&payload, "gpt-4o"), expected as u64);
 }
 
 #[test]
-fn count_messages_tokens_fallback_uses_openai_message_payload() {
+fn count_messages_tokens_counts_text_and_images_like_vv_llm() {
     let mut message = Message::user("look");
     message.image_url = Some("https://example.test/image.png".to_string());
-    let payload = vec![message.to_openai_message(true)];
-    let expected_payload = serde_json::to_string(&payload).expect("message payload");
 
     assert_eq!(
-        count_messages_tokens(&[message], "unknown-provider-model"),
-        estimate_tokens(&expected_payload, "unknown-provider-model")
+        count_messages_tokens(&[message], "gpt-4o"),
+        count_tokens("look", "gpt-4o") + 765
     );
 }
 

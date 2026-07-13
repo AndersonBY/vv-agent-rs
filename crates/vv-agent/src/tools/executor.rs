@@ -1,19 +1,88 @@
+use std::any::Any;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::context::RunContext;
 use crate::tools::{ToolContext, ToolSpec};
-use crate::types::{ToolCall, ToolExecutionResult};
+use crate::types::{Metadata, ToolArguments, ToolCall, ToolExecutionResult};
 
 pub type ToolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ToolError>> + Send + 'a>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolExposure {
+    /// Model-visible and executable through the runtime.
     Direct,
+    /// Reserved for deferred discovery. It currently has the same visibility and execution
+    /// semantics as `Direct` under the shared SDK contract.
     Deferred,
+    /// Reserved for model-origin-only invocation. It currently has the same visibility and
+    /// execution semantics as `Direct` under the shared SDK contract.
     DirectModelOnly,
+    /// Not model-visible, but still available for explicit runtime invocation.
     Hidden,
+}
+
+#[derive(Clone, Default)]
+pub struct ToolEnablementContext {
+    pub run: RunContext,
+    pub app_state: Option<Arc<dyn Any + Send + Sync>>,
+}
+
+impl ToolEnablementContext {
+    pub fn new(run: RunContext) -> Self {
+        Self {
+            run,
+            app_state: None,
+        }
+    }
+
+    pub fn with_app_state(mut self, app_state: Option<Arc<dyn Any + Send + Sync>>) -> Self {
+        self.app_state = app_state;
+        self
+    }
+
+    pub fn app_state<T: Send + Sync + 'static>(&self) -> Option<&T> {
+        self.app_state.as_ref()?.downcast_ref::<T>()
+    }
+}
+
+pub type ToolEnablementPredicate =
+    Arc<dyn Fn(&ToolEnablementContext) -> bool + Send + Sync + 'static>;
+
+#[derive(Clone)]
+pub enum ToolEnablementRule {
+    Static(bool),
+    Predicate(ToolEnablementPredicate),
+}
+
+impl ToolEnablementRule {
+    pub fn predicate<F>(predicate: F) -> Self
+    where
+        F: Fn(&ToolEnablementContext) -> bool + Send + Sync + 'static,
+    {
+        Self::Predicate(Arc::new(predicate))
+    }
+
+    pub fn is_enabled(&self, context: &ToolEnablementContext) -> bool {
+        match self {
+            Self::Static(enabled) => *enabled,
+            Self::Predicate(predicate) => predicate(context),
+        }
+    }
+}
+
+impl Default for ToolEnablementRule {
+    fn default() -> Self {
+        Self::Static(true)
+    }
+}
+
+impl From<bool> for ToolEnablementRule {
+    fn from(enabled: bool) -> Self {
+        Self::Static(enabled)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +90,63 @@ pub enum ApprovalRequirement {
     NotRequired,
     Required,
     Provider,
+}
+
+pub type ApprovalPredicate =
+    Arc<dyn Fn(&ToolContext, &ToolArguments) -> bool + Send + Sync + 'static>;
+
+#[derive(Clone)]
+pub enum ToolApprovalRule {
+    Static(ApprovalRequirement),
+    Predicate(ApprovalPredicate),
+}
+
+impl ToolApprovalRule {
+    pub fn predicate<F>(predicate: F) -> Self
+    where
+        F: Fn(&ToolContext, &ToolArguments) -> bool + Send + Sync + 'static,
+    {
+        Self::Predicate(Arc::new(predicate))
+    }
+
+    pub fn requirement(
+        &self,
+        context: &ToolContext,
+        arguments: &ToolArguments,
+    ) -> ApprovalRequirement {
+        match self {
+            Self::Static(requirement) => *requirement,
+            Self::Predicate(predicate) => {
+                if predicate(context, arguments) {
+                    ApprovalRequirement::Required
+                } else {
+                    ApprovalRequirement::NotRequired
+                }
+            }
+        }
+    }
+}
+
+impl Default for ToolApprovalRule {
+    fn default() -> Self {
+        Self::Static(ApprovalRequirement::NotRequired)
+    }
+}
+
+impl From<bool> for ToolApprovalRule {
+    fn from(needs_approval: bool) -> Self {
+        Self::Static(if needs_approval {
+            ApprovalRequirement::Required
+        } else {
+            ApprovalRequirement::NotRequired
+        })
+    }
+}
+
+impl From<ApprovalRequirement> for ToolApprovalRule {
+    fn from(requirement: ApprovalRequirement) -> Self {
+        Self::Static(requirement)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -60,11 +186,12 @@ impl std::error::Error for ToolError {}
 pub trait ToolExecutor: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
+    fn metadata(&self) -> &Metadata {
+        static EMPTY_METADATA: std::sync::OnceLock<Metadata> = std::sync::OnceLock::new();
+        EMPTY_METADATA.get_or_init(Metadata::new)
+    }
     fn exposure(&self) -> ToolExposure {
         ToolExposure::Direct
-    }
-    fn supports_parallel(&self) -> bool {
-        false
     }
     fn timeout(&self) -> Option<Duration> {
         None
@@ -75,7 +202,7 @@ pub trait ToolExecutor: Send + Sync {
         _call: &ToolCall,
         _ctx: &ToolRunContext<'_>,
     ) -> ApprovalRequirement {
-        ApprovalRequirement::Provider
+        ApprovalRequirement::NotRequired
     }
     fn run<'a>(
         &'a self,
@@ -92,10 +219,8 @@ pub struct ToolSpecExecutor {
 
 impl ToolSpecExecutor {
     pub fn new(spec: ToolSpec) -> Self {
-        Self {
-            spec,
-            exposure: ToolExposure::Direct,
-        }
+        let exposure = spec.exposure;
+        Self { spec, exposure }
     }
 
     pub fn with_exposure(mut self, exposure: ToolExposure) -> Self {
@@ -117,12 +242,28 @@ impl ToolExecutor for ToolSpecExecutor {
         &self.spec.description
     }
 
+    fn metadata(&self) -> &Metadata {
+        &self.spec.metadata
+    }
+
     fn exposure(&self) -> ToolExposure {
         self.exposure
     }
 
+    fn timeout(&self) -> Option<Duration> {
+        self.spec.timeout
+    }
+
     fn spec(&self, _ctx: &ToolSpecContext) -> Result<ToolSpec, ToolError> {
         Ok(self.spec.clone())
+    }
+
+    fn approval_requirement(
+        &self,
+        call: &ToolCall,
+        ctx: &ToolRunContext<'_>,
+    ) -> ApprovalRequirement {
+        self.spec.approval.requirement(ctx.context, &call.arguments)
     }
 
     fn run<'a>(
@@ -130,8 +271,26 @@ impl ToolExecutor for ToolSpecExecutor {
         call: ToolCall,
         ctx: ToolRunContext<'a>,
     ) -> ToolFuture<'a, ToolExecutionResult> {
+        let handler = self.spec.handler.clone();
         Box::pin(async move {
-            let mut result = (self.spec.handler)(ctx.context, &call.arguments);
+            ctx.context.begin_tool_call(&call);
+            if self.spec.timeout.is_none() {
+                let mut result = handler(ctx.context, &call.arguments);
+                if result.tool_call_id.trim().is_empty() || result.tool_call_id == "pending" {
+                    result.tool_call_id = call.id;
+                }
+                return Ok(result);
+            }
+
+            let arguments = call.arguments.clone();
+            let mut isolated_context = ctx.context.clone();
+            let (mut result, updated_context) = tokio::task::spawn_blocking(move || {
+                let result = handler(&mut isolated_context, &arguments);
+                (result, isolated_context)
+            })
+            .await
+            .map_err(|error| ToolError::new(format!("tool task failed: {error}")))?;
+            *ctx.context = updated_context;
             if result.tool_call_id.trim().is_empty() || result.tool_call_id == "pending" {
                 result.tool_call_id = call.id;
             }
