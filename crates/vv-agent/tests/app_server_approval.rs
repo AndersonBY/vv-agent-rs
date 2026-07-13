@@ -21,9 +21,10 @@ fn approval_request() -> ServerRequest {
         thread_id: "thread_1".to_string(),
         turn_id: "turn_1".to_string(),
         request_id: "approval_1".to_string(),
+        tool_call_id: "call_1".to_string(),
         tool_name: "dangerous".to_string(),
         preview: "dangerous {}".to_string(),
-        choices: vec![ApprovalDecision::Allow, ApprovalDecision::Deny],
+        arguments: json!({}),
     })
 }
 
@@ -62,15 +63,139 @@ async fn callback_client_response_resolves_pending_request() {
 
     assert!(
         outgoing
-            .resolve_server_response(JsonRpcResponse {
-                id: request_id,
-                result: json!({"decision": "allow"}),
-            })
+            .resolve_server_response(
+                connection_id,
+                JsonRpcResponse {
+                    id: request_id,
+                    result: json!({"decision": "allow"}),
+                }
+            )
             .await
     );
 
     let result = callback.await.expect("callback").expect("result");
     assert_eq!(result["decision"], "allow");
+}
+
+#[tokio::test]
+async fn callback_resolution_requires_connection_method_thread_and_turn_ownership() {
+    let (outgoing, mut rx) = OutgoingMessageSender::channel(8);
+    let owner = ConnectionId::new(1);
+    let other = ConnectionId::new(2);
+    outgoing.register_connection(owner).await;
+    outgoing.register_connection(other).await;
+    let (request_id, callback) = outgoing
+        .send_server_request(owner, approval_request())
+        .await
+        .expect("server request");
+    let _ = rx.recv().await.expect("outgoing request");
+
+    for (connection_id, method, thread_id, turn_id) in [
+        (other, "approval/request", "thread_1", "turn_1"),
+        (owner, "other/request", "thread_1", "turn_1"),
+        (owner, "approval/request", "thread_2", "turn_1"),
+        (owner, "approval/request", "thread_1", "turn_2"),
+    ] {
+        assert!(
+            !outgoing
+                .resolve_server_response_bound(
+                    connection_id,
+                    Some(method),
+                    Some(thread_id),
+                    Some(turn_id),
+                    JsonRpcResponse {
+                        id: request_id.clone(),
+                        result: json!({"decision": "allow"}),
+                    },
+                )
+                .await
+        );
+        assert_eq!(outgoing.pending_server_request_count().await, 1);
+    }
+
+    assert!(
+        outgoing
+            .resolve_server_response_bound(
+                owner,
+                Some("approval/request"),
+                Some("thread_1"),
+                Some("turn_1"),
+                JsonRpcResponse {
+                    id: request_id,
+                    result: json!({"decision": "allow"}),
+                },
+            )
+            .await
+    );
+    assert_eq!(
+        callback.await.expect("callback").expect("result")["decision"],
+        "allow"
+    );
+}
+
+#[tokio::test]
+async fn approval_resolve_rejects_cross_connection_and_wrong_turn() {
+    let (mut processor, mut outgoing) = MessageProcessor::new_for_tests(16);
+    let owner = ConnectionId::new(1);
+    let other = ConnectionId::new(2);
+    initialize(&mut processor, &mut outgoing, owner).await;
+    initialize(&mut processor, &mut outgoing, other).await;
+
+    let callback = processor
+        .outgoing()
+        .send_server_request_with_id(
+            owner,
+            RequestId::String("approval_1".to_string()),
+            approval_request(),
+        )
+        .await
+        .expect("server request");
+    let _ = next_server_request(&mut outgoing).await;
+
+    for (connection_id, turn_id) in [(other, "turn_1"), (owner, "turn_2")] {
+        processor
+            .process_message(
+                connection_id,
+                request(
+                    10,
+                    "approval/resolve",
+                    json!({
+                        "threadId": "thread_1",
+                        "turnId": turn_id,
+                        "requestId": "approval_1",
+                        "decision": "allow"
+                    }),
+                ),
+            )
+            .await;
+        let envelope = outgoing.recv().await.expect("error response");
+        let JsonRpcMessage::Error(error) = envelope.message else {
+            panic!("expected ownership error");
+        };
+        assert_eq!(error.error.code, -32602);
+        assert_eq!(processor.outgoing().pending_server_request_count().await, 1);
+    }
+
+    processor
+        .process_message(
+            owner,
+            request(
+                11,
+                "approval/resolve",
+                json!({
+                    "threadId": "thread_1",
+                    "turnId": "turn_1",
+                    "requestId": "approval_1",
+                    "decision": "allow"
+                }),
+            ),
+        )
+        .await;
+    let _ = expect_response(&mut outgoing).await;
+    assert_eq!(
+        callback.await.expect("callback").expect("result")["decision"],
+        "allow"
+    );
 }
 
 #[tokio::test]
@@ -86,14 +211,17 @@ async fn callback_client_error_resolves_pending_request_with_error() {
 
     assert!(
         outgoing
-            .resolve_server_error(JsonRpcError {
-                id: request_id,
-                error: JsonRpcErrorBody {
-                    code: -32603,
-                    message: "client failed".to_string(),
-                    data: None,
-                },
-            })
+            .resolve_server_error(
+                connection_id,
+                JsonRpcError {
+                    id: request_id,
+                    error: JsonRpcErrorBody {
+                        code: -32603,
+                        message: "client failed".to_string(),
+                        data: None,
+                    },
+                }
+            )
             .await
     );
 
@@ -123,10 +251,13 @@ async fn callback_timeout_removes_pending_request() {
     assert_eq!(outgoing.pending_server_request_count().await, 0);
     assert!(
         !outgoing
-            .resolve_server_response(JsonRpcResponse {
-                id: request.id,
-                result: json!({"decision": "allow"}),
-            })
+            .resolve_server_response(
+                connection_id,
+                JsonRpcResponse {
+                    id: request.id,
+                    result: json!({"decision": "allow"}),
+                }
+            )
             .await
     );
 }
@@ -144,18 +275,24 @@ async fn callback_duplicate_response_is_ignored_after_first_resolution() {
 
     assert!(
         outgoing
-            .resolve_server_response(JsonRpcResponse {
-                id: request_id.clone(),
-                result: json!({"decision": "allow"}),
-            })
+            .resolve_server_response(
+                connection_id,
+                JsonRpcResponse {
+                    id: request_id.clone(),
+                    result: json!({"decision": "allow"}),
+                }
+            )
             .await
     );
     assert!(
         !outgoing
-            .resolve_server_response(JsonRpcResponse {
-                id: request_id,
-                result: json!({"decision": "deny"}),
-            })
+            .resolve_server_response(
+                connection_id,
+                JsonRpcResponse {
+                    id: request_id,
+                    result: json!({"decision": "deny"}),
+                }
+            )
             .await
     );
     let result = callback.await.expect("callback").expect("result");
@@ -232,6 +369,205 @@ async fn approval_run_sends_server_request_and_allows_tool_after_client_response
     })
     .await;
     assert!(matches!(completed, ServerNotification::TurnCompleted(_)));
+    assert_eq!(
+        tool_runs.lock().expect("runs").as_slice(),
+        &["dangerous ran".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn approval_request_stays_bound_to_turn_owner_and_is_not_reassigned_after_disconnect() {
+    let tool_runs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (mut processor, mut outgoing) =
+        approval_processor_with_timeout(tool_runs.clone(), Duration::from_secs(30));
+    let owner = ConnectionId::new(1);
+    let observer = ConnectionId::new(2);
+    initialize(&mut processor, &mut outgoing, owner).await;
+    let thread_id = start_thread(&mut processor, &mut outgoing, owner).await;
+    initialize(&mut processor, &mut outgoing, observer).await;
+    processor
+        .process_message(
+            observer,
+            request(10, "thread/resume", json!({"threadId": thread_id})),
+        )
+        .await;
+    let _ = expect_response(&mut outgoing).await;
+
+    processor
+        .process_message(
+            owner,
+            request(
+                3,
+                "turn/start",
+                json!({
+                    "threadId": thread_id,
+                    "input": [{"text": "do it"}]
+                }),
+            ),
+        )
+        .await;
+    let _turn: TurnStartResponse = decode_response(expect_response(&mut outgoing).await);
+    let (approval_connection, _approval) = next_server_request_envelope(&mut outgoing).await;
+    assert_eq!(approval_connection, owner);
+
+    processor.disconnect_connection(owner).await;
+
+    loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(3), outgoing.recv())
+            .await
+            .expect("completion timeout")
+            .expect("outgoing message");
+        if matches!(envelope.message, JsonRpcMessage::Request(_)) {
+            assert_ne!(
+                envelope.connection_id, observer,
+                "approval must never be reassigned to an observer"
+            );
+        }
+        if envelope.connection_id == observer {
+            if let JsonRpcMessage::Notification(notification) = envelope.message {
+                if matches!(
+                    decode_notification(notification),
+                    ServerNotification::TurnCompleted(_)
+                ) {
+                    break;
+                }
+            }
+        }
+    }
+
+    assert!(tool_runs.lock().expect("runs").is_empty());
+}
+
+#[tokio::test]
+async fn queued_follow_up_keeps_the_original_turn_owner_for_approval() {
+    let tool_runs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (mut processor, mut outgoing) = approval_processor(tool_runs.clone());
+    let owner = ConnectionId::new(1);
+    let observer = ConnectionId::new(2);
+    initialize(&mut processor, &mut outgoing, owner).await;
+    let thread_id = start_thread(&mut processor, &mut outgoing, owner).await;
+    initialize(&mut processor, &mut outgoing, observer).await;
+    processor
+        .process_message(
+            observer,
+            request(10, "thread/resume", json!({"threadId": thread_id})),
+        )
+        .await;
+    let _ = expect_response(&mut outgoing).await;
+
+    processor
+        .process_message(
+            owner,
+            request(
+                3,
+                "turn/start",
+                json!({
+                    "threadId": thread_id,
+                    "input": [{"text": "first"}]
+                }),
+            ),
+        )
+        .await;
+    let first_turn: TurnStartResponse = decode_response(expect_response(&mut outgoing).await);
+    let (first_connection, first_approval) = next_server_request_envelope(&mut outgoing).await;
+    assert_eq!(first_connection, owner);
+
+    processor
+        .process_message(
+            observer,
+            request(
+                11,
+                "turn/followUp",
+                json!({
+                    "threadId": thread_id,
+                    "expectedTurnId": first_turn.turn_id,
+                    "input": [{"text": "second"}]
+                }),
+            ),
+        )
+        .await;
+    let _ = expect_response(&mut outgoing).await;
+    processor
+        .process_message(
+            owner,
+            JsonRpcMessage::Response(JsonRpcResponse {
+                id: first_approval.id,
+                result: json!({"decision": "allow"}),
+            }),
+        )
+        .await;
+
+    let (second_connection, second_approval) = next_server_request_envelope(&mut outgoing).await;
+    assert_eq!(second_connection, owner);
+    processor
+        .process_message(
+            owner,
+            JsonRpcMessage::Response(JsonRpcResponse {
+                id: second_approval.id,
+                result: json!({"decision": "allow"}),
+            }),
+        )
+        .await;
+    let _completed = next_notification_matching(&mut outgoing, |notification| {
+        matches!(notification, ServerNotification::TurnCompleted(_))
+    })
+    .await;
+
+    assert_eq!(tool_runs.lock().expect("runs").len(), 2);
+}
+
+#[tokio::test]
+async fn approval_run_preserves_allow_session_without_downgraded_duplicate() {
+    let tool_runs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (mut processor, mut outgoing) = approval_processor(tool_runs.clone());
+    let connection_id = ConnectionId::new(1);
+    initialize(&mut processor, &mut outgoing, connection_id).await;
+    let thread_id = start_thread(&mut processor, &mut outgoing, connection_id).await;
+
+    processor
+        .process_message(
+            connection_id,
+            request(
+                3,
+                "turn/start",
+                json!({
+                    "threadId": thread_id,
+                    "input": [{"text": "do it"}],
+                    "model": "approval-model"
+                }),
+            ),
+        )
+        .await;
+    let _turn = expect_response(&mut outgoing).await;
+    let _approval = next_notification_matching(&mut outgoing, |notification| {
+        matches!(notification, ServerNotification::ApprovalRequested(_))
+    })
+    .await;
+    let server_request = next_server_request(&mut outgoing).await;
+
+    processor
+        .process_message(
+            connection_id,
+            JsonRpcMessage::Response(JsonRpcResponse {
+                id: server_request.id,
+                result: json!({ "decision": "allow_session" }),
+            }),
+        )
+        .await;
+
+    let mut resolutions = Vec::new();
+    loop {
+        let notification = expect_notification(&mut outgoing).await;
+        match notification {
+            ServerNotification::ApprovalResolved(params) => {
+                resolutions.push(params.decision);
+            }
+            ServerNotification::TurnCompleted(_) => break,
+            _ => {}
+        }
+    }
+
+    assert_eq!(resolutions, [ApprovalDecision::AllowSession]);
     assert_eq!(
         tool_runs.lock().expect("runs").as_slice(),
         &["dangerous ran".to_string()]
@@ -330,7 +666,7 @@ async fn approval_run_times_out_when_client_does_not_respond() {
     let ServerNotification::ApprovalResolved(resolved) = resolved else {
         unreachable!("matched approval resolved")
     };
-    assert_eq!(resolved.decision, ApprovalDecision::Deny);
+    assert_eq!(resolved.decision, ApprovalDecision::Timeout);
 
     let _completed = next_notification_matching(&mut outgoing, |notification| {
         matches!(notification, ServerNotification::TurnCompleted(_))
@@ -378,7 +714,7 @@ async fn approval_run_interrupt_releases_pending_approval_without_waiting_for_ti
                 "turn/interrupt",
                 json!({
                     "threadId": thread_id,
-                    "turnId": turn.turn.id
+                    "turnId": turn.turn_id
                 }),
             ),
         ),
@@ -413,6 +749,7 @@ fn approval_processor_with_timeout(
     let dangerous = FunctionTool::builder("dangerous")
         .description("Requires approval.")
         .json_schema(json!({"type":"object","properties":{},"required":[]}))
+        .needs_approval(true)
         .handler(move |_ctx, _args: serde_json::Value| {
             let dangerous_runs = dangerous_runs.clone();
             async move {
@@ -444,6 +781,22 @@ fn approval_processor_with_timeout(
                         "finish",
                         "task_finish",
                         json!({"message":"done"}),
+                    )],
+                ),
+                LLMResponse::with_tool_calls(
+                    "",
+                    vec![ToolCall::from_raw_arguments(
+                        "call_2",
+                        "dangerous",
+                        json!({}),
+                    )],
+                ),
+                LLMResponse::with_tool_calls(
+                    "",
+                    vec![ToolCall::from_raw_arguments(
+                        "finish_2",
+                        "task_finish",
+                        json!({"message":"done again"}),
                     )],
                 ),
             ],
@@ -524,7 +877,7 @@ async fn start_thread(
         .await;
     let response: ThreadStartResponse = decode_response(expect_response(outgoing).await);
     let _ = expect_notification(outgoing).await;
-    response.thread.id
+    response.thread_id
 }
 
 fn request(id: i64, method: &str, params: serde_json::Value) -> JsonRpcMessage {
@@ -570,13 +923,19 @@ async fn next_notification_matching(
 }
 
 async fn next_server_request(rx: &mut mpsc::Receiver<OutgoingEnvelope>) -> JsonRpcRequest {
+    next_server_request_envelope(rx).await.1
+}
+
+async fn next_server_request_envelope(
+    rx: &mut mpsc::Receiver<OutgoingEnvelope>,
+) -> (ConnectionId, JsonRpcRequest) {
     loop {
         let envelope = tokio::time::timeout(Duration::from_secs(3), rx.recv())
             .await
             .expect("message timeout")
             .expect("outgoing message");
         if let JsonRpcMessage::Request(request) = envelope.message {
-            return request;
+            return (envelope.connection_id, request);
         }
     }
 }

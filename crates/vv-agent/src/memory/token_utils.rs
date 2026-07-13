@@ -1,5 +1,6 @@
 use serde_json::Value;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use crate::types::Message;
 
@@ -54,11 +55,22 @@ pub fn count_messages_tokens(messages: &[Message], model: &str) -> u64 {
     if messages.is_empty() {
         return 0;
     }
-    let payload = messages
+    let combined_text = messages
         .iter()
-        .map(|message| message.to_openai_message(true))
-        .collect::<Vec<_>>();
-    count_tokens(&serde_json::to_string(&payload).unwrap_or_default(), model)
+        .map(|message| message.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let text_tokens = if combined_text.is_empty() {
+        0
+    } else {
+        count_tokens(&combined_text, model)
+    };
+    let image_count = messages
+        .iter()
+        .filter(|message| message.image_url.is_some())
+        .count() as u64;
+
+    text_tokens + image_count * default_image_tokens(model)
 }
 
 pub trait TokenCountPayload {
@@ -88,11 +100,16 @@ pub fn count_tokens<T: TokenCountPayload + ?Sized>(payload: &T, model: &str) -> 
     if text.is_empty() {
         return 0;
     }
-    if vv_llm_tokenizer_supported(model) {
-        if let Ok(count) = vv_llm::utilities::count_tokens(&text, model) {
+    let direct_count = vv_llm::utilities::count_tokens(&text, model);
+    if vv_llm_has_universal_model_dispatch() {
+        if let Ok(count) = direct_count {
             if count > 0 {
                 return count as u64;
             }
+        }
+    } else if let Some(count) = count_tokens_with_legacy_vv_llm(&text, model) {
+        if count > 0 {
+            return count as u64;
         }
     }
     estimate_tokens(&text, model)
@@ -116,11 +133,46 @@ pub fn estimate_tokens(text: &str, _model: &str) -> u64 {
         .max(1.0) as u64
 }
 
-fn vv_llm_tokenizer_supported(model: &str) -> bool {
-    model == "gpt-3.5-turbo"
-        || model.starts_with("gpt-4o")
-        || model.starts_with("o1-")
-        || model.starts_with("o3-")
+fn default_image_tokens(model: &str) -> u64 {
+    if model.to_ascii_lowercase().starts_with("moonshot") {
+        1_024
+    } else {
+        765
+    }
+}
+
+fn vv_llm_has_universal_model_dispatch() -> bool {
+    static SUPPORTED: OnceLock<bool> = OnceLock::new();
+    *SUPPORTED.get_or_init(|| {
+        matches!(
+            vv_llm::utilities::count_tokens(
+                "antidisestablishmentarianism",
+                "unknown-provider-model",
+            ),
+            Ok(6)
+        )
+    })
+}
+
+fn count_tokens_with_legacy_vv_llm(text: &str, model: &str) -> Option<usize> {
+    let normalized_model = model.to_ascii_lowercase();
+    if normalized_model.starts_with("abab") || normalized_model.starts_with("minimax") {
+        return Some((text.chars().count() as f64 / 1.33) as usize);
+    }
+
+    // vv-llm 0.2.x exposes both BPEs but only dispatches a few model names.
+    let tokenizer_model = if normalized_model == "gpt-3.5-turbo"
+        || normalized_model.starts_with("moonshot")
+        || normalized_model.starts_with("kimi")
+        || normalized_model.starts_with("gemini")
+        || normalized_model.starts_with("stepfun")
+        || normalized_model.starts_with("glm")
+    {
+        "gpt-3.5-turbo"
+    } else {
+        "gpt-4o"
+    };
+    vv_llm::utilities::count_tokens(text, tokenizer_model).ok()
 }
 
 fn is_cjk(ch: char) -> bool {

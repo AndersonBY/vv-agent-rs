@@ -87,15 +87,6 @@ pub(in crate::types::dict) fn no_tool_policy_value(policy: NoToolPolicy) -> &'st
     }
 }
 
-pub(in crate::types::dict) fn parse_no_tool_policy(value: &str) -> Result<NoToolPolicy, String> {
-    match value {
-        "continue" => Ok(NoToolPolicy::Continue),
-        "wait_user" => Ok(NoToolPolicy::WaitUser),
-        "finish" => Ok(NoToolPolicy::Finish),
-        other => Err(format!("unknown no_tool_policy: {other}")),
-    }
-}
-
 pub(in crate::types::dict) fn agent_status_value(status: AgentStatus) -> &'static str {
     match status {
         AgentStatus::Pending => "pending",

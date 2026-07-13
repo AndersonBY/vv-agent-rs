@@ -7,17 +7,24 @@ use vv_agent::skills::{
     discover_skill_dirs, find_skill_md, metadata_to_prompt_entries, normalize_skill_list,
     normalize_validation_mode, parse_frontmatter, read_properties, read_skill, render_skills_xml,
     to_available_skills_xml, validate_metadata, validate_metadata_with_diagnostics, SkillEntry,
-    SkillProperties,
+    SkillProperties, VALIDATION_MODES,
 };
 
 #[test]
 fn skills_public_api_validates_metadata() {
     assert_eq!(
-        normalize_validation_mode(Some("relaxed"))
+        normalize_validation_mode(Some("compat"))
             .expect("mode")
             .as_str(),
-        "relaxed"
+        "compat"
     );
+    assert_eq!(
+        normalize_validation_mode(Some("relaxed"))
+            .expect("legacy mode alias")
+            .as_str(),
+        "compat"
+    );
+    assert_eq!(VALIDATION_MODES, ["strict", "compat", "minimal"]);
     assert!(normalize_validation_mode(Some("unknown")).is_err());
 
     let metadata = BTreeMap::from([
@@ -88,6 +95,67 @@ fn skills_public_api_validates_metadata() {
 }
 
 #[test]
+fn skills_compat_mode_matches_python_validation_semantics() {
+    let metadata = BTreeMap::from([
+        ("name".to_string(), json!("review-code")),
+        ("description".to_string(), json!("Review code safely")),
+        ("compatibility".to_string(), json!(123)),
+        ("unexpected".to_string(), json!(true)),
+    ]);
+    let compat = validate_metadata_with_diagnostics(
+        &metadata,
+        Some(Path::new("different-dir")),
+        Some("compat"),
+    )
+    .expect("compat diagnostics");
+
+    assert!(compat
+        .errors
+        .iter()
+        .any(|error| error == "Field 'compatibility' must be a string"));
+    assert!(compat
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("Unexpected fields")));
+    assert!(compat
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("Directory name")));
+
+    let minimal =
+        validate_metadata_with_diagnostics(&metadata, None, Some("minimal")).expect("minimal");
+    assert!(!minimal
+        .errors
+        .iter()
+        .any(|error| error.contains("compatibility")));
+    assert!(minimal
+        .warnings
+        .iter()
+        .any(|warning| warning == "Field 'compatibility' must be a string"));
+
+    let unicode_compatibility = BTreeMap::from([
+        ("name".to_string(), json!("review-code")),
+        ("description".to_string(), json!("Review code safely")),
+        ("compatibility".to_string(), json!("界".repeat(500))),
+    ]);
+    assert!(
+        validate_metadata(&unicode_compatibility, None, Some("strict"))
+            .expect("unicode compatibility")
+            .is_empty()
+    );
+
+    let too_long = BTreeMap::from([
+        ("name".to_string(), json!("review-code")),
+        ("description".to_string(), json!("Review code safely")),
+        ("compatibility".to_string(), json!("界".repeat(501))),
+    ]);
+    assert!(validate_metadata(&too_long, None, Some("compat"))
+        .expect("long compatibility")
+        .iter()
+        .any(|error| error.contains("500 character limit")));
+}
+
+#[test]
 fn skills_public_api_renders_available_skills_xml_with_budget() {
     let entry = SkillEntry {
         name: "review-code".to_string(),
@@ -129,12 +197,29 @@ fn skills_public_api_renders_available_skills_xml_with_budget() {
         name: "review-code".to_string(),
         description: "Review code".to_string(),
         license: Some("MIT".to_string()),
+        compatibility: Some("rust>=1.80".to_string()),
         allowed_tools: Some("read_file".to_string()),
         metadata: BTreeMap::from([("owner".to_string(), "agent".to_string())]),
     };
     let payload = properties.to_value();
+    assert_eq!(payload["compatibility"], "rust>=1.80");
     assert_eq!(payload["allowed-tools"], "read_file");
     assert_eq!(payload["metadata"]["owner"], "agent");
+}
+
+#[test]
+fn skills_prompt_budget_counts_unicode_characters_instead_of_utf8_bytes() {
+    let entry = SkillEntry {
+        name: "unicode-skill".to_string(),
+        description: "界".repeat(30),
+        location: Some("skills/unicode-skill/SKILL.md".to_string()),
+        ..SkillEntry::default()
+    };
+    let full = render_skills_xml(std::slice::from_ref(&entry), usize::MAX);
+    let character_budget = full.chars().count();
+
+    assert!(full.len() > character_budget);
+    assert_eq!(render_skills_xml(&[entry], character_budget), full);
 }
 
 #[test]
@@ -147,6 +232,7 @@ fn skills_public_api_parses_and_loads_skill_dirs() {
 name: review-code
 description: Review code safely
 license: MIT
+compatibility: rust>=1.80
 allowed-tools: read_file, search_files
 metadata:
   owner: agent
@@ -180,6 +266,7 @@ Use these instructions.
     let properties = read_properties(&skill_dir).expect("properties");
     assert_eq!(properties.name, "review-code");
     assert_eq!(properties.license.as_deref(), Some("MIT"));
+    assert_eq!(properties.compatibility.as_deref(), Some("rust>=1.80"));
     assert_eq!(
         properties.allowed_tools.as_deref(),
         Some("read_file, search_files")
@@ -227,22 +314,19 @@ Use these instructions.
 }
 
 #[test]
-fn skills_public_api_rejects_runtime_requirement_frontmatter() {
+fn skills_public_api_accepts_compatibility_frontmatter() {
     let workspace = tempfile::tempdir().expect("workspace");
     let skill_dir = workspace.path().join("skills/runtime-ready");
     fs::create_dir_all(&skill_dir).expect("skill dir");
-    let runtime_requirement_field = runtime_requirement_field();
     fs::write(
         skill_dir.join("SKILL.md"),
-        format!(
-            r#"---
+        r#"---
 name: runtime-ready
 description: Runtime-ready skill
-{runtime_requirement_field}: rust>=1.80
+compatibility: rust>=1.80
 ---
 Use these instructions.
-"#
-        ),
+"#,
     )
     .expect("write skill");
 
@@ -257,7 +341,7 @@ Use these instructions.
                 Value::String("Runtime-ready skill".to_string()),
             ),
             (
-                runtime_requirement_field,
+                "compatibility".to_string(),
                 Value::String("rust>=1.80".to_string()),
             ),
         ]),
@@ -265,20 +349,10 @@ Use these instructions.
         Some("strict"),
     )
     .expect("diagnostics");
-    assert!(
-        diagnostics
-            .errors
-            .iter()
-            .any(|error| error.contains("Unexpected fields")),
-        "runtime requirement metadata should not be accepted as first-class skill metadata: {diagnostics:?}"
-    );
-}
+    assert!(diagnostics.errors.is_empty(), "{diagnostics:?}");
 
-fn runtime_requirement_field() -> String {
-    String::from_utf8(vec![
-        0x63, 0x6f, 0x6d, 0x70, 0x61, 0x74, 0x69, 0x62, 0x69, 0x6c, 0x69, 0x74, 0x79,
-    ])
-    .expect("runtime requirement field fixture is valid utf-8")
+    let properties = read_properties(&skill_dir).expect("properties");
+    assert_eq!(properties.compatibility.as_deref(), Some("rust>=1.80"));
 }
 
 #[test]

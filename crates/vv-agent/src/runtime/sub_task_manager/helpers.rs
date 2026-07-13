@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use chrono::{SecondsFormat, Utc};
 use serde_json::Value;
 
-use crate::types::AgentStatus;
+use crate::types::{AgentStatus, SubTaskOutcome};
 
 pub(super) fn status_label(status: AgentStatus) -> &'static str {
     match status {
@@ -15,6 +15,18 @@ pub(super) fn status_label(status: AgentStatus) -> &'static str {
         AgentStatus::Failed => "failed",
         AgentStatus::MaxCycles => "max_cycles",
     }
+}
+
+pub(super) fn normalize_failed_outcome(mut outcome: SubTaskOutcome) -> SubTaskOutcome {
+    if outcome.status == AgentStatus::Failed
+        && outcome
+            .error_code
+            .as_deref()
+            .is_none_or(|error_code| error_code.trim().is_empty())
+    {
+        outcome.error_code = Some("sub_task_failed".to_string());
+    }
+    outcome
 }
 
 pub(super) fn now_iso() -> String {
@@ -49,7 +61,7 @@ pub(super) fn preview_text(value: Option<&Value>) -> Option<String> {
     if text.is_empty() {
         return None;
     }
-    if text.len() <= PREVIEW_LIMIT {
+    if text.chars().count() <= PREVIEW_LIMIT {
         return Some(text.to_string());
     }
     let mut truncated = text

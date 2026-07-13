@@ -5,7 +5,9 @@ use serde_json::Value;
 use crate::llm::LlmClient;
 use std::path::Path;
 
-use crate::types::{AgentResult, AgentTask, CycleRecord, ToolCall, ToolExecutionResult};
+use crate::types::{
+    AgentResult, AgentTask, CycleRecord, ToolCall, ToolExecutionResult, ToolResultStatus,
+};
 
 use super::{AgentRuntime, RuntimeRunControls};
 
@@ -14,8 +16,20 @@ impl<C: LlmClient> AgentRuntime<C> {
         &self,
         controls: &RuntimeRunControls,
         event: &str,
-        payload: BTreeMap<String, Value>,
+        mut payload: BTreeMap<String, Value>,
     ) {
+        if let Some(context) = controls.execution_context.as_ref() {
+            for (metadata_key, payload_key) in [
+                ("_vv_agent_run_id", "run_id"),
+                ("_vv_agent_trace_id", "trace_id"),
+                ("_vv_agent_agent_name", "agent_name"),
+                ("_vv_agent_session_id", "session_id"),
+            ] {
+                if let Some(value) = context.metadata.get(metadata_key) {
+                    payload.insert(payload_key.to_string(), value.clone());
+                }
+            }
+        }
         if let Some(handler) = &self.log_handler {
             if let Ok(mut handler) = handler.lock() {
                 (handler)(event, &payload);
@@ -89,12 +103,14 @@ impl<C: LlmClient> AgentRuntime<C> {
                     "agent_name".to_string(),
                     Value::String(
                         task.metadata
-                            .get("agent_name")
+                            .get("_vv_agent_agent_name")
+                            .or_else(|| task.metadata.get("agent_name"))
                             .and_then(Value::as_str)
                             .unwrap_or(&task.task_id)
                             .to_string(),
                     ),
                 ),
+                ("input".to_string(), Value::String(task.user_prompt.clone())),
                 ("model".to_string(), Value::String(task.model.clone())),
                 (
                     "workspace".to_string(),
@@ -148,7 +164,7 @@ impl<C: LlmClient> AgentRuntime<C> {
                 ),
                 (
                     "status".to_string(),
-                    serde_json::to_value(result.status).unwrap_or(Value::Null),
+                    tool_result_status_value(result.status),
                 ),
                 (
                     "directive".to_string(),
@@ -189,4 +205,15 @@ impl<C: LlmClient> AgentRuntime<C> {
             .collect::<String>();
         format!("{prefix}...")
     }
+}
+
+pub(super) fn tool_result_status_value(status: ToolResultStatus) -> Value {
+    let status = match status {
+        ToolResultStatus::Success => "success",
+        ToolResultStatus::Error => "error",
+        ToolResultStatus::WaitResponse => "wait_response",
+        ToolResultStatus::Running => "running",
+        ToolResultStatus::PendingCompress => "pending_compress",
+    };
+    Value::String(status.to_string())
 }

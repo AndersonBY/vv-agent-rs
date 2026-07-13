@@ -3,10 +3,10 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{path_escapes_workspace_error, stringify_tool_arg, tool_error};
-use crate::types::{ToolArguments, ToolExecutionResult};
+use crate::tools::common::{path_escapes_workspace_error, stringify_tool_arg};
+use crate::types::{Metadata, ToolArguments, ToolExecutionResult};
 
-use super::super::workspace_backend_error;
+use super::super::edit::{workspace_tool_error, workspace_tool_error_with_details};
 
 pub fn file_info(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
     let spec = file_info_tool();
@@ -19,7 +19,11 @@ pub(crate) fn file_info_tool() -> ToolSpec {
         "Return metadata for a workspace path.",
         Arc::new(|context, arguments| {
             if !arguments.contains_key("path") {
-                return tool_error("missing required argument: path");
+                return workspace_tool_error_with_details(
+                    "`path` is required.",
+                    "invalid_arguments",
+                    Metadata::from([("missing_arguments".to_string(), json!(["path"]))]),
+                );
             }
             let path = stringify_tool_arg(arguments.get("path"), "");
             if let Err(error) = context.resolve_workspace_path(&path) {
@@ -41,8 +45,12 @@ pub(crate) fn file_info_tool() -> ToolSpec {
                     }
                     ToolExecutionResult::success("", payload.to_string())
                 }
-                Ok(None) => tool_error(format!("path not found: {path}")),
-                Err(error) => workspace_backend_error(error),
+                Ok(None) => {
+                    workspace_tool_error(format!("path not found: {path}"), "path_not_found", &path)
+                }
+                Err(error) => {
+                    workspace_tool_error(error.to_string(), "workspace_backend_error", &path)
+                }
             }
         }),
     );

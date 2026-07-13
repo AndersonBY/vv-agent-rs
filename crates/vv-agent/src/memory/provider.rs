@@ -7,6 +7,10 @@ use crate::types::Metadata;
 pub type MemoryFuture<T> = Pin<Box<dyn Future<Output = Result<T, MemoryError>> + Send>>;
 
 pub trait MemoryProvider: Send + Sync {
+    fn provider_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
     fn search(&self, request: MemorySearchRequest) -> MemoryFuture<Vec<MemorySearchResult>>;
     fn save(&self, request: MemorySaveRequest) -> MemoryFuture<MemorySaveResult>;
 
@@ -19,10 +23,21 @@ pub trait MemoryProvider: Send + Sync {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MemorySearchRequest {
     pub query: String,
+    pub limit: usize,
     pub metadata: Metadata,
+}
+
+impl Default for MemorySearchRequest {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            limit: 10,
+            metadata: Metadata::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

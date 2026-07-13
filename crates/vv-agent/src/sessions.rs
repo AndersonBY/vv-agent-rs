@@ -1,9 +1,14 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use rusqlite::{params, Connection, OptionalExtension};
+use redis::{Commands, Connection as RedisConnection};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 
-use crate::types::{Message, MessageRole};
+use crate::types::{Message, MessageRole, ToolCall};
 
 pub trait Session: Send + Sync {
     fn session_id(&self) -> &str;
@@ -11,13 +16,16 @@ pub trait Session: Send + Sync {
     fn add_items(&self, items: Vec<SessionItem>) -> SessionFuture<()>;
     fn pop_item(&self) -> SessionFuture<Option<SessionItem>>;
     fn clear(&self) -> SessionFuture<()>;
+
+    fn clear_session(&self) -> SessionFuture<()> {
+        self.clear()
+    }
 }
 
 pub type SessionFuture<T> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, String>> + Send>>;
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SessionItem {
     User {
         content: String,
@@ -32,6 +40,9 @@ pub enum SessionItem {
         content: String,
         tool_call_id: String,
     },
+    Message {
+        message: Message,
+    },
 }
 
 impl SessionItem {
@@ -44,10 +55,26 @@ impl SessionItem {
                 content,
                 tool_call_id,
             } => Message::tool(content.clone(), tool_call_id.clone()),
+            Self::Message { message } => message.clone(),
         }
     }
 
     pub fn from_message(message: &Message) -> Option<Self> {
+        let has_unrepresentable_tool_call_id = match message.role {
+            MessageRole::Tool => message.tool_call_id.is_none(),
+            _ => message.tool_call_id.is_some(),
+        };
+        if has_unrepresentable_tool_call_id
+            || message.name.is_some()
+            || !message.tool_calls.is_empty()
+            || message.reasoning_content.is_some()
+            || message.image_url.is_some()
+            || !message.metadata.is_empty()
+        {
+            return Some(Self::Message {
+                message: message.clone(),
+            });
+        }
         match message.role {
             MessageRole::System => Some(Self::System {
                 content: message.content.clone(),
@@ -63,6 +90,167 @@ impl SessionItem {
                 tool_call_id: message.tool_call_id.clone().unwrap_or_default(),
             }),
         }
+    }
+}
+
+impl Serialize for SessionItem {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let message = self.to_message();
+        SessionMessageWire(&message).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionItem {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        if value.get("type").is_some() {
+            let tagged = TaggedSessionItem::deserialize(value).map_err(serde::de::Error::custom)?;
+            return tagged.into_session_item().map_err(serde::de::Error::custom);
+        }
+        let message = Message::from_dict(&value).map_err(serde::de::Error::custom)?;
+        SessionItem::from_message(&message)
+            .ok_or_else(|| serde::de::Error::custom("unsupported session message role"))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum TaggedSessionItem {
+    User {
+        content: String,
+    },
+    Assistant {
+        content: String,
+    },
+    System {
+        content: String,
+    },
+    Tool {
+        content: String,
+        tool_call_id: String,
+    },
+    Message {
+        message: Value,
+    },
+}
+
+impl TaggedSessionItem {
+    fn into_session_item(self) -> Result<SessionItem, String> {
+        match self {
+            Self::User { content } => Ok(SessionItem::User { content }),
+            Self::Assistant { content } => Ok(SessionItem::Assistant { content }),
+            Self::System { content } => Ok(SessionItem::System { content }),
+            Self::Tool {
+                content,
+                tool_call_id,
+            } => Ok(SessionItem::Tool {
+                content,
+                tool_call_id,
+            }),
+            Self::Message { message } => {
+                let message = Message::from_dict(&message)?;
+                SessionItem::from_message(&message)
+                    .ok_or_else(|| "unsupported session message role".to_string())
+            }
+        }
+    }
+}
+
+struct SessionMessageWire<'a>(&'a Message);
+
+impl Serialize for SessionMessageWire<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let message = self.0;
+        let mut field_count = 2;
+        field_count += usize::from(message.name.is_some());
+        field_count += usize::from(message.tool_call_id.is_some());
+        field_count += usize::from(!message.tool_calls.is_empty());
+        field_count += usize::from(message.reasoning_content.is_some());
+        field_count += usize::from(message.image_url.is_some());
+        field_count += usize::from(!message.metadata.is_empty());
+
+        let mut state = serializer.serialize_map(Some(field_count))?;
+        state.serialize_entry("role", &message.role)?;
+        state.serialize_entry("content", &message.content)?;
+        if let Some(name) = &message.name {
+            state.serialize_entry("name", name)?;
+        }
+        if let Some(tool_call_id) = &message.tool_call_id {
+            state.serialize_entry("tool_call_id", tool_call_id)?;
+        }
+        if !message.tool_calls.is_empty() {
+            state.serialize_entry("tool_calls", &SessionToolCallsWire(&message.tool_calls))?;
+        }
+        if let Some(reasoning_content) = &message.reasoning_content {
+            state.serialize_entry("reasoning_content", reasoning_content)?;
+        }
+        if let Some(image_url) = &message.image_url {
+            state.serialize_entry("image_url", image_url)?;
+        }
+        if !message.metadata.is_empty() {
+            state.serialize_entry("metadata", &message.metadata)?;
+        }
+        state.end()
+    }
+}
+
+struct SessionToolCallsWire<'a>(&'a [ToolCall]);
+
+impl Serialize for SessionToolCallsWire<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+        for tool_call in self.0 {
+            sequence.serialize_element(&SessionToolCallWire(tool_call))?;
+        }
+        sequence.end()
+    }
+}
+
+struct SessionToolCallWire<'a>(&'a ToolCall);
+
+impl Serialize for SessionToolCallWire<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let tool_call = self.0;
+        let field_count = 3 + usize::from(tool_call.extra_content.is_some());
+        let mut state = serializer.serialize_map(Some(field_count))?;
+        state.serialize_entry("id", &tool_call.id)?;
+        state.serialize_entry("type", "function")?;
+        state.serialize_entry("function", &SessionToolFunctionWire(tool_call))?;
+        if let Some(extra_content) = &tool_call.extra_content {
+            state.serialize_entry("extra_content", extra_content)?;
+        }
+        state.end()
+    }
+}
+
+struct SessionToolFunctionWire<'a>(&'a ToolCall);
+
+impl Serialize for SessionToolFunctionWire<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_map(Some(2))?;
+        state.serialize_entry("name", &self.0.name)?;
+        let arguments =
+            serde_json::to_string(&self.0.arguments).map_err(serde::ser::Error::custom)?;
+        state.serialize_entry("arguments", &arguments)?;
+        state.end()
     }
 }
 
@@ -145,10 +333,53 @@ pub trait SessionStore: Send + Sync {
     fn session(&self, session_id: &str) -> Arc<dyn Session>;
 }
 
+#[derive(Clone, Default)]
+pub struct MemorySessionStore {
+    sessions: Arc<Mutex<HashMap<String, Arc<dyn Session>>>>,
+}
+
+impl MemorySessionStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn session(&self, session_id: &str) -> Arc<dyn Session> {
+        <Self as SessionStore>::session(self, session_id)
+    }
+}
+
+impl SessionStore for MemorySessionStore {
+    fn session(&self, session_id: &str) -> Arc<dyn Session> {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .expect("memory session store lock poisoned");
+        sessions
+            .entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(MemorySession::new(session_id)))
+            .clone()
+    }
+}
+
 #[derive(Clone)]
 pub struct SqliteSessionStore {
     connection: Arc<Mutex<Connection>>,
 }
+
+const SQLITE_SESSION_SCHEMA_VERSION: i64 = 1;
+const CANONICAL_SESSION_COLUMNS: [&str; 3] = ["session_id", "item_index", "payload"];
+const RUST_LEGACY_SESSION_COLUMNS: [&str; 3] = ["id", "session_id", "item_json"];
+const CREATE_SESSION_ITEMS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS session_items (
+        session_id TEXT NOT NULL,
+        item_index INTEGER PRIMARY KEY AUTOINCREMENT,
+        payload TEXT NOT NULL
+    )
+"#;
+const CREATE_SESSION_ITEMS_INDEX: &str = r#"
+    CREATE INDEX IF NOT EXISTS idx_session_items_session_id_item_index
+        ON session_items (session_id, item_index)
+"#;
 
 impl SqliteSessionStore {
     pub fn open_memory() -> Result<Self, String> {
@@ -156,21 +387,16 @@ impl SqliteSessionStore {
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self, String> {
-        let connection = Connection::open(path).map_err(sqlite_error)?;
+        let mut connection = Connection::open(path).map_err(sqlite_error)?;
         connection
             .execute_batch(
                 r#"
+                PRAGMA busy_timeout = 5000;
                 PRAGMA journal_mode=WAL;
-                CREATE TABLE IF NOT EXISTS session_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id TEXT NOT NULL,
-                    item_json TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_session_items_session_id_id
-                    ON session_items (session_id, id);
                 "#,
             )
             .map_err(sqlite_error)?;
+        initialize_sqlite_session_schema(&mut connection)?;
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
         })
@@ -212,15 +438,15 @@ impl Session for SqliteSession {
                 connection
                     .prepare(
                         r#"
-                        SELECT item_json
+                        SELECT payload
                         FROM (
-                            SELECT id, item_json
+                            SELECT item_index, payload
                             FROM session_items
                             WHERE session_id = ?1
-                            ORDER BY id DESC
+                            ORDER BY item_index DESC
                             LIMIT ?2
                         )
-                        ORDER BY id ASC
+                        ORDER BY item_index ASC
                         "#,
                     )
                     .map_err(sqlite_error)?
@@ -228,25 +454,28 @@ impl Session for SqliteSession {
                 connection
                     .prepare(
                         r#"
-                        SELECT item_json
+                        SELECT payload
                         FROM session_items
                         WHERE session_id = ?1
-                        ORDER BY id ASC
+                        ORDER BY item_index ASC
                         "#,
                     )
                     .map_err(sqlite_error)?
             };
             let mut rows = if let Some(limit) = limit {
                 statement
-                    .query(params![session_id, limit as i64])
+                    .query(params![
+                        session_id,
+                        i64::try_from(limit).unwrap_or(i64::MAX)
+                    ])
                     .map_err(sqlite_error)?
             } else {
                 statement.query(params![session_id]).map_err(sqlite_error)?
             };
             let mut items = Vec::new();
             while let Some(row) = rows.next().map_err(sqlite_error)? {
-                let item_json: String = row.get(0).map_err(sqlite_error)?;
-                items.push(serde_json::from_str(&item_json).map_err(json_error)?);
+                let payload: String = row.get(0).map_err(sqlite_error)?;
+                items.push(serde_json::from_str(&payload).map_err(json_error)?);
             }
             Ok(items)
         })
@@ -256,16 +485,19 @@ impl Session for SqliteSession {
         let session_id = self.session_id.to_string();
         let connection = self.connection.clone();
         Box::pin(async move {
+            if items.is_empty() {
+                return Ok(());
+            }
             let mut connection = connection
                 .lock()
                 .map_err(|_| "sqlite session store lock poisoned".to_string())?;
             let transaction = connection.transaction().map_err(sqlite_error)?;
             for item in items {
-                let item_json = serde_json::to_string(&item).map_err(json_error)?;
+                let payload = serde_json::to_string(&item).map_err(json_error)?;
                 transaction
                     .execute(
-                        "INSERT INTO session_items (session_id, item_json) VALUES (?1, ?2)",
-                        params![session_id, item_json],
+                        "INSERT INTO session_items (session_id, payload) VALUES (?1, ?2)",
+                        params![session_id, payload],
                     )
                     .map_err(sqlite_error)?;
             }
@@ -285,10 +517,10 @@ impl Session for SqliteSession {
             let row = transaction
                 .query_row(
                     r#"
-                    SELECT id, item_json
+                    SELECT item_index, payload
                     FROM session_items
                     WHERE session_id = ?1
-                    ORDER BY id DESC
+                    ORDER BY item_index DESC
                     LIMIT 1
                     "#,
                     params![session_id],
@@ -296,15 +528,19 @@ impl Session for SqliteSession {
                 )
                 .optional()
                 .map_err(sqlite_error)?;
-            let Some((id, item_json)) = row else {
+            let Some((item_index, payload)) = row else {
                 transaction.commit().map_err(sqlite_error)?;
                 return Ok(None);
             };
+            let item = serde_json::from_str(&payload).map_err(json_error)?;
             transaction
-                .execute("DELETE FROM session_items WHERE id = ?1", params![id])
+                .execute(
+                    "DELETE FROM session_items WHERE item_index = ?1",
+                    params![item_index],
+                )
                 .map_err(sqlite_error)?;
             transaction.commit().map_err(sqlite_error)?;
-            Ok(Some(serde_json::from_str(&item_json).map_err(json_error)?))
+            Ok(Some(item))
         })
     }
 
@@ -312,14 +548,271 @@ impl Session for SqliteSession {
         let session_id = self.session_id.to_string();
         let connection = self.connection.clone();
         Box::pin(async move {
-            connection
+            let mut connection = connection
                 .lock()
-                .map_err(|_| "sqlite session store lock poisoned".to_string())?
+                .map_err(|_| "sqlite session store lock poisoned".to_string())?;
+            let transaction = connection.transaction().map_err(sqlite_error)?;
+            transaction
                 .execute(
                     "DELETE FROM session_items WHERE session_id = ?1",
                     params![session_id],
                 )
                 .map_err(sqlite_error)?;
+            transaction.commit().map_err(sqlite_error)?;
+            Ok(())
+        })
+    }
+}
+
+fn initialize_sqlite_session_schema(connection: &mut Connection) -> Result<(), String> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sqlite_error)?;
+    let version = transaction
+        .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+        .map_err(sqlite_error)?;
+    if version > SQLITE_SESSION_SCHEMA_VERSION {
+        return Err(format!(
+            "session schema version {version} is newer than supported version \
+             {SQLITE_SESSION_SCHEMA_VERSION}"
+        ));
+    }
+
+    let table_exists = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master \
+             WHERE type = 'table' AND name = 'session_items')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(sqlite_error)?
+        != 0;
+    if !table_exists {
+        transaction
+            .execute_batch(CREATE_SESSION_ITEMS_TABLE)
+            .map_err(sqlite_error)?;
+    } else {
+        let columns = session_table_columns(&transaction)?;
+        if columns == RUST_LEGACY_SESSION_COLUMNS {
+            migrate_rust_legacy_session_schema(&transaction)?;
+        } else if columns != CANONICAL_SESSION_COLUMNS {
+            return Err(format!(
+                "unsupported session_items schema columns: {columns:?}"
+            ));
+        }
+    }
+
+    transaction
+        .execute_batch(CREATE_SESSION_ITEMS_INDEX)
+        .map_err(sqlite_error)?;
+    transaction
+        .execute_batch("PRAGMA user_version = 1;")
+        .map_err(sqlite_error)?;
+    transaction.commit().map_err(sqlite_error)
+}
+
+fn session_table_columns(connection: &Connection) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(session_items)")
+        .map_err(sqlite_error)?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(sqlite_error)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(sqlite_error)
+}
+
+fn migrate_rust_legacy_session_schema(connection: &Connection) -> Result<(), String> {
+    let legacy_table_exists = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master \
+             WHERE type = 'table' AND name = 'session_items_legacy_v0')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(sqlite_error)?
+        != 0;
+    if legacy_table_exists {
+        return Err(
+            "cannot migrate session_items while session_items_legacy_v0 exists".to_string(),
+        );
+    }
+
+    let legacy_rows = {
+        let mut statement = connection
+            .prepare("SELECT id, session_id, item_json FROM session_items ORDER BY id ASC")
+            .map_err(sqlite_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(sqlite_error)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_error)?
+    };
+    let canonical_rows = legacy_rows
+        .into_iter()
+        .map(|(item_index, session_id, item_json)| {
+            let item = serde_json::from_str::<SessionItem>(&item_json).map_err(json_error)?;
+            let payload = serde_json::to_string(&item).map_err(json_error)?;
+            Ok((item_index, session_id, payload))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    connection
+        .execute(
+            "ALTER TABLE session_items RENAME TO session_items_legacy_v0",
+            [],
+        )
+        .map_err(sqlite_error)?;
+    connection
+        .execute_batch(CREATE_SESSION_ITEMS_TABLE)
+        .map_err(sqlite_error)?;
+    for (item_index, session_id, payload) in canonical_rows {
+        connection
+            .execute(
+                "INSERT INTO session_items (item_index, session_id, payload) \
+                 VALUES (?1, ?2, ?3)",
+                params![item_index, session_id, payload],
+            )
+            .map_err(sqlite_error)?;
+    }
+    connection
+        .execute("DROP TABLE session_items_legacy_v0", [])
+        .map_err(sqlite_error)?;
+    Ok(())
+}
+
+const REDIS_SESSION_KEY_PREFIX: &str = "vv-agent-session";
+
+#[derive(Clone)]
+pub struct RedisSessionStore {
+    connection: Arc<Mutex<RedisConnection>>,
+    key_prefix: Arc<String>,
+}
+
+impl RedisSessionStore {
+    pub fn new(redis_url: impl AsRef<str>) -> Result<Self, String> {
+        Self::with_key_prefix(redis_url, REDIS_SESSION_KEY_PREFIX)
+    }
+
+    pub fn with_key_prefix(
+        redis_url: impl AsRef<str>,
+        key_prefix: impl Into<String>,
+    ) -> Result<Self, String> {
+        let client = redis::Client::open(redis_url.as_ref()).map_err(redis_error)?;
+        let connection = client.get_connection().map_err(redis_error)?;
+        Ok(Self {
+            connection: Arc::new(Mutex::new(connection)),
+            key_prefix: Arc::new(key_prefix.into()),
+        })
+    }
+
+    pub fn session(&self, session_id: &str) -> Arc<dyn Session> {
+        <Self as SessionStore>::session(self, session_id)
+    }
+}
+
+impl SessionStore for RedisSessionStore {
+    fn session(&self, session_id: &str) -> Arc<dyn Session> {
+        Arc::new(RedisSession {
+            session_id: Arc::new(session_id.to_string()),
+            connection: self.connection.clone(),
+            key_prefix: self.key_prefix.clone(),
+        })
+    }
+}
+
+#[derive(Clone)]
+struct RedisSession {
+    session_id: Arc<String>,
+    connection: Arc<Mutex<RedisConnection>>,
+    key_prefix: Arc<String>,
+}
+
+impl RedisSession {
+    fn key(&self) -> String {
+        format!("{}:{}", self.key_prefix, self.session_id)
+    }
+}
+
+impl Session for RedisSession {
+    fn session_id(&self) -> &str {
+        self.session_id.as_str()
+    }
+
+    fn get_items(&self, limit: Option<usize>) -> SessionFuture<Vec<SessionItem>> {
+        let connection = self.connection.clone();
+        let key = self.key();
+        Box::pin(async move {
+            let raw_items: Vec<String> = {
+                let mut connection = connection
+                    .lock()
+                    .map_err(|_| "redis session store lock poisoned".to_string())?;
+                match limit {
+                    Some(0) => return Ok(Vec::new()),
+                    Some(limit) => {
+                        let limit = isize::try_from(limit).unwrap_or(isize::MAX);
+                        connection.lrange(&key, -limit, -1).map_err(redis_error)?
+                    }
+                    None => connection.lrange(&key, 0, -1).map_err(redis_error)?,
+                }
+            };
+            raw_items
+                .into_iter()
+                .map(|item_json| serde_json::from_str(&item_json).map_err(json_error))
+                .collect()
+        })
+    }
+
+    fn add_items(&self, items: Vec<SessionItem>) -> SessionFuture<()> {
+        let connection = self.connection.clone();
+        let key = self.key();
+        Box::pin(async move {
+            if items.is_empty() {
+                return Ok(());
+            }
+            let payloads = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(json_error)?;
+            connection
+                .lock()
+                .map_err(|_| "redis session store lock poisoned".to_string())?
+                .rpush::<_, _, usize>(key, payloads)
+                .map_err(redis_error)?;
+            Ok(())
+        })
+    }
+
+    fn pop_item(&self) -> SessionFuture<Option<SessionItem>> {
+        let connection = self.connection.clone();
+        let key = self.key();
+        Box::pin(async move {
+            let raw: Option<String> = connection
+                .lock()
+                .map_err(|_| "redis session store lock poisoned".to_string())?
+                .rpop(key, None)
+                .map_err(redis_error)?;
+            raw.map(|item_json| serde_json::from_str(&item_json).map_err(json_error))
+                .transpose()
+        })
+    }
+
+    fn clear(&self) -> SessionFuture<()> {
+        let connection = self.connection.clone();
+        let key = self.key();
+        Box::pin(async move {
+            connection
+                .lock()
+                .map_err(|_| "redis session store lock poisoned".to_string())?
+                .del::<_, usize>(key)
+                .map_err(redis_error)?;
             Ok(())
         })
     }
@@ -329,33 +822,106 @@ fn sqlite_error(error: rusqlite::Error) -> String {
     error.to_string()
 }
 
+fn redis_error(error: redis::RedisError) -> String {
+    error.to_string()
+}
+
 fn json_error(error: serde_json::Error) -> String {
     error.to_string()
 }
 
 pub async fn session_store_conformance(store: &dyn SessionStore) -> Result<(), String> {
     let session = store.session("conformance-thread");
-    session.clear().await?;
-    session
-        .add_items(vec![SessionItem::User {
-            content: "hello".to_string(),
-        }])
-        .await?;
+    let other_session = store.session("conformance-thread-other");
+    session.clear_session().await?;
+    other_session.clear().await?;
+
+    let mut user = Message::user("inspect the image");
+    user.image_url = Some("data:image/png;base64,AA==".to_string());
+    user.metadata.insert("sequence".to_string(), Value::from(1));
+
+    let mut assistant = Message::assistant("");
+    assistant.name = Some("planner".to_string());
+    assistant.reasoning_content = Some("Check persistence details.".to_string());
+    assistant.tool_calls = vec![ToolCall::new(
+        "call_1",
+        "lookup",
+        [(
+            "query".to_string(),
+            Value::String("session parity".to_string()),
+        )]
+        .into_iter()
+        .collect(),
+    )];
+    assistant
+        .metadata
+        .insert("sequence".to_string(), Value::from(2));
+
+    let mut tool = Message::tool("result: ok", "call_1");
+    tool.name = Some("lookup".to_string());
+    tool.image_url = Some("data:image/png;base64,AQ==".to_string());
+    tool.metadata.insert("sequence".to_string(), Value::from(3));
+
+    let expected = [user, assistant, tool]
+        .iter()
+        .map(|message| {
+            SessionItem::from_message(message)
+                .ok_or_else(|| "failed to create conformance session item".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    session.add_items(expected.clone()).await?;
+
     let same_session = store.session("conformance-thread");
     let items = same_session.get_items(None).await?;
-    if items
-        != vec![SessionItem::User {
-            content: "hello".to_string(),
-        }]
+    if items != expected {
+        return Err("session store did not preserve appended messages".to_string());
+    }
+    if same_session.get_items(Some(2)).await? != expected[1..] {
+        return Err("session store limit did not return newest messages in order".to_string());
+    }
+    if !same_session.get_items(Some(0)).await?.is_empty() {
+        return Err("session store limit=0 must return no messages".to_string());
+    }
+    let mut isolated = same_session.get_items(None).await?;
+    let Some(first) = isolated.first_mut() else {
+        return Err("session store returned no snapshot items".to_string());
+    };
+    match first {
+        SessionItem::Message { message } => {
+            message.content = "mutated outside the store".to_string();
+        }
+        SessionItem::User { content }
+        | SessionItem::Assistant { content }
+        | SessionItem::System { content }
+        | SessionItem::Tool { content, .. } => {
+            *content = "mutated outside the store".to_string();
+        }
+    }
+    if same_session
+        .get_items(None)
+        .await?
+        .first()
+        .map(SessionItem::to_message)
+        .map(|message| message.content)
+        != Some(expected[0].to_message().content)
     {
-        return Err("session store did not persist appended items".to_string());
+        return Err("session store leaked mutable snapshot items".to_string());
     }
+    if !other_session.get_items(None).await?.is_empty() {
+        return Err("session store did not isolate session ids".to_string());
+    }
+
     let popped = same_session.pop_item().await?;
-    if !matches!(popped, Some(SessionItem::User { content }) if content == "hello") {
-        return Err("session store pop_item returned unexpected item".to_string());
+    if popped.as_ref() != expected.last() {
+        return Err("session store pop_item returned an unexpected message".to_string());
     }
-    if !same_session.get_items(None).await?.is_empty() {
-        return Err("session store pop_item did not remove the item".to_string());
+    if same_session.get_items(None).await? != expected[..2] {
+        return Err("session store pop_item did not remove the message".to_string());
+    }
+
+    same_session.clear().await?;
+    if !session.get_items(None).await?.is_empty() {
+        return Err("session store clear did not clear the session".to_string());
     }
     Ok(())
 }

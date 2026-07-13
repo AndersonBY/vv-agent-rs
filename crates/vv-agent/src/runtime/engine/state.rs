@@ -1,10 +1,10 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::llm::LlmClient;
 use crate::runtime::backends::RuntimeExecutionBackend;
 use crate::runtime::hooks::RuntimeHook;
-use crate::tools::ToolRegistry;
+use crate::tools::{ToolPolicy, ToolRegistry};
 use crate::workspace::WorkspaceBackend;
 
 use super::RuntimeLogHandler;
@@ -21,4 +21,7 @@ pub struct AgentRuntime<C: LlmClient> {
     pub settings_file: Option<PathBuf>,
     pub default_backend: Option<String>,
     pub sub_agent_timeout_seconds: f64,
+    pub(crate) tool_policy: Option<ToolPolicy>,
+    pub(crate) pending_tool_approval:
+        Option<Arc<Mutex<Option<crate::result::PendingToolApproval>>>>,
 }

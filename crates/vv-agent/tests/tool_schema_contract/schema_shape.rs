@@ -1,9 +1,26 @@
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use vv_agent::build_default_registry;
 
 use super::helpers::{
     description, enum_values, property_description, property_names, schema_type, sorted,
 };
+
+const CANONICAL_TOOL_SCHEMA_SHA256: &str =
+    "f85422117d41d28ffa3cdfcfd9a42892854de624808fadc2124f4ebe7a452b61";
+
+#[test]
+fn runtime_schema_export_has_shared_canonical_hash() {
+    let schemas = build_default_registry()
+        .list_openai_schemas(None)
+        .expect("built-in tool schemas");
+    let canonical_json = serde_json::to_string(&schemas).expect("canonical tool schema JSON");
+
+    assert_eq!(
+        format!("{:x}", Sha256::digest(canonical_json.as_bytes())),
+        CANONICAL_TOOL_SCHEMA_SHA256
+    );
+}
 
 #[test]
 fn builtin_tool_required_fields_match_agent_schema_contract() {

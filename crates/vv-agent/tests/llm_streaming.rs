@@ -2,13 +2,14 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use futures_util::stream;
 use serde_json::{json, Value};
 use vv_agent::llm::{PROMPT_CACHE_ENABLED_KEY, SYSTEM_PROMPT_SECTIONS_KEY};
 use vv_agent::{
     AgentRuntime, AgentStatus, AgentTask, ExecutionContext, LlmClient, LlmRequest, Message,
-    RuntimeRunControls, StreamCallback, VvLlmClient,
+    ModelSettings, ResponseFormat, RuntimeRunControls, StreamCallback, ToolChoice, VvLlmClient,
 };
 
 #[derive(Clone, Default)]
@@ -261,6 +262,57 @@ struct CountingFailingChatClient {
     calls: Arc<Mutex<u32>>,
 }
 
+#[derive(Clone, Default)]
+struct ConfigurationFailingChatClient;
+
+impl vv_llm::ChatClient for ConfigurationFailingChatClient {
+    fn provider_name(&self) -> &'static str {
+        "configuration-failing"
+    }
+
+    fn create_completion<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatResponse, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            Err(vv_llm::VvLlmError::Configuration(
+                "invalid local configuration".to_string(),
+            ))
+        })
+    }
+
+    fn create_stream<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatStream, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            Err(vv_llm::VvLlmError::Configuration(
+                "invalid local configuration".to_string(),
+            ))
+        })
+    }
+}
+
 impl CountingFailingChatClient {
     fn calls(&self) -> u32 {
         *self.calls.lock().expect("counting calls lock")
@@ -360,7 +412,7 @@ impl vv_llm::ChatClient for FlakyChatClient {
             let mut failures = failures_remaining.lock().expect("flaky failures lock");
             if *failures > 0 {
                 *failures -= 1;
-                return Err(vv_llm::VvLlmError::Provider(
+                return Err(vv_llm::VvLlmError::Http(
                     "transient endpoint error".to_string(),
                 ));
             }
@@ -396,7 +448,7 @@ impl vv_llm::ChatClient for FlakyChatClient {
             let mut failures = failures_remaining.lock().expect("flaky failures lock");
             if *failures > 0 {
                 *failures -= 1;
-                return Err(vv_llm::VvLlmError::Provider(
+                return Err(vv_llm::VvLlmError::Http(
                     "transient endpoint error".to_string(),
                 ));
             }
@@ -554,6 +606,70 @@ impl vv_llm::ChatClient for UnnormalizedToolCallChatClient {
 #[derive(Clone, Default)]
 struct RecordingMessagesChatClient {
     requests: Arc<Mutex<Vec<vv_llm::ChatRequest>>>,
+}
+
+#[derive(Clone)]
+struct DelayedChatClient {
+    delay: Duration,
+}
+
+impl vv_llm::ChatClient for DelayedChatClient {
+    fn provider_name(&self) -> &'static str {
+        "delayed"
+    }
+
+    fn create_completion<'life0, 'async_trait>(
+        &'life0 self,
+        request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatResponse, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        let delay = self.delay;
+        Box::pin(async move {
+            tokio::time::sleep(delay).await;
+            Ok(vv_llm::ChatResponse {
+                id: "delayed-response".to_string(),
+                model: request.model,
+                content: "done".to_string(),
+                tool_calls: Vec::new(),
+                reasoning_content: None,
+                usage: None,
+            })
+        })
+    }
+
+    fn create_stream<'life0, 'async_trait>(
+        &'life0 self,
+        _request: vv_llm::ChatRequest,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<vv_llm::ChatStream, vv_llm::VvLlmError>>
+                + Send
+                + 'async_trait,
+        >,
+    >
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait,
+    {
+        let delay = self.delay;
+        Box::pin(async move {
+            tokio::time::sleep(delay).await;
+            Ok(Box::pin(stream::iter([Ok(vv_llm::ChatStreamDelta {
+                content: "done".to_string(),
+                done: true,
+                ..vv_llm::ChatStreamDelta::default()
+            })])) as vv_llm::ChatStream)
+        })
+    }
 }
 
 impl RecordingMessagesChatClient {

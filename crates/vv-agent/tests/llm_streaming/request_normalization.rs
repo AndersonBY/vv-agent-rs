@@ -188,6 +188,191 @@ fn vv_llm_client_applies_deepseek_reasoning_profile() {
 }
 
 #[test]
+fn vv_llm_client_projects_model_settings_into_the_real_chat_request() {
+    let chat_client = RecordingMessagesChatClient::default();
+    let probe = chat_client.clone();
+    let llm = VvLlmClient::new(
+        "openai",
+        "demo-model",
+        "demo-model",
+        Box::new(chat_client),
+        90.0,
+    );
+    let mut request = LlmRequest::new("demo-model", vec![Message::user("inspect settings")]);
+    request.tools = vec![
+        json!({
+            "type": "function",
+            "function": {"name": "lookup", "description": "lookup", "parameters": {"type": "object"}}
+        }),
+        json!({
+            "type": "function",
+            "function": {"name": "write", "description": "write", "parameters": {"type": "object"}}
+        }),
+    ];
+    request.model_settings = Some(
+        ModelSettings::builder()
+            .temperature(0.25)
+            .top_p(0.8)
+            .max_tokens(321)
+            .tool_choice(ToolChoice::Tool("lookup".to_string()))
+            .parallel_tool_calls(false)
+            .reasoning(json!({"effort": "high", "type": "enabled"}))
+            .response_format(ResponseFormat::JsonObject)
+            .extra_body("provider_option", json!("body"))
+            .build(),
+    );
+
+    let _ = llm.complete(request).expect("model settings request");
+
+    let request = probe.last_request().expect("recorded request");
+    assert_eq!(request.options.temperature, Some(0.25));
+    assert_eq!(request.options.max_tokens, Some(321));
+    assert_eq!(request.tool_choice.as_deref(), Some("required"));
+    assert_eq!(request.tools.len(), 1);
+    assert_eq!(request.tools[0].name, "lookup");
+    assert_eq!(request.extra_body["top_p"], json!(0.8));
+    assert_eq!(request.extra_body["parallel_tool_calls"], json!(false));
+    assert_eq!(request.extra_body["reasoning_effort"], json!("high"));
+    assert_eq!(request.extra_body["thinking"], json!({"type": "enabled"}));
+    assert_eq!(
+        request.extra_body["response_format"],
+        json!({"type": "json_object"})
+    );
+    assert_eq!(request.extra_body["provider_option"], json!("body"));
+}
+
+#[test]
+fn vv_llm_client_applies_none_and_rejects_unknown_named_tool_choice() {
+    let none_client = RecordingMessagesChatClient::default();
+    let none_probe = none_client.clone();
+    let none_llm = VvLlmClient::new(
+        "openai",
+        "demo-model",
+        "demo-model",
+        Box::new(none_client),
+        90.0,
+    )
+    .with_retry_policy(1, 0.0);
+    let mut none_request = LlmRequest::new("demo-model", vec![Message::user("no tools")]);
+    none_request.tools = vec![json!({
+        "type": "function",
+        "function": {"name": "lookup", "description": "lookup", "parameters": {"type": "object"}}
+    })];
+    none_request.model_settings = Some(
+        ModelSettings::builder()
+            .tool_choice(ToolChoice::None)
+            .build(),
+    );
+
+    let _ = none_llm.complete(none_request).expect("none tool choice");
+    let recorded = none_probe.last_request().expect("recorded request");
+    assert!(recorded.tools.is_empty());
+    assert_eq!(recorded.tool_choice, None);
+
+    let unknown_client = RecordingMessagesChatClient::default();
+    let unknown_probe = unknown_client.clone();
+    let unknown_llm = VvLlmClient::new(
+        "openai",
+        "demo-model",
+        "demo-model",
+        Box::new(unknown_client),
+        90.0,
+    )
+    .with_retry_policy(1, 0.0);
+    let mut unknown_request = LlmRequest::new("demo-model", vec![Message::user("missing tool")]);
+    unknown_request.tools = vec![json!({
+        "type": "function",
+        "function": {"name": "lookup", "description": "lookup", "parameters": {"type": "object"}}
+    })];
+    unknown_request.model_settings = Some(
+        ModelSettings::builder()
+            .tool_choice(ToolChoice::Tool("missing".to_string()))
+            .build(),
+    );
+
+    let error = unknown_llm
+        .complete(unknown_request)
+        .expect_err("unknown named tool");
+    assert!(error.to_string().contains("unknown tool: missing"));
+    assert!(unknown_probe.last_request().is_none());
+}
+
+#[test]
+fn vv_llm_client_rejects_per_request_extra_headers() {
+    let llm = VvLlmClient::new(
+        "openai",
+        "demo-model",
+        "demo-model",
+        Box::new(RecordingMessagesChatClient::default()),
+        90.0,
+    );
+    let mut request = LlmRequest::new("demo-model", vec![Message::user("inspect settings")]);
+    request.model_settings = Some(
+        ModelSettings::builder()
+            .extra_header("x-request", "value")
+            .build(),
+    );
+
+    let error = llm
+        .complete(request)
+        .expect_err("headers must fail explicitly");
+
+    assert!(error.to_string().contains("extra_headers is not supported"));
+
+    let mut request = LlmRequest::new("demo-model", vec![Message::user("inspect settings")]);
+    request.model_settings = Some(
+        ModelSettings::builder()
+            .extra_arg("extra_query", json!({"region": "test"}))
+            .build(),
+    );
+    let error = llm
+        .complete(request)
+        .expect_err("extra args must fail explicitly");
+    assert!(error.to_string().contains("extra_args is not supported"));
+}
+
+#[test]
+fn provider_timeout_is_default_and_model_settings_override_it() {
+    let timed_out = VvLlmClient::new(
+        "openai",
+        "demo-model",
+        "demo-model",
+        Box::new(DelayedChatClient {
+            delay: Duration::from_millis(30),
+        }),
+        0.005,
+    )
+    .with_retry_policy(1, 0.0);
+    let error = timed_out
+        .complete(LlmRequest::new(
+            "demo-model",
+            vec![Message::user("timeout")],
+        ))
+        .expect_err("provider timeout must apply");
+    assert!(error.to_string().contains("timed out after 0.005"));
+
+    let overridden = VvLlmClient::new(
+        "openai",
+        "demo-model",
+        "demo-model",
+        Box::new(DelayedChatClient {
+            delay: Duration::from_millis(20),
+        }),
+        0.005,
+    )
+    .with_retry_policy(1, 0.0);
+    let mut request = LlmRequest::new("demo-model", vec![Message::user("override")]);
+    request.model_settings = Some(
+        ModelSettings::builder()
+            .timeout(Duration::from_millis(100))
+            .build(),
+    );
+
+    let response = overridden.complete(request).expect("override timeout");
+    assert_eq!(response.content, "done");
+}
+
+#[test]
 fn vv_llm_client_normalizes_supported_thinking_model_options() {
     let claude_client = RecordingMessagesChatClient::default();
     let claude_probe = claude_client.clone();
@@ -254,10 +439,14 @@ fn vv_llm_client_applies_claude_prompt_cache_through_vv_llm_types() {
         Box::new(chat_client),
         90.0,
     );
+    let mut system_message = Message::system("fallback system text");
+    system_message
+        .metadata
+        .insert(PROMPT_CACHE_ENABLED_KEY.to_string(), json!(false));
     let mut request = LlmRequest::new(
         "claude-sonnet-4-6",
         vec![
-            Message::system("fallback system text"),
+            system_message,
             Message::user("latest user turn ".repeat(350)),
         ],
     );
@@ -316,6 +505,46 @@ fn vv_llm_client_applies_claude_prompt_cache_through_vv_llm_types() {
             ..
         }) if value == &json!({"type": "ephemeral"})
     ));
+}
+
+#[test]
+fn explicit_request_metadata_disables_system_prompt_cache_default() {
+    let chat_client = RecordingMessagesChatClient::default();
+    let probe = chat_client.clone();
+    let llm = VvLlmClient::new(
+        "anthropic",
+        "claude-sonnet-4-6",
+        "claude-sonnet-4-6",
+        Box::new(chat_client),
+        90.0,
+    );
+    let mut system_message = Message::system("stable section ".repeat(400));
+    system_message
+        .metadata
+        .insert(PROMPT_CACHE_ENABLED_KEY.to_string(), json!(true));
+    system_message.metadata.insert(
+        SYSTEM_PROMPT_SECTIONS_KEY.to_string(),
+        json!([{"id": "stable", "text": "stable section ".repeat(400), "stable": true}]),
+    );
+    let mut request = LlmRequest::new(
+        "claude-sonnet-4-6",
+        vec![system_message, Message::user("hello")],
+    );
+    request.metadata = json!({PROMPT_CACHE_ENABLED_KEY: false});
+
+    let _ = llm.complete(request).expect("uncached request");
+
+    let request = probe.last_request().expect("recorded request");
+    assert!(request
+        .messages
+        .iter()
+        .all(|message| message.content.iter().all(|content| !matches!(
+            content,
+            vv_llm::MessageContent::Text {
+                cache_control: Some(_),
+                ..
+            }
+        ))));
 }
 
 #[test]

@@ -147,6 +147,7 @@ impl SessionMemory {
         self.state.last_extracted_message_index = -1;
         if let Some(current_tokens) = current_tokens {
             self.state.tokens_at_last_extraction = current_tokens;
+            self.state.initialized = true;
         }
         self.save();
     }

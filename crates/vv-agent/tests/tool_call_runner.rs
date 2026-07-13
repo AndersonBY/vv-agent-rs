@@ -89,6 +89,117 @@ fn tool_call_runner_skips_remaining_calls_after_finish() {
 }
 
 #[test]
+fn tool_call_runner_applies_stop_on_first_success_to_all_registered_tools() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut registry = ToolRegistry::new();
+    for name in ["first", "second"] {
+        registry
+            .register(ToolSpec::new(
+                name,
+                name,
+                Arc::new(|_context, _arguments| ToolExecutionResult::success("", "tool output")),
+            ))
+            .expect("tool");
+    }
+    let runner = ToolCallRunner::new(registry);
+    let mut task = vv_agent::AgentTask::new("tool_runner", "demo", "system", "prompt");
+    task.metadata.insert(
+        "_vv_agent_tool_use_behavior".to_string(),
+        json!("stop_on_first_tool"),
+    );
+    let mut context = ToolContext::new(workspace.path());
+    let tool_calls = vec![
+        ToolCall::new("first_call", "first", BTreeMap::new()),
+        ToolCall::new("second_call", "second", BTreeMap::new()),
+    ];
+    let mut messages = Vec::new();
+    let mut cycle = empty_cycle(tool_calls.clone());
+
+    let outcome = runner
+        .run(ToolRunRequest::new(
+            &task,
+            tool_calls,
+            &mut context,
+            &mut messages,
+            &mut cycle,
+        ))
+        .expect("tool run");
+
+    assert_eq!(
+        outcome.directive_result.expect("directive").directive,
+        ToolDirective::Finish
+    );
+    assert_eq!(cycle.tool_results[0].status, ToolResultStatus::Success);
+    assert_eq!(
+        cycle.tool_results[1].error_code.as_deref(),
+        Some("skipped_due_to_finish")
+    );
+}
+
+#[test]
+fn tool_call_runner_stops_only_at_named_successful_tools() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut registry = ToolRegistry::new();
+    for name in ["prepare", "publish"] {
+        registry
+            .register(ToolSpec::new(
+                name,
+                name,
+                Arc::new(move |_context, _arguments| {
+                    ToolExecutionResult::success("", format!("{name} output"))
+                }),
+            ))
+            .expect("tool");
+    }
+    let runner = ToolCallRunner::new(registry);
+    let mut task = vv_agent::AgentTask::new("tool_runner", "demo", "system", "prompt");
+    task.metadata.insert(
+        "_vv_agent_tool_use_behavior".to_string(),
+        json!("stop_at_tool_names"),
+    );
+    task.metadata.insert(
+        "_vv_agent_stop_at_tool_names".to_string(),
+        json!(["publish"]),
+    );
+    let mut context = ToolContext::new(workspace.path());
+    let tool_calls = vec![
+        ToolCall::new("prepare_call", "prepare", BTreeMap::new()),
+        ToolCall::new("publish_call", "publish", BTreeMap::new()),
+    ];
+    let mut messages = Vec::new();
+    let mut cycle = empty_cycle(tool_calls.clone());
+
+    let outcome = runner
+        .run(ToolRunRequest::new(
+            &task,
+            tool_calls,
+            &mut context,
+            &mut messages,
+            &mut cycle,
+        ))
+        .expect("tool run");
+
+    assert_eq!(cycle.tool_results.len(), 2);
+    assert_eq!(cycle.tool_results[0].directive, ToolDirective::Continue);
+    assert_eq!(cycle.tool_results[1].directive, ToolDirective::Finish);
+    assert_eq!(
+        outcome.directive_result.expect("directive").content,
+        "publish output"
+    );
+}
+
+fn empty_cycle(tool_calls: Vec<ToolCall>) -> vv_agent::CycleRecord {
+    vv_agent::CycleRecord {
+        index: 1,
+        assistant_message: String::new(),
+        tool_calls,
+        tool_results: Vec::new(),
+        memory_compacted: false,
+        token_usage: vv_agent::TokenUsage::default(),
+    }
+}
+
+#[test]
 fn tool_call_runner_short_circuit_result_keeps_original_tool_call_id_after_call_patch() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = ToolRegistry::new();

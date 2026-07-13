@@ -124,7 +124,7 @@ fn should_clear_message(
     if inferred_cycle >= protected_cycle {
         return false;
     }
-    if message.content.len() <= min_result_length.max(1) {
+    if message.content.chars().count() <= min_result_length.max(1) {
         return false;
     }
     if is_microcompacted_tool_content(&message.content) {
@@ -146,7 +146,7 @@ fn replace_content(message: &Message) -> Message {
         .insert("microcompacted".to_string(), json!(true));
     updated.metadata.insert(
         "microcompact_original_chars".to_string(),
-        json!(message.content.len()),
+        json!(message.content.chars().count()),
     );
     updated.content = CLEARED_MARKER.to_string();
     updated

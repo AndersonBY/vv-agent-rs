@@ -78,10 +78,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             RunEventPayload::ApprovalRequested {
                 request_id,
                 tool_name,
-                preview,
+                message,
                 ..
             } => {
-                println!("approval requested for {tool_name}: {preview}");
+                println!("approval requested for {tool_name}: {message}");
                 let request_id = request_id.clone();
                 handle
                     .approve(&request_id, ApprovalDecision::allow())
@@ -106,11 +106,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .as_background_task()
         .name("approval_demo_background")
         .build()?;
-    let mut context = vv_agent::ToolContext::new(config.workspace);
+    let context = vv_agent::ToolContext::new(config.workspace);
     let handle = background.start(
         &runner,
-        &mut context,
+        &context,
         json!({"task_description": "后台执行同一个 approval demo agent"}),
+        None,
     )?;
     println!("background task {} {:?}", handle.task_id(), handle.status());
     println!("trace: {}", trace_path.display());

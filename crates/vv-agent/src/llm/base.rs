@@ -6,6 +6,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::memory::CompactionExhaustedError;
+use crate::model_settings::ModelSettings;
 use crate::types::{LLMResponse, Message};
 
 pub type LlmStreamCallback = Arc<dyn Fn(&BTreeMap<String, Value>) + Send + Sync + 'static>;
@@ -16,6 +17,7 @@ pub struct LlmRequest {
     pub messages: Vec<Message>,
     pub tools: Vec<Value>,
     pub metadata: Value,
+    pub model_settings: Option<ModelSettings>,
 }
 
 impl LlmRequest {
@@ -25,6 +27,7 @@ impl LlmRequest {
             messages,
             tools: Vec::new(),
             metadata: Value::Null,
+            model_settings: None,
         }
     }
 }

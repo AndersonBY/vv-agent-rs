@@ -26,11 +26,20 @@ struct ConnectionOutgoingState {
     opt_out_notification_methods: HashSet<String>,
 }
 
+#[derive(Debug)]
+struct PendingServerRequest {
+    connection_id: ConnectionId,
+    method: String,
+    thread_id: Option<String>,
+    turn_id: Option<String>,
+    callback: oneshot::Sender<ServerRequestResult>,
+}
+
 #[derive(Clone)]
 pub struct OutgoingMessageSender {
     tx: mpsc::Sender<OutgoingEnvelope>,
     connections: Arc<Mutex<HashMap<ConnectionId, ConnectionOutgoingState>>>,
-    pending_server_requests: Arc<Mutex<HashMap<RequestId, oneshot::Sender<ServerRequestResult>>>>,
+    pending_server_requests: Arc<Mutex<HashMap<RequestId, PendingServerRequest>>>,
     next_server_request_id: Arc<AtomicI64>,
 }
 
@@ -54,6 +63,35 @@ impl OutgoingMessageSender {
             .await
             .entry(connection_id)
             .or_default();
+    }
+
+    pub async fn is_connection_registered(&self, connection_id: ConnectionId) -> bool {
+        self.connections.lock().await.contains_key(&connection_id)
+    }
+
+    pub async fn unregister_connection(&self, connection_id: ConnectionId) {
+        self.connections.lock().await.remove(&connection_id);
+        let pending = {
+            let mut requests = self.pending_server_requests.lock().await;
+            let request_ids = requests
+                .iter()
+                .filter_map(|(request_id, pending)| {
+                    (pending.connection_id == connection_id).then_some(request_id.clone())
+                })
+                .collect::<Vec<_>>();
+            request_ids
+                .into_iter()
+                .filter_map(|request_id| requests.remove(&request_id))
+                .collect::<Vec<_>>()
+        };
+        let error = JsonRpcErrorBody {
+            code: AppServerErrorCode::InternalError.code(),
+            message: "client_disconnected".to_string(),
+            data: None,
+        };
+        for pending in pending {
+            let _ = pending.callback.send(Err(error.clone()));
+        }
     }
 
     pub async fn configure_connection(
@@ -155,26 +193,9 @@ impl OutgoingMessageSender {
             "srvreq_{}",
             self.next_server_request_id.fetch_add(1, Ordering::Relaxed)
         ));
-        let (callback_tx, callback_rx) = oneshot::channel();
-        self.pending_server_requests
-            .lock()
-            .await
-            .insert(id.clone(), callback_tx);
-        let (method, params) = tagged_method_params(&request)?;
-        if let Err(error) = self
-            .send_message(
-                connection_id,
-                JsonRpcMessage::Request(crate::app_server::protocol::JsonRpcRequest {
-                    id: id.clone(),
-                    method,
-                    params,
-                }),
-            )
-            .await
-        {
-            self.pending_server_requests.lock().await.remove(&id);
-            return Err(error);
-        }
+        let callback_rx = self
+            .send_server_request_with_id(connection_id, id.clone(), request)
+            .await?;
         Ok((id, callback_rx))
     }
 
@@ -210,12 +231,32 @@ impl OutgoingMessageSender {
         id: RequestId,
         request: ServerRequest,
     ) -> Result<oneshot::Receiver<ServerRequestResult>, AppServerError> {
+        if matches!(id, RequestId::Null) {
+            return Err(AppServerError::invalid_params(
+                "Server request id cannot be null",
+            ));
+        }
         let (callback_tx, callback_rx) = oneshot::channel();
-        self.pending_server_requests
-            .lock()
-            .await
-            .insert(id.clone(), callback_tx);
         let (method, params) = tagged_method_params(&request)?;
+        let (thread_id, turn_id) = server_request_scope(&request);
+        {
+            let mut requests = self.pending_server_requests.lock().await;
+            if requests.contains_key(&id) {
+                return Err(AppServerError::invalid_params(
+                    "Duplicate server request id",
+                ));
+            }
+            requests.insert(
+                id.clone(),
+                PendingServerRequest {
+                    connection_id,
+                    method: method.clone(),
+                    thread_id,
+                    turn_id,
+                    callback: callback_tx,
+                },
+            );
+        }
         if let Err(error) = self
             .send_message(
                 connection_id,
@@ -276,20 +317,50 @@ impl OutgoingMessageSender {
         .await
     }
 
-    pub async fn resolve_server_response(&self, response: JsonRpcResponse) -> bool {
-        self.pending_server_requests
-            .lock()
+    pub async fn resolve_server_response(
+        &self,
+        connection_id: ConnectionId,
+        response: JsonRpcResponse,
+    ) -> bool {
+        self.resolve_server_response_bound(connection_id, None, None, None, response)
             .await
-            .remove(&response.id)
-            .is_some_and(|callback| callback.send(Ok(response.result)).is_ok())
     }
 
-    pub async fn resolve_server_error(&self, error: JsonRpcError) -> bool {
-        self.pending_server_requests
-            .lock()
-            .await
-            .remove(&error.id)
-            .is_some_and(|callback| callback.send(Err(error.error)).is_ok())
+    pub async fn resolve_server_response_bound(
+        &self,
+        connection_id: ConnectionId,
+        method: Option<&str>,
+        thread_id: Option<&str>,
+        turn_id: Option<&str>,
+        response: JsonRpcResponse,
+    ) -> bool {
+        let pending = {
+            let mut requests = self.pending_server_requests.lock().await;
+            let matches = requests.get(&response.id).is_some_and(|pending| {
+                pending.connection_id == connection_id
+                    && method.is_none_or(|method| pending.method == method)
+                    && thread_id
+                        .is_none_or(|thread_id| pending.thread_id.as_deref() == Some(thread_id))
+                    && turn_id.is_none_or(|turn_id| pending.turn_id.as_deref() == Some(turn_id))
+            });
+            matches.then(|| requests.remove(&response.id)).flatten()
+        };
+        pending.is_some_and(|pending| pending.callback.send(Ok(response.result)).is_ok())
+    }
+
+    pub async fn resolve_server_error(
+        &self,
+        connection_id: ConnectionId,
+        error: JsonRpcError,
+    ) -> bool {
+        let pending = {
+            let mut requests = self.pending_server_requests.lock().await;
+            let matches = requests
+                .get(&error.id)
+                .is_some_and(|pending| pending.connection_id == connection_id);
+            matches.then(|| requests.remove(&error.id)).flatten()
+        };
+        pending.is_some_and(|pending| pending.callback.send(Err(error.error)).is_ok())
     }
 
     async fn send_message(
@@ -297,6 +368,9 @@ impl OutgoingMessageSender {
         connection_id: ConnectionId,
         message: JsonRpcMessage,
     ) -> Result<(), AppServerError> {
+        if !self.is_connection_registered(connection_id).await {
+            return Err(AppServerError::internal("client_disconnected"));
+        }
         self.tx
             .send(OutgoingEnvelope {
                 connection_id,
@@ -321,6 +395,14 @@ impl OutgoingMessageSender {
                         .opt_out_notification_methods
                         .contains(notification_method(notification))
             })
+    }
+}
+
+fn server_request_scope(request: &ServerRequest) -> (Option<String>, Option<String>) {
+    match request {
+        ServerRequest::ApprovalRequest(params) => {
+            (Some(params.thread_id.clone()), Some(params.turn_id.clone()))
+        }
     }
 }
 
@@ -354,6 +436,8 @@ fn notification_method(notification: &ServerNotification) -> &'static str {
     match notification {
         ServerNotification::ThreadStarted(_) => "thread/started",
         ServerNotification::ThreadArchived(_) => "thread/archived",
+        ServerNotification::ThreadClosed(_) => "thread/closed",
+        ServerNotification::ThreadStatusChanged(_) => "thread/status/changed",
         ServerNotification::TurnStarted(_) => "turn/started",
         ServerNotification::TurnCompleted(_) => "turn/completed",
         ServerNotification::ItemStarted(_) => "item/started",

@@ -92,6 +92,10 @@ describes instructions, model, tools, handoffs, hooks, and defaults. `Runner`
 owns model providers, workspace defaults, and execution. `RunConfig` overrides
 one run without changing the agent definition, including the public
 `ExecutionMode` for inline, threaded, or distributed execution.
+Per-run controls also cover tool registry factories, before-cycle and
+interruption messages, sub-task management, runtime observers, log previews,
+and LLM request debug dumps. See `docs/runtime-control.md` for precedence and
+language-adaptation details.
 
 ```rust
 use vv_agent::{Agent, ExecutionMode, ModelRef, Runner, RunConfig, VvLlmModelProvider};
@@ -116,6 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Create notes.md with three project takeaways.",
             RunConfig::builder()
                 .max_cycles(12)
+                .max_handoffs(4)
                 .execution_mode(ExecutionMode::Inline)
                 .build(),
         )
@@ -124,6 +129,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+A handoff is an outer Runner control transfer, not an agent-as-tool call. The
+target Agent resolves its own model and model settings, while the active
+session, cancellation token, and mutated shared state continue across the
+transition. `max_handoffs` defaults to `10` and limits control transfers
+independently from `max_cycles`. Approval resume preserves the same behavior.
+
+Reusable run defaults belong in
+`Runner::builder().default_run_config(...)`. Provider resolution is per-run
+then Runner. Model resolution is per-run, Agent, Runner, then the selected
+provider default. Model settings merge from provider to Runner to Agent to
+per-run, with each later layer overriding earlier fields. Replacing the
+provider for one run does not reuse a backend-bound model from the Runner.
 
 Sessions keep conversation history across runner calls:
 
@@ -181,6 +199,11 @@ model-facing `ask_user` tool remains for requesting user input as part of the
 conversation. Host applications can also attach `ContextProvider` values for
 ordered prompt fragments and `MemoryProvider` values for external search, save,
 and compaction lifecycle hooks.
+
+`ToolPolicy` exposes `Default`, `Always`, `Never`, and `OnRequest` approval
+modes. `Default` inherits the next configured policy; explicit `OnRequest`
+follows each tool's static or dynamic approval declaration. `Always` forces
+approval and `Never` bypasses it without evaluating a dynamic tool predicate.
 
 ### App Server
 

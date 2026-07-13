@@ -95,11 +95,14 @@ pub fn create_system_prompt_builder(
         ));
     }
     if let Some(available_skills) = options.available_skills.as_ref() {
-        tools_lines.push(templates::render_available_skills(
+        let skills_prompt = templates::render_available_skills(
             &language,
             available_skills,
             options.workspace.as_deref(),
-        ));
+        );
+        if !skills_prompt.is_empty() {
+            tools_lines.push(skills_prompt);
+        }
     }
     tools_lines.push(templates::task_finish_prompt(&language).to_string());
     builder.add_section(PromptSection::constant(

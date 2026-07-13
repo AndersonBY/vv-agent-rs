@@ -2,10 +2,14 @@ use crate::types::MessageRole;
 
 pub(super) fn normalize_excerpt(content: &str, limit: usize) -> String {
     let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.len() <= limit {
+    if normalized.chars().count() <= limit {
         normalized
     } else {
-        format!("{}...", &normalized[..limit.saturating_sub(3)])
+        let prefix = normalized
+            .chars()
+            .take(limit.saturating_sub(3))
+            .collect::<String>();
+        format!("{prefix}...")
     }
 }
 

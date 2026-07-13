@@ -22,7 +22,7 @@ impl RunEventReplayQuery {
     pub fn run(run_id: impl Into<String>) -> Self {
         Self {
             run_id: run_id.into(),
-            include_children: false,
+            include_children: true,
         }
     }
 
@@ -69,44 +69,98 @@ impl RunEventStore for JsonlRunEventStore {
     }
 
     fn replay(&self, query: RunEventReplayQuery) -> Result<RunEventIter, EventStoreError> {
-        if !self.path.exists() {
-            return Ok(Box::new(std::iter::empty()));
-        }
-
-        let file = File::open(&self.path).map_err(EventStoreError::io)?;
-        let reader = BufReader::new(file);
-        let mut events = Vec::new();
-        for line in reader.lines() {
-            let line = line.map_err(EventStoreError::io)?;
-            let event: RunEvent = serde_json::from_str(&line).map_err(EventStoreError::json)?;
-            let include = event.run_id() == query.run_id()
-                || (query.should_include_children()
-                    && event.parent_run_id() == Some(query.run_id()));
-            if include {
-                events.push(event);
+        let file = match File::open(&self.path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Box::new(std::iter::empty()));
             }
-        }
+            Err(error) => return Err(EventStoreError::io(error)),
+        };
+        let mut lines = BufReader::new(file).lines().enumerate();
+        let mut stopped = false;
 
-        Ok(Box::new(events.into_iter().map(Ok)))
+        Ok(Box::new(std::iter::from_fn(move || {
+            if stopped {
+                return None;
+            }
+
+            loop {
+                let Some((line_index, line)) = lines.next() else {
+                    stopped = true;
+                    return None;
+                };
+                let line_number = line_index + 1;
+                let line = match line {
+                    Ok(line) => line,
+                    Err(error) => {
+                        stopped = true;
+                        return Some(Err(EventStoreError::io(error)));
+                    }
+                };
+                let event: RunEvent = match serde_json::from_str(&line) {
+                    Ok(event) => event,
+                    Err(_) => {
+                        stopped = true;
+                        return Some(Err(EventStoreError::corrupt_line(line_number)));
+                    }
+                };
+                let include = event.run_id() == query.run_id()
+                    || (query.should_include_children()
+                        && event.parent_run_id() == Some(query.run_id()));
+                if include {
+                    return Some(Ok(event));
+                }
+            }
+        })))
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventStoreError {
+    code: &'static str,
     message: String,
+    line_number: Option<usize>,
 }
 
 impl EventStoreError {
+    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            line_number: None,
+        }
+    }
+
     fn io(error: std::io::Error) -> Self {
         Self {
+            code: "event_store_io_error",
             message: error.to_string(),
+            line_number: None,
         }
     }
 
     fn json(error: serde_json::Error) -> Self {
         Self {
+            code: "event_store_serialization_error",
             message: error.to_string(),
+            line_number: None,
         }
+    }
+
+    fn corrupt_line(line_number: usize) -> Self {
+        Self {
+            code: "event_store_corrupt_line",
+            message: format!("event store corrupt line {line_number}"),
+            line_number: Some(line_number),
+        }
+    }
+
+    pub fn code(&self) -> &'static str {
+        self.code
+    }
+
+    pub fn line_number(&self) -> Option<usize> {
+        self.line_number
     }
 }
 

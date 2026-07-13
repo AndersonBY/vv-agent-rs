@@ -11,13 +11,23 @@ use vv_agent::app_server::transport::{AppServerTransport, TransportEvent};
 #[test]
 fn jsonl_parser_decodes_one_message_per_line() {
     let message =
-        parse_jsonl_message(r#"{"id":1,"method":"initialize","params":{}}"#).expect("parse");
+        parse_jsonl_message(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#)
+            .expect("parse");
 
     assert!(matches!(
         message,
         Some(JsonRpcMessage::Request(request)) if request.id == RequestId::Integer(1)
             && request.method == "initialize"
     ));
+}
+
+#[test]
+fn jsonl_parser_rejects_message_without_json_rpc_version() {
+    let error = parse_jsonl_message(r#"{"id":1,"method":"initialize","params":{}}"#)
+        .expect_err("missing jsonrpc version");
+
+    assert_eq!(error.code(), AppServerErrorCode::InvalidRequest);
+    assert_eq!(error.message(), "Invalid Request");
 }
 
 #[test]
@@ -35,10 +45,11 @@ fn jsonl_writer_emits_one_line_per_message() {
 }
 
 #[test]
-fn invalid_json_line_returns_invalid_request() {
+fn invalid_json_line_returns_parse_error() {
     let error = parse_jsonl_message("{not json").expect_err("invalid json");
 
-    assert_eq!(error.code(), AppServerErrorCode::InvalidRequest);
+    assert_eq!(error.code(), AppServerErrorCode::ParseError);
+    assert_eq!(error.message(), "Parse error");
 }
 
 #[test]

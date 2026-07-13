@@ -9,7 +9,25 @@ use crate::types::SubTaskOutcome;
 use crate::workspace::WorkspaceBackend;
 
 use super::helpers::{is_internal_workspace_file, preview_text, status_label};
-use super::types::ManagedSubTaskSnapshot;
+use super::types::{ManagedSubTaskSnapshot, SubTaskLineage};
+
+#[derive(Clone)]
+pub(super) struct ManagedSubAgentSession {
+    pub(super) session: Arc<dyn SubAgentSession>,
+    pub(super) initial_lineage: SubTaskLineage,
+}
+
+#[derive(Clone)]
+pub(super) struct ContinuationAdmissionState {
+    task_title: String,
+    outcome: Option<SubTaskOutcome>,
+    recent_activity: Option<String>,
+    parent_run_id: Option<String>,
+    parent_tool_call_id: Option<String>,
+    running: bool,
+    worker_owned_run: bool,
+    updated_at: String,
+}
 
 pub struct ManagedSubTask {
     pub(super) task_id: String,
@@ -17,23 +35,26 @@ pub struct ManagedSubTask {
     pub(super) agent_name: String,
     pub(super) task_title: String,
     pub(super) workspace_backend: Option<Arc<dyn WorkspaceBackend>>,
-    pub(super) session: Option<Arc<dyn SubAgentSession>>,
+    pub(super) session: Option<ManagedSubAgentSession>,
     pub(super) outcome: Option<SubTaskOutcome>,
     pub(super) resolved: BTreeMap<String, String>,
     pub(super) current_cycle_index: Option<u32>,
     pub(super) recent_activity: Option<String>,
     pub(super) latest_cycle: Option<Value>,
     pub(super) latest_tool_call: Option<Value>,
+    pub(super) parent_run_id: Option<String>,
+    pub(super) parent_tool_call_id: Option<String>,
+    pub(super) running: bool,
+    pub(super) worker_owned_run: bool,
     pub(super) handle: Option<JoinHandle<()>>,
     pub(super) updated_at: String,
-    pub(super) manager_listener_attached: bool,
+    pub(super) session_generation: u64,
+    pub(super) manager_listener_generation: Option<u64>,
 }
 
 impl ManagedSubTask {
     pub(super) fn is_running(&self) -> bool {
-        self.handle
-            .as_ref()
-            .is_some_and(|handle| !handle.is_finished())
+        self.running
     }
 
     pub(super) fn to_status_entry(&self, detail_level: &str, workspace_file_limit: usize) -> Value {
@@ -43,52 +64,56 @@ impl ManagedSubTask {
             "session_id": self.session_id,
             "agent_name": self.agent_name,
             "status": status,
-            "task_description": self.task_title,
         });
-        if let Some(outcome) = &self.outcome {
-            if let Some(final_answer) = &outcome.final_answer {
-                entry["final_answer"] = Value::String(final_answer.clone());
-            }
-            if let Some(wait_reason) = &outcome.wait_reason {
-                entry["wait_reason"] = Value::String(wait_reason.clone());
-            }
-            if let Some(error) = &outcome.error {
-                entry["error"] = Value::String(error.clone());
-            }
-            if outcome.cycles > 0 {
-                entry["cycles"] = Value::Number(outcome.cycles.into());
-            }
-            if !outcome.todo_list.is_empty() {
-                entry["todo_list"] = Value::Array(outcome.todo_list.clone());
-            }
-            if !outcome.resolved.is_empty() {
-                entry["resolved"] = json!(outcome.resolved);
+        if !self.task_title.is_empty() {
+            entry["task_description"] = Value::String(self.task_title.clone());
+        }
+        if !self.is_running() {
+            if let Some(outcome) = &self.outcome {
+                if let Some(final_answer) = &outcome.final_answer {
+                    entry["final_answer"] = Value::String(final_answer.clone());
+                }
+                if let Some(wait_reason) = &outcome.wait_reason {
+                    entry["wait_reason"] = Value::String(wait_reason.clone());
+                }
+                if let Some(error) = &outcome.error {
+                    entry["error"] = Value::String(error.clone());
+                }
+                if let Some(error_code) = &outcome.error_code {
+                    entry["error_code"] = Value::String(error_code.clone());
+                }
+                if outcome.cycles > 0 {
+                    entry["cycles"] = Value::Number(outcome.cycles.into());
+                }
+                if !outcome.todo_list.is_empty() {
+                    entry["todo_list"] = Value::Array(outcome.todo_list.clone());
+                }
+                if !outcome.resolved.is_empty() {
+                    entry["resolved"] = json!(outcome.resolved);
+                }
             }
         }
+        if let Some(parent_run_id) = &self.parent_run_id {
+            entry["parent_run_id"] = Value::String(parent_run_id.clone());
+        }
+        if let Some(parent_tool_call_id) = &self.parent_tool_call_id {
+            entry["parent_tool_call_id"] = Value::String(parent_tool_call_id.clone());
+        }
         if detail_level == "snapshot" {
-            let recent_activity = self
-                .recent_activity
-                .clone()
-                .or_else(|| {
-                    self.outcome.as_ref().and_then(|outcome| {
-                        outcome
-                            .final_answer
-                            .clone()
-                            .or_else(|| outcome.wait_reason.clone())
-                            .or_else(|| outcome.error.clone())
-                    })
-                })
-                .unwrap_or_else(|| self.task_title.clone());
             let workspace_snapshot = self.workspace_snapshot(workspace_file_limit);
             entry["snapshot"] = json!({
                 "current_cycle_index": self.current_cycle_index,
-                "task_title": self.task_title,
-                "recent_activity": recent_activity,
                 "updated_at": self.updated_at,
                 "workspace_files": workspace_snapshot.files,
                 "workspace_file_count": workspace_snapshot.file_count,
                 "workspace_files_truncated": workspace_snapshot.truncated,
             });
+            if !self.task_title.is_empty() {
+                entry["snapshot"]["task_title"] = Value::String(self.task_title.clone());
+            }
+            if let Some(recent_activity) = &self.recent_activity {
+                entry["snapshot"]["recent_activity"] = Value::String(recent_activity.clone());
+            }
             if let Some(latest_cycle) = &self.latest_cycle {
                 entry["snapshot"]["latest_cycle"] = latest_cycle.clone();
             }
@@ -107,27 +132,26 @@ impl ManagedSubTask {
             task_title: self.task_title.clone(),
             status: self.status_label().to_string(),
             running: self.is_running(),
-            outcome: self.outcome.clone(),
+            outcome: (!self.is_running()).then(|| self.outcome.clone()).flatten(),
             resolved: self.resolved.clone(),
             current_cycle_index: self.current_cycle_index,
             recent_activity: self.recent_activity.clone(),
             latest_cycle: self.latest_cycle.clone(),
             latest_tool_call: self.latest_tool_call.clone(),
+            parent_run_id: self.parent_run_id.clone(),
+            parent_tool_call_id: self.parent_tool_call_id.clone(),
             updated_at: self.updated_at.clone(),
         }
     }
 
     pub(super) fn status_label(&self) -> &'static str {
+        if self.is_running() {
+            return "running";
+        }
         self.outcome
             .as_ref()
             .map(|outcome| status_label(outcome.status))
-            .unwrap_or_else(|| {
-                if self.is_running() {
-                    "running"
-                } else {
-                    "pending"
-                }
-            })
+            .unwrap_or("pending")
     }
 
     pub(super) fn update_from_outcome(&mut self, outcome: &SubTaskOutcome) {
@@ -144,6 +168,45 @@ impl ManagedSubTask {
         {
             self.recent_activity = Some(detail);
         }
+    }
+
+    pub(super) fn admit_continuation(
+        &mut self,
+        prompt: &str,
+        lineage: &SubTaskLineage,
+        updated_at: String,
+    ) -> ContinuationAdmissionState {
+        let previous = ContinuationAdmissionState {
+            task_title: self.task_title.clone(),
+            outcome: self.outcome.clone(),
+            recent_activity: self.recent_activity.clone(),
+            parent_run_id: self.parent_run_id.clone(),
+            parent_tool_call_id: self.parent_tool_call_id.clone(),
+            running: self.running,
+            worker_owned_run: self.worker_owned_run,
+            updated_at: self.updated_at.clone(),
+        };
+        self.task_title = prompt.to_string();
+        self.outcome = None;
+        self.recent_activity = Some(prompt.to_string());
+        self.parent_run_id = lineage.parent_run_id.clone();
+        self.parent_tool_call_id = lineage.parent_tool_call_id.clone();
+        self.running = true;
+        self.worker_owned_run = true;
+        self.updated_at = updated_at;
+        previous
+    }
+
+    pub(super) fn rollback_continuation(&mut self, previous: ContinuationAdmissionState) {
+        self.task_title = previous.task_title;
+        self.outcome = previous.outcome;
+        self.recent_activity = previous.recent_activity;
+        self.parent_run_id = previous.parent_run_id;
+        self.parent_tool_call_id = previous.parent_tool_call_id;
+        self.running = previous.running;
+        self.worker_owned_run = previous.worker_owned_run;
+        self.handle = None;
+        self.updated_at = previous.updated_at;
     }
 
     pub(super) fn set_latest_cycle_status(&mut self, status: &str) {

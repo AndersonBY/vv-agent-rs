@@ -18,11 +18,12 @@ pub(super) fn render_grep_content(
     let summary = &payload["summary"];
     let total_matches = summary["total_matches"].as_u64().unwrap_or_default();
     let files_with_matches = summary["files_with_matches"].as_u64().unwrap_or_default();
+    let pattern = python_string_repr(pattern);
     match output_mode {
         "files_with_matches" => {
             let files = payload["files"].as_array().cloned().unwrap_or_default();
             let mut lines = vec![format!(
-                "Found {files_with_matches} files matching pattern {pattern:?}"
+                "Found {files_with_matches} files matching pattern {pattern}"
             )];
             if files.is_empty() {
                 lines.push("No matches found.".to_string());
@@ -39,7 +40,7 @@ pub(super) fn render_grep_content(
             lines.join("\n")
         }
         "count" => {
-            let mut lines = vec![format!("Match counts for pattern {pattern:?}")];
+            let mut lines = vec![format!("Match counts for pattern {pattern}")];
             if head_limited {
                 lines.push(format!(
                     "Showing first {} files.",
@@ -60,7 +61,7 @@ pub(super) fn render_grep_content(
         }
         _ => {
             let mut lines = vec![format!(
-                "Found {total_matches} matches in {files_with_matches} files for pattern {pattern:?}"
+                "Found {total_matches} matches in {files_with_matches} files for pattern {pattern}"
             )];
             let rows = payload["matches"].as_array().cloned().unwrap_or_default();
             if rows.is_empty() {
@@ -95,24 +96,62 @@ pub(super) fn render_grep_content(
     }
 }
 
+fn python_string_repr(value: &str) -> String {
+    let quote = if value.contains('\'') && !value.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut rendered = String::with_capacity(value.len() + 2);
+    rendered.push(quote);
+    for character in value.chars() {
+        match character {
+            '\\' => rendered.push_str("\\\\"),
+            '\t' => rendered.push_str("\\t"),
+            '\n' => rendered.push_str("\\n"),
+            '\r' => rendered.push_str("\\r"),
+            character if character == quote => {
+                rendered.push('\\');
+                rendered.push(character);
+            }
+            character if character.is_control() => {
+                let codepoint = character as u32;
+                if codepoint <= 0xff {
+                    rendered.push_str(&format!("\\x{codepoint:02x}"));
+                } else if codepoint <= 0xffff {
+                    rendered.push_str(&format!("\\u{codepoint:04x}"));
+                } else {
+                    rendered.push_str(&format!("\\U{codepoint:08x}"));
+                }
+            }
+            character => rendered.push(character),
+        }
+    }
+    rendered.push(quote);
+    rendered
+}
+
 pub(super) fn truncate_result_text(
     result_text: String,
     total_matches: usize,
     files_with_matches: usize,
 ) -> (String, bool) {
     let line_count = result_text.lines().count();
-    if line_count <= MAX_RESULT_LINES && result_text.len() <= MAX_RESULT_CHARS {
+    let result_char_count = result_text.chars().count();
+    if line_count <= MAX_RESULT_LINES && result_char_count <= MAX_RESULT_CHARS {
         return (result_text, false);
     }
 
-    let truncated = if result_text.len() > MAX_RESULT_CHARS {
-        let mut end = MAX_RESULT_CHARS.min(result_text.len());
-        while !result_text.is_char_boundary(end) {
-            end -= 1;
-        }
+    let truncated = if result_char_count > MAX_RESULT_CHARS {
+        let end = result_text
+            .char_indices()
+            .nth(MAX_RESULT_CHARS)
+            .map_or(result_text.len(), |(index, _)| index);
         let candidate = &result_text[..end];
         match candidate.rfind('\n') {
-            Some(last_newline) if last_newline > MAX_RESULT_CHARS * 4 / 5 => {
+            Some(last_newline)
+                if candidate[..last_newline].chars().count() > MAX_RESULT_CHARS * 4 / 5 =>
+            {
                 candidate[..last_newline].to_string()
             }
             _ => candidate.to_string(),
@@ -131,13 +170,13 @@ pub(super) fn truncate_result_text(
          Shown: {shown_lines} lines, {} characters\n\
          Total matches: {total_matches} in {files_with_matches} files\n\
          Use a narrower pattern/path/glob/type/head_limit for more focused output.",
-        truncated.len()
+        truncated.chars().count()
     );
     (format!("{truncated}{truncated_info}"), true)
 }
 
 pub(super) fn cap_file_paths(items: Vec<String>) -> (Vec<String>, bool) {
-    cap_structured_items(items, |path| path.len() + 4)
+    cap_structured_items(items, |path| path.chars().count() + 4)
 }
 
 pub(super) fn cap_file_counts(
@@ -145,18 +184,18 @@ pub(super) fn cap_file_counts(
 ) -> (BTreeMap<String, usize>, bool) {
     let count_items = file_counts.into_iter().collect::<Vec<_>>();
     let (capped_items, capped) = cap_structured_items(count_items, |(path, count)| {
-        path.len() + count.to_string().len() + 8
+        path.chars().count() + count.to_string().len() + 8
     });
     (capped_items.into_iter().collect(), capped)
 }
 
 pub(super) fn cap_match_rows(rows: Vec<Value>) -> (Vec<Value>, bool) {
     cap_structured_items(rows, |row| {
-        row["path"].as_str().map_or(0, str::len)
+        row["path"].as_str().map_or(0, |path| path.chars().count())
             + row["line"]
                 .as_u64()
                 .map_or(0, |line| line.to_string().len())
-            + row["text"].as_str().map_or(0, str::len)
+            + row["text"].as_str().map_or(0, |text| text.chars().count())
             + 32
     })
 }

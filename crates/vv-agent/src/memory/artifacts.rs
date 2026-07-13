@@ -7,7 +7,8 @@ mod render;
 use crate::types::Message;
 
 use self::content::{
-    build_compacted_tool_content, kept_tool_message_indices, should_compact_tool_message,
+    build_compacted_tool_content, is_compacted_tool_content, kept_tool_message_indices,
+    should_compact_tool_message,
 };
 use self::info::build_tool_call_info;
 use self::persist::persist_tool_content;
@@ -32,15 +33,24 @@ pub fn compact_tool_results(
     let mut artifacts = Vec::new();
     let mut compacted = Vec::with_capacity(messages.len());
     for (index, message) in messages.iter().enumerate() {
-        if !should_compact_tool_message(message, index, &keep_indices, config.compact_threshold) {
-            compacted.push(message.clone());
-            continue;
-        }
-
         let info = message
             .tool_call_id
             .as_deref()
             .and_then(|tool_call_id| tool_info.get(tool_call_id));
+        if !should_compact_tool_message(message, index, &keep_indices, config.compact_threshold) {
+            if is_compacted_tool_content(&message.content) {
+                if let Some(artifact) = persisted_artifact_from_compacted_content(
+                    &message.content,
+                    info.and_then(|item| item.tool_name.as_deref()),
+                    info.and_then(|item| item.arguments.as_deref()),
+                ) {
+                    artifacts.push(artifact);
+                }
+            }
+            compacted.push(message.clone());
+            continue;
+        }
+
         let artifact_path = persist_tool_content(
             &message.content,
             message.tool_call_id.as_deref(),
@@ -66,4 +76,33 @@ pub fn compact_tool_results(
         changed = true;
     }
     (compacted, artifacts, changed)
+}
+
+fn persisted_artifact_from_compacted_content(
+    content: &str,
+    fallback_tool_name: Option<&str>,
+    arguments: Option<&str>,
+) -> Option<PersistedArtifact> {
+    let mut path = None;
+    let mut tool_name = fallback_tool_name.map(str::to_string);
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some(value) = line.strip_prefix("artifact_path:") {
+            let value = value.trim();
+            if !value.is_empty() && value != "N/A" {
+                path = Some(value.to_string());
+            }
+        } else if tool_name.is_none() {
+            tool_name = line
+                .strip_prefix("tool_name:")
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+        }
+    }
+    Some(PersistedArtifact {
+        path: path?,
+        tool_name,
+        arguments: arguments.map(str::to_string),
+    })
 }

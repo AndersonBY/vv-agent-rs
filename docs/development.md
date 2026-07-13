@@ -2,6 +2,16 @@
 
 Run commands from the `vv-agent-rs/` workspace root.
 
+The repository vendors an immutable snapshot of the shared Python/Rust
+contract. Verify it before changing or releasing shared behavior:
+
+```bash
+python3 scripts/contract_snapshot.py check
+```
+
+Canonical fixtures live in `../vv-agent-contract/`; never edit
+`crates/vv-agent/tests/fixtures/parity/` directly.
+
 ## Setup
 
 The Rust workspace currently contains the `vv-agent` crate:
@@ -78,6 +88,7 @@ Common environment variables:
 
 | Change area | Primary tests |
 | --- | --- |
+| Shared contract and canonical producers | `tests/parity_evidence_manifests.rs`, `tests/tool_schema_contract.rs`, `tests/app_server_contract_parity.rs`, `tests/runner_producer_parity.rs` |
 | Settings and model resolution | `tests/vv_llm_integration.rs` |
 | CLI | `tests/cli.rs` |
 | Runtime loop and terminal states | `tests/runtime_cycle.rs`, `tests/cycle_runner.rs` |
@@ -89,6 +100,7 @@ Common environment variables:
 | External memory provider contract | `tests/memory_provider.rs` |
 | Run events and replay | `tests/run_events_v1.rs`, `tests/event_store.rs`, `tests/session_graph_events.rs` |
 | Live run handle and streaming | `tests/run_handle.rs`, `tests/public_sdk_redesign.rs`, `tests/sdk_smoke.rs` |
+| Embedded interactive sessions and typed final output | `tests/interactive_session.rs`, `tests/typed_final_output.rs` |
 | Live approval provider | `tests/approval_provider.rs` |
 | Tool orchestrator | `tests/tool_orchestrator.rs`, `tests/tools_dispatcher.rs` |
 | Context providers | `tests/context_providers.rs` |

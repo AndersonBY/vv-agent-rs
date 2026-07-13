@@ -3,8 +3,8 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{stringify_tool_arg, tool_error_with_code, tool_result};
-use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
+use crate::tools::common::{stringify_tool_arg, tool_error_with_code, tool_result_with_metadata};
+use crate::types::{Metadata, ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 pub fn compress_memory(
     context: &mut ToolContext,
@@ -49,11 +49,12 @@ pub(crate) fn compress_memory_tool() -> ToolSpec {
                 "ok": true,
                 "saved_notes": saved_notes,
             });
-            tool_result(
+            tool_result_with_metadata(
                 ToolResultStatus::Success,
                 payload,
                 None,
                 ToolDirective::Continue,
+                Metadata::from([("saved_notes".to_string(), json!(saved_notes))]),
             )
         }),
     );

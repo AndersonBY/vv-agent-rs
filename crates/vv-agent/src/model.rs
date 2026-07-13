@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 use crate::config::{
@@ -10,12 +11,78 @@ use crate::llm::{LlmClient, LlmRequest, ScriptStep, ScriptedLlmClient, VvLlmClie
 use crate::model_settings::ModelSettings;
 use crate::types::LLMResponse;
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelRef {
     Named(String),
     BackendModel { backend: String, model: String },
     Resolved(ResolvedModelConfig),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum ModelRefWire {
+    Named { model: String },
+    BackendModel { backend: String, model: String },
+}
+
+impl Serialize for ModelRef {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let wire = match self {
+            Self::Named(model) => ModelRefWire::Named {
+                model: nonempty_serialize_value::<S::Error>("model", model)?,
+            },
+            Self::BackendModel { backend, model } => ModelRefWire::BackendModel {
+                backend: nonempty_serialize_value::<S::Error>("backend", backend)?,
+                model: nonempty_serialize_value::<S::Error>("model", model)?,
+            },
+            Self::Resolved(_) => {
+                return Err(serde::ser::Error::custom(
+                    "resolved ModelRef is process-local and cannot be serialized",
+                ));
+            }
+        };
+        wire.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ModelRef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match ModelRefWire::deserialize(deserializer)? {
+            ModelRefWire::Named { model } => Ok(Self::Named(
+                nonempty_deserialize_value::<D::Error>("model", &model)?,
+            )),
+            ModelRefWire::BackendModel { backend, model } => Ok(Self::BackendModel {
+                backend: nonempty_deserialize_value::<D::Error>("backend", &backend)?,
+                model: nonempty_deserialize_value::<D::Error>("model", &model)?,
+            }),
+        }
+    }
+}
+
+fn nonempty_serialize_value<E>(field: &str, value: &str) -> Result<String, E>
+where
+    E: serde::ser::Error,
+{
+    if value.trim().is_empty() {
+        return Err(E::custom(format!("ModelRef {field} cannot be empty")));
+    }
+    Ok(value.to_string())
+}
+
+fn nonempty_deserialize_value<E>(field: &str, value: &str) -> Result<String, E>
+where
+    E: serde::de::Error,
+{
+    if value.trim().is_empty() {
+        return Err(E::custom(format!("ModelRef {field} cannot be empty")));
+    }
+    Ok(value.to_string())
 }
 
 impl ModelRef {
@@ -68,12 +135,16 @@ pub trait ModelProvider: Send + Sync {
     fn default_settings(&self, _resolved: &ResolvedModelConfig) -> ModelSettings {
         ModelSettings::default()
     }
+
+    fn default_model_ref(&self) -> Option<ModelRef> {
+        None
+    }
 }
 
 #[derive(Clone)]
 pub struct ScriptedModelProvider {
     backend: String,
-    _default_model: String,
+    default_model: String,
     llm: ScriptedLlmClient,
     context_length: Option<u64>,
     max_output_tokens: Option<u64>,
@@ -100,7 +171,7 @@ impl ScriptedModelProvider {
     ) -> Self {
         Self {
             backend: backend.into(),
-            _default_model: default_model.into(),
+            default_model: default_model.into(),
             llm: ScriptedLlmClient::from_steps(steps),
             context_length: Some(128_000),
             max_output_tokens: Some(16_384),
@@ -145,7 +216,8 @@ impl ModelProvider for ScriptedModelProvider {
                 model.clone(),
                 Vec::new(),
             )
-            .with_token_limits(self.context_length, self.max_output_tokens)),
+            .with_token_limits(self.context_length, self.max_output_tokens)
+            .with_capabilities(true, true, false)),
             ModelRef::BackendModel { backend, model } => {
                 if backend != &self.backend {
                     return Err(ModelError::BackendMismatch {
@@ -160,7 +232,8 @@ impl ModelProvider for ScriptedModelProvider {
                     model.clone(),
                     Vec::new(),
                 )
-                .with_token_limits(self.context_length, self.max_output_tokens))
+                .with_token_limits(self.context_length, self.max_output_tokens)
+                .with_capabilities(true, true, false))
             }
             ModelRef::Resolved(resolved) => Ok(resolved.clone()),
         }
@@ -172,6 +245,10 @@ impl ModelProvider for ScriptedModelProvider {
 
     fn default_settings(&self, _resolved: &ResolvedModelConfig) -> ModelSettings {
         self.default_settings.clone()
+    }
+
+    fn default_model_ref(&self) -> Option<ModelRef> {
+        Some(ModelRef::named(self.default_model.clone()))
     }
 }
 

@@ -1,34 +1,41 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use serde_json::json;
+use serde_json::{json, Value};
 
+use crate::app_server::host::{
+    AgentResolutionRequest, AppServerHost, DefaultAppServerHost, RunConfigResolutionRequest,
+};
 use crate::app_server::outgoing::OutgoingMessageSender;
 use crate::app_server::protocol::{
-    map_run_event_to_notifications, AgentMessageDeltaParams, AppItem, AppItemKind, AppItemStatus,
-    AppServerError, AppServerErrorCode, AppTurn, ApprovalDecision, ApprovalRequestParams,
+    map_run_event_to_notifications, AgentMessageDeltaParams, AppItem, AppServerError,
+    AppServerErrorCode, AppTokenUsage, AppTurn, ApprovalDecision, ApprovalRequestParams,
     ApprovalResolveParams, ItemCompletedParams, ItemStartedParams, JsonRpcError, JsonRpcErrorBody,
-    RequestId, ServerNotification, ServerRequest, ThreadStatus, TurnCompletedParams,
-    TurnStartParams, TurnStartedParams, TurnStatus, UserInput,
+    RequestId, ServerNotification, ServerRequest, ThreadStatus, ThreadStatusChangedParams,
+    TurnCompletedParams, TurnStartParams, TurnStartedParams, TurnStatus, UserInput,
 };
-use crate::app_server::thread_state::{ActiveTurn, ThreadStateManager};
+use crate::app_server::thread_state::{ActiveTurn, SteeringQueue, ThreadStateManager};
 use crate::app_server::thread_store::{SqliteThreadStore, ThreadStoreError};
+use crate::app_server::transport::ConnectionId;
+use crate::events::RunEventPayload;
 use crate::tools::ApprovalDecision as ToolApprovalDecision;
+use crate::types::{AgentStatus, Metadata, TaskTokenUsage, ToolExecutionResult};
 use crate::{
-    Agent, ApprovalBroker, ApprovalFuture, ApprovalProvider, ApprovalRequest, ModelRef, RunConfig,
-    RunHandle, Runner,
+    Agent, ApprovalBroker, ApprovalFuture, ApprovalProvider, ApprovalRequest, BeforeLlmEvent,
+    BeforeLlmPatch, BeforeToolCallEvent, BeforeToolCallPatch, Message, RunConfig, RunHandle,
+    RunResult, Runner, RuntimeHook,
 };
 
 #[derive(Clone)]
 pub struct AppServerRunAdapter {
     runner: Runner,
-    agent: Agent,
+    host: Arc<dyn AppServerHost>,
     store: SqliteThreadStore,
     state: ThreadStateManager,
     outgoing: OutgoingMessageSender,
-    next_turn_id: Arc<AtomicU64>,
     approval_request_timeout: Duration,
+    turn_approval_timeouts: Arc<Mutex<HashMap<(String, String), Duration>>>,
 }
 
 impl AppServerRunAdapter {
@@ -39,14 +46,30 @@ impl AppServerRunAdapter {
         state: ThreadStateManager,
         outgoing: OutgoingMessageSender,
     ) -> Self {
-        Self {
+        Self::with_host(
             runner,
-            agent,
+            Arc::new(DefaultAppServerHost::from_agent(agent)),
             store,
             state,
             outgoing,
-            next_turn_id: Arc::new(AtomicU64::new(1)),
+        )
+    }
+
+    pub fn with_host(
+        runner: Runner,
+        host: Arc<dyn AppServerHost>,
+        store: SqliteThreadStore,
+        state: ThreadStateManager,
+        outgoing: OutgoingMessageSender,
+    ) -> Self {
+        Self {
+            runner,
+            host,
+            store,
+            state,
+            outgoing,
             approval_request_timeout: Duration::from_secs(30),
+            turn_approval_timeouts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -63,14 +86,18 @@ impl AppServerRunAdapter {
         &self.state
     }
 
-    pub async fn start_turn(&self, params: TurnStartParams) -> Result<AppTurn, AppServerError> {
+    pub async fn start_turn(
+        &self,
+        owner_connection_id: ConnectionId,
+        params: TurnStartParams,
+    ) -> Result<AppTurn, AppServerError> {
         let thread = self
             .store
             .get_thread(&params.thread_id)
             .map_err(store_error)?
-            .ok_or_else(|| AppServerError::invalid_params("Unknown thread"))?;
-        if thread.archived {
-            return Err(AppServerError::invalid_params("Thread is archived"));
+            .ok_or_else(AppServerError::thread_not_found)?;
+        if thread.archived_at.is_some() {
+            return Err(AppServerError::thread_archived());
         }
         if self.state.active_turn(&params.thread_id).await.is_some() {
             return Err(AppServerError::invalid_params(
@@ -78,48 +105,79 @@ impl AppServerRunAdapter {
             ));
         }
 
-        let turn_id = format!("turn_{}", self.next_turn_id.fetch_add(1, Ordering::Relaxed));
-        let input = params.input.clone();
-        let input_text = input_text(&input);
-        let run_id = format!("{}_run", self.agent.name());
-        let mut config = RunConfig::default();
-        if let Some(model) = params.model {
-            config.model = Some(ModelRef::named(model));
+        let mut effective_metadata = thread.metadata.clone();
+        effective_metadata.extend(params.metadata.clone());
+        let agent_request = AgentResolutionRequest {
+            thread_id: thread.thread_id.clone(),
+            agent_key: thread.agent_key.clone(),
+            cwd: thread.cwd.clone(),
+            metadata: effective_metadata.clone(),
+        };
+        let config_request = RunConfigResolutionRequest {
+            thread_id: thread.thread_id.clone(),
+            agent_key: thread.agent_key.clone(),
+            cwd: thread.cwd.clone(),
+            metadata: effective_metadata.clone(),
+        };
+        let agent = self
+            .host
+            .resolve_agent(&agent_request)
+            .map_err(|error| AppServerError::internal(error.to_string()))?;
+        let mut config = self
+            .host
+            .build_run_config(&config_request)
+            .map_err(|error| AppServerError::internal(error.to_string()))?;
+
+        let turn = self
+            .store
+            .create_turn(&params.thread_id, params.input.clone())
+            .map_err(store_error)?;
+        let steering = SteeringQueue::default();
+        if config.approval_provider.is_none() {
+            config.approval_provider = Some(Arc::new(AppServerApprovalProvider));
         }
-        let approval_broker = ApprovalBroker::default();
-        config.approval_provider = Some(Arc::new(AppServerApprovalProvider));
-        config.approval_broker = Some(approval_broker);
+        if config.approval_broker.is_none() {
+            config.approval_broker = Some(ApprovalBroker::default());
+        }
+        let approval_request_timeout =
+            effective_approval_request_timeout(&config, self.approval_request_timeout);
+        config.hooks.push(Arc::new(SteeringRuntimeHook {
+            queue: steering.clone(),
+        }));
+        config.metadata.extend(effective_metadata);
         config
             .metadata
-            .insert("thread_id".to_string(), json!(params.thread_id));
+            .insert("thread_id".to_string(), json!(turn.thread_id));
         config
             .metadata
-            .insert("turn_id".to_string(), json!(turn_id.clone()));
+            .insert("turn_id".to_string(), json!(turn.turn_id));
+        config
+            .metadata
+            .insert("session_id".to_string(), json!(turn.thread_id));
 
         let handle = self
             .runner
-            .start(&self.agent, input_text, config)
+            .start(&agent, input_text(&turn.input), config)
             .await
             .map_err(AppServerError::internal)?;
-        let turn = AppTurn {
-            id: turn_id.clone(),
-            thread_id: params.thread_id.clone(),
-            run_id,
-            status: TurnStatus::Running,
-            input,
-            started_at_ms: Some(timestamp_millis()),
-            completed_at_ms: None,
-            token_usage: None,
-        };
         self.store
-            .set_active_turn(&params.thread_id, Some(&turn_id), ThreadStatus::Running)
+            .set_active_turn(&turn.thread_id, Some(&turn.turn_id), ThreadStatus::Running)
             .map_err(store_error)?;
+        self.turn_approval_timeouts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                (turn.thread_id.clone(), turn.turn_id.clone()),
+                approval_request_timeout,
+            );
         self.state
             .set_active_turn(
-                params.thread_id,
+                turn.thread_id.clone(),
                 ActiveTurn {
                     turn: turn.clone(),
                     handle,
+                    steering,
+                    owner_connection_id,
                 },
             )
             .await;
@@ -129,7 +187,18 @@ impl AppServerRunAdapter {
     pub async fn notify_turn_started(&self, turn: &AppTurn) -> Result<(), AppServerError> {
         self.broadcast_to_thread(
             &turn.thread_id,
-            ServerNotification::TurnStarted(TurnStartedParams { turn: turn.clone() }),
+            ServerNotification::ThreadStatusChanged(ThreadStatusChangedParams {
+                thread_id: turn.thread_id.clone(),
+                status: ThreadStatus::Running,
+            }),
+        )
+        .await?;
+        self.broadcast_to_thread(
+            &turn.thread_id,
+            ServerNotification::TurnStarted(TurnStartedParams {
+                thread_id: turn.thread_id.clone(),
+                turn_id: turn.turn_id.clone(),
+            }),
         )
         .await
     }
@@ -138,38 +207,58 @@ impl AppServerRunAdapter {
         let Some(active) = self.state.active_turn(&thread_id).await else {
             return;
         };
+        self.spawn_event_forwarding_for(active, thread_id, turn_id);
+    }
+
+    fn spawn_event_forwarding_for(&self, active: ActiveTurn, thread_id: String, turn_id: String) {
         let adapter = self.clone();
         tokio::spawn(async move {
             let mut events = active.handle.events();
+            let mut tool_arguments = HashMap::<String, Value>::new();
             while let Some(event) = events.next().await {
                 match event {
                     Ok(event) => {
+                        if let RunEventPayload::ToolCallStarted {
+                            tool_call_id,
+                            arguments,
+                            ..
+                        } = event.payload()
+                        {
+                            tool_arguments.insert(tool_call_id.clone(), arguments.clone());
+                        }
                         let notifications =
                             map_run_event_to_notifications(&thread_id, &turn_id, &event);
-                        for notification in notifications {
+                        for mut notification in notifications {
+                            // The route owns the canonical decision. The runtime event currently
+                            // carries only `approved`, so forwarding it would collapse
+                            // `allow_session` to `allow` and emit a duplicate resolution.
+                            if matches!(notification, ServerNotification::ApprovalResolved(_)) {
+                                continue;
+                            }
+                            if let ServerNotification::ApprovalRequested(approval) =
+                                &mut notification
+                            {
+                                if let Some(arguments) = tool_arguments.get(&approval.tool_call_id)
+                                {
+                                    approval.arguments = arguments.clone();
+                                }
+                            }
                             if let Some(item) = item_from_notification(&notification) {
                                 let _ = adapter.store.append_item(&thread_id, &turn_id, item);
                             }
                             let _ = adapter
                                 .broadcast_to_thread(&thread_id, notification.clone())
                                 .await;
-                            if let ServerNotification::ApprovalRequested(approval) = &notification {
+                            if let ServerNotification::ApprovalRequested(approval) = notification {
                                 adapter
                                     .route_approval_request(
                                         &thread_id,
                                         &turn_id,
+                                        active.owner_connection_id,
                                         &active.handle,
-                                        approval.clone(),
+                                        approval,
                                     )
                                     .await;
-                            }
-                            if is_terminal_turn_notification(&notification) {
-                                adapter.state.clear_active_turn(&thread_id, &turn_id).await;
-                                let _ = adapter.store.set_active_turn(
-                                    &thread_id,
-                                    None,
-                                    ThreadStatus::Idle,
-                                );
                             }
                         }
                     }
@@ -185,74 +274,96 @@ impl AppServerRunAdapter {
                                 ),
                             )
                             .await;
-                        break;
                     }
                 }
             }
+            let result = events.into_result().await;
+            adapter
+                .complete_turn(thread_id, turn_id, active.owner_connection_id, result)
+                .await;
         });
+    }
+
+    pub async fn queue_steering(
+        &self,
+        thread_id: &str,
+        expected_turn_id: &str,
+        input: Vec<UserInput>,
+    ) -> Result<String, AppServerError> {
+        let active = self
+            .validated_active_turn(thread_id, expected_turn_id)
+            .await?;
+        active
+            .steering
+            .lock()
+            .map_err(|_| AppServerError::internal("steering queue lock poisoned"))?
+            .push_back(input);
+        Ok(active.turn.turn_id)
+    }
+
+    pub async fn queue_follow_up(
+        &self,
+        thread_id: &str,
+        expected_turn_id: &str,
+        input: Vec<UserInput>,
+    ) -> Result<String, AppServerError> {
+        let active = self
+            .validated_active_turn(thread_id, expected_turn_id)
+            .await?;
+        self.state.queue_follow_up(thread_id, input).await;
+        Ok(active.turn.turn_id)
     }
 
     pub async fn interrupt_turn(
         &self,
         thread_id: &str,
-        turn_id: &str,
+        expected_turn_id: &str,
     ) -> Result<InterruptTurnOutcome, AppServerError> {
-        if let Some(pending) = self.state.pending_approval(thread_id).await {
-            if pending.turn_id == turn_id {
-                let mut completed_turn = None;
-                if let Some(active) = self.state.active_turn(thread_id).await {
-                    active.handle.cancel();
-                    let _ = active
-                        .handle
-                        .approve(
-                            &pending.request_id,
-                            ToolApprovalDecision::timeout("turn interrupted"),
-                        )
-                        .await;
-                    completed_turn = Some(interrupted_turn(active.turn));
-                }
-                let _ = self
-                    .outgoing
-                    .resolve_server_error(JsonRpcError {
+        let active = self
+            .validated_active_turn(thread_id, expected_turn_id)
+            .await?;
+        let pending = self.state.pending_approval(thread_id).await;
+        active.handle.cancel();
+        let mut approval_resolved = None;
+        if let Some(pending) = pending.filter(|pending| pending.turn_id == active.turn.turn_id) {
+            let _ = active
+                .handle
+                .approve(
+                    &pending.request_id,
+                    ToolApprovalDecision::timeout("turn interrupted"),
+                )
+                .await;
+            let _ = self
+                .outgoing
+                .resolve_server_error(
+                    pending.connection_id,
+                    JsonRpcError {
                         id: RequestId::String(pending.request_id.clone()),
                         error: JsonRpcErrorBody {
                             code: AppServerErrorCode::InternalError.code(),
                             message: "turn interrupted".to_string(),
                             data: None,
                         },
-                    })
-                    .await;
-                self.state
-                    .clear_pending_approval(thread_id, &pending.request_id)
-                    .await;
-                self.store
-                    .set_active_turn(thread_id, None, ThreadStatus::Idle)
-                    .map_err(store_error)?;
-                return Ok(InterruptTurnOutcome {
-                    approval_resolved: Some(ApprovalResolveParams {
-                        thread_id: thread_id.to_string(),
-                        turn_id: turn_id.to_string(),
-                        request_id: pending.request_id,
-                        decision: ApprovalDecision::Deny,
-                    }),
-                    completed_turn,
-                });
-            }
-        }
-        if let Some(active) = self.state.active_turn(thread_id).await {
-            if active.turn.id != turn_id {
-                return Err(AppServerError::invalid_params("No matching active turn"));
-            }
-            active.handle.cancel();
-            self.store
-                .set_active_turn(thread_id, None, ThreadStatus::Idle)
-                .map_err(store_error)?;
-            return Ok(InterruptTurnOutcome {
-                approval_resolved: None,
-                completed_turn: Some(interrupted_turn(active.turn)),
+                    },
+                )
+                .await;
+            self.state
+                .clear_pending_approval(thread_id, &pending.request_id)
+                .await;
+            approval_resolved = Some(ApprovalResolveParams {
+                thread_id: thread_id.to_string(),
+                turn_id: active.turn.turn_id.clone(),
+                request_id: pending.request_id,
+                decision: ApprovalDecision::Timeout,
+                reason: "turn interrupted".to_string(),
+                metadata: Metadata::new(),
             });
         }
-        Err(AppServerError::invalid_params("No matching active turn"))
+        Ok(InterruptTurnOutcome {
+            approval_resolved,
+            turn_id: active.turn.turn_id,
+            cancelled: true,
+        })
     }
 
     pub async fn notify_approval_resolved(
@@ -264,20 +375,134 @@ impl AppServerRunAdapter {
             .await
     }
 
-    pub async fn notify_turn_completed(&self, turn: AppTurn) -> Result<(), AppServerError> {
-        let thread_id = turn.thread_id.clone();
-        self.broadcast_to_thread(
-            &thread_id,
-            ServerNotification::TurnCompleted(TurnCompletedParams { turn }),
-        )
-        .await
-    }
-
     pub async fn active_turn(&self, thread_id: &str) -> Option<AppTurn> {
         self.state
             .active_turn(thread_id)
             .await
             .map(|active| active.turn)
+    }
+
+    async fn validated_active_turn(
+        &self,
+        thread_id: &str,
+        expected_turn_id: &str,
+    ) -> Result<ActiveTurn, AppServerError> {
+        let active = self
+            .state
+            .active_turn(thread_id)
+            .await
+            .ok_or_else(AppServerError::active_turn_not_found)?;
+        if !expected_turn_id.is_empty() && active.turn.turn_id != expected_turn_id {
+            return Err(AppServerError::turn_id_mismatch());
+        }
+        Ok(active)
+    }
+
+    async fn complete_turn(
+        &self,
+        thread_id: String,
+        turn_id: String,
+        owner_connection_id: ConnectionId,
+        result: Result<RunResult, String>,
+    ) {
+        let (status, run_id, final_output, error, token_usage) = match result {
+            Ok(result) => {
+                let status = turn_status(result.status());
+                let error = if status == TurnStatus::Completed {
+                    None
+                } else {
+                    result
+                        .result()
+                        .error
+                        .clone()
+                        .or_else(|| result.result().wait_reason.clone())
+                        .or_else(|| Some("Turn failed".to_string()))
+                };
+                (
+                    status,
+                    Some(result.run_id().to_string()),
+                    result.final_output().map(str::to_string),
+                    error,
+                    Some(app_token_usage(&result.result().token_usage)),
+                )
+            }
+            Err(error) => (TurnStatus::Failed, None, None, Some(error), None),
+        };
+        let mut stored_result = std::collections::BTreeMap::new();
+        if let Some(final_output) = &final_output {
+            stored_result.insert("finalOutput".to_string(), json!(final_output));
+        }
+        if let Some(error) = &error {
+            stored_result.insert("error".to_string(), json!(error));
+        }
+        if let Some(token_usage) = &token_usage {
+            stored_result.insert("tokenUsage".to_string(), json!(token_usage));
+        }
+        let _ = self
+            .store
+            .update_turn(&turn_id, status, run_id.as_deref(), &stored_result);
+        self.turn_approval_timeouts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&(thread_id.clone(), turn_id.clone()));
+        self.state.clear_active_turn(&thread_id, &turn_id).await;
+        let _ = self
+            .store
+            .set_active_turn(&thread_id, None, ThreadStatus::Idle);
+        let _ = self
+            .broadcast_to_thread(
+                &thread_id,
+                ServerNotification::ThreadStatusChanged(ThreadStatusChangedParams {
+                    thread_id: thread_id.clone(),
+                    status: ThreadStatus::Idle,
+                }),
+            )
+            .await;
+        let _ = self
+            .broadcast_to_thread(
+                &thread_id,
+                ServerNotification::TurnCompleted(TurnCompletedParams {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    run_id,
+                    status,
+                    final_output,
+                    error,
+                    token_usage,
+                }),
+            )
+            .await;
+
+        if status == TurnStatus::Completed {
+            if let Some(input) = self.state.pop_follow_up(&thread_id).await {
+                let params = TurnStartParams {
+                    thread_id: thread_id.clone(),
+                    input,
+                    metadata: Default::default(),
+                };
+                match self.start_turn(owner_connection_id, params).await {
+                    Ok(turn) => {
+                        let _ = self.notify_turn_started(&turn).await;
+                        if let Some(active) = self.state.active_turn(&thread_id).await {
+                            self.spawn_event_forwarding_for(active, thread_id, turn.turn_id);
+                        }
+                    }
+                    Err(error) => {
+                        let _ = self
+                            .broadcast_to_thread(
+                                &thread_id,
+                                ServerNotification::ErrorWarning(
+                                    crate::app_server::protocol::WarningParams {
+                                        message: error.message().to_string(),
+                                        code: Some("follow_up".to_string()),
+                                    },
+                                ),
+                            )
+                            .await;
+                    }
+                }
+            }
+        }
     }
 
     async fn broadcast_to_thread(
@@ -298,38 +523,67 @@ impl AppServerRunAdapter {
         &self,
         thread_id: &str,
         turn_id: &str,
+        owner_connection_id: ConnectionId,
         handle: &RunHandle,
         approval: ApprovalRequestParams,
     ) {
-        let subscribers = self.state.subscribers(thread_id).await;
-        let Some(connection_id) = subscribers.first().copied() else {
+        if !self
+            .state
+            .is_subscribed(thread_id, owner_connection_id)
+            .await
+        {
+            let reason = "approval client disconnected";
             let _ = handle
-                .approve(
-                    &approval.request_id,
-                    ToolApprovalDecision::timeout("approval client disconnected"),
+                .approve(&approval.request_id, ToolApprovalDecision::timeout(reason))
+                .await;
+            let _ = self
+                .broadcast_to_thread(
+                    thread_id,
+                    ServerNotification::ApprovalResolved(ApprovalResolveParams {
+                        thread_id: thread_id.to_string(),
+                        turn_id: turn_id.to_string(),
+                        request_id: approval.request_id,
+                        decision: ApprovalDecision::Timeout,
+                        reason: reason.to_string(),
+                        metadata: Metadata::new(),
+                    }),
                 )
                 .await;
             return;
-        };
+        }
         self.state
-            .set_pending_approval(thread_id, turn_id, approval.request_id.clone())
+            .set_pending_approval(
+                thread_id,
+                turn_id,
+                approval.request_id.clone(),
+                owner_connection_id,
+            )
             .await;
+        let timeout = self
+            .turn_approval_timeouts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&(thread_id.to_string(), turn_id.to_string()))
+            .copied()
+            .unwrap_or(self.approval_request_timeout);
         let response = self
             .outgoing
             .send_server_request_with_id_and_timeout(
-                connection_id,
+                owner_connection_id,
                 RequestId::String(approval.request_id.clone()),
                 ServerRequest::ApprovalRequest(approval.clone()),
-                self.approval_request_timeout,
+                timeout,
             )
             .await;
         let (decision, protocol_decision) = match response {
             Ok(value) => tool_approval_decision_from_response(value),
             Err(error) => (
                 ToolApprovalDecision::timeout(error.message().to_string()),
-                ApprovalDecision::Deny,
+                ApprovalDecision::Timeout,
             ),
         };
+        let resolution_reason = decision.reason().to_string();
+        let resolution_metadata = decision.metadata().cloned().unwrap_or_default();
         if self
             .state
             .pending_approval(thread_id)
@@ -345,14 +599,14 @@ impl AppServerRunAdapter {
         let _ = self
             .broadcast_to_thread(
                 thread_id,
-                ServerNotification::ApprovalResolved(
-                    crate::app_server::protocol::ApprovalResolveParams {
-                        thread_id: thread_id.to_string(),
-                        turn_id: turn_id.to_string(),
-                        request_id: approval.request_id,
-                        decision: protocol_decision,
-                    },
-                ),
+                ServerNotification::ApprovalResolved(ApprovalResolveParams {
+                    thread_id: thread_id.to_string(),
+                    turn_id: turn_id.to_string(),
+                    request_id: approval.request_id,
+                    decision: protocol_decision,
+                    reason: resolution_reason,
+                    metadata: resolution_metadata,
+                }),
             )
             .await;
     }
@@ -360,7 +614,8 @@ impl AppServerRunAdapter {
 
 pub struct InterruptTurnOutcome {
     pub approval_resolved: Option<ApprovalResolveParams>,
-    pub completed_turn: Option<AppTurn>,
+    pub turn_id: String,
+    pub cancelled: bool,
 }
 
 struct AppServerApprovalProvider;
@@ -375,91 +630,186 @@ impl ApprovalProvider for AppServerApprovalProvider {
     }
 }
 
-fn item_from_notification(notification: &ServerNotification) -> Option<AppItem> {
-    match notification {
-        ServerNotification::AgentMessageDelta(AgentMessageDeltaParams {
-            item_id, delta, ..
-        }) => Some(AppItem {
-            id: item_id.clone(),
-            run_event_id: item_id.clone(),
-            kind: AppItemKind::AgentMessage,
-            status: AppItemStatus::Completed,
-            created_at_ms: timestamp_millis(),
-            completed_at_ms: Some(timestamp_millis()),
-            content: Some(json!({ "text": delta })),
-        }),
-        ServerNotification::ItemStarted(ItemStartedParams { item, .. })
-        | ServerNotification::ItemCompleted(ItemCompletedParams { item, .. }) => Some(item.clone()),
-        ServerNotification::ApprovalRequested(ApprovalRequestParams {
-            request_id,
-            tool_name,
-            preview,
-            ..
-        }) => Some(AppItem {
-            id: request_id.clone(),
-            run_event_id: request_id.clone(),
-            kind: AppItemKind::ApprovalRequest,
-            status: AppItemStatus::InProgress,
-            created_at_ms: timestamp_millis(),
-            completed_at_ms: None,
-            content: Some(json!({
-                "toolName": tool_name,
-                "preview": preview,
-                "choices": [ApprovalDecision::Allow, ApprovalDecision::Deny],
-            })),
-        }),
-        _ => None,
+struct SteeringRuntimeHook {
+    queue: SteeringQueue,
+}
+
+impl RuntimeHook for SteeringRuntimeHook {
+    fn before_llm(&self, event: BeforeLlmEvent<'_>) -> Option<BeforeLlmPatch> {
+        let queued = {
+            let Ok(mut queue) = self.queue.lock() else {
+                return None;
+            };
+            queue.drain(..).collect::<Vec<_>>()
+        };
+        if queued.is_empty() {
+            return None;
+        }
+        let mut messages = event.messages.to_vec();
+        messages.extend(
+            queued
+                .iter()
+                .map(|input| Message::user(input_text(input)))
+                .filter(|message| !message.content.is_empty()),
+        );
+        Some(BeforeLlmPatch {
+            messages: Some(messages),
+            tool_schemas: None,
+        })
+    }
+
+    fn before_tool_call(&self, event: BeforeToolCallEvent<'_>) -> Option<BeforeToolCallPatch> {
+        let has_steering = self
+            .queue
+            .lock()
+            .map(|queue| !queue.is_empty())
+            .unwrap_or(false);
+        has_steering.then(|| {
+            ToolExecutionResult::success(
+                event.call.id.clone(),
+                "Tool skipped due to queued steering message.",
+            )
+            .into()
+        })
     }
 }
 
-fn is_terminal_turn_notification(notification: &ServerNotification) -> bool {
-    matches!(notification, ServerNotification::TurnCompleted(_))
+fn effective_approval_request_timeout(config: &RunConfig, fallback: Duration) -> Duration {
+    config.approval_timeout.unwrap_or(fallback)
 }
 
-fn interrupted_turn(mut turn: AppTurn) -> AppTurn {
-    turn.status = TurnStatus::Interrupted;
-    turn.completed_at_ms = Some(timestamp_millis());
-    turn
+fn item_from_notification(notification: &ServerNotification) -> Option<AppItem> {
+    match notification {
+        ServerNotification::AgentMessageDelta(AgentMessageDeltaParams { item, .. })
+        | ServerNotification::ItemStarted(ItemStartedParams { item })
+        | ServerNotification::ItemCompleted(ItemCompletedParams { item }) => Some(item.clone()),
+        _ => None,
+    }
 }
 
 fn input_text(input: &[UserInput]) -> String {
     input
         .iter()
-        .map(|item| item.text.as_str())
+        .filter_map(|item| {
+            if item.get("type").and_then(Value::as_str) == Some("text") {
+                item.get("text").and_then(Value::as_str).map(str::to_string)
+            } else if let Some(text) = item.get("text").and_then(Value::as_str) {
+                Some(text.to_string())
+            } else if item.is_null() {
+                None
+            } else {
+                Some(item.to_string())
+            }
+        })
+        .filter(|text| !text.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn turn_status(status: AgentStatus) -> TurnStatus {
+    match status {
+        AgentStatus::Completed => TurnStatus::Completed,
+        AgentStatus::Pending | AgentStatus::Running => TurnStatus::Running,
+        AgentStatus::WaitUser | AgentStatus::Failed | AgentStatus::MaxCycles => TurnStatus::Failed,
+    }
+}
+
+fn app_token_usage(usage: &TaskTokenUsage) -> AppTokenUsage {
+    AppTokenUsage {
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        total_tokens: usage.total_tokens,
+        cached_tokens: usage.cached_tokens,
+        reasoning_tokens: usage.reasoning_tokens,
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        cache_creation_tokens: usage.cache_creation_tokens,
+    }
 }
 
 fn store_error(error: ThreadStoreError) -> AppServerError {
     AppServerError::internal(error.to_string())
 }
 
-fn tool_approval_decision_from_response(
-    value: serde_json::Value,
-) -> (ToolApprovalDecision, ApprovalDecision) {
-    match value
+fn tool_approval_decision_from_response(value: Value) -> (ToolApprovalDecision, ApprovalDecision) {
+    let action = value
         .get("decision")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-    {
-        "allow" | "approved" => (ToolApprovalDecision::allow(), ApprovalDecision::Allow),
-        "deny" | "denied" => {
-            let reason = value
-                .get("message")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("approval denied");
-            (ToolApprovalDecision::deny(reason), ApprovalDecision::Deny)
-        }
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let supplied_reason = value
+        .get("reason")
+        .or_else(|| value.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let metadata = value
+        .get("metadata")
+        .and_then(Value::as_object)
+        .map(|metadata| {
+            metadata
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect::<Metadata>()
+        })
+        .unwrap_or_default();
+    let (decision, protocol_decision) = match action {
+        "allow" => (ToolApprovalDecision::allow(), ApprovalDecision::Allow),
+        "allow_session" => (
+            ToolApprovalDecision::allow_session(),
+            ApprovalDecision::AllowSession,
+        ),
+        "deny" => (
+            ToolApprovalDecision::deny(if supplied_reason.is_empty() {
+                "approval denied"
+            } else {
+                supplied_reason
+            }),
+            ApprovalDecision::Deny,
+        ),
+        "timeout" => (
+            ToolApprovalDecision::timeout(if supplied_reason.is_empty() {
+                "approval request timed out"
+            } else {
+                supplied_reason
+            }),
+            ApprovalDecision::Timeout,
+        ),
         _ => (
             ToolApprovalDecision::deny("invalid approval response"),
             ApprovalDecision::Deny,
         ),
-    }
+    };
+    let decision = if supplied_reason.is_empty() {
+        decision
+    } else {
+        decision.with_reason(supplied_reason)
+    };
+    let decision = if metadata.is_empty() {
+        decision
+    } else {
+        decision.with_metadata(metadata)
+    };
+    (decision, protocol_decision)
 }
 
-fn timestamp_millis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn turn_run_config_approval_timeout_overrides_adapter_fallback() {
+        let configured = Duration::from_millis(25);
+        let config = RunConfig {
+            approval_timeout: Some(configured),
+            ..RunConfig::default()
+        };
+
+        assert_eq!(
+            effective_approval_request_timeout(&config, Duration::from_secs(30)),
+            configured
+        );
+        assert_eq!(
+            effective_approval_request_timeout(&RunConfig::default(), Duration::from_secs(30)),
+            Duration::from_secs(30)
+        );
+    }
 }

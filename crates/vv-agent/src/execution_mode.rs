@@ -3,6 +3,7 @@ use crate::runtime::backends::{
 };
 
 #[derive(Debug, Clone, Default)]
+#[allow(clippy::large_enum_variant)] // Preserve direct backend construction in the public API.
 pub enum ExecutionMode {
     #[default]
     Inline,

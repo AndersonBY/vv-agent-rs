@@ -31,6 +31,7 @@ fn sub_task_status_can_continue_completed_registered_session() {
             final_answer: Some("initial done".to_string()),
             wait_reason: None,
             error: None,
+            error_code: None,
             cycles: 1,
             todo_list: Vec::new(),
             resolved: BTreeMap::new(),
@@ -100,6 +101,7 @@ fn sub_task_status_can_continue_completed_attached_session_without_global_regist
             final_answer: Some("initial done".to_string()),
             wait_reason: None,
             error: None,
+            error_code: None,
             cycles: 1,
             todo_list: Vec::new(),
             resolved: BTreeMap::new(),
@@ -170,6 +172,7 @@ fn sub_task_manager_preserves_attached_resolved_payload_for_continuation() {
             final_answer: Some("initial done".to_string()),
             wait_reason: None,
             error: None,
+            error_code: None,
             cycles: 1,
             todo_list: Vec::new(),
             resolved: BTreeMap::new(),
@@ -209,6 +212,7 @@ fn sub_task_manager_records_failed_outcome_when_background_runner_panics() {
         .as_str()
         .expect("panic error")
         .contains("runner exploded"));
+    assert_eq!(entries[0]["error_code"], "sub_task_failed");
 }
 
 #[test]
@@ -258,6 +262,7 @@ fn sub_task_manager_sanitizes_session_messages_before_continue() {
             final_answer: Some("initial done".to_string()),
             wait_reason: None,
             error: None,
+            error_code: None,
             cycles: 1,
             todo_list: Vec::new(),
             resolved: BTreeMap::new(),
@@ -297,6 +302,7 @@ fn sub_task_status_rejects_max_cycles_continuation() {
             final_answer: None,
             wait_reason: None,
             error: Some("max cycles".to_string()),
+            error_code: None,
             cycles: 8,
             todo_list: Vec::new(),
             resolved: BTreeMap::new(),
@@ -351,6 +357,7 @@ fn sub_task_status_snapshot_tracks_session_activity_and_workspace_files() {
                     final_answer: Some("done".to_string()),
                     wait_reason: None,
                     error: None,
+                    error_code: None,
                     cycles: 1,
                     todo_list: Vec::new(),
                     resolved: BTreeMap::new(),

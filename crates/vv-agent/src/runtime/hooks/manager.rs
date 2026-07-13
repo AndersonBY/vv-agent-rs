@@ -12,7 +12,7 @@ use super::events::{
 };
 use super::traits::RuntimeHook;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct RuntimeHookManager {
     hooks: Vec<Arc<dyn RuntimeHook>>,
 }

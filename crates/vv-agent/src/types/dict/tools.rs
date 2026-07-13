@@ -35,11 +35,12 @@ impl ToolExecutionResult {
         let object = expect_object(data, "ToolExecutionResult")?;
         let status = match read_optional_string(object, "status_code").as_deref() {
             Some(status_code) => parse_tool_result_status(status_code)?,
-            None => parse_simple_tool_result_status(
-                read_optional_string(object, "status")
-                    .as_deref()
-                    .unwrap_or("success"),
-            )?,
+            None => {
+                let status =
+                    read_optional_string(object, "status").unwrap_or_else(|| "success".to_string());
+                parse_tool_result_status(&status)
+                    .or_else(|_| parse_simple_tool_result_status(&status))?
+            }
         };
         Ok(Self {
             tool_call_id: read_string(object, "tool_call_id").unwrap_or_default(),

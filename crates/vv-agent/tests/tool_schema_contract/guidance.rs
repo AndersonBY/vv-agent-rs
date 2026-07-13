@@ -261,7 +261,12 @@ fn high_impact_tool_parameters_include_operational_guidance() {
         (
             "create_sub_task",
             "exclude_files_pattern",
-            vec!["shared context", "large", "irrelevant"],
+            vec![
+                "discovery only",
+                "normalized workspace-relative",
+                "direct known-path access",
+                "not an access-control boundary or sandbox",
+            ],
         ),
         (
             "sub_task_status",

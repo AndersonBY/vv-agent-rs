@@ -1,66 +1,43 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "AppItem",
-  "type": "object",
+  "additionalProperties": false,
   "properties": {
-    "completedAtMs": {
-      "type": [
-        "integer",
-        "null"
-      ],
-      "format": "uint128",
-      "minimum": 0
+    "createdAt": {
+      "type": "number"
     },
-    "content": true,
-    "createdAtMs": {
-      "type": "integer",
-      "format": "uint128",
-      "minimum": 0
-    },
-    "id": {
+    "itemId": {
       "type": "string"
     },
-    "runEventId": {
-      "type": "string"
+    "payload": {
+      "additionalProperties": true,
+      "type": "object"
     },
     "status": {
-      "$ref": "#/$defs/AppItemStatus"
+      "type": "string"
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "turnId": {
+      "type": "string"
     },
     "type": {
-      "$ref": "#/$defs/AppItemKind"
+      "type": "string"
+    },
+    "updatedAt": {
+      "type": "number"
     }
   },
   "required": [
-    "id",
-    "runEventId",
+    "itemId",
+    "threadId",
+    "turnId",
     "type",
     "status",
-    "createdAtMs"
+    "payload",
+    "createdAt",
+    "updatedAt"
   ],
-  "$defs": {
-    "AppItemKind": {
-      "type": "string",
-      "enum": [
-        "userMessage",
-        "agentMessage",
-        "toolCall",
-        "approvalRequest",
-        "approvalResolved",
-        "memoryCompact",
-        "subRun",
-        "handoff",
-        "runStatus"
-      ]
-    },
-    "AppItemStatus": {
-      "type": "string",
-      "enum": [
-        "queued",
-        "inProgress",
-        "completed",
-        "failed",
-        "interrupted"
-      ]
-    }
-  }
+  "title": "AppItem",
+  "type": "object"
 }

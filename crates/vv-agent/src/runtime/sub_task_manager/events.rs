@@ -9,6 +9,7 @@ impl SubTaskManager {
     pub(super) fn handle_session_event(
         &self,
         task_id: &str,
+        session_generation: u64,
         event: &str,
         payload: &BTreeMap<String, Value>,
     ) {
@@ -16,9 +17,14 @@ impl SubTaskManager {
         let Some(record) = tasks.get_mut(task_id) else {
             return;
         };
+        if record.session_generation != session_generation {
+            return;
+        }
         record.updated_at = now_iso();
         match event {
             "session_run_start" => {
+                record.running = true;
+                record.outcome = None;
                 if let Some(prompt) = preview_text(payload.get("prompt")) {
                     record.task_title = prompt.clone();
                     record.recent_activity = Some(prompt);

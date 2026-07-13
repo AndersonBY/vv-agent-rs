@@ -5,7 +5,8 @@ use crate::types::ToolDirective;
 use super::outcome::ToolRunOutcome;
 use super::request::ToolRunRequest;
 use super::results::{
-    image_notification_from_tool_result, needs_tool_call_id, skipped_tool_result,
+    apply_tool_use_behavior, image_notification_from_tool_result, needs_tool_call_id,
+    skipped_tool_result,
 };
 
 pub struct ToolCallRunner {
@@ -34,7 +35,9 @@ impl ToolCallRunner {
 
         for (index, call) in request.tool_calls.iter().enumerate() {
             if let Some(context) = request.execution_context {
-                context.check_cancelled()?;
+                context
+                    .check_cancelled()
+                    .map_err(|error| error.to_string())?;
             }
             let (patched_call, short_circuit_result) = self.hook_manager.apply_before_tool_call(
                 request.task,
@@ -71,6 +74,7 @@ impl ToolCallRunner {
             if needs_tool_call_id(&result.tool_call_id) {
                 result.tool_call_id = patched_call.id.clone();
             }
+            apply_tool_use_behavior(request.task, &patched_call, &mut result);
 
             request.messages.push(result.to_message());
             if let Some(image_notification) =

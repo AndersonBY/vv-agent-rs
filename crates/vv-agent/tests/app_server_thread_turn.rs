@@ -6,13 +6,14 @@ use tokio::sync::mpsc;
 use vv_agent::app_server::protocol::{
     map_run_event_to_notifications, AppItemKind, AppItemStatus, JsonRpcMessage,
     JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestId, ServerNotification,
-    ThreadReadResponse, ThreadStartResponse, TurnStartResponse, TurnStatus, UserInput,
+    ThreadReadResponse, ThreadStartResponse, TurnStartResponse, TurnStatus,
 };
 use vv_agent::app_server::{outgoing::OutgoingEnvelope, processor::MessageProcessor};
 use vv_agent::app_server::{thread_store::SqliteThreadStore, transport::ConnectionId};
+use vv_agent::events::ApprovalAction;
 use vv_agent::{
-    Agent, AgentStatus, LLMResponse, ModelRef, RunEvent, Runner, ScriptedModelProvider, ToolCall,
-    ToolStatus,
+    Agent, AgentStatus, LLMResponse, ModelRef, RunEvent, RunEventPayload, Runner,
+    ScriptedModelProvider, ToolCall, ToolStatus,
 };
 
 #[test]
@@ -24,9 +25,12 @@ fn item_mapping_assistant_delta_becomes_agent_message_delta() {
     let [ServerNotification::AgentMessageDelta(delta)] = notifications.as_slice() else {
         panic!("expected agent message delta");
     };
-    assert_eq!(delta.thread_id, "thread_1");
-    assert_eq!(delta.turn_id, "turn_1");
-    assert_eq!(delta.item_id, event.event_id().as_str());
+    assert_eq!(delta.item.thread_id, "thread_1");
+    assert_eq!(delta.item.turn_id, "turn_1");
+    assert_eq!(
+        delta.item.item_id,
+        format!("item_{}", event.event_id().as_str())
+    );
     assert_eq!(delta.delta, "hello");
 }
 
@@ -44,16 +48,20 @@ fn item_mapping_tool_call_started_becomes_started_tool_item() {
 
     let notifications = map_run_event_to_notifications("thread_1", "turn_1", &event);
 
-    let [ServerNotification::ItemStarted(started)] = notifications.as_slice() else {
-        panic!("expected item started");
+    let Some(ServerNotification::ItemStarted(started)) = notifications.first() else {
+        panic!("expected item started first");
     };
-    assert_eq!(started.item.run_event_id, event.event_id().as_str());
-    assert_eq!(started.item.kind, AppItemKind::ToolCall);
-    assert_eq!(started.item.status, AppItemStatus::InProgress);
     assert_eq!(
-        started.item.content.as_ref().expect("content")["toolName"],
-        "bash"
+        started.item.item_id,
+        format!("item_{}", event.event_id().as_str())
     );
+    assert_eq!(started.item.kind, AppItemKind::ToolCall);
+    assert_eq!(started.item.status, AppItemStatus::Started);
+    assert_eq!(started.item.payload["toolName"], "bash");
+    assert!(matches!(
+        notifications.get(1),
+        Some(ServerNotification::ToolCallDelta(_))
+    ));
 }
 
 #[test]
@@ -75,7 +83,10 @@ fn item_mapping_tool_call_completed_becomes_completed_item() {
     };
     assert_eq!(completed.item.kind, AppItemKind::ToolCall);
     assert_eq!(completed.item.status, AppItemStatus::Completed);
-    assert_eq!(completed.item.completed_at_ms, Some(event.created_at_ms()));
+    assert_eq!(
+        completed.item.updated_at,
+        event.created_at_ms() as f64 / 1000.0
+    );
 }
 
 #[test]
@@ -88,33 +99,71 @@ fn item_mapping_approval_requested_becomes_approval_notification() {
         "call_1",
         "bash",
         "Run cargo test",
-    );
+    )
+    .with_metadata("arguments", json!({"cmd": "cargo test"}))
+    .with_metadata("tool_name", json!("bash"));
 
     let notifications = map_run_event_to_notifications("thread_1", "turn_1", &event);
 
-    let [ServerNotification::ApprovalRequested(approval)] = notifications.as_slice() else {
-        panic!("expected approval requested");
+    let [ServerNotification::ItemStarted(started), ServerNotification::ApprovalRequested(approval)] =
+        notifications.as_slice()
+    else {
+        panic!("expected approval item and request");
     };
+    assert_eq!(started.item.payload["message"], "Run cargo test");
+    assert_eq!(
+        started.item.payload["arguments"],
+        json!({"cmd": "cargo test"})
+    );
     assert_eq!(approval.thread_id, "thread_1");
     assert_eq!(approval.turn_id, "turn_1");
     assert_eq!(approval.request_id, "approval_1");
     assert_eq!(approval.tool_name, "bash");
+    assert_eq!(approval.arguments, json!({"cmd": "cargo test"}));
 }
 
 #[test]
-fn item_mapping_run_completed_becomes_turn_completed() {
+fn item_mapping_approval_resolved_preserves_reason_and_metadata() {
+    let event = RunEvent::new(
+        "run_1",
+        "trace_1",
+        "assistant",
+        Some(1),
+        RunEventPayload::ApprovalResolved {
+            request_id: "approval_1".to_string(),
+            tool_name: "bash".to_string(),
+            tool_call_id: "call_1".to_string(),
+            approved: true,
+        },
+    )
+    .with_approval_action(ApprovalAction::AllowSession)
+    .with_metadata("action", json!("allow_session"))
+    .with_metadata("reason", json!("approved by owner"))
+    .with_metadata("decision_metadata", json!({"ticket": 7}));
+
+    let notifications = map_run_event_to_notifications("thread_1", "turn_1", &event);
+
+    let [ServerNotification::ItemCompleted(completed), ServerNotification::ApprovalResolved(resolved)] =
+        notifications.as_slice()
+    else {
+        panic!("expected approval completion and resolution");
+    };
+    assert_eq!(completed.item.payload["reason"], "approved by owner");
+    assert_eq!(
+        completed.item.payload["decisionMetadata"],
+        json!({"ticket": 7})
+    );
+    assert_eq!(resolved.reason, "approved by owner");
+    assert_eq!(resolved.metadata["ticket"], 7);
+}
+
+#[test]
+fn item_mapping_leaves_run_completion_to_runtime_adapter() {
     let event = RunEvent::run_completed("run_1", "trace_1", "assistant", AgentStatus::Completed);
 
     let notifications = map_run_event_to_notifications("thread_1", "turn_1", &event);
 
-    let [ServerNotification::TurnCompleted(completed)] = notifications.as_slice() else {
-        panic!("expected turn completed");
-    };
-    assert_eq!(completed.turn.id, "turn_1");
-    assert_eq!(completed.turn.thread_id, "thread_1");
-    assert_eq!(completed.turn.run_id, "run_1");
-    assert_eq!(completed.turn.status, TurnStatus::Completed);
-    assert_eq!(completed.turn.completed_at_ms, Some(event.created_at_ms()));
+    assert!(notifications.is_empty());
 }
 
 #[tokio::test]
@@ -153,17 +202,16 @@ async fn json_rpc_thread_turn_streams_notifications_and_replays_items() {
                 2,
                 "thread/start",
                 json!({
-                    "title": "demo",
-                    "model": "demo-model",
-                    "ephemeral": false
+                    "agentKey": "default",
+                    "metadata": {"title": "demo"}
                 }),
             ),
         )
         .await;
     let thread_response: ThreadStartResponse =
         decode_response(expect_response(&mut outgoing).await);
-    let thread_id = thread_response.thread.id.clone();
-    assert_eq!(thread_response.thread.title.as_deref(), Some("demo"));
+    let thread_id = thread_response.thread_id.clone();
+    assert_eq!(thread_response.agent_key, "default");
     assert!(matches!(
         expect_notification(&mut outgoing).await,
         ServerNotification::ThreadStarted(_)
@@ -177,44 +225,36 @@ async fn json_rpc_thread_turn_streams_notifications_and_replays_items() {
                 "turn/start",
                 json!({
                     "threadId": thread_id,
-                    "input": [{"text": "say hello"}],
-                    "model": "demo-model"
+                    "input": [{"type": "text", "text": "say hello"}]
                 }),
             ),
         )
         .await;
     let turn_response: TurnStartResponse = decode_response(expect_response(&mut outgoing).await);
-    let turn_id = turn_response.turn.id.clone();
-    assert_eq!(turn_response.turn.thread_id, thread_id);
-    assert_eq!(
-        turn_response.turn.input,
-        vec![UserInput {
-            text: "say hello".into()
-        }]
-    );
+    let turn_id = turn_response.turn_id.clone();
+    assert_eq!(turn_response.thread_id, thread_id);
+    assert_eq!(turn_response.status, TurnStatus::Running);
 
-    let started = expect_notification(&mut outgoing).await;
+    let started = next_notification_matching(&mut outgoing, |notification| {
+        matches!(notification, ServerNotification::TurnStarted(_))
+    })
+    .await;
     assert!(matches!(started, ServerNotification::TurnStarted(_)));
 
-    let delta = next_notification_matching(&mut outgoing, |notification| {
-        matches!(notification, ServerNotification::AgentMessageDelta(_))
-    })
-    .await;
-    let ServerNotification::AgentMessageDelta(delta) = delta else {
-        unreachable!("matched delta")
-    };
-    assert_eq!(delta.thread_id, thread_id);
-    assert_eq!(delta.turn_id, turn_id);
-    assert_eq!(delta.delta, "hello world");
-
     let item_completed = next_notification_matching(&mut outgoing, |notification| {
-        matches!(notification, ServerNotification::ItemCompleted(_))
+        matches!(
+            notification,
+            ServerNotification::ItemCompleted(completed)
+                if completed.item.kind == AppItemKind::AgentMessage
+        )
     })
     .await;
-    assert!(matches!(
-        item_completed,
-        ServerNotification::ItemCompleted(_)
-    ));
+    let ServerNotification::ItemCompleted(item_completed) = item_completed else {
+        unreachable!("matched completed agent message")
+    };
+    assert_eq!(item_completed.item.thread_id, thread_id);
+    assert_eq!(item_completed.item.turn_id, turn_id);
+    assert_eq!(item_completed.item.payload["text"], "hello world");
 
     let completed = next_notification_matching(&mut outgoing, |notification| {
         matches!(notification, ServerNotification::TurnCompleted(_))
@@ -223,8 +263,9 @@ async fn json_rpc_thread_turn_streams_notifications_and_replays_items() {
     let ServerNotification::TurnCompleted(completed) = completed else {
         unreachable!("matched turn completed")
     };
-    assert_eq!(completed.turn.id, turn_id);
-    assert_eq!(completed.turn.status, TurnStatus::Completed);
+    assert_eq!(completed.turn_id, turn_id);
+    assert_eq!(completed.status, TurnStatus::Completed);
+    assert_eq!(completed.final_output.as_deref(), Some("hello world"));
 
     processor
         .process_message(
@@ -233,7 +274,7 @@ async fn json_rpc_thread_turn_streams_notifications_and_replays_items() {
         )
         .await;
     let read: ThreadReadResponse = decode_response(expect_response(&mut outgoing).await);
-    assert_eq!(read.thread.id, thread_id);
+    assert_eq!(read.thread.thread_id, thread_id);
     assert!(read
         .items
         .iter()

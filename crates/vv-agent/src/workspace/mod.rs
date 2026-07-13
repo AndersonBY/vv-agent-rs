@@ -1,4 +1,5 @@
 pub mod base;
+mod discovery_filter;
 pub mod local;
 pub mod memory;
 pub mod s3;
@@ -9,6 +10,10 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 pub use base::{FileInfo, WorkspaceBackend};
+pub use discovery_filter::{
+    validate_portable_exclude_pattern, DiscoveryFilteredWorkspaceBackend, PortableRegexError,
+    INVALID_EXCLUDE_FILES_PATTERN_CODE, INVALID_EXCLUDE_FILES_PATTERN_MESSAGE,
+};
 pub use local::LocalWorkspaceBackend;
 pub use memory::MemoryWorkspaceBackend;
 pub use s3::{S3WorkspaceBackend, S3WorkspaceConfig};

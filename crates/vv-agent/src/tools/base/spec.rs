@@ -1,9 +1,11 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 
 use super::ToolContext;
-use crate::types::{ToolArguments, ToolExecutionResult};
+use crate::tools::ToolApprovalRule;
+use crate::types::{Metadata, ToolArguments, ToolExecutionResult};
 
 pub type ToolHandler =
     Arc<dyn Fn(&mut ToolContext, &ToolArguments) -> ToolExecutionResult + Send + Sync + 'static>;
@@ -18,6 +20,11 @@ pub struct ToolSpec {
     pub description: String,
     pub schema: Value,
     pub kind: ToolSpecKind,
+    pub strict_schema: bool,
+    pub exposure: crate::tools::ToolExposure,
+    pub timeout: Option<Duration>,
+    pub approval: ToolApprovalRule,
+    pub metadata: Metadata,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +63,11 @@ impl ToolSpec {
             handler,
             description,
             kind: ToolSpecKind::Function,
+            strict_schema: true,
+            exposure: crate::tools::ToolExposure::Direct,
+            timeout: None,
+            approval: ToolApprovalRule::default(),
+            metadata: Metadata::new(),
         }
     }
 }

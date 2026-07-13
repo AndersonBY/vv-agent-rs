@@ -3,9 +3,9 @@ use crate::runtime::CancellationToken;
 use crate::types::{AgentResult, AgentStatus, CycleRecord, Message, Metadata};
 
 pub(crate) fn execute_cycle_loop<F>(
-    mut messages: Vec<Message>,
-    mut shared_state: Metadata,
-    mut cycle_executor: F,
+    messages: Vec<Message>,
+    shared_state: Metadata,
+    cycle_executor: F,
     cancellation_token: Option<&CancellationToken>,
     max_cycles: u32,
 ) -> AgentResult
@@ -18,9 +18,38 @@ where
         Option<&CancellationToken>,
     ) -> Option<AgentResult>,
 {
-    let mut cycles = Vec::new();
+    execute_cycle_loop_with_state(
+        messages,
+        Vec::new(),
+        shared_state,
+        cycle_executor,
+        cancellation_token,
+        1,
+        max_cycles,
+    )
+}
 
-    for cycle_index in 1..=max_cycles {
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn execute_cycle_loop_with_state<F>(
+    mut messages: Vec<Message>,
+    mut cycles: Vec<CycleRecord>,
+    mut shared_state: Metadata,
+    mut cycle_executor: F,
+    cancellation_token: Option<&CancellationToken>,
+    cycle_index_start: u32,
+    cycle_count: u32,
+) -> AgentResult
+where
+    F: FnMut(
+        u32,
+        &mut Vec<Message>,
+        &mut Vec<CycleRecord>,
+        &mut Metadata,
+        Option<&CancellationToken>,
+    ) -> Option<AgentResult>,
+{
+    for offset in 0..cycle_count {
+        let cycle_index = cycle_index_start.saturating_add(offset);
         if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
             return cancelled_backend_result(messages, cycles, shared_state);
         }

@@ -4,13 +4,14 @@ use std::sync::Arc;
 use futures_util::StreamExt;
 use serde_json::Value;
 
-use crate::llm::{LlmError, LlmStreamCallback};
+use crate::llm::LlmStreamCallback;
 use crate::types::{LLMResponse, Metadata};
 
 use super::response::{
     completion_payload_for_usage, estimate_missing_usage, from_vv_llm_tool_call, from_vv_llm_usage,
     merge_tool_call_extra_content, UsageEstimateContext,
 };
+use super::EndpointAttemptError;
 
 mod events;
 mod raw_content;
@@ -25,12 +26,12 @@ pub(super) async fn collect_vv_llm_stream(
     request: vv_llm::ChatRequest,
     stream_callback: Option<LlmStreamCallback>,
     estimate: Option<UsageEstimateContext>,
-) -> Result<LLMResponse, LlmError> {
+) -> Result<LLMResponse, EndpointAttemptError> {
     let model = request.model.clone();
     let mut stream = chat_client
         .create_stream(request)
         .await
-        .map_err(|error| LlmError::Request(error.to_string()))?;
+        .map_err(EndpointAttemptError::from_provider)?;
     let mut content = String::new();
     let mut reasoning_content = String::new();
     let mut raw_content = Vec::new();
@@ -40,7 +41,7 @@ pub(super) async fn collect_vv_llm_stream(
     let mut active_tool_call_key = None::<String>;
 
     while let Some(delta) = stream.next().await {
-        let delta = delta.map_err(|error| LlmError::Request(error.to_string()))?;
+        let delta = delta.map_err(EndpointAttemptError::from_provider)?;
         if let Some(delta_usage) = delta.usage {
             usage = Some(delta_usage);
         }

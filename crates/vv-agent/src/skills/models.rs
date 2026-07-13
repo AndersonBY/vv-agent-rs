@@ -8,6 +8,7 @@ pub struct SkillProperties {
     pub name: String,
     pub description: String,
     pub license: Option<String>,
+    pub compatibility: Option<String>,
     pub allowed_tools: Option<String>,
     pub metadata: BTreeMap<String, String>,
 }
@@ -23,6 +24,12 @@ impl SkillProperties {
         ]);
         if let Some(license) = &self.license {
             payload.insert("license".to_string(), Value::String(license.clone()));
+        }
+        if let Some(compatibility) = &self.compatibility {
+            payload.insert(
+                "compatibility".to_string(),
+                Value::String(compatibility.clone()),
+            );
         }
         if let Some(allowed_tools) = &self.allowed_tools {
             payload.insert(
@@ -57,6 +64,7 @@ pub struct SkillEntry {
     pub description: String,
     pub location: Option<String>,
     pub instructions: Option<String>,
+    pub compatibility: Option<String>,
     pub allowed_tools: Option<String>,
     pub metadata: BTreeMap<String, String>,
     pub load_error: Option<String>,

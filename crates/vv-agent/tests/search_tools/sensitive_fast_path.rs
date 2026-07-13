@@ -95,7 +95,7 @@ printf '%s\n' \
                 .expect("search token");
 
             assert_eq!(result.metadata["files"], json!(["visible.txt"]));
-            assert_eq!(result.metadata["sensitive_files_omitted"], 0);
+            assert!(!result.metadata.contains_key("sensitive_files_omitted"));
             assert_eq!(result.metadata["summary"]["files_searched"], 1);
         },
     );

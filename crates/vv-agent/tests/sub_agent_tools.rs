@@ -30,7 +30,7 @@ fn isolated_sub_agent_registry() -> SubAgentRegistryTestLock {
     let guard = LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("sub-agent registry test lock");
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     sub_agent_session_registry().clear();
     SubAgentRegistryTestLock { _guard: guard }
 }
@@ -79,6 +79,7 @@ impl SubAgentSession for ContinuingSubAgentSession {
             final_answer: Some("continued done".to_string()),
             wait_reason: None,
             error: None,
+            error_code: None,
             cycles: 2,
             todo_list: Vec::new(),
             resolved: BTreeMap::new(),
@@ -116,6 +117,7 @@ impl SubAgentSession for SanitizingSubAgentSession {
             final_answer: Some("continued done".to_string()),
             wait_reason: None,
             error: None,
+            error_code: None,
             cycles: 2,
             todo_list: Vec::new(),
             resolved: BTreeMap::new(),

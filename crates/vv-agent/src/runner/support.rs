@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
@@ -10,9 +11,9 @@ use crate::events::RunEvent;
 use crate::guardrails::GuardrailOutcome;
 use crate::result::RunResult;
 use crate::run_config::RunConfig;
-use crate::runtime::{BeforeToolCallEvent, BeforeToolCallPatch, RuntimeHook};
+use crate::runtime::{BeforeLlmEvent, BeforeLlmPatch, RuntimeHook};
 use crate::tools::{ApprovalPolicy, ToolPolicy};
-use crate::types::{AgentResult, ToolDirective, ToolExecutionResult, ToolResultStatus};
+use crate::types::AgentResult;
 
 use super::NormalizedInput;
 
@@ -20,8 +21,11 @@ use super::NormalizedInput;
 pub(super) struct HandoffRequest {
     pub(super) from_agent: String,
     pub(super) to_agent: String,
+    pub(super) tool_name: String,
     pub(super) input: String,
     pub(super) tool_call_id: String,
+    pub(super) cycle_index: u32,
+    pub(super) metadata: crate::types::Metadata,
 }
 
 pub(super) struct SingleRunOutcome {
@@ -29,25 +33,22 @@ pub(super) struct SingleRunOutcome {
     pub(super) handoff: Option<HandoffRequest>,
 }
 
-pub(super) struct ApprovedToolCall {
-    pub(super) call: crate::types::ToolCall,
-    pub(super) cycle_index: u32,
-}
-
 pub(super) fn apply_input_guardrails(
     agent: &Agent,
     context: &RunContext,
     input: NormalizedInput,
-) -> Result<NormalizedInput, String> {
+) -> GuardrailOutcome<NormalizedInput> {
     let mut current = input;
     for guardrail in agent.input_guardrails() {
         current = match guardrail.check(context, &current) {
             GuardrailOutcome::Allow(input) => input,
-            GuardrailOutcome::Block { message } => return Err(message),
-            GuardrailOutcome::RequireApproval { message } => return Err(message),
+            GuardrailOutcome::Block { message } => return GuardrailOutcome::Block { message },
+            GuardrailOutcome::RequireApproval { message } => {
+                return GuardrailOutcome::RequireApproval { message }
+            }
         };
     }
-    Ok(current)
+    GuardrailOutcome::Allow(current)
 }
 
 pub(super) fn apply_output_guardrails(
@@ -64,19 +65,19 @@ pub(super) fn apply_output_guardrails(
                 failed.status = crate::types::AgentStatus::Failed;
                 failed.error = Some(message);
                 failed.final_answer = None;
-                failed
+                failed.wait_reason = None;
+                return failed;
             }
         };
     }
     current
 }
 
-pub(super) fn max_handoff_depth(config: &RunConfig, agent: &Agent) -> u32 {
+pub(super) fn max_handoff_depth(default_config: &RunConfig, config: &RunConfig) -> u32 {
     config
-        .max_cycles
-        .or(agent.max_cycles())
+        .max_handoffs
+        .or(default_config.max_handoffs)
         .unwrap_or(10)
-        .max(1)
 }
 
 pub(super) fn effective_event_store(
@@ -98,29 +99,47 @@ pub(super) fn capture_event(
     event_store: Option<&Arc<dyn crate::event_store::RunEventStore>>,
     event_store_fail_closed: bool,
     event: RunEvent,
-) {
+) -> Result<(), String> {
     if let Some(store) = event_store {
         if let Err(error) = store.append(&event) {
             if event_store_fail_closed {
-                panic!("run event store append failed: {error}");
+                return Err(format!("run event store append failed: {error}"));
             }
             eprintln!("warning: run event store append failed: {error}");
         }
     }
-    if let Some(sender) = event_sender {
-        let _ = sender.send(event.clone());
-    }
     if let Some(collector) = collector {
-        if let Ok(mut events) = collector.lock() {
-            events.push(event);
-        }
+        collector
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(event.clone());
     }
+    if let Some(sender) = event_sender {
+        let _ = sender.send(event);
+    }
+    Ok(())
 }
 
 pub(super) fn insert_context_metadata(
     metadata: &mut crate::types::Metadata,
     bundle: &ContextBundle,
 ) {
+    metadata.insert(
+        "system_prompt_sections".to_string(),
+        Value::Array(bundle.metadata_sections()),
+    );
+    metadata.insert(
+        "system_prompt_sources".to_string(),
+        json!(bundle.sources.clone()),
+    );
+    metadata.insert(
+        "system_prompt_stable_hash".to_string(),
+        Value::String(bundle.stable_hash.clone()),
+    );
+    metadata.insert(
+        "system_prompt_omitted_sections".to_string(),
+        json!(bundle.omitted_section_ids.clone()),
+    );
     metadata.insert(
         "context_section_ids".to_string(),
         json!(bundle
@@ -140,66 +159,38 @@ pub(super) fn insert_context_metadata(
     );
 }
 
-pub(super) fn find_approved_tool_call(
-    result: &AgentResult,
-    approved_ids: &[String],
-) -> Option<ApprovedToolCall> {
-    for cycle in &result.cycles {
-        for tool_result in &cycle.tool_results {
-            let interruption_id = tool_result
-                .metadata
-                .get("approval_interruption_id")
-                .and_then(Value::as_str)?;
-            if !approved_ids.iter().any(|id| id == interruption_id) {
-                continue;
-            }
-            let tool_name = tool_result
-                .metadata
-                .get("tool_name")
-                .and_then(Value::as_str)?;
-            let call = cycle
-                .tool_calls
-                .iter()
-                .find(|call| call.id == tool_result.tool_call_id && call.name == tool_name)
-                .cloned()
-                .or_else(|| {
-                    cycle
-                        .tool_calls
-                        .iter()
-                        .find(|call| call.name == tool_name)
-                        .cloned()
-                })?;
-            return Some(ApprovedToolCall {
-                call,
-                cycle_index: cycle.index,
-            });
-        }
-    }
-    None
-}
-
 pub(super) fn extract_handoff(result: &AgentResult) -> Option<HandoffRequest> {
     result
         .cycles
         .iter()
-        .flat_map(|cycle| cycle.tool_results.iter())
-        .find_map(|tool_result| {
+        .flat_map(|cycle| {
+            cycle
+                .tool_results
+                .iter()
+                .map(move |tool_result| (cycle.index, tool_result))
+        })
+        .find_map(|(cycle_index, tool_result)| {
             let is_handoff = tool_result
                 .metadata
-                .get("handoff")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+                .get("mode")
+                .and_then(Value::as_str)
+                .is_some_and(|mode| mode == "handoff");
             if !is_handoff {
                 return None;
             }
             let from_agent = tool_result
                 .metadata
-                .get("from_agent")
+                .get("handoff_from")
                 .and_then(Value::as_str)?
                 .to_string();
             let to_agent = tool_result
                 .metadata
-                .get("to_agent")
+                .get("handoff_to")
+                .and_then(Value::as_str)?
+                .to_string();
+            let tool_name = tool_result
+                .metadata
+                .get("handoff_tool_name")
                 .and_then(Value::as_str)?
                 .to_string();
             let input = tool_result
@@ -211,14 +202,13 @@ pub(super) fn extract_handoff(result: &AgentResult) -> Option<HandoffRequest> {
             Some(HandoffRequest {
                 from_agent,
                 to_agent,
+                tool_name,
                 input,
                 tool_call_id: tool_result.tool_call_id.clone(),
+                cycle_index,
+                metadata: tool_result.metadata.clone(),
             })
         })
-}
-
-pub(super) fn approval_required(policy: &ToolPolicy) -> bool {
-    !matches!(policy.approval, ApprovalPolicy::Never)
 }
 
 pub(super) fn merged_tool_policy(
@@ -237,173 +227,192 @@ pub(super) fn merged_tool_policy(
         .disallowed_tools
         .extend(runner.disallowed_tools.clone());
     merged.disallowed_tools.extend(run.disallowed_tools.clone());
-    merged.approval = match run.approval {
-        ApprovalPolicy::Never if !matches!(runner.approval, ApprovalPolicy::Never) => {
-            runner.approval.clone()
-        }
-        ApprovalPolicy::Never if !matches!(agent.approval, ApprovalPolicy::Never) => {
-            agent.approval.clone()
-        }
-        _ => run.approval.clone(),
+    let mut seen_disallowed = HashSet::new();
+    merged
+        .disallowed_tools
+        .retain(|tool| seen_disallowed.insert(tool.clone()));
+    let predicates = [
+        agent.can_use_tool.clone(),
+        runner.can_use_tool.clone(),
+        run.can_use_tool.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    merged.can_use_tool = if predicates.is_empty() {
+        None
+    } else {
+        Some(Arc::new(move |tool_name, arguments| {
+            predicates
+                .iter()
+                .all(|predicate| predicate(tool_name, arguments))
+        }))
     };
-    if let Some(max_concurrency) = runner.max_concurrency {
-        merged.max_concurrency = Some(max_concurrency);
-    }
-    if let Some(max_concurrency) = run.max_concurrency {
-        merged.max_concurrency = Some(max_concurrency);
-    }
+    merged.approval = [run.approval, agent.approval, runner.approval]
+        .into_iter()
+        .find(|approval| !matches!(approval, ApprovalPolicy::Default))
+        .unwrap_or(ApprovalPolicy::Default);
     merged
 }
 
 pub(super) struct ApprovalHook {
     policy: ToolPolicy,
-    approved_ids: Vec<String>,
 }
 
 impl ApprovalHook {
-    pub(super) fn new(policy: ToolPolicy, metadata: crate::types::Metadata) -> Self {
-        let approved_ids = metadata
-            .get("approved_tool_interruption_ids")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default();
-        Self {
-            policy,
-            approved_ids,
-        }
+    pub(super) fn new(policy: ToolPolicy) -> Self {
+        Self { policy }
     }
 }
 
 impl RuntimeHook for ApprovalHook {
-    fn before_tool_call(&self, event: BeforeToolCallEvent<'_>) -> Option<BeforeToolCallPatch> {
-        if let Some(allowed) = self.policy.allowed_tools.as_ref() {
-            if !allowed.iter().any(|tool| tool == &event.call.name) {
-                return Some(BeforeToolCallPatch::result(approval_error(
-                    &event.call.id,
-                    &event.call.name,
-                    "tool_not_allowed",
-                    "Tool is not in the allowed tool list.",
-                )));
-            }
-        }
-        if self
-            .policy
-            .disallowed_tools
+    fn before_llm(&self, event: BeforeLlmEvent<'_>) -> Option<BeforeLlmPatch> {
+        let filtered = event
+            .tool_schemas
             .iter()
-            .any(|tool| tool == &event.call.name)
-        {
-            return Some(BeforeToolCallPatch::result(approval_error(
-                &event.call.id,
-                &event.call.name,
-                "tool_disallowed",
-                "Tool is disallowed by policy.",
-            )));
-        }
-        if !matches!(self.policy.approval, ApprovalPolicy::Always) {
+            .filter(|schema| {
+                schema["function"]["name"]
+                    .as_str()
+                    .map(|name| tool_allowed_by_policy(&self.policy, name))
+                    .unwrap_or_else(|| self.policy.allowed_tools.is_none())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if filtered.len() == event.tool_schemas.len() {
             return None;
         }
-        let interruption_id = approval_interruption_id(event.task.task_id.as_str(), event.call);
-        if self
-            .approved_ids
-            .iter()
-            .any(|approved| approved == &interruption_id)
-        {
-            return None;
+        Some(BeforeLlmPatch {
+            messages: None,
+            tool_schemas: Some(filtered),
+        })
+    }
+}
+
+fn tool_allowed_by_policy(policy: &ToolPolicy, tool_name: &str) -> bool {
+    let allowed = policy
+        .allowed_tools
+        .as_ref()
+        .is_none_or(|tools| tools.iter().any(|tool| tool == tool_name));
+    allowed && !policy.disallowed_tools.iter().any(|tool| tool == tool_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merged_tool_policy;
+    use crate::tools::{ApprovalPolicy, ToolPolicy};
+    use serde_json::json;
+
+    fn policy(approval: ApprovalPolicy) -> ToolPolicy {
+        ToolPolicy {
+            approval,
+            ..ToolPolicy::default()
         }
-        Some(BeforeToolCallPatch::result(approval_required_result(
-            &event.call.id,
-            &event.call.name,
-            &interruption_id,
-        )))
     }
-}
 
-fn approval_interruption_id(task_id: &str, call: &crate::types::ToolCall) -> String {
-    format!("approval:{task_id}:{}:{}", call.name, call.id)
-}
+    #[test]
+    fn approval_policy_precedence_matrix_is_run_then_agent_then_runner_then_default() {
+        let cases = [
+            (
+                "framework default",
+                ApprovalPolicy::Default,
+                ApprovalPolicy::Default,
+                ApprovalPolicy::Default,
+                ApprovalPolicy::Default,
+            ),
+            (
+                "runner fallback",
+                ApprovalPolicy::Always,
+                ApprovalPolicy::Default,
+                ApprovalPolicy::Default,
+                ApprovalPolicy::Always,
+            ),
+            (
+                "agent overrides runner",
+                ApprovalPolicy::Always,
+                ApprovalPolicy::Never,
+                ApprovalPolicy::Default,
+                ApprovalPolicy::Never,
+            ),
+            (
+                "agent on-request overrides runner",
+                ApprovalPolicy::Always,
+                ApprovalPolicy::OnRequest,
+                ApprovalPolicy::Default,
+                ApprovalPolicy::OnRequest,
+            ),
+            (
+                "run never overrides agent",
+                ApprovalPolicy::Never,
+                ApprovalPolicy::Always,
+                ApprovalPolicy::Never,
+                ApprovalPolicy::Never,
+            ),
+            (
+                "run always overrides agent",
+                ApprovalPolicy::Always,
+                ApprovalPolicy::Never,
+                ApprovalPolicy::Always,
+                ApprovalPolicy::Always,
+            ),
+            (
+                "run on-request overrides agent",
+                ApprovalPolicy::Never,
+                ApprovalPolicy::Always,
+                ApprovalPolicy::OnRequest,
+                ApprovalPolicy::OnRequest,
+            ),
+        ];
 
-fn approval_required_result(
-    tool_call_id: &str,
-    tool_name: &str,
-    interruption_id: &str,
-) -> ToolExecutionResult {
-    let mut metadata = crate::types::Metadata::new();
-    metadata.insert("approval_required".to_string(), Value::Bool(true));
-    metadata.insert(
-        "approval_interruption_id".to_string(),
-        Value::String(interruption_id.to_string()),
-    );
-    metadata.insert(
-        "tool_name".to_string(),
-        Value::String(tool_name.to_string()),
-    );
-    ToolExecutionResult {
-        tool_call_id: tool_call_id.to_string(),
-        content: json!({
-            "ok": false,
-            "approval_required": true,
-            "interruption_id": interruption_id,
-            "tool_name": tool_name,
-        })
-        .to_string(),
-        status: ToolResultStatus::WaitResponse,
-        directive: ToolDirective::WaitUser,
-        error_code: Some("tool_approval_required".to_string()),
-        metadata,
-        image_url: None,
-        image_path: None,
+        for (name, runner, agent, run, expected) in cases {
+            let merged = merged_tool_policy(&policy(agent), &policy(runner), &policy(run));
+            assert_eq!(merged.approval, expected, "{name}");
+        }
     }
-}
 
-fn approval_error(
-    tool_call_id: &str,
-    tool_name: &str,
-    error_code: &str,
-    message: &str,
-) -> ToolExecutionResult {
-    ToolExecutionResult {
-        tool_call_id: tool_call_id.to_string(),
-        content: json!({
-            "ok": false,
-            "error": message,
-            "error_code": error_code,
-            "tool_name": tool_name,
-        })
-        .to_string(),
-        status: ToolResultStatus::Error,
-        directive: ToolDirective::Continue,
-        error_code: Some(error_code.to_string()),
-        metadata: crate::types::Metadata::new(),
-        image_url: None,
-        image_path: None,
-    }
-}
+    #[test]
+    fn merge_overrides_allowlist_deduplicates_denylist_and_ands_predicates() {
+        let agent = ToolPolicy::default()
+            .allow_only(["agent"])
+            .disallow("shared")
+            .disallow("agent")
+            .can_use_tool(|_name, arguments| arguments["agent"] == json!(true));
+        let runner = ToolPolicy::default()
+            .allow_only(["runner"])
+            .disallow("shared")
+            .disallow("runner")
+            .can_use_tool(|_name, arguments| arguments["runner"] == json!(true));
+        let run = ToolPolicy::default()
+            .allow_only(["run"])
+            .disallow("agent")
+            .disallow("run")
+            .can_use_tool(|_name, arguments| arguments["run"] == json!(true));
 
-pub(super) fn completed_from_first_tool_result(result: RunResult) -> RunResult {
-    if result.status() != crate::types::AgentStatus::MaxCycles {
-        return result;
+        let merged = merged_tool_policy(&agent, &runner, &run);
+
+        assert_eq!(merged.allowed_tools, Some(vec!["run".to_string()]));
+        assert_eq!(
+            merged.disallowed_tools,
+            vec!["shared", "agent", "runner", "run"]
+        );
+        assert!(merged.allows_arguments(
+            "tool",
+            &[
+                ("agent".to_string(), json!(true)),
+                ("runner".to_string(), json!(true)),
+                ("run".to_string(), json!(true)),
+            ]
+            .into_iter()
+            .collect()
+        ));
+        assert!(!merged.allows_arguments(
+            "tool",
+            &[
+                ("agent".to_string(), json!(true)),
+                ("runner".to_string(), json!(false)),
+                ("run".to_string(), json!(true)),
+            ]
+            .into_iter()
+            .collect()
+        ));
     }
-    let Some(tool_result) = result
-        .result()
-        .cycles
-        .iter()
-        .flat_map(|cycle| cycle.tool_results.iter())
-        .find(|tool_result| tool_result.status == ToolResultStatus::Success)
-        .cloned()
-    else {
-        return result;
-    };
-    let final_answer = tool_result.content.clone();
-    let agent_name = result.agent_name().to_string();
-    let resolved = result.resolved_model().clone();
-    let mut agent_result = result.result().clone();
-    agent_result.status = crate::types::AgentStatus::Completed;
-    agent_result.final_answer = Some(final_answer);
-    RunResult::new(agent_name, agent_result, resolved)
 }

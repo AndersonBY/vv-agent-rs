@@ -5,6 +5,7 @@ use crate::app_server::protocol::{AppServerError, JsonRpcMessage};
 use super::{AppServerTransport, ConnectionId, TransportEvent, TransportFuture};
 
 pub struct ChannelTransport {
+    connection_id: ConnectionId,
     inbound_rx: mpsc::Receiver<TransportEvent>,
     outbound_tx: mpsc::Sender<JsonRpcMessage>,
 }
@@ -22,6 +23,7 @@ impl ChannelTransport {
         let connection_id = ConnectionId::new(1);
         (
             Self {
+                connection_id,
                 inbound_rx,
                 outbound_tx,
             },
@@ -43,10 +45,14 @@ impl AppServerTransport for ChannelTransport {
 
     fn send(
         &self,
-        _connection_id: ConnectionId,
+        connection_id: ConnectionId,
         message: JsonRpcMessage,
     ) -> TransportFuture<'_, Result<(), AppServerError>> {
+        let expected_connection_id = self.connection_id;
         Box::pin(async move {
+            if connection_id != expected_connection_id {
+                return Err(AppServerError::internal("unknown channel connection"));
+            }
             self.outbound_tx
                 .try_send(message)
                 .map_err(|error| match error {

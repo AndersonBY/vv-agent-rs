@@ -32,6 +32,7 @@ pub fn approval_app_server_client() -> AppServerClient {
     let dangerous = FunctionTool::builder("dangerous")
         .description("Requires approval.")
         .json_schema(json!({"type":"object","properties":{},"required":[]}))
+        .needs_approval(true)
         .handler(|_ctx, _args: serde_json::Value| async move { Ok(ToolOutput::text("allowed")) })
         .build()
         .expect("tool");

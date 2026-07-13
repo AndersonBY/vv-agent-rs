@@ -6,9 +6,9 @@ use serde_json::Value;
 
 use crate::skills::normalize_skill_list;
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{tool_error_with_code, tool_result};
+use crate::tools::common::{tool_error_with_code, tool_result_with_metadata};
 use crate::tools::schemas;
-use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
+use crate::types::{Metadata, ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 use state::{append_activation_log, append_unique_string};
 
@@ -27,10 +27,7 @@ pub(crate) fn activate_skill_tool() -> ToolSpec {
             if skill_name.is_empty() {
                 return tool_error_with_code("`skill_name` is required", "skill_name_required");
             }
-            let raw_skills = context
-                .shared_state
-                .get("available_skills")
-                .or_else(|| context.metadata.get("available_skills"));
+            let raw_skills = context.shared_state.get("available_skills");
             let entries = normalize_skill_list(raw_skills, Some(&context.workspace), true);
             if entries.is_empty() {
                 return tool_error_with_code(
@@ -92,11 +89,12 @@ pub(crate) fn activate_skill_tool() -> ToolSpec {
             if !reason.is_empty() {
                 payload.insert("reason".to_string(), Value::String(reason));
             }
-            tool_result(
+            tool_result_with_metadata(
                 ToolResultStatus::Success,
                 Value::Object(payload),
                 None,
                 ToolDirective::Continue,
+                Metadata::from([("skill_name".to_string(), Value::String(entry.name))]),
             )
         }),
     );

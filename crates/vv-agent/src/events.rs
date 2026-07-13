@@ -1,7 +1,6 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::types::{AgentStatus, Metadata};
@@ -32,9 +31,7 @@ pub struct EventId(String);
 
 impl EventId {
     pub fn new() -> Self {
-        static NEXT_EVENT_ID: AtomicU64 = AtomicU64::new(1);
-        let sequence = NEXT_EVENT_ID.fetch_add(1, Ordering::Relaxed);
-        Self(format!("evt_{}_{}", timestamp_millis(), sequence))
+        Self(format!("evt_{}", uuid::Uuid::new_v4().simple()))
     }
 
     pub fn as_str(&self) -> &str {
@@ -48,21 +45,143 @@ impl Default for EventId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RunEvent {
     pub version: RunEventVersion,
     pub event_id: EventId,
     pub run_id: String,
     pub trace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_event_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_run_id: Option<String>,
-    pub created_at_ms: u128,
+    pub created_at: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cycle_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Metadata::is_empty")]
     pub metadata: Metadata,
     #[serde(flatten)]
     pub payload: RunEventPayload,
+    #[serde(flatten, skip_serializing_if = "Metadata::is_empty")]
+    extra_fields: Metadata,
+}
+
+#[derive(Deserialize)]
+struct RunEventWire {
+    version: RunEventVersion,
+    event_id: EventId,
+    run_id: String,
+    trace_id: String,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    parent_event_id: Option<String>,
+    #[serde(default)]
+    parent_run_id: Option<String>,
+    #[serde(default)]
+    created_at: Option<f64>,
+    #[serde(default)]
+    created_at_ms: Option<f64>,
+    #[serde(default)]
+    cycle_index: Option<u32>,
+    #[serde(default)]
+    agent_name: Option<String>,
+    #[serde(default)]
+    metadata: Metadata,
+    #[serde(flatten)]
+    payload: RunEventPayload,
+}
+
+impl<'de> Deserialize<'de> for RunEvent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let mut wire: RunEventWire =
+            serde_json::from_value(value.clone()).map_err(D::Error::custom)?;
+        if wire.version.as_str() != "v1" {
+            return Err(D::Error::custom(format!(
+                "unsupported run event version `{}`",
+                wire.version.as_str()
+            )));
+        }
+        for (field, value) in [
+            ("event_id", wire.event_id.as_str()),
+            ("run_id", wire.run_id.as_str()),
+            ("trace_id", wire.trace_id.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(D::Error::custom(format!(
+                    "run event {field} must be a non-empty string"
+                )));
+            }
+        }
+        if matches!(
+            &wire.payload,
+            RunEventPayload::ToolCallStarted { arguments, .. } if !arguments.is_object()
+        ) {
+            return Err(D::Error::custom(
+                "run event tool arguments must be an object",
+            ));
+        }
+        if let RunEventPayload::ApprovalResolved { approved, .. } = &mut wire.payload {
+            let action = match value.get("action") {
+                Some(Value::String(action)) => ApprovalAction::parse(action).ok_or_else(|| {
+                    D::Error::custom(format!("unsupported approval action `{action}`"))
+                })?,
+                Some(_) => return Err(D::Error::custom("approval action must be a string")),
+                None if value.get("approved").is_some() => ApprovalAction::from_approved(*approved),
+                None => {
+                    return Err(D::Error::custom(
+                        "approval_resolved requires action or approved",
+                    ))
+                }
+            };
+            if value.get("action").is_some()
+                && value.get("approved").is_some()
+                && *approved != action.is_approved()
+            {
+                return Err(D::Error::custom(format!(
+                    "approval action `{}` conflicts with approved={approved}",
+                    action.as_str()
+                )));
+            }
+            *approved = action.is_approved();
+        }
+        let created_at = match (wire.created_at, wire.created_at_ms) {
+            (Some(seconds), _) => seconds,
+            (None, Some(milliseconds)) => milliseconds / 1000.0,
+            (None, None) => return Err(D::Error::custom("missing created_at")),
+        };
+        if !created_at.is_finite() || created_at < 0.0 {
+            return Err(D::Error::custom(
+                "created_at must be a finite non-negative number",
+            ));
+        }
+
+        let mut extra_fields = supplemental_wire_fields(&value, &wire.payload);
+        add_default_supplemental_fields(&wire.payload, &mut extra_fields);
+        Ok(Self {
+            version: wire.version,
+            event_id: wire.event_id,
+            run_id: wire.run_id,
+            trace_id: wire.trace_id,
+            session_id: wire.session_id,
+            parent_event_id: wire.parent_event_id,
+            parent_run_id: wire.parent_run_id,
+            created_at,
+            cycle_index: wire.cycle_index,
+            agent_name: wire.agent_name,
+            metadata: wire.metadata,
+            payload: wire.payload,
+            extra_fields,
+        })
+    }
 }
 
 impl RunEvent {
@@ -73,6 +192,8 @@ impl RunEvent {
         cycle_index: Option<u32>,
         payload: RunEventPayload,
     ) -> Self {
+        let mut extra_fields = Metadata::new();
+        add_default_supplemental_fields(&payload, &mut extra_fields);
         Self {
             version: RunEventVersion::v1(),
             event_id: EventId::new(),
@@ -81,11 +202,12 @@ impl RunEvent {
             session_id: None,
             parent_event_id: None,
             parent_run_id: None,
-            created_at_ms: timestamp_millis(),
+            created_at: timestamp_seconds(),
             cycle_index,
             agent_name: Some(agent_name.into()),
             metadata: Metadata::new(),
             payload,
+            extra_fields,
         }
     }
 
@@ -190,7 +312,7 @@ impl RunEvent {
         request_id: impl Into<String>,
         tool_call_id: impl Into<String>,
         tool_name: impl Into<String>,
-        preview: impl Into<String>,
+        message: impl Into<String>,
     ) -> Self {
         Self::new(
             run_id,
@@ -201,7 +323,7 @@ impl RunEvent {
                 request_id: request_id.into(),
                 tool_call_id: tool_call_id.into(),
                 tool_name: tool_name.into(),
-                preview: preview.into(),
+                message: message.into(),
             },
         )
     }
@@ -290,13 +412,20 @@ impl RunEvent {
         agent_name: impl Into<String>,
         error: AgentErrorPayload,
     ) -> Self {
-        Self::new(
+        let AgentErrorPayload { message, code } = error;
+        let mut event = Self::new(
             run_id,
             trace_id,
             agent_name,
             None,
-            RunEventPayload::RunFailed { error },
-        )
+            RunEventPayload::RunFailed { error: message },
+        );
+        if let Some(code) = code {
+            event
+                .metadata
+                .insert("error_code".to_string(), Value::String(code));
+        }
+        event
     }
 
     pub fn version(&self) -> &RunEventVersion {
@@ -327,8 +456,12 @@ impl RunEvent {
         self.parent_run_id.as_deref()
     }
 
+    pub fn created_at(&self) -> f64 {
+        self.created_at
+    }
+
     pub fn created_at_ms(&self) -> u128 {
-        self.created_at_ms
+        (self.created_at * 1000.0).round() as u128
     }
 
     pub fn cycle_index(&self) -> Option<u32> {
@@ -341,6 +474,23 @@ impl RunEvent {
 
     pub fn payload(&self) -> &RunEventPayload {
         &self.payload
+    }
+
+    pub fn metadata(&self) -> &Metadata {
+        &self.metadata
+    }
+
+    pub fn approval_action(&self) -> Option<ApprovalAction> {
+        let RunEventPayload::ApprovalResolved { approved, .. } = &self.payload else {
+            return None;
+        };
+        Some(
+            self.extra_fields
+                .get("action")
+                .and_then(Value::as_str)
+                .and_then(ApprovalAction::parse)
+                .unwrap_or_else(|| ApprovalAction::from_approved(*approved)),
+        )
     }
 
     pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
@@ -362,6 +512,88 @@ impl RunEvent {
         self.metadata.insert(key.into(), value);
         self
     }
+
+    pub(crate) fn with_handoff_lifecycle(
+        mut self,
+        status: impl Into<String>,
+        child_session_id: Option<&str>,
+        child_run_id: Option<&str>,
+    ) -> Self {
+        debug_assert!(matches!(
+            &self.payload,
+            RunEventPayload::HandoffStarted { .. } | RunEventPayload::HandoffCompleted { .. }
+        ));
+        self.extra_fields
+            .insert("status".to_string(), Value::String(status.into()));
+        if let Some(child_session_id) = child_session_id {
+            self.extra_fields.insert(
+                "child_session_id".to_string(),
+                Value::String(child_session_id.to_string()),
+            );
+        }
+        if let Some(child_run_id) = child_run_id {
+            self.extra_fields.insert(
+                "child_run_id".to_string(),
+                Value::String(child_run_id.to_string()),
+            );
+        }
+        self
+    }
+
+    pub(crate) fn with_sub_run_details(
+        mut self,
+        child_session_id: Option<&str>,
+        task_id: Option<&str>,
+        wait_reason: Option<&str>,
+        error: Option<&str>,
+        token_usage: Option<Value>,
+    ) -> Self {
+        debug_assert!(matches!(
+            &self.payload,
+            RunEventPayload::SubRunCompleted { .. }
+        ));
+        for (key, value) in [
+            ("child_session_id", child_session_id),
+            ("task_id", task_id),
+            ("wait_reason", wait_reason),
+            ("error", error),
+        ] {
+            if let Some(value) = value {
+                self.extra_fields
+                    .insert(key.to_string(), Value::String(value.to_string()));
+            }
+        }
+        if let Some(token_usage) = token_usage {
+            self.extra_fields
+                .insert("token_usage".to_string(), token_usage);
+        }
+        self
+    }
+
+    pub fn with_approval_action(mut self, action: ApprovalAction) -> Self {
+        if let RunEventPayload::ApprovalResolved { approved, .. } = &mut self.payload {
+            *approved = action.is_approved();
+            self.extra_fields.insert(
+                "action".to_string(),
+                Value::String(action.as_str().to_string()),
+            );
+        }
+        self
+    }
+
+    pub fn with_final_output(mut self, final_output: Option<String>) -> Self {
+        self.extra_fields.insert(
+            "final_output".to_string(),
+            final_output.map_or(Value::Null, Value::String),
+        );
+        self
+    }
+
+    pub fn final_output(&self) -> Option<&str> {
+        self.extra_fields
+            .get("final_output")
+            .and_then(Value::as_str)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -373,6 +605,7 @@ pub enum RunEventPayload {
     RunStateChanged {
         state: String,
     },
+    AgentStarted,
     CycleStarted,
     LlmStarted {
         model: String,
@@ -389,12 +622,14 @@ pub enum RunEventPayload {
         request_id: String,
         tool_call_id: String,
         tool_name: String,
-        preview: String,
+        #[serde(alias = "preview")]
+        message: String,
     },
     ApprovalResolved {
         request_id: String,
-        tool_call_id: String,
         tool_name: String,
+        tool_call_id: String,
+        #[serde(default)]
         approved: bool,
     },
     ToolCallCompleted {
@@ -404,22 +639,32 @@ pub enum RunEventPayload {
     },
     MemoryCompactStarted {
         message_count: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         estimated_tokens: Option<u64>,
     },
     MemoryCompactCompleted {
         before_count: usize,
         after_count: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         summary_tokens: Option<u64>,
     },
     SubRunStarted {
         parent_tool_call_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         child_session_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         task_id: Option<String>,
     },
     SubRunCompleted {
         parent_tool_call_id: String,
         status: AgentStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         final_output: Option<String>,
+    },
+    Handoff {
+        source_agent: String,
+        target_agent: String,
+        tool_call_id: String,
     },
     HandoffStarted {
         source_agent: String,
@@ -431,18 +676,59 @@ pub enum RunEventPayload {
         target_agent: String,
         tool_call_id: String,
     },
-    SessionPersisted {
-        session_id: String,
-    },
+    SessionPersisted,
     RunCompleted {
         status: AgentStatus,
     },
     RunFailed {
-        error: AgentErrorPayload,
+        error: String,
     },
     RunCancelled {
         reason: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalAction {
+    #[default]
+    Allow,
+    AllowSession,
+    Deny,
+    Timeout,
+}
+
+impl ApprovalAction {
+    pub fn from_approved(approved: bool) -> Self {
+        if approved {
+            Self::Allow
+        } else {
+            Self::Deny
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "allow" => Some(Self::Allow),
+            "allow_session" => Some(Self::AllowSession),
+            "deny" => Some(Self::Deny),
+            "timeout" => Some(Self::Timeout),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::AllowSession => "allow_session",
+            Self::Deny => "deny",
+            Self::Timeout => "timeout",
+        }
+    }
+
+    pub fn is_approved(self) -> bool {
+        matches!(self, Self::Allow | Self::AllowSession)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -469,9 +755,59 @@ impl AgentErrorPayload {
     }
 }
 
-fn timestamp_millis() -> u128 {
+fn timestamp_seconds() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
+        .map(|duration| duration.as_micros() as f64 / 1_000_000.0)
         .unwrap_or_default()
+}
+
+fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload) -> Metadata {
+    let Some(object) = value.as_object() else {
+        return Metadata::new();
+    };
+    let keys: &[&str] = match payload {
+        RunEventPayload::ApprovalResolved { .. } => &["action"],
+        RunEventPayload::SubRunStarted { .. } => &["status"],
+        RunEventPayload::SubRunCompleted { .. } => &[
+            "child_session_id",
+            "task_id",
+            "wait_reason",
+            "error",
+            "token_usage",
+        ],
+        RunEventPayload::HandoffStarted { .. } => &["status", "child_session_id"],
+        RunEventPayload::HandoffCompleted { .. } => &["status", "child_session_id", "child_run_id"],
+        RunEventPayload::RunCompleted { .. } => &["final_output"],
+        _ => &[],
+    };
+    keys.iter()
+        .filter_map(|key| {
+            object
+                .get(*key)
+                .cloned()
+                .map(|value| ((*key).to_string(), value))
+        })
+        .collect()
+}
+
+fn add_default_supplemental_fields(payload: &RunEventPayload, fields: &mut Metadata) {
+    let (key, value) = match payload {
+        RunEventPayload::ApprovalResolved { approved, .. } => (
+            "action",
+            Value::String(
+                ApprovalAction::from_approved(*approved)
+                    .as_str()
+                    .to_string(),
+            ),
+        ),
+        RunEventPayload::SubRunStarted { .. } => ("status", Value::String("running".to_string())),
+        RunEventPayload::HandoffStarted { .. } => ("status", Value::String("started".to_string())),
+        RunEventPayload::HandoffCompleted { .. } => {
+            ("status", Value::String("completed".to_string()))
+        }
+        RunEventPayload::RunCompleted { .. } => ("final_output", Value::Null),
+        _ => return,
+    };
+    fields.entry(key.to_string()).or_insert(value);
 }

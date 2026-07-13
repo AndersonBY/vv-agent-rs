@@ -12,6 +12,7 @@ fn runtime_microcompacts_before_full_memory_compaction() {
         workspace.path(),
     ));
     let mut task = AgentTask::new("microcompact_task", "demo", "system", "inspect memory");
+    task.extra_tool_names.push("bash".to_string());
     task.memory_compact_threshold = 10_000;
     task.metadata
         .insert("model_context_window".to_string(), json!(20_000));
@@ -61,6 +62,7 @@ fn runtime_respects_configured_microcompact_tool_allowlist() {
         "system",
         "inspect memory",
     );
+    task.extra_tool_names.push("bash".to_string());
     task.memory_compact_threshold = 10_000;
     task.metadata
         .insert("model_context_window".to_string(), json!(20_000));
@@ -114,6 +116,7 @@ fn runtime_parses_string_float_microcompact_ratio() {
         "system",
         "inspect memory",
     );
+    task.extra_tool_names.push("bash".to_string());
     task.memory_compact_threshold = 10_000;
     task.metadata
         .insert("model_context_window".to_string(), json!(20_000));

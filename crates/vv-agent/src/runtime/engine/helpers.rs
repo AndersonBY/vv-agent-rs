@@ -134,6 +134,15 @@ pub(super) fn build_initial_messages(task: &AgentTask) -> Vec<Message> {
             if let Some(system_message) = messages.first_mut() {
                 let mut metadata = task.metadata.clone();
                 metadata.extend(system_message.metadata.clone());
+                if task.metadata.get("is_sub_task") == Some(&Value::Bool(true)) {
+                    for key in crate::runtime::sub_agents::RESERVED_SUB_AGENT_METADATA_KEYS {
+                        if let Some(value) = task.metadata.get(key) {
+                            metadata.insert(key.to_string(), value.clone());
+                        } else {
+                            metadata.remove(key);
+                        }
+                    }
+                }
                 system_message.metadata = metadata;
             }
         }

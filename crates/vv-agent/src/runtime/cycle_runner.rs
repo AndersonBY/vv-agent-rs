@@ -144,6 +144,9 @@ impl<C: LlmClient> CycleRunner<C> {
             let mut llm_request =
                 LlmRequest::new(request.task.model.clone(), request_messages.clone());
             llm_request.tools = request_tool_schemas.clone();
+            llm_request.metadata =
+                Value::Object(request.task.metadata.clone().into_iter().collect());
+            llm_request.model_settings = request.task.model_settings.clone();
             match self.llm_client.complete_with_stream(
                 llm_request,
                 request
@@ -206,5 +209,7 @@ impl<C: LlmClient> CycleRunner<C> {
 }
 
 fn check_context_cancelled(context: &ExecutionContext) -> Result<(), LlmError> {
-    context.check_cancelled().map_err(LlmError::Request)
+    context
+        .check_cancelled()
+        .map_err(|error| LlmError::Request(error.to_string()))
 }

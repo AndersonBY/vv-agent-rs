@@ -151,15 +151,18 @@ impl MemoryManager {
             {
                 return (artifact_compacted, true);
             }
-            if image_changed {
-                summary_source = image_compacted;
+            if image_changed || artifact_changed {
+                summary_source = artifact_compacted;
             }
         }
         let (compacted, changed) = self.compress_memory(&summary_source, artifact_cycle_index);
         if changed {
+            let post_compaction_tokens = count_messages_tokens(
+                &self.apply_session_memory_context(&compacted),
+                &self.config.model,
+            );
             if let Some(session_memory) = self.session_memory.as_mut() {
-                session_memory
-                    .on_compaction(Some(count_messages_tokens(&compacted, &self.config.model)));
+                session_memory.on_compaction(Some(post_compaction_tokens));
             }
         }
         (compacted, changed)

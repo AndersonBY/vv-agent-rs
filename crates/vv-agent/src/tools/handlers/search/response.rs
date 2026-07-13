@@ -90,8 +90,10 @@ pub(super) fn search_files_success_response(
         "content_truncated": false,
         "structured_truncated": structured_truncated,
         "truncated": structured_truncated,
-        "sensitive_files_omitted": result.sensitive_files_omitted,
     });
+    if result.sensitive_files_omitted > 0 {
+        payload["sensitive_files_omitted"] = json!(result.sensitive_files_omitted);
+    }
     if structured_capped {
         payload["structured_item_limit"] = json!(MAX_STRUCTURED_ITEMS);
         payload["structured_char_limit"] = json!(MAX_STRUCTURED_CHARS);

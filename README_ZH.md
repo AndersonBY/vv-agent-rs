@@ -86,6 +86,9 @@ CLI 参数：
 tools、handoffs、hooks 和默认值；`Runner` 管理 model provider、workspace 默认值和执行；
 `RunConfig` 用来覆盖单次运行，而不改变 Agent 定义，包括用于选择 inline、threaded
 或 distributed 执行的公共 `ExecutionMode`。
+单次运行还可以覆盖工具 registry factory、before-cycle / interruption 消息、
+sub-task manager、runtime observer、日志预览长度和 LLM 请求 debug dump。完整优先级与
+语言适配见 `docs/runtime-control.md`。
 
 ```rust
 use vv_agent::{Agent, ExecutionMode, ModelRef, Runner, RunConfig, VvLlmModelProvider};
@@ -110,6 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "创建 notes.md，写入三个项目要点。",
             RunConfig::builder()
                 .max_cycles(12)
+                .max_handoffs(4)
                 .execution_mode(ExecutionMode::Inline)
                 .build(),
         )
@@ -118,6 +122,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+Handoff 是 Runner 外层的控制权转移，不是 agent-as-tool 调用。目标 Agent 会重新解析
+自己的 model 和 model settings，同时沿用当前 session、cancellation token，并继承源
+Agent 已修改的 shared state。`max_handoffs` 默认值为 `10`，它独立于
+`max_cycles` 限制控制转移次数；审批恢复也保持相同语义。
+
+需要跨多次运行复用的默认值应放在
+`Runner::builder().default_run_config(...)`。Provider 优先级为 per-run、
+Runner；Model 优先级为 per-run、Agent、Runner、当前 Provider 默认模型；
+ModelSettings 按 Provider、Runner、Agent、per-run 逐层合并，后面的层覆盖前面的
+字段。单次运行替换 Provider 时，不会错误复用 Runner 中绑定到另一 backend 的模型。
 
 Session 会在多次 runner 调用之间保存上下文：
 
@@ -172,6 +187,10 @@ let result = handle.result().await?;
 实时工具审批使用 `ApprovalProvider` 和 handle 持有的 broker。面向模型的 `ask_user`
 工具仍用于在对话中请求用户输入。宿主应用还可以通过 `ContextProvider` 注入有序 prompt
 片段，通过 `MemoryProvider` 接入外部 search、save 和 compaction lifecycle。
+
+`ToolPolicy` 提供 `Default`、`Always`、`Never` 和 `OnRequest` 四种审批模式。
+`Default` 继续继承下一层配置；显式 `OnRequest` 按每个工具的静态或动态审批声明决定。
+`Always` 强制审批，`Never` 跳过审批，二者都不会执行动态工具审批 predicate。
 
 ### App Server
 

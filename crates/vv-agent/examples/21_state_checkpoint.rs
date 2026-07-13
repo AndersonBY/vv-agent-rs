@@ -53,6 +53,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         messages: result.messages.clone(),
         cycles: result.cycles.clone(),
         shared_state: result.shared_state.clone(),
+        revision: 0,
+        claim_token: None,
+        claimed_cycle: None,
+        lease_expires_at_ms: None,
+        terminal_result: None,
     };
     store.save_checkpoint(checkpoint.clone())?;
     println!("[demo] Checkpoint 已保存, task_id={task_id}");

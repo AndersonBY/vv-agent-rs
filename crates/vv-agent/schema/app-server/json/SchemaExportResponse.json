@@ -1,23 +1,24 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "SchemaExportResponse",
-  "type": "object",
+  "additionalProperties": false,
   "properties": {
     "jsonSchema": {
-      "type": "object",
       "additionalProperties": {
         "type": "string"
-      }
+      },
+      "type": "object"
     },
     "typescript": {
-      "type": "object",
       "additionalProperties": {
         "type": "string"
-      }
+      },
+      "type": "object"
     }
   },
   "required": [
     "jsonSchema",
     "typescript"
-  ]
+  ],
+  "title": "SchemaExportResponse",
+  "type": "object"
 }

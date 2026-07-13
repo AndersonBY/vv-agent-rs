@@ -48,8 +48,10 @@ pub use sub_agent_sessions::{
     sub_agent_session_registry, subscribe_sub_agent_session, unregister_sub_agent_session,
     SubAgentSession, SubAgentSessionListener, SubAgentSessionRegistry, SubAgentSessionUnsubscribe,
 };
+pub(crate) use sub_agents::with_assigned_sub_task_identity;
 pub use sub_task_manager::{
-    ManagedSubTask, ManagedSubTaskSnapshot, SubTaskManager, SubTaskSessionAttachment,
+    ManagedSubTask, ManagedSubTaskSnapshot, SubTaskLineage, SubTaskManager,
+    SubTaskSessionAttachment, SubTaskSubmissionContext, SubTaskTurnSnapshot,
 };
 pub use token_usage::{normalize_token_usage, summarize_task_token_usage};
 pub use tool_call_runner::{ToolCallRunner, ToolRunOutcome, ToolRunRequest};

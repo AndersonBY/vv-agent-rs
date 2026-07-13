@@ -8,8 +8,9 @@ use crate::model::ModelProvider;
 use crate::runtime::cancellation::CancellationToken;
 use crate::runtime::context::{ExecutionContext, StreamCallback};
 use crate::runtime::sub_task_manager::SubTaskManager;
-use crate::types::Message;
+use crate::types::{CycleRecord, Message};
 use crate::workspace::WorkspaceBackend;
+use crate::{RunConfig, RunContext};
 
 pub type RuntimeLogCallback = dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static;
 pub type RuntimeLogHandler = Arc<Mutex<Box<RuntimeLogCallback>>>;
@@ -29,7 +30,20 @@ pub struct RuntimeRunControls {
     pub workspace: Option<PathBuf>,
     pub workspace_backend: Option<Arc<dyn WorkspaceBackend>>,
     pub model_provider: Option<Arc<dyn ModelProvider>>,
+    pub run_context: Option<RunContext>,
     pub sub_task_manager: Option<SubTaskManager>,
+    #[doc(hidden)]
+    pub background_parent_run_config: Option<RunConfig>,
+    #[doc(hidden)]
+    pub initial_messages: Option<Vec<Message>>,
+    #[doc(hidden)]
+    pub initial_shared_state: Option<BTreeMap<String, Value>>,
+    #[doc(hidden)]
+    pub initial_cycles: Option<Vec<CycleRecord>>,
+    #[doc(hidden)]
+    pub cycle_index_start: Option<u32>,
+    #[doc(hidden)]
+    pub cycle_count: Option<u32>,
 }
 
 impl RuntimeRunControls {

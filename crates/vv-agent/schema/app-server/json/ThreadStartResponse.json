@@ -1,82 +1,29 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "ThreadStartResponse",
-  "type": "object",
+  "additionalProperties": false,
   "properties": {
-    "thread": {
-      "$ref": "#/$defs/AppThread"
+    "agentKey": {
+      "type": "string"
+    },
+    "cwd": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "type": "string"
+    },
+    "threadId": {
+      "type": "string"
     }
   },
   "required": [
-    "thread"
+    "threadId",
+    "agentKey",
+    "cwd",
+    "status"
   ],
-  "$defs": {
-    "AppThread": {
-      "type": "object",
-      "properties": {
-        "activeTurnId": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "archived": {
-          "type": "boolean"
-        },
-        "createdAtMs": {
-          "type": "integer",
-          "format": "uint128",
-          "minimum": 0
-        },
-        "cwd": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "ephemeral": {
-          "type": "boolean"
-        },
-        "id": {
-          "type": "string"
-        },
-        "model": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "status": {
-          "$ref": "#/$defs/ThreadStatus"
-        },
-        "title": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "updatedAtMs": {
-          "type": "integer",
-          "format": "uint128",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "id",
-        "status",
-        "archived",
-        "ephemeral",
-        "createdAtMs",
-        "updatedAtMs"
-      ]
-    },
-    "ThreadStatus": {
-      "type": "string",
-      "enum": [
-        "idle",
-        "running",
-        "archived"
-      ]
-    }
-  }
+  "title": "ThreadStartResponse",
+  "type": "object"
 }

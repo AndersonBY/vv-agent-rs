@@ -9,8 +9,8 @@ use vv_agent::app_server::processor::MessageProcessor;
 use vv_agent::app_server::protocol::{
     AppItem, AppItemKind, AppItemStatus, ApprovalDecision, JsonRpcMessage, JsonRpcNotification,
     JsonRpcRequest, JsonRpcResponse, RequestId, ServerNotification, ThreadArchiveResponse,
-    ThreadListResponse, ThreadResumeResponse, ThreadStartParams, ThreadStartResponse,
-    TurnStartResponse,
+    ThreadListResponse, ThreadResumeResponse, ThreadStartParams, ThreadStartResponse, ThreadStatus,
+    ThreadUnsubscribeResponse, TurnStartResponse,
 };
 use vv_agent::app_server::request_serialization::{
     RequestSerializationAccess, RequestSerializationQueue, RequestSerializationQueueKey,
@@ -27,48 +27,47 @@ fn thread_store_creates_and_reads_thread() {
     let store = SqliteThreadStore::in_memory().expect("store");
     let thread = store
         .create_thread(ThreadStartParams {
+            agent_key: "default".to_string(),
             cwd: Some("/tmp/project".into()),
-            title: Some("Investigate".to_string()),
-            model: Some("demo-model".to_string()),
-            ephemeral: false,
+            metadata: Default::default(),
         })
         .expect("create thread");
 
     let loaded = store
-        .get_thread(&thread.id)
+        .get_thread(&thread.thread_id)
         .expect("read thread")
         .expect("thread exists");
 
-    assert_eq!(loaded.id, thread.id);
-    assert_eq!(loaded.title.as_deref(), Some("Investigate"));
-    assert_eq!(loaded.model.as_deref(), Some("demo-model"));
-    assert!(!loaded.ephemeral);
+    assert_eq!(loaded.thread_id, thread.thread_id);
+    assert_eq!(loaded.agent_key, "default");
+    assert_eq!(
+        loaded.cwd.as_deref(),
+        Some(std::path::Path::new("/tmp/project"))
+    );
 }
 
 #[test]
-fn thread_store_lists_non_archived_threads_newest_first() {
+fn thread_store_lists_non_archived_threads_in_creation_order() {
     let store = SqliteThreadStore::in_memory().expect("store");
     let first = store
         .create_thread(ThreadStartParams {
+            agent_key: "first".to_string(),
             cwd: None,
-            title: Some("first".to_string()),
-            model: None,
-            ephemeral: false,
+            metadata: Default::default(),
         })
         .expect("first");
     let second = store
         .create_thread(ThreadStartParams {
+            agent_key: "second".to_string(),
             cwd: None,
-            title: Some("second".to_string()),
-            model: None,
-            ephemeral: false,
+            metadata: Default::default(),
         })
         .expect("second");
 
     let threads = store.list_threads(false).expect("list");
 
-    assert_eq!(threads[0].id, second.id);
-    assert_eq!(threads[1].id, first.id);
+    assert_eq!(threads[0].thread_id, first.thread_id);
+    assert_eq!(threads[1].thread_id, second.thread_id);
 }
 
 #[test]
@@ -76,19 +75,18 @@ fn thread_store_archive_hides_thread_from_default_list() {
     let store = SqliteThreadStore::in_memory().expect("store");
     let thread = store
         .create_thread(ThreadStartParams {
+            agent_key: "default".to_string(),
             cwd: None,
-            title: Some("archive me".to_string()),
-            model: None,
-            ephemeral: false,
+            metadata: Default::default(),
         })
         .expect("create");
 
-    store.archive_thread(&thread.id).expect("archive");
+    store.archive_thread(&thread.thread_id).expect("archive");
 
     assert!(store.list_threads(false).expect("active").is_empty());
     let archived = store.list_threads(true).expect("all");
     assert_eq!(archived.len(), 1);
-    assert!(archived[0].archived);
+    assert!(archived[0].archived_at.is_some());
 }
 
 #[test]
@@ -96,21 +94,20 @@ fn thread_store_appends_and_replays_items_in_insert_order() {
     let store = SqliteThreadStore::in_memory().expect("store");
     let thread = store
         .create_thread(ThreadStartParams {
+            agent_key: "default".to_string(),
             cwd: None,
-            title: None,
-            model: None,
-            ephemeral: false,
+            metadata: Default::default(),
         })
         .expect("create");
 
     for index in 0..5 {
         store
-            .append_item(&thread.id, "turn_1", test_item(index))
+            .append_item(&thread.thread_id, "turn_1", test_item(index))
             .expect("append");
     }
 
-    let items = store.replay_items(&thread.id).expect("replay");
-    let ids: Vec<String> = items.into_iter().map(|item| item.id).collect();
+    let items = store.replay_items(&thread.thread_id).expect("replay");
+    let ids: Vec<String> = items.into_iter().map(|item| item.item_id).collect();
 
     assert_eq!(ids, vec!["item_0", "item_1", "item_2", "item_3", "item_4"]);
 }
@@ -120,24 +117,23 @@ fn thread_store_can_replay_one_hundred_items_in_stable_order() {
     let store = SqliteThreadStore::in_memory().expect("store");
     let thread = store
         .create_thread(ThreadStartParams {
+            agent_key: "default".to_string(),
             cwd: None,
-            title: None,
-            model: None,
-            ephemeral: false,
+            metadata: Default::default(),
         })
         .expect("create");
 
     for index in 0..100 {
         store
-            .append_item(&thread.id, "turn_1", test_item(index))
+            .append_item(&thread.thread_id, "turn_1", test_item(index))
             .expect("append");
     }
 
-    let items = store.replay_items(&thread.id).expect("replay");
+    let items = store.replay_items(&thread.thread_id).expect("replay");
 
     assert_eq!(items.len(), 100);
-    assert_eq!(items.first().expect("first").id, "item_0");
-    assert_eq!(items.last().expect("last").id, "item_99");
+    assert_eq!(items.first().expect("first").item_id, "item_0");
+    assert_eq!(items.last().expect("last").item_id, "item_99");
 }
 
 #[test]
@@ -145,21 +141,20 @@ fn thread_store_archive_keeps_replay_items_readable() {
     let store = SqliteThreadStore::in_memory().expect("store");
     let thread = store
         .create_thread(ThreadStartParams {
+            agent_key: "default".to_string(),
             cwd: None,
-            title: None,
-            model: None,
-            ephemeral: false,
+            metadata: Default::default(),
         })
         .expect("create");
     store
-        .append_item(&thread.id, "turn_1", test_item(1))
+        .append_item(&thread.thread_id, "turn_1", test_item(1))
         .expect("append");
 
-    store.archive_thread(&thread.id).expect("archive");
+    store.archive_thread(&thread.thread_id).expect("archive");
 
-    let items = store.replay_items(&thread.id).expect("replay");
+    let items = store.replay_items(&thread.thread_id).expect("replay");
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0].id, "item_1");
+    assert_eq!(items[0].item_id, "item_1");
 }
 
 #[tokio::test]
@@ -202,15 +197,15 @@ async fn thread_resume_replays_items_and_subscribes_second_client_to_active_turn
         .await;
     let resumed: ThreadResumeResponse =
         decode_response(expect_response_for_connection(&mut outgoing, client_b).await);
-    assert_eq!(resumed.thread.id, thread_id);
-    assert_eq!(
-        resumed.active_turn.as_ref().map(|turn| turn.id.as_str()),
-        Some(turn.turn.id.as_str())
-    );
+    assert_eq!(resumed.thread.thread_id, thread_id);
+    assert!(resumed
+        .turns
+        .iter()
+        .any(|active| active.turn_id == turn.turn_id));
     assert!(resumed
         .items
         .iter()
-        .any(|item| item.kind == AppItemKind::ApprovalRequest));
+        .any(|item| item.kind == AppItemKind::Approval));
 
     processor
         .process_message(
@@ -236,6 +231,162 @@ async fn thread_resume_replays_items_and_subscribes_second_client_to_active_turn
     })
     .await;
     assert!(matches!(completed, ServerNotification::TurnCompleted(_)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resume_subscription_is_installed_before_snapshot_releases_live_broadcasts() {
+    let state = vv_agent::app_server::thread_state::ThreadStateManager::default();
+    let resume_state = state.clone();
+    let connection_id = ConnectionId::new(7);
+    let (snapshot_started_tx, snapshot_started_rx) = std::sync::mpsc::channel();
+    let (release_snapshot_tx, release_snapshot_rx) = std::sync::mpsc::channel();
+    let release_snapshot_rx = Arc::new(std::sync::Mutex::new(release_snapshot_rx));
+
+    let resume = tokio::spawn(async move {
+        resume_state
+            .subscribe_and_snapshot("thread_1", connection_id, || {
+                snapshot_started_tx.send(()).expect("signal snapshot");
+                release_snapshot_rx
+                    .lock()
+                    .expect("release receiver")
+                    .recv()
+                    .expect("release snapshot");
+                Ok::<_, &'static str>("snapshot")
+            })
+            .await
+    });
+    snapshot_started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("snapshot started");
+
+    let broadcast_state = state.clone();
+    let subscriber_lookup =
+        tokio::spawn(async move { broadcast_state.subscribers("thread_1").await });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        !subscriber_lookup.is_finished(),
+        "live broadcast lookup must wait until replay snapshot is complete"
+    );
+
+    release_snapshot_tx.send(()).expect("release snapshot");
+    assert_eq!(resume.await.expect("resume task"), Ok("snapshot"));
+    assert_eq!(
+        subscriber_lookup.await.expect("subscriber lookup"),
+        [connection_id]
+    );
+}
+
+#[tokio::test]
+async fn failed_resume_snapshot_rolls_back_subscription_and_closed_state() {
+    let state = vv_agent::app_server::thread_state::ThreadStateManager::default();
+    let connection_id = ConnectionId::new(9);
+    state.subscribe("thread_1", connection_id).await;
+    assert!(state.unsubscribe("thread_1", connection_id).await);
+    assert!(state.is_closed("thread_1").await);
+
+    let result = state
+        .subscribe_and_snapshot("thread_1", connection_id, || {
+            Err::<(), _>("snapshot failed")
+        })
+        .await;
+
+    assert_eq!(result, Err("snapshot failed"));
+    assert!(!state.is_subscribed("thread_1", connection_id).await);
+    assert!(state.is_closed("thread_1").await);
+}
+
+#[tokio::test]
+async fn successful_resume_reopens_closed_thread_with_or_without_subscription() {
+    for subscribe in [true, false] {
+        let (mut processor, mut outgoing) = approval_processor();
+        let connection_id = ConnectionId::new(1);
+        initialize(&mut processor, &mut outgoing, connection_id, 1).await;
+        let thread_id =
+            start_thread(&mut processor, &mut outgoing, connection_id, 2, "reopen").await;
+        processor
+            .process_message(
+                connection_id,
+                request(3, "thread/unsubscribe", json!({ "threadId": thread_id })),
+            )
+            .await;
+        let closed: ThreadUnsubscribeResponse =
+            decode_response(expect_response_for_connection(&mut outgoing, connection_id).await);
+        assert!(closed.closed);
+
+        processor
+            .process_message(
+                connection_id,
+                request(
+                    4,
+                    "thread/resume",
+                    json!({ "threadId": thread_id, "subscribe": subscribe }),
+                ),
+            )
+            .await;
+        let resumed: ThreadResumeResponse =
+            decode_response(expect_response_for_connection(&mut outgoing, connection_id).await);
+
+        assert_eq!(resumed.thread.status, ThreadStatus::Idle);
+    }
+}
+
+#[tokio::test]
+async fn successful_resume_reopens_persisted_closed_thread() {
+    let store = SqliteThreadStore::in_memory().expect("store");
+    let (mut processor, mut outgoing) = approval_processor_with_store(store.clone());
+    let connection_id = ConnectionId::new(1);
+    initialize(&mut processor, &mut outgoing, connection_id, 1).await;
+    let thread_id = start_thread(&mut processor, &mut outgoing, connection_id, 2, "reopen").await;
+    processor
+        .process_message(
+            connection_id,
+            request(3, "thread/unsubscribe", json!({ "threadId": thread_id })),
+        )
+        .await;
+    let _: ThreadUnsubscribeResponse =
+        decode_response(expect_response_for_connection(&mut outgoing, connection_id).await);
+    store
+        .set_active_turn(&thread_id, None, ThreadStatus::Closed)
+        .expect("persist closed status");
+
+    processor
+        .process_message(
+            connection_id,
+            request(
+                4,
+                "thread/resume",
+                json!({ "threadId": thread_id, "subscribe": false }),
+            ),
+        )
+        .await;
+    let resumed: ThreadResumeResponse =
+        decode_response(expect_response_for_connection(&mut outgoing, connection_id).await);
+
+    assert_eq!(resumed.thread.status, ThreadStatus::Idle);
+    assert_eq!(
+        store
+            .get_thread(&thread_id)
+            .expect("read thread")
+            .expect("thread exists")
+            .status,
+        ThreadStatus::Idle
+    );
+}
+
+#[tokio::test]
+async fn successful_state_resume_reopens_before_snapshot() {
+    let state = vv_agent::app_server::thread_state::ThreadStateManager::default();
+    let connection_id = ConnectionId::new(9);
+    state.subscribe("thread_1", connection_id).await;
+    assert!(state.unsubscribe("thread_1", connection_id).await);
+
+    let result = state
+        .subscribe_and_snapshot("thread_1", connection_id, || Ok::<_, ()>("snapshot"))
+        .await;
+
+    assert_eq!(result, Ok("snapshot"));
+    assert!(!state.is_closed("thread_1").await);
+    assert!(state.is_subscribed("thread_1", connection_id).await);
 }
 
 #[tokio::test]
@@ -267,7 +418,7 @@ async fn thread_list_filters_archived_threads_and_archive_emits_notification() {
     let active: ThreadListResponse =
         decode_response(expect_response_for_connection(&mut outgoing, connection_id).await);
     assert_eq!(active.threads.len(), 1);
-    assert_eq!(active.threads[0].id, keep_id);
+    assert_eq!(active.threads[0].thread_id, keep_id);
 
     processor
         .process_message(
@@ -278,7 +429,7 @@ async fn thread_list_filters_archived_threads_and_archive_emits_notification() {
     let archived: ThreadListResponse =
         decode_response(expect_response_for_connection(&mut outgoing, connection_id).await);
     assert_eq!(archived.threads.len(), 1);
-    assert_eq!(archived.threads[0].id, archive_id);
+    assert_eq!(archived.threads[0].thread_id, archive_id);
 
     processor
         .process_message(
@@ -293,6 +444,47 @@ async fn thread_list_filters_archived_threads_and_archive_emits_notification() {
     let paged: ThreadListResponse =
         decode_response(expect_response_for_connection(&mut outgoing, connection_id).await);
     assert_eq!(paged.threads.len(), 1);
+}
+
+#[tokio::test]
+async fn thread_archive_notifies_only_requester_without_subscribing_it() {
+    let (mut processor, mut outgoing) = approval_processor();
+    let subscriber = ConnectionId::new(1);
+    let requester = ConnectionId::new(2);
+    initialize(&mut processor, &mut outgoing, subscriber, 1).await;
+    let thread_id = start_thread(&mut processor, &mut outgoing, subscriber, 2, "archive").await;
+    initialize(&mut processor, &mut outgoing, requester, 10).await;
+
+    processor
+        .process_message(
+            requester,
+            request(11, "thread/archive", json!({ "threadId": thread_id })),
+        )
+        .await;
+    let _: ThreadArchiveResponse =
+        decode_response(expect_response_for_connection(&mut outgoing, requester).await);
+    let _ = next_notification_for_connection_matching(&mut outgoing, requester, |notification| {
+        matches!(notification, ServerNotification::ThreadArchived(_))
+    })
+    .await;
+    let _ = next_notification_for_connection_matching(&mut outgoing, requester, |notification| {
+        matches!(notification, ServerNotification::ThreadStatusChanged(_))
+    })
+    .await;
+    assert!(matches!(
+        outgoing.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+
+    processor
+        .process_message(
+            subscriber,
+            request(12, "thread/unsubscribe", json!({ "threadId": thread_id })),
+        )
+        .await;
+    let unsubscribed: ThreadUnsubscribeResponse =
+        decode_response(expect_response_for_connection(&mut outgoing, subscriber).await);
+    assert!(unsubscribed.closed);
 }
 
 #[tokio::test]
@@ -444,13 +636,14 @@ fn request_serialization_scope_uses_global_shared_keys_for_model_and_schema_read
 
 fn test_item(index: usize) -> AppItem {
     AppItem {
-        id: format!("item_{index}"),
-        run_event_id: format!("evt_{index}"),
+        item_id: format!("item_{index}"),
+        thread_id: "thread_1".to_string(),
+        turn_id: "turn_1".to_string(),
         kind: AppItemKind::AgentMessage,
         status: AppItemStatus::Completed,
-        created_at_ms: index as u128,
-        completed_at_ms: Some(index as u128),
-        content: Some(serde_json::json!({ "text": format!("message {index}") })),
+        payload: serde_json::json!({ "text": format!("message {index}") }),
+        created_at: index as f64,
+        updated_at: index as f64,
     }
 }
 
@@ -487,9 +680,16 @@ struct ServerRequestEnvelope {
 }
 
 fn approval_processor() -> (MessageProcessor, mpsc::Receiver<OutgoingEnvelope>) {
+    approval_processor_with_store(SqliteThreadStore::in_memory().expect("store"))
+}
+
+fn approval_processor_with_store(
+    store: SqliteThreadStore,
+) -> (MessageProcessor, mpsc::Receiver<OutgoingEnvelope>) {
     let dangerous = FunctionTool::builder("dangerous")
         .description("Requires approval.")
         .json_schema(json!({"type":"object","properties":{},"required":[]}))
+        .needs_approval(true)
         .handler(|_ctx, _args: serde_json::Value| async move { Ok(ToolOutput::text("allowed")) })
         .build()
         .expect("tool");
@@ -525,12 +725,7 @@ fn approval_processor() -> (MessageProcessor, mpsc::Receiver<OutgoingEnvelope>) 
         .tool(dangerous)
         .build()
         .expect("agent");
-    MessageProcessor::new_for_tests_with_runtime(
-        64,
-        runner,
-        agent,
-        SqliteThreadStore::in_memory().expect("store"),
-    )
+    MessageProcessor::new_for_tests_with_runtime(64, runner, agent, store)
 }
 
 async fn initialize(
@@ -585,9 +780,8 @@ async fn start_thread(
                 request_id,
                 "thread/start",
                 json!({
-                    "title": title,
-                    "model": "approval-model",
-                    "ephemeral": false
+                    "agentKey": "default",
+                    "metadata": {"title": title}
                 }),
             ),
         )
@@ -598,7 +792,7 @@ async fn start_thread(
         matches!(message, ServerNotification::ThreadStarted(_))
     })
     .await;
-    response.thread.id
+    response.thread_id
 }
 
 fn request(id: i64, method: &str, params: serde_json::Value) -> JsonRpcMessage {

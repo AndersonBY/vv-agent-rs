@@ -9,8 +9,12 @@ duplicating the details.
 | Document | Use it for |
 | --- | --- |
 | `architecture.md` | Runtime structure, module boundaries, execution flow, and invariants. |
+| `parity-contract.md` | Rust producer mapping and local adoption commands for the canonical `vv-agent-contract` release. |
 | `development.md` | Local setup, Cargo commands, test ownership, live tests, and change hygiene. |
+| `interactive-sessions.md` | Embedded session lifecycle, live control, events, and typed final output. |
 | `model-settings.md` | `LLM_SETTINGS`, key-file handling, exact model resolution, defaults, and `vv-llm` boundaries. |
+| `runtime-control.md` | Per-run controls, language adaptations, resume, approvals, sessions, cancellation, and event producers. |
+| `app_server.md` | JSONL protocol, lifecycle, approval, schema generation, CLI startup, and host boundary. |
 
 ## Existing Entry Points
 

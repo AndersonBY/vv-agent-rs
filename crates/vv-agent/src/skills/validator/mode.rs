@@ -1,20 +1,24 @@
 use super::super::errors::SkillValidationError;
 
 pub const DEFAULT_VALIDATION_MODE: &str = "strict";
-pub const VALIDATION_MODES: [&str; 3] = ["strict", "relaxed", "minimal"];
+pub const VALIDATION_MODES: [&str; 3] = ["strict", "compat", "minimal"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationMode {
     Strict,
-    Relaxed,
+    Compat,
     Minimal,
 }
 
 impl ValidationMode {
+    #[allow(non_upper_case_globals)]
+    #[deprecated(note = "use ValidationMode::Compat")]
+    pub const Relaxed: Self = Self::Compat;
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Strict => "strict",
-            Self::Relaxed => "relaxed",
+            Self::Compat => "compat",
             Self::Minimal => "minimal",
         }
     }
@@ -30,10 +34,10 @@ pub fn normalize_validation_mode(
         .as_str()
     {
         "strict" => Ok(ValidationMode::Strict),
-        "relaxed" => Ok(ValidationMode::Relaxed),
+        "compat" | "relaxed" => Ok(ValidationMode::Compat),
         "minimal" => Ok(ValidationMode::Minimal),
         other => Err(SkillValidationError::new(format!(
-            "Unsupported validation mode '{other}'. Expected one of [strict, relaxed, minimal]."
+            "Unsupported validation mode '{other}'. Expected one of [strict, compat, minimal]."
         ))),
     }
 }

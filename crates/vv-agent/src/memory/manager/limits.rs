@@ -35,6 +35,18 @@ impl MemoryManager {
         (used_tokens.saturating_mul(100)) / threshold
     }
 
+    pub(crate) fn should_attempt_compaction(
+        &self,
+        messages: &[Message],
+        total_tokens: Option<u64>,
+        recent_tool_call_ids: Option<&BTreeSet<String>>,
+    ) -> bool {
+        let used_tokens =
+            self.calculate_effective_length(messages, total_tokens, recent_tool_call_ids);
+        self.should_preemptive_microcompact(used_tokens)
+            || used_tokens > self.autocompact_threshold()
+    }
+
     pub fn warning_threshold(&self) -> u64 {
         let threshold = self.autocompact_threshold();
         if threshold == 0 {

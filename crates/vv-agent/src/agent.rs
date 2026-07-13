@@ -1,28 +1,41 @@
+use std::borrow::Borrow;
+use std::collections::BTreeMap;
 use std::sync::Arc;
+
+use serde::de::DeserializeOwned;
 
 use crate::guardrails::{InputGuardrail, OutputGuardrail};
 use crate::handoffs::Handoff;
 use crate::model::ModelRef;
 use crate::model_settings::ModelSettings;
 use crate::runtime::RuntimeHook;
+use crate::tools::common::trim_portable_whitespace;
 use crate::tools::{AgentToolBuilder, BackgroundAgentTaskBuilder};
 use crate::tools::{Tool, ToolPolicy};
-use crate::types::Metadata;
+use crate::types::{Metadata, SubAgentConfig};
+
+pub type InstructionProvider =
+    Arc<dyn Fn(&crate::context::RunContext, &Agent) -> String + Send + Sync>;
+pub type OutputValidator = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct Agent {
     name: String,
     instructions: String,
+    instruction_provider: Option<InstructionProvider>,
     model: Option<ModelRef>,
     model_settings: ModelSettings,
     tools: Vec<Arc<dyn Tool>>,
     handoffs: Vec<Handoff>,
     input_guardrails: Vec<Arc<dyn InputGuardrail>>,
     output_guardrails: Vec<Arc<dyn OutputGuardrail>>,
+    output_type_name: Option<&'static str>,
+    output_validator: Option<OutputValidator>,
     hooks: Vec<Arc<dyn RuntimeHook>>,
     max_cycles: Option<u32>,
     tool_use_behavior: ToolUseBehavior,
     tool_policy: ToolPolicy,
+    sub_agents: BTreeMap<String, SubAgentConfig>,
     metadata: Metadata,
 }
 
@@ -32,18 +45,23 @@ impl Agent {
             agent: Self {
                 name: name.into(),
                 instructions: String::new(),
+                instruction_provider: None,
                 model: None,
                 model_settings: ModelSettings::default(),
                 tools: Vec::new(),
                 handoffs: Vec::new(),
                 input_guardrails: Vec::new(),
                 output_guardrails: Vec::new(),
+                output_type_name: None,
+                output_validator: None,
                 hooks: Vec::new(),
                 max_cycles: None,
                 tool_use_behavior: ToolUseBehavior::default(),
                 tool_policy: ToolPolicy::default(),
+                sub_agents: BTreeMap::new(),
                 metadata: Metadata::new(),
             },
+            sub_agent_error: None,
         }
     }
 
@@ -53,6 +71,13 @@ impl Agent {
 
     pub fn instructions(&self) -> &str {
         &self.instructions
+    }
+
+    pub fn resolve_instructions(&self, context: &crate::context::RunContext) -> String {
+        self.instruction_provider
+            .as_ref()
+            .map(|provider| provider(context, self))
+            .unwrap_or_else(|| self.instructions.clone())
     }
 
     pub fn model(&self) -> Option<&ModelRef> {
@@ -79,6 +104,17 @@ impl Agent {
         &self.output_guardrails
     }
 
+    pub fn output_type_name(&self) -> Option<&'static str> {
+        self.output_type_name
+    }
+
+    pub fn validate_output(&self, output: &str) -> Result<(), String> {
+        match self.output_validator.as_ref() {
+            Some(validator) => validator(output),
+            None => Ok(()),
+        }
+    }
+
     pub fn hooks(&self) -> &[Arc<dyn RuntimeHook>] {
         &self.hooks
     }
@@ -93,6 +129,10 @@ impl Agent {
 
     pub fn tool_policy(&self) -> &ToolPolicy {
         &self.tool_policy
+    }
+
+    pub fn sub_agents(&self) -> &BTreeMap<String, SubAgentConfig> {
+        &self.sub_agents
     }
 
     pub fn metadata(&self) -> &Metadata {
@@ -110,11 +150,22 @@ impl Agent {
 
 pub struct AgentBuilder {
     agent: Agent,
+    sub_agent_error: Option<String>,
 }
 
 impl AgentBuilder {
     pub fn instructions(mut self, instructions: impl Into<String>) -> Self {
         self.agent.instructions = instructions.into();
+        self.agent.instruction_provider = None;
+        self
+    }
+
+    pub fn dynamic_instructions(
+        mut self,
+        provider: impl Fn(&crate::context::RunContext, &Agent) -> String + Send + Sync + 'static,
+    ) -> Self {
+        self.agent.instructions.clear();
+        self.agent.instruction_provider = Some(Arc::new(provider));
         self
     }
 
@@ -153,6 +204,29 @@ impl AgentBuilder {
         self
     }
 
+    pub fn output_type<T>(mut self) -> Self
+    where
+        T: DeserializeOwned + 'static,
+    {
+        self.agent.output_type_name = Some(std::any::type_name::<T>());
+        self.agent.output_validator = Some(Arc::new(|output| {
+            serde_json::from_str::<T>(output)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        }));
+        self
+    }
+
+    pub fn output_validator(
+        mut self,
+        name: &'static str,
+        validator: impl Fn(&str) -> Result<(), String> + Send + Sync + 'static,
+    ) -> Self {
+        self.agent.output_type_name = Some(name);
+        self.agent.output_validator = Some(Arc::new(validator));
+        self
+    }
+
     pub fn hook(mut self, hook: Arc<dyn RuntimeHook>) -> Self {
         self.agent.hooks.push(hook);
         self
@@ -173,6 +247,23 @@ impl AgentBuilder {
         self
     }
 
+    pub fn sub_agent(mut self, id: impl AsRef<str>, config: impl Borrow<SubAgentConfig>) -> Self {
+        self.insert_sub_agent(id.as_ref(), config.borrow());
+        self
+    }
+
+    pub fn sub_agents<I, K, C>(mut self, sub_agents: I) -> Self
+    where
+        I: IntoIterator<Item = (K, C)>,
+        K: AsRef<str>,
+        C: Borrow<SubAgentConfig>,
+    {
+        for (id, config) in sub_agents {
+            self.insert_sub_agent(id.as_ref(), config.borrow());
+        }
+        self
+    }
+
     pub fn metadata(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
         self.agent.metadata.insert(key.into(), value);
         self
@@ -182,10 +273,31 @@ impl AgentBuilder {
         if self.agent.name.trim().is_empty() {
             return Err("agent name cannot be empty".to_string());
         }
-        if self.agent.instructions.trim().is_empty() {
+        if self.agent.instructions.trim().is_empty() && self.agent.instruction_provider.is_none() {
             return Err("agent instructions cannot be empty".to_string());
         }
+        if let Some(error) = self.sub_agent_error {
+            return Err(error);
+        }
         Ok(self.agent)
+    }
+
+    fn insert_sub_agent(&mut self, id: &str, config: &SubAgentConfig) {
+        let normalized_id = trim_portable_whitespace(id);
+        if normalized_id.is_empty() {
+            self.sub_agent_error
+                .get_or_insert_with(|| "sub-agent id cannot be empty".to_string());
+            return;
+        }
+        if self.agent.sub_agents.contains_key(normalized_id) {
+            self.sub_agent_error.get_or_insert_with(|| {
+                format!("duplicate sub-agent id after normalization: {normalized_id}")
+            });
+            return;
+        }
+        self.agent
+            .sub_agents
+            .insert(normalized_id.to_string(), config.clone());
     }
 }
 
@@ -194,5 +306,5 @@ pub enum ToolUseBehavior {
     #[default]
     RunLlmAgain,
     StopOnFirstTool,
-    StopAtTools(Vec<String>),
+    StopAtToolNames(Vec<String>),
 }

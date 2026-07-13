@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use crate::agent::Agent;
 use crate::run_config::RunConfig;
 use crate::runner::Runner;
+use crate::tools::background_agent_task::inherited_run_config;
 use crate::tools::{Tool, ToolContext, ToolOutput, ToolSpec, ToolSpecKind};
 use crate::types::{SubTaskRequest, ToolArguments};
 
@@ -68,6 +69,7 @@ impl Tool for AgentTool {
                         Ok(request) => request,
                         Err(error) => return ToolOutput::error(error).to_result(""),
                     };
+                    let prompt = prompt_from_request(&request, context);
                     if let Some(provider) = context.model_provider.clone() {
                         let runner = Runner::builder()
                             .model_provider_arc(provider)
@@ -79,10 +81,8 @@ impl Tool for AgentTool {
                         };
                         let result = runner.run_blocking(
                             &agent_tool.agent,
-                            crate::runner::NormalizedInput::from(request.task_description.clone()),
-                            RunConfig::builder()
-                                .workspace_backend(context.workspace_backend.clone())
-                                .build(),
+                            crate::runner::NormalizedInput::from(prompt),
+                            inherited_run_config(context, Some(RunConfig::default())),
                             None,
                         );
                         return match result {
@@ -169,8 +169,38 @@ impl AgentToolBuilder {
                         "description": "Whether to include parent task summary."
                     }
                 },
-                "required": ["task_description"]
+                "required": ["task_description"],
+                "additionalProperties": false
             }),
         })
     }
+}
+
+fn prompt_from_request(request: &SubTaskRequest, context: &ToolContext) -> String {
+    let mut prompt = request.task_description.clone();
+    if !request.output_requirements.is_empty() {
+        prompt.push_str("\n\n<Output Requirements>\n");
+        prompt.push_str(&request.output_requirements);
+        prompt.push_str("\n</Output Requirements>");
+    }
+    if request.include_main_summary {
+        let parent_summary = context
+            .shared_state
+            .get("main_task_summary")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                context
+                    .metadata
+                    .get("_vv_agent_input")
+                    .and_then(Value::as_str)
+            })
+            .map(str::trim)
+            .filter(|summary| !summary.is_empty());
+        if let Some(parent_summary) = parent_summary {
+            prompt.push_str("\n\n<Main Task Summary>\n");
+            prompt.push_str(parent_summary);
+            prompt.push_str("\n</Main Task Summary>");
+        }
+    }
+    prompt
 }

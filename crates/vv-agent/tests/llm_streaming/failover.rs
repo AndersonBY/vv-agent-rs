@@ -37,6 +37,75 @@ fn vv_llm_client_fails_over_to_next_endpoint_client() {
 }
 
 #[test]
+fn unknown_provider_error_fails_over_without_same_endpoint_retry() {
+    let primary = CountingFailingChatClient::default();
+    let primary_probe = primary.clone();
+    let llm = VvLlmClient::new_with_named_endpoint_clients(
+        "openai",
+        "gpt-4o-mini",
+        "gpt-4o-mini",
+        vec![
+            (
+                "primary-endpoint".to_string(),
+                "gpt-4o-mini".to_string(),
+                Box::new(primary) as Box<dyn vv_llm::ChatClient>,
+            ),
+            (
+                "backup-endpoint".to_string(),
+                "gpt-4o-mini".to_string(),
+                Box::new(UsageMissingChatClient) as Box<dyn vv_llm::ChatClient>,
+            ),
+        ],
+        90.0,
+    )
+    .with_randomize_endpoints(false)
+    .with_retry_policy(3, 0.0);
+
+    let response = llm
+        .complete(LlmRequest::new(
+            "gpt-4o-mini",
+            vec![Message::user("fail over once")],
+        ))
+        .expect("backup response");
+
+    assert_eq!(response.raw["used_endpoint_id"], json!("backup-endpoint"));
+    assert_eq!(primary_probe.calls(), 1);
+}
+
+#[test]
+fn configuration_error_aborts_without_trying_backup_endpoint() {
+    let llm = VvLlmClient::new_with_named_endpoint_clients(
+        "openai",
+        "gpt-4o-mini",
+        "gpt-4o-mini",
+        vec![
+            (
+                "invalid-endpoint".to_string(),
+                "gpt-4o-mini".to_string(),
+                Box::new(ConfigurationFailingChatClient) as Box<dyn vv_llm::ChatClient>,
+            ),
+            (
+                "backup-endpoint".to_string(),
+                "gpt-4o-mini".to_string(),
+                Box::new(UsageMissingChatClient) as Box<dyn vv_llm::ChatClient>,
+            ),
+        ],
+        90.0,
+    )
+    .with_randomize_endpoints(false)
+    .with_retry_policy(3, 0.0);
+
+    let error = llm
+        .complete(LlmRequest::new(
+            "gpt-4o-mini",
+            vec![Message::user("invalid config")],
+        ))
+        .expect_err("configuration error must abort");
+
+    assert!(error.to_string().contains("invalid local configuration"));
+}
+
+#[test]
 fn vv_llm_client_prefers_last_successful_endpoint() {
     let primary = CountingFailingChatClient::default();
     let primary_probe = primary.clone();

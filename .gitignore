@@ -1,3 +1,4 @@
 /target/
+__pycache__/
 dev_settings.json
 local_settings.json

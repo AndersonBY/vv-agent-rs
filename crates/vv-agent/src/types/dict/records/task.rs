@@ -70,44 +70,15 @@ impl AgentTask {
                 "initial_shared_state".to_string(),
                 metadata_to_value(&self.initial_shared_state),
             ),
+            (
+                "model_settings".to_string(),
+                serde_json::to_value(&self.model_settings).unwrap_or(Value::Null),
+            ),
             ("metadata".to_string(), metadata_to_value(&self.metadata)),
         ]))
     }
 
     pub fn from_dict(data: &Value) -> Result<Self, String> {
-        let object = expect_object(data, "AgentTask")?;
-        let mut task = Self::new(
-            read_required_string(object, "task_id")?,
-            read_required_string(object, "model")?,
-            read_required_string(object, "system_prompt")?,
-            read_required_string(object, "user_prompt")?,
-        );
-        task.max_cycles = read_u32(object, "max_cycles", 8);
-        task.memory_compact_threshold = read_u64(object, "memory_compact_threshold", 128_000);
-        task.memory_threshold_percentage = read_u8(object, "memory_threshold_percentage", 90);
-        task.no_tool_policy = parse_no_tool_policy(
-            read_optional_string(object, "no_tool_policy")
-                .as_deref()
-                .unwrap_or("continue"),
-        )?;
-        task.allow_interruption = read_bool(object, "allow_interruption", true);
-        task.use_workspace = read_bool(object, "use_workspace", true);
-        task.has_sub_agents = read_bool(object, "has_sub_agents", false);
-        if let Some(value) = object.get("sub_agents") {
-            task.sub_agents =
-                serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
-        }
-        task.agent_type = read_optional_string(object, "agent_type");
-        task.native_multimodal = read_bool(object, "native_multimodal", false);
-        task.extra_tool_names = read_string_list(object, "extra_tool_names");
-        task.exclude_tools = read_string_list(object, "exclude_tools");
-        task.initial_messages = read_array(object, "initial_messages")
-            .unwrap_or(&[])
-            .iter()
-            .map(Message::from_dict)
-            .collect::<Result<Vec<_>, _>>()?;
-        task.initial_shared_state = read_metadata(object, "initial_shared_state")?;
-        task.metadata = read_metadata(object, "metadata")?;
-        Ok(task)
+        serde_json::from_value(data.clone()).map_err(|error| error.to_string())
     }
 }

@@ -4,9 +4,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{
-    coerce_bool, parse_integer_arg, stringify_tool_arg, tool_error_with_code, tool_result,
-};
+use crate::tools::common::{coerce_bool, parse_integer_arg, tool_result, trim_portable_whitespace};
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 const DEFAULT_SUB_TASK_WAIT_INTERVAL_SECONDS: i64 = 300;
@@ -32,40 +30,50 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
         "Inspect status for background sub-tasks.",
         Arc::new(|context, arguments| {
             let Some(manager) = context.sub_task_manager.clone() else {
-                return tool_error_with_code(
+                return status_error(
                     "Sub-task manager is not available for this task",
                     "sub_task_manager_unavailable",
                 );
             };
             let Some(raw_task_ids) = arguments.get("task_ids").and_then(Value::as_array) else {
-                return tool_error_with_code(
-                    "`task_ids` must be a non-empty array",
-                    "invalid_task_ids",
-                );
+                return status_error("`task_ids` must be a non-empty array", "invalid_task_ids");
             };
+            if raw_task_ids.is_empty() {
+                return status_error("`task_ids` must be a non-empty array", "invalid_task_ids");
+            }
             let mut task_ids = Vec::new();
             for item in raw_task_ids {
-                if is_falsey_id_value(item) {
-                    continue;
-                }
-                let task_id = stringify_tool_arg(Some(item), "");
-                let task_id = task_id.trim();
+                let Value::String(task_id) = item else {
+                    return status_error(
+                        "`task_ids` must contain only strings",
+                        "invalid_task_ids",
+                    );
+                };
+                let task_id = trim_portable_whitespace(task_id);
                 if !task_id.is_empty() && !task_ids.iter().any(|known| known == task_id) {
                     task_ids.push(task_id.to_string());
                 }
             }
             if task_ids.is_empty() {
-                return tool_error_with_code(
+                return status_error(
                     "`task_ids` must include at least one valid task id",
                     "invalid_task_ids",
                 );
             }
-            let detail_level = arguments
-                .get("detail_level")
-                .and_then(Value::as_str)
-                .map(|value| value.trim().to_ascii_lowercase())
-                .filter(|value| value == "basic" || value == "snapshot")
-                .unwrap_or_else(|| "basic".to_string());
+            let detail_level = match arguments.get("detail_level") {
+                None => "basic".to_string(),
+                Some(Value::String(value)) => {
+                    let normalized = trim_portable_whitespace(value).to_ascii_lowercase();
+                    if normalized == "basic" || normalized == "snapshot" {
+                        normalized
+                    } else {
+                        "basic".to_string()
+                    }
+                }
+                Some(_) => {
+                    return status_error("`detail_level` must be a string", "invalid_detail_level");
+                }
+            };
             let workspace_file_limit = arguments
                 .get("workspace_file_limit")
                 .and_then(|value| parse_integer_arg(value).ok())
@@ -75,32 +83,43 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
             let check_interval_seconds =
                 normalize_wait_interval_seconds(arguments.get("check_interval_seconds"));
             let max_wait_seconds = normalize_max_wait_seconds(arguments.get("max_wait_seconds"));
-            let message = arguments.get("message").and_then(|value| {
-                if value.is_null() {
-                    return None;
+            let message = match arguments.get("message") {
+                None => None,
+                Some(Value::String(value)) => {
+                    let message = trim_portable_whitespace(value);
+                    (!message.is_empty()).then(|| message.to_string())
                 }
-                let message = stringify_tool_arg(Some(value), "");
-                let message = message.trim();
-                (!message.is_empty()).then(|| message.to_string())
-            });
+                Some(_) => {
+                    return status_error("`message` must be a string", "invalid_sub_task_message");
+                }
+            };
             let wait_for_response = coerce_bool(arguments.get("wait_for_response"), false);
             let mut interaction = None;
             if let Some(message) = message {
                 let target_id = task_ids[0].clone();
                 let Some(session_id) = manager.task_session_id(&target_id) else {
-                    return tool_error_with_code(
+                    return task_status_error(
                         format!("Sub-task {target_id} not found."),
                         "sub_task_not_found",
+                        &target_id,
                     );
                 };
                 let previous_status = manager
                     .task_status_label(&target_id)
                     .unwrap_or_else(|| "missing".to_string());
                 if manager.is_running(&target_id) {
+                    if manager.has_attached_session(&target_id) != Some(true) {
+                        return task_status_error(
+                            format!("Sub-task {target_id} session is not ready yet."),
+                            "sub_task_session_not_ready",
+                            &target_id,
+                        );
+                    }
                     if !crate::steer_sub_agent_session(&session_id, &message) {
-                        return tool_error_with_code(
+                        return task_status_error(
                             format!("Failed to queue message for running sub-task {target_id}."),
                             "sub_task_message_queue_failed",
+                            &target_id,
                         );
                     }
                     interaction = Some(json!({
@@ -110,13 +129,20 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
                     }));
                 } else {
                     if previous_status == "max_cycles" {
-                        return tool_error_with_code(
+                        return task_status_error(
                             format!("Sub-task {target_id} reached max cycles and cannot continue."),
                             "sub_task_max_cycles_reached",
+                            &target_id,
                         );
                     }
-                    if let Err(error) = manager.continue_task(&target_id, &message) {
-                        return tool_error_with_code(error, "sub_task_continue_failed");
+                    let continuation = match context.sub_task_turn_snapshot.clone() {
+                        Some(snapshot) => {
+                            manager.continue_task_with_snapshot(&target_id, &message, snapshot)
+                        }
+                        None => manager.continue_task(&target_id, &message),
+                    };
+                    if let Err(error) = continuation {
+                        return task_status_error(error, "sub_task_continue_failed", &target_id);
                     }
                     interaction = Some(json!({
                         "task_id": target_id,
@@ -171,15 +197,35 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
     spec
 }
 
-fn is_falsey_id_value(value: &Value) -> bool {
-    match value {
-        Value::Null => true,
-        Value::Bool(value) => !*value,
-        Value::Number(number) => number.as_f64() == Some(0.0),
-        Value::String(value) => value.is_empty(),
-        Value::Array(items) => items.is_empty(),
-        Value::Object(object) => object.is_empty(),
-    }
+fn status_error(message: impl Into<String>, error_code: &str) -> ToolExecutionResult {
+    tool_result(
+        ToolResultStatus::Error,
+        json!({
+            "ok": false,
+            "error": message.into(),
+            "error_code": error_code,
+        }),
+        Some(error_code),
+        ToolDirective::Continue,
+    )
+}
+
+fn task_status_error(
+    message: impl Into<String>,
+    error_code: &str,
+    task_id: &str,
+) -> ToolExecutionResult {
+    tool_result(
+        ToolResultStatus::Error,
+        json!({
+            "ok": false,
+            "error": message.into(),
+            "error_code": error_code,
+            "details": {"task_id": task_id},
+        }),
+        Some(error_code),
+        ToolDirective::Continue,
+    )
 }
 
 fn normalize_wait_interval_seconds(value: Option<&Value>) -> i64 {

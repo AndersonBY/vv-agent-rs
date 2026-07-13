@@ -64,6 +64,15 @@ impl SubTaskManager {
             .map(|record| record.status_label().to_string())
     }
 
+    pub fn has_attached_session(&self, task_id: &str) -> Option<bool> {
+        self.join_finished_tasks();
+        self.tasks
+            .lock()
+            .expect("sub-task manager poisoned")
+            .get(task_id)
+            .map(|record| record.session.is_some())
+    }
+
     pub fn is_running(&self, task_id: &str) -> bool {
         self.join_finished_tasks();
         self.tasks
@@ -86,6 +95,7 @@ impl SubTaskManager {
                         record.handle.take()
                     }
                     Some(_) => None,
+                    None if record.is_running() => None,
                     None => return true,
                 }
             };

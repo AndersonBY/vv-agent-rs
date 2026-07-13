@@ -12,7 +12,7 @@ use self::diagnostics::{append_issue, merge_diagnostics, IssueSeverity};
 pub use self::mode::{
     normalize_validation_mode, ValidationMode, DEFAULT_VALIDATION_MODE, VALIDATION_MODES,
 };
-use self::rules::{validate_description, validate_name, ALLOWED_FIELDS};
+use self::rules::{validate_compatibility, validate_description, validate_name, ALLOWED_FIELDS};
 use super::errors::SkillValidationError;
 use super::parser::{find_skill_md, parse_frontmatter};
 
@@ -67,6 +67,8 @@ pub fn validate_metadata_with_diagnostics(
             .errors
             .push("Missing required field in frontmatter: description".to_string()),
     }
+
+    validate_compatibility(metadata.get("compatibility"), mode, &mut diagnostics);
 
     Ok(diagnostics)
 }

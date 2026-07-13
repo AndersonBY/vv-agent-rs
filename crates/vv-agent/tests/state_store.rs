@@ -39,6 +39,11 @@ fn checkpoint(task_id: &str, cycle_index: u32) -> Checkpoint {
         ]
         .into_iter()
         .collect(),
+        revision: 0,
+        claim_token: None,
+        claimed_cycle: None,
+        lease_expires_at_ms: None,
+        terminal_result: None,
     }
 }
 

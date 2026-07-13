@@ -1,6 +1,79 @@
 use super::*;
 
 #[test]
+fn workspace_backends_report_utf8_bytes_written() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let local = LocalWorkspaceBackend::new(workspace.path());
+    let memory = MemoryWorkspaceBackend::default();
+    let s3 = S3WorkspaceBackend::from_object_store(InMemory::new(), "tenant/workspace")
+        .expect("s3 backend");
+    let content = "你好, world";
+
+    assert_eq!(
+        local
+            .write_text("unicode.txt", content, false)
+            .expect("local write"),
+        content.len()
+    );
+    assert_eq!(
+        memory
+            .write_text("unicode.txt", content, false)
+            .expect("memory write"),
+        content.len()
+    );
+    assert_eq!(
+        s3.write_text("unicode.txt", content, false)
+            .expect("s3 write"),
+        content.len()
+    );
+}
+
+#[test]
+fn workspace_backends_enforce_canonical_dot_segment_rules() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let local = LocalWorkspaceBackend::new(workspace.path());
+    local
+        .write_text("nested/../canonical.txt", "local", false)
+        .expect("local normalized write");
+    assert_eq!(
+        local.read_text("./canonical.txt").expect("local read"),
+        "local"
+    );
+    assert_eq!(
+        local
+            .write_text("../escape.txt", "blocked", false)
+            .expect_err("local escape must fail")
+            .kind(),
+        ErrorKind::PermissionDenied
+    );
+    assert!(!local.exists("../escape.txt"));
+    assert!(!local.is_file("../escape.txt"));
+
+    let memory = MemoryWorkspaceBackend::default();
+    memory
+        .write_text("../../escape.txt", "memory", false)
+        .expect("memory clamped write");
+    assert_eq!(
+        memory.read_text("/escape.txt").expect("memory read"),
+        "memory"
+    );
+    assert_eq!(
+        memory.list_files("..", "*.txt").expect("memory list"),
+        vec!["escape.txt"]
+    );
+
+    let s3 = S3WorkspaceBackend::from_object_store(InMemory::new(), "tenant/workspace")
+        .expect("s3 backend");
+    s3.write_text("../../escape.txt", "s3", false)
+        .expect("s3 clamped write");
+    assert_eq!(s3.read_text("/escape.txt").expect("s3 read"), "s3");
+    assert_eq!(
+        s3.list_files("..", "*.txt").expect("s3 list"),
+        vec!["escape.txt"]
+    );
+}
+
+#[test]
 fn local_workspace_backend_replaces_invalid_utf8_when_reading_text() {
     let workspace = tempfile::tempdir().expect("workspace");
     let path = workspace.path().join("mixed.log");

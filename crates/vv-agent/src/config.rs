@@ -61,6 +61,12 @@ pub struct ResolvedModelConfig {
     pub model_id: String,
     pub context_length: Option<u64>,
     pub max_output_tokens: Option<u64>,
+    #[serde(default)]
+    pub function_call_available: bool,
+    #[serde(default)]
+    pub response_format_available: bool,
+    #[serde(default)]
+    pub native_multimodal: bool,
     pub endpoint_options: Vec<EndpointOption>,
 }
 
@@ -85,6 +91,9 @@ impl ResolvedModelConfig {
             model_id: model_id.into(),
             context_length: None,
             max_output_tokens: None,
+            function_call_available: false,
+            response_format_available: false,
+            native_multimodal: false,
             endpoint_options,
         }
     }
@@ -99,12 +108,25 @@ impl ResolvedModelConfig {
         self
     }
 
+    pub fn with_capabilities(
+        mut self,
+        function_call_available: bool,
+        response_format_available: bool,
+        native_multimodal: bool,
+    ) -> Self {
+        self.function_call_available = function_call_available;
+        self.response_format_available = response_format_available;
+        self.native_multimodal = native_multimodal;
+        self
+    }
+
     pub fn endpoint(&self) -> Option<&EndpointConfig> {
         self.endpoint_options.first().map(|option| &option.endpoint)
     }
 }
 
 pub fn apply_resolved_model_limits(task: &mut AgentTask, resolved: &ResolvedModelConfig) {
+    task.native_multimodal = resolved.native_multimodal;
     if let Some(context_length) = resolved.context_length {
         task.metadata
             .entry("model_context_window".to_string())
@@ -115,6 +137,15 @@ pub fn apply_resolved_model_limits(task: &mut AgentTask, resolved: &ResolvedMode
             .entry("reserved_output_tokens".to_string())
             .or_insert_with(|| Value::from(max_output_tokens));
     }
+    task.metadata
+        .entry("function_call_available".to_string())
+        .or_insert_with(|| Value::Bool(resolved.function_call_available));
+    task.metadata
+        .entry("response_format_available".to_string())
+        .or_insert_with(|| Value::Bool(resolved.response_format_available));
+    task.metadata
+        .entry("native_multimodal".to_string())
+        .or_insert_with(|| Value::Bool(resolved.native_multimodal));
 }
 
 pub fn load_memory_summary_defaults_from_file(path: &Path) -> MemorySummaryDefaults {

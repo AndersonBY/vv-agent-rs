@@ -55,7 +55,15 @@ fn cancellation_token_callbacks_match_agent_semantics() {
 
     assert!(token.cancelled());
     assert_eq!(*calls.lock().expect("callback calls lock"), vec!["first"]);
-    assert!(token.check().is_err());
+    let error: vv_agent::CancelledError = token.check().expect_err("typed cancellation");
+    assert_eq!(error.message(), "Operation was cancelled");
+    let context_error: vv_agent::CancelledError = ExecutionContext {
+        cancellation_token: Some(token.clone()),
+        ..ExecutionContext::default()
+    }
+    .check_cancelled()
+    .expect_err("typed context cancellation");
+    assert_eq!(context_error, error);
 
     let immediate_calls = Arc::new(Mutex::new(Vec::new()));
     let callback_calls = Arc::clone(&immediate_calls);

@@ -25,6 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = runner
         .run_with_config(&agent, prompt, RunConfig::builder().max_cycles(12).build())
         .await?;
+    let resolved = result.resolved_model();
 
     println!(
         "{}",
@@ -33,9 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "status": format!("{:?}", result.status()),
             "final_output": result.final_output(),
             "resolved": {
-                "backend": result.resolved_model().backend,
-                "selected_model": result.resolved_model().selected_model,
-                "model_id": result.resolved_model().model_id,
+                "backend": resolved.map(|model| &model.backend),
+                "selected_model": resolved.map(|model| &model.selected_model),
+                "model_id": resolved.map(|model| &model.model_id),
             }
         }))?
     );

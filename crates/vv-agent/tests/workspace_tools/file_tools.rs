@@ -627,6 +627,16 @@ fn edit_file_requires_unique_match_by_default_and_supports_replace_all() {
         ambiguous.error_code.as_deref(),
         Some("old_string_not_unique")
     );
+    let ambiguous_payload: Value =
+        serde_json::from_str(&ambiguous.content).expect("ambiguous payload");
+    assert_eq!(
+        ambiguous_payload["error"],
+        "`old_string` matched multiple locations; make it unique or set replace_all=true."
+    );
+    assert_eq!(ambiguous_payload["match_count"], 3);
+    assert_eq!(ambiguous.metadata["error_code"], "old_string_not_unique");
+    assert_eq!(ambiguous.metadata["path"], "duplicate.txt");
+    assert_eq!(ambiguous.metadata["match_count"], 3);
 
     let replace_all = registry
         .execute(
@@ -705,5 +715,153 @@ fn edit_file_success_returns_metadata_and_preserves_crlf() {
     assert_eq!(
         std::fs::read(workspace.path().join("crlf.txt")).expect("file"),
         b"first\r\nSECOND\r\nTHIRD\r\n"
+    );
+}
+
+#[test]
+fn edit_file_returns_real_unified_diff() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    std::fs::write(workspace.path().join("diff.txt"), "alpha\nbeta\ngamma\n").expect("file");
+    registry
+        .execute(
+            &ToolCall::new(
+                "read_diff",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!("diff.txt"))]),
+            ),
+            &mut context,
+        )
+        .expect("read_file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "edit_diff",
+                "edit_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("diff.txt")),
+                    ("old_string".to_string(), json!("beta")),
+                    ("new_string".to_string(), json!("BETTA")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("edit_file");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.directive, vv_agent::ToolDirective::Continue);
+    assert_eq!(result.error_code, None);
+    assert_eq!(
+        result.metadata["diff"],
+        concat!(
+            "--- diff.txt\n",
+            "+++ diff.txt\n",
+            "@@ -1,3 +1,3 @@\n",
+            " alpha\n",
+            "-beta\n",
+            "+BETTA\n",
+            " gamma\n",
+        )
+    );
+    assert_eq!(result.metadata["diff_truncated"], false);
+    assert_eq!(result.metadata["additions"], 1);
+    assert_eq!(result.metadata["deletions"], 1);
+}
+
+#[test]
+fn edit_file_truncates_large_cjk_diff_at_unicode_boundary() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    let before = "旧".repeat(6_100);
+    let after = "新".repeat(6_100);
+    std::fs::write(workspace.path().join("large-diff.txt"), &before).expect("file");
+    registry
+        .execute(
+            &ToolCall::new(
+                "read_large_diff",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!("large-diff.txt"))]),
+            ),
+            &mut context,
+        )
+        .expect("read_file");
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "edit_large_diff",
+                "edit_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("large-diff.txt")),
+                    ("old_string".to_string(), json!(before)),
+                    ("new_string".to_string(), json!(after.clone())),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("edit_file");
+    let diff = result.metadata["diff"].as_str().expect("diff");
+
+    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.metadata["diff_truncated"], true);
+    assert_eq!(diff.chars().count(), 12_000);
+    assert!(diff.len() > 12_000);
+    assert!(diff.starts_with("--- large-diff.txt\n+++ large-diff.txt\n@@ -1 +1 @@\n-"));
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join("large-diff.txt")).expect("file"),
+        after
+    );
+}
+
+#[test]
+fn read_and_edit_preserve_utf8_bom_and_crlf() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    let mut original = b"\xef\xbb\xbffirst\r\n".to_vec();
+    original.extend_from_slice("第二行\r\n".as_bytes());
+    std::fs::write(workspace.path().join("bom-crlf.txt"), original).expect("file");
+
+    let read = registry
+        .execute(
+            &ToolCall::new(
+                "read_bom_crlf",
+                "read_file",
+                BTreeMap::from([("path".to_string(), json!("bom-crlf.txt"))]),
+            ),
+            &mut context,
+        )
+        .expect("read_file");
+    let read_payload: Value = serde_json::from_str(&read.content).expect("read payload");
+    assert_eq!(read_payload["content"], "first\n第二行");
+
+    let edit = registry
+        .execute(
+            &ToolCall::new(
+                "edit_bom_crlf",
+                "edit_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("bom-crlf.txt")),
+                    ("old_string".to_string(), json!("第二行")),
+                    ("new_string".to_string(), json!("更新行")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("edit_file");
+    let diff = edit.metadata["diff"].as_str().expect("diff");
+    let mut expected = b"\xef\xbb\xbffirst\r\n".to_vec();
+    expected.extend_from_slice("更新行\r\n".as_bytes());
+
+    assert_eq!(edit.status, ToolResultStatus::Success);
+    assert_eq!(edit.metadata["line_ending"], "crlf");
+    assert!(!diff.contains('\u{feff}'));
+    assert!(!diff.contains('\r'));
+    assert_eq!(
+        std::fs::read(workspace.path().join("bom-crlf.txt")).expect("file"),
+        expected
     );
 }

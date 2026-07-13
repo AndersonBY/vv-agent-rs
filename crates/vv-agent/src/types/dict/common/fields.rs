@@ -66,14 +66,6 @@ pub(in crate::types::dict) fn read_u64(
     object.get(key).and_then(Value::as_u64).unwrap_or(default)
 }
 
-pub(in crate::types::dict) fn read_u8(object: &Map<String, Value>, key: &str, default: u8) -> u8 {
-    object
-        .get(key)
-        .and_then(Value::as_u64)
-        .and_then(|value| u8::try_from(value).ok())
-        .unwrap_or(default)
-}
-
 pub(in crate::types::dict) fn read_array<'a>(
     object: &'a Map<String, Value>,
     key: &str,
@@ -90,21 +82,4 @@ pub(in crate::types::dict) fn read_metadata(
         Some(Value::Null) | None => Ok(Metadata::new()),
         Some(_) => Err(format!("{key:?} must be an object")),
     }
-}
-
-pub(in crate::types::dict) fn read_string_list(
-    object: &Map<String, Value>,
-    key: &str,
-) -> Vec<String> {
-    object
-        .get(key)
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
 }

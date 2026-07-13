@@ -11,7 +11,7 @@ Delegation rules:
 - Give the child concrete scope, relevant files or commands, constraints, and expected evidence.
 - Do not use batch mode for ordered edits, shared mutable state, dependent tasks, or work where one child result changes what the next child should do.
 - Keep `include_main_summary=false` for independent tasks; enable it only when the child truly needs parent context.
-- Use `exclude_files_pattern` to keep large, generated, or irrelevant paths out of child context.
+- `exclude_files_pattern` is a discovery filter over normalized workspace-relative paths. It hides matches from child file listing, search, and status snapshots, but direct known-path access, shell commands, and custom tools remain available. It is not an access-control boundary or sandbox.
 
 Execution:
 - `wait_for_completion=true` (default): wait for result(s) and return final payload. Batch mode may run requests through the runtime execution backend in parallel and returns a summary plus one result per task.
@@ -68,7 +68,7 @@ pub(in crate::tools::schemas) fn create_sub_task_schema() -> Value {
                     },
                     "exclude_files_pattern": {
                         "type": "string",
-                        "description": "Optional regex for excluding files from shared context. Use to keep large, generated, or irrelevant paths out of child context."
+                        "description": "Optional portable regex applied to normalized workspace-relative paths for child discovery only. Matching paths are hidden from file listing, search, and status snapshots. Direct known-path access, shell commands, and custom tools remain available, so this is not an access-control boundary or sandbox. Blank values are treated as absent; lookaround, backreferences, Unicode property escapes, engine-specific anchors/escapes, possessive quantifiers, and character-class set operations are rejected."
                     },
                     "wait_for_completion": {
                         "type": "boolean",

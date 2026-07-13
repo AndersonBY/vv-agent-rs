@@ -114,6 +114,11 @@ fn entries_from_object(
         description,
         location,
         instructions,
+        compatibility: object
+            .get("compatibility")
+            .map(truthy_value_string)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
         allowed_tools: object
             .get("allowed-tools")
             .or_else(|| object.get("allowed_tools"))
@@ -139,6 +144,7 @@ fn load_entry(skill_dir: &Path, workspace: Option<&Path>, load_instructions: boo
                     description: loaded.properties.description,
                     location: Some(relative_location(&loaded.skill_md_path, workspace)),
                     instructions: Some(loaded.instructions).filter(|value| !value.is_empty()),
+                    compatibility: loaded.properties.compatibility,
                     allowed_tools: loaded.properties.allowed_tools,
                     metadata: loaded.properties.metadata,
                     load_error: None,
@@ -157,6 +163,7 @@ fn load_entry(skill_dir: &Path, workspace: Option<&Path>, load_instructions: boo
                 description: properties.description,
                 location,
                 instructions: None,
+                compatibility: properties.compatibility,
                 allowed_tools: properties.allowed_tools,
                 metadata: properties.metadata,
                 load_error: None,
