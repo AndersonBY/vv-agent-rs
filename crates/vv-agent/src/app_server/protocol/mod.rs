@@ -34,10 +34,10 @@ pub use thread::{
     ThreadUnsubscribeResponse,
 };
 pub use turn::{
-    AppTokenUsage, AppTurn, TurnCompletedParams, TurnControlResponse, TurnFollowUpParams,
-    TurnFollowUpResponse, TurnInterruptParams, TurnInterruptResponse, TurnStartParams,
-    TurnStartResponse, TurnStartedParams, TurnStatus, TurnSteerParams, TurnSteerResponse,
-    UserInput,
+    AppCacheUsage, AppTokenUsage, AppTurn, TurnCompletedParams, TurnControlResponse,
+    TurnFollowUpParams, TurnFollowUpResponse, TurnInterruptParams, TurnInterruptResponse,
+    TurnStartParams, TurnStartResponse, TurnStartedParams, TurnStatus, TurnSteerParams,
+    TurnSteerResponse, UserInput,
 };
 
 pub use errors::{AppServerError, AppServerErrorCode};

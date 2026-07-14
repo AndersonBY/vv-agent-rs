@@ -13,8 +13,8 @@ use vv_agent::app_server::protocol::{
 use vv_agent::app_server::thread_store::SqliteThreadStore;
 use vv_agent::app_server::transport::ConnectionId;
 use vv_agent::{
-    Agent, FunctionTool, LLMResponse, LlmRequest, ModelRef, RunEvent, Runner, ScriptStep,
-    ScriptedModelProvider, ToolCall, ToolOutput,
+    Agent, CacheUsage, CacheUsageStatus, FunctionTool, LLMResponse, LlmRequest, ModelRef, RunEvent,
+    Runner, ScriptStep, ScriptedModelProvider, TokenUsage, ToolCall, ToolOutput, UsageSource,
 };
 
 #[tokio::test]
@@ -140,7 +140,24 @@ async fn turn_controls_match_python_v1_errors_without_an_active_turn() {
 
 #[tokio::test]
 async fn turn_completion_keeps_python_v1_terminal_fields() {
-    let (mut processor, mut outgoing) = processor_with_runtime(vec![finish_response("done")]);
+    let mut response = finish_response("done");
+    response.token_usage = TokenUsage {
+        prompt_tokens: 10,
+        completion_tokens: 2,
+        total_tokens: 12,
+        input_tokens: 10,
+        output_tokens: 2,
+        usage_source: UsageSource::ProviderReported,
+        cache_usage: CacheUsage {
+            status: CacheUsageStatus::ProviderReported,
+            read_tokens: Some(0),
+            write_tokens: None,
+            uncached_input_tokens: Some(10),
+            source: Some("provider_usage".to_string()),
+        },
+        ..TokenUsage::default()
+    };
+    let (mut processor, mut outgoing) = processor_with_runtime(vec![response]);
     let connection_id = ConnectionId::new(1);
     initialize(&mut processor, &mut outgoing, connection_id).await;
     start_thread(&mut processor, &mut outgoing, connection_id).await;
@@ -176,6 +193,11 @@ async fn turn_completion_keeps_python_v1_terminal_fields() {
         .is_some_and(|run_id| run_id.starts_with("run_")));
     assert_ne!(params["runId"], "assistant_run");
     assert!(params.get("tokenUsage").is_some());
+    assert_eq!(
+        params["tokenUsage"]["cache_usage"]["status"],
+        "provider_reported"
+    );
+    assert_eq!(params["tokenUsage"]["cache_usage"]["read_tokens"], 0);
     assert!(params.get("turn").is_none());
 }
 

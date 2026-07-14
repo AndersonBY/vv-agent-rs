@@ -56,7 +56,7 @@ const CONFIGURED_SUB_AGENT_FIXTURE_SHA256: &str =
 const CONFIGURED_SUB_AGENT_EVENTS_FIXTURE: &str =
     include_str!("fixtures/parity/configured_sub_agent_events_v1.jsonl");
 const CONFIGURED_SUB_AGENT_EVENTS_FIXTURE_SHA256: &str =
-    "d00e03e0dd05ed49f4fbc86f6e4e8b63ce884b99381fd260e3212bc71717817f";
+    "0fc2e5b09bf7cc9b8e06743d02c0a7bd11e54ca83814f9ab73aec256b3c80618";
 const MANAGER_TOOL_ENVELOPE_FIXTURE: &str =
     include_str!("fixtures/parity/manager_tool_envelope_v1.json");
 const MANAGER_TOOL_ENVELOPE_FIXTURE_SHA256: &str =

@@ -119,9 +119,8 @@ pub(super) async fn collect_vv_llm_stream(
                 );
             }
         }
-        if delta.done {
-            break;
-        }
+        // Some OpenAI-compatible providers emit the final usage-only chunk
+        // after the finish chunk. Consume the provider stream through EOF.
     }
 
     let mut raw = Metadata::new();

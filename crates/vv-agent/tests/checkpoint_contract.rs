@@ -14,7 +14,7 @@ use vv_agent::runtime::stores::sqlite::SqliteStateStore;
 use vv_agent::{AgentResult, AgentStatus, Message};
 
 const FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec_v1.json");
-const FIXTURE_SHA256: &str = "375baeb13c961a3a50ae23501e000839ac6baf5d2e2878d7858d79d3bab91cb8";
+const FIXTURE_SHA256: &str = "1a08f6a202ce8922e52c90d05dc718b90b05fdd65146f66becf360502d4aa8d0";
 
 fn checkpoint(task_id: &str) -> Checkpoint {
     Checkpoint {

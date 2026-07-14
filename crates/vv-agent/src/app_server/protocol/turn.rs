@@ -138,4 +138,14 @@ pub struct AppTokenUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_creation_tokens: u64,
+    pub cache_usage: AppCacheUsage,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AppCacheUsage {
+    pub status: String,
+    pub read_tokens: Option<u64>,
+    pub write_tokens: Option<u64>,
+    pub uncached_input_tokens: Option<u64>,
+    pub source: Option<String>,
 }

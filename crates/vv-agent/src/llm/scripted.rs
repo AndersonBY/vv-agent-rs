@@ -9,6 +9,8 @@ pub type ScriptStepCallback =
     Arc<dyn Fn(&LlmRequest) -> Result<LLMResponse, LlmError> + Send + Sync + 'static>;
 
 #[derive(Clone)]
+// Boxing Response would break direct construction of this public test API.
+#[allow(clippy::large_enum_variant)]
 pub enum ScriptStep {
     Response(LLMResponse),
     Callback(ScriptStepCallback),

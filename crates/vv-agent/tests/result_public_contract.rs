@@ -69,6 +69,10 @@ fn run_result_public_projection_matches_shared_contract_without_credentials() {
     assert_eq!(projection["status"], "wait_user");
     assert_eq!(projection["final_output"], "Approval is required.");
     assert_eq!(
+        projection["token_usage"],
+        contract["agent_result"]["token_usage"]
+    );
+    assert_eq!(
         projection["resolved_model"],
         contract["resolved_model_projection"]
     );
