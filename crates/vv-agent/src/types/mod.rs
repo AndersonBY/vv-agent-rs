@@ -16,5 +16,7 @@ pub use tasks::{
     INVALID_SUB_AGENT_MODEL_CODE, INVALID_SUB_AGENT_MODEL_MESSAGE,
     INVALID_SUB_AGENT_SYSTEM_PROMPT_CODE, INVALID_SUB_AGENT_SYSTEM_PROMPT_MESSAGE,
 };
-pub use token_usage::{CycleTokenUsage, TaskTokenUsage, TokenUsage};
+pub use token_usage::{
+    CacheUsage, CacheUsageStatus, CycleTokenUsage, TaskTokenUsage, TokenUsage, UsageSource,
+};
 pub use tool_calls::{ToolCall, ToolExecutionResult};

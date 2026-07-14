@@ -53,7 +53,9 @@ pub use sub_task_manager::{
     ManagedSubTask, ManagedSubTaskSnapshot, SubTaskLineage, SubTaskManager,
     SubTaskSessionAttachment, SubTaskSubmissionContext, SubTaskTurnSnapshot,
 };
-pub use token_usage::{normalize_token_usage, summarize_task_token_usage};
+pub use token_usage::{
+    normalize_token_usage, normalize_token_usage_with_hints, summarize_task_token_usage,
+};
 pub use tool_call_runner::{ToolCallRunner, ToolRunOutcome, ToolRunRequest};
 pub use tool_planner::{
     freeze_dynamic_tool_schema_hints, patch_dynamic_tool_schema_hints, plan_tool_names,

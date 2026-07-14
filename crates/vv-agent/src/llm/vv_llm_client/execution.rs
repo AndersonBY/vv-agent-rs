@@ -76,6 +76,7 @@ impl VvLlmClient {
                 temperature: request_options.temperature,
                 max_tokens: request_options.max_tokens,
                 stream: None,
+                ..vv_llm::ChatRequestOptions::default()
             },
             tools: request_tools
                 .into_iter()

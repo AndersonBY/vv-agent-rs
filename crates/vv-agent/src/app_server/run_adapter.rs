@@ -9,18 +9,19 @@ use crate::app_server::host::{
 };
 use crate::app_server::outgoing::OutgoingMessageSender;
 use crate::app_server::protocol::{
-    map_run_event_to_notifications, AgentMessageDeltaParams, AppItem, AppServerError,
-    AppServerErrorCode, AppTokenUsage, AppTurn, ApprovalDecision, ApprovalRequestParams,
-    ApprovalResolveParams, ItemCompletedParams, ItemStartedParams, JsonRpcError, JsonRpcErrorBody,
-    RequestId, ServerNotification, ServerRequest, ThreadStatus, ThreadStatusChangedParams,
-    TurnCompletedParams, TurnStartParams, TurnStartedParams, TurnStatus, UserInput,
+    map_run_event_to_notifications, AgentMessageDeltaParams, AppCacheUsage, AppItem,
+    AppServerError, AppServerErrorCode, AppTokenUsage, AppTurn, ApprovalDecision,
+    ApprovalRequestParams, ApprovalResolveParams, ItemCompletedParams, ItemStartedParams,
+    JsonRpcError, JsonRpcErrorBody, RequestId, ServerNotification, ServerRequest, ThreadStatus,
+    ThreadStatusChangedParams, TurnCompletedParams, TurnStartParams, TurnStartedParams, TurnStatus,
+    UserInput,
 };
 use crate::app_server::thread_state::{ActiveTurn, SteeringQueue, ThreadStateManager};
 use crate::app_server::thread_store::{SqliteThreadStore, ThreadStoreError};
 use crate::app_server::transport::ConnectionId;
 use crate::events::RunEventPayload;
 use crate::tools::ApprovalDecision as ToolApprovalDecision;
-use crate::types::{AgentStatus, Metadata, TaskTokenUsage, ToolExecutionResult};
+use crate::types::{AgentStatus, CacheUsageStatus, Metadata, TaskTokenUsage, ToolExecutionResult};
 use crate::{
     Agent, ApprovalBroker, ApprovalFuture, ApprovalProvider, ApprovalRequest, BeforeLlmEvent,
     BeforeLlmPatch, BeforeToolCallEvent, BeforeToolCallPatch, Message, RunConfig, RunHandle,
@@ -724,6 +725,18 @@ fn app_token_usage(usage: &TaskTokenUsage) -> AppTokenUsage {
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         cache_creation_tokens: usage.cache_creation_tokens,
+        cache_usage: AppCacheUsage {
+            status: match usage.cache_usage.status {
+                CacheUsageStatus::ProviderReported => "provider_reported",
+                CacheUsageStatus::AccountingMissing => "accounting_missing",
+                CacheUsageStatus::Unsupported => "unsupported",
+            }
+            .to_string(),
+            read_tokens: usage.cache_usage.read_tokens,
+            write_tokens: usage.cache_usage.write_tokens,
+            uncached_input_tokens: usage.cache_usage.uncached_input_tokens,
+            source: usage.cache_usage.source.clone(),
+        },
     }
 }
 

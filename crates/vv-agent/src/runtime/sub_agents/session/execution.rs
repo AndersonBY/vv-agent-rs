@@ -22,6 +22,8 @@ use super::projection::project_execution_context;
 use super::RuntimeSubAgentSession;
 use crate::runtime::sub_agents::task::canonical_sub_run_metadata;
 
+type RunPromptError = Box<(String, Option<TaskTokenUsage>)>;
+
 impl RuntimeSubAgentSession {
     pub(super) fn run_prompt(
         &self,
@@ -60,7 +62,8 @@ impl RuntimeSubAgentSession {
             Ok(Ok((outcome, token_usage))) => {
                 self.finish_outcome(&controls, &lifecycle, outcome, token_usage.as_ref())
             }
-            Ok(Err((error, token_usage))) => {
+            Ok(Err(error)) => {
+                let (error, token_usage) = *error;
                 let (observed_cycles, observed_usage) = observed_progress.snapshot();
                 let outcome = self.failed_outcome(error, observed_cycles);
                 let token_usage = token_usage.as_ref().or(observed_usage.as_ref());
@@ -83,13 +86,13 @@ impl RuntimeSubAgentSession {
         cancellation_token: CancellationToken,
         controls: &EffectiveTurnControls,
         observed_progress: Arc<ObservedRunProgress>,
-    ) -> Result<(SubTaskOutcome, Option<TaskTokenUsage>), (String, Option<TaskTokenUsage>)> {
+    ) -> Result<(SubTaskOutcome, Option<TaskTokenUsage>), RunPromptError> {
         let (initial_messages, shared_state) = {
             let state = self.state.lock().map_err(|_| {
-                (
+                Box::new((
                     "Sub-agent session state lock is poisoned.".to_string(),
                     None,
-                )
+                ))
             })?;
             (state.messages.clone(), state.shared_state.clone())
         };
@@ -186,7 +189,7 @@ impl RuntimeSubAgentSession {
                     cycle_count: None,
                 },
             )
-            .map_err(|error| (error.to_string(), observed_progress.token_usage()))?;
+            .map_err(|error| Box::new((error.to_string(), observed_progress.token_usage())))?;
         let token_usage = if result.cycles.is_empty() {
             (result.status != AgentStatus::Failed).then(|| result.token_usage.clone())
         } else {
@@ -195,10 +198,10 @@ impl RuntimeSubAgentSession {
 
         {
             let mut state = self.state.lock().map_err(|_| {
-                (
+                Box::new((
                     "Sub-agent session state lock is poisoned.".to_string(),
                     token_usage.clone(),
-                )
+                ))
             })?;
             state.messages = result.messages.clone();
             state.shared_state = result.shared_state.clone();

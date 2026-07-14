@@ -43,6 +43,16 @@ fn public_export_path(id: &str) -> &'static str {
         }
         "result.runtime_result" => export_type!(vv_agent::AgentResult, "vv_agent::AgentResult"),
         "result.status" => export_type!(vv_agent::AgentStatus, "vv_agent::AgentStatus"),
+        "result.usage_source" => export_type!(vv_agent::UsageSource, "vv_agent::UsageSource"),
+        "result.cache_usage_status" => export_type!(
+            vv_agent::CacheUsageStatus,
+            "vv_agent::CacheUsageStatus"
+        ),
+        "result.cache_usage" => export_type!(vv_agent::CacheUsage, "vv_agent::CacheUsage"),
+        "result.token_usage" => export_type!(vv_agent::TokenUsage, "vv_agent::TokenUsage"),
+        "result.task_token_usage" => {
+            export_type!(vv_agent::TaskTokenUsage, "vv_agent::TaskTokenUsage")
+        }
         "run_handle.live" => export_type!(vv_agent::RunHandle, "vv_agent::RunHandle"),
         "run_handle.snapshot" => {
             export_type!(vv_agent::RunHandleState, "vv_agent::RunHandleState")
@@ -798,7 +808,7 @@ fn public_api_manifest_compiles_real_rust_exports() {
             );
         }
     }
-    assert_eq!(capability_ids.len(), 109);
+    assert_eq!(capability_ids.len(), 114);
 
     let surfaces = fixture["surfaces"].as_array().expect("public API surfaces");
     let surface_map = surfaces

@@ -101,12 +101,19 @@ impl vv_llm::ChatClient for StreamingChatClient {
                     ..vv_llm::ChatStreamDelta::default()
                 }),
                 Ok(vv_llm::ChatStreamDelta {
+                    done: true,
+                    ..vv_llm::ChatStreamDelta::default()
+                }),
+                Ok(vv_llm::ChatStreamDelta {
                     usage: Some(vv_llm::ChatUsage {
                         prompt_tokens: Some(3),
                         completion_tokens: Some(5),
                         total_tokens: Some(8),
+                        input_tokens: Some(3),
+                        output_tokens: Some(5),
+                        cache_read_input_tokens: Some(2),
+                        ..vv_llm::ChatUsage::default()
                     }),
-                    done: true,
                     ..vv_llm::ChatStreamDelta::default()
                 }),
             ];

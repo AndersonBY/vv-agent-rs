@@ -32,6 +32,13 @@ Task completion is tool-driven. The model must call `task_finish` or `ask_user`
 to finish, wait for user input, or continue; the runtime does not infer success
 from an assistant prose message.
 
+Token accounting keeps provider truth separate from compatibility values.
+`TokenUsage::usage_source` identifies provider-reported, estimated, or missing
+totals. `CacheUsage` distinguishes an explicit zero cache read from missing
+accounting and adapter-declared lack of support. `TaskTokenUsage` exposes a
+cache total only when every included cycle reports that metric; legacy numeric
+fields remain available but do not prove cache-accounting availability.
+
 ## Module Map
 
 | Path | Responsibility |

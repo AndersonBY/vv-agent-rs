@@ -1,7 +1,8 @@
 use serde_json::Value;
 
 use crate::memory::token_utils::count_tokens;
-use crate::types::{LLMResponse, Metadata, TokenUsage, ToolCall};
+use crate::runtime::normalize_token_usage_with_hints;
+use crate::types::{LLMResponse, Metadata, TokenUsage, ToolCall, UsageSource};
 
 #[derive(Debug, Clone)]
 pub(super) struct UsageEstimateContext {
@@ -84,16 +85,36 @@ fn normalize_tool_call_name(name: &str) -> String {
 }
 
 pub(super) fn from_vv_llm_usage(usage: vv_llm::ChatUsage) -> TokenUsage {
-    let raw = serde_json::to_value(&usage).unwrap_or(Value::Null);
-    TokenUsage {
-        prompt_tokens: usage.prompt_tokens.unwrap_or_default() as u64,
-        completion_tokens: usage.completion_tokens.unwrap_or_default() as u64,
-        total_tokens: usage.total_tokens.unwrap_or_default() as u64,
-        input_tokens: usage.prompt_tokens.unwrap_or_default() as u64,
-        output_tokens: usage.completion_tokens.unwrap_or_default() as u64,
-        raw,
-        ..TokenUsage::default()
-    }
+    let raw = usage
+        .raw_usage
+        .clone()
+        .unwrap_or_else(|| serde_json::to_value(&usage).unwrap_or_else(|_| serde_json::json!({})));
+    let mut normalized =
+        normalize_token_usage_with_hints(&raw, Some(UsageSource::ProviderReported), None);
+    normalized.prompt_tokens = usage
+        .prompt_tokens
+        .map(u64::from)
+        .unwrap_or(normalized.prompt_tokens);
+    normalized.completion_tokens = usage
+        .completion_tokens
+        .map(u64::from)
+        .unwrap_or(normalized.completion_tokens);
+    normalized.total_tokens = usage
+        .total_tokens
+        .map(u64::from)
+        .unwrap_or(normalized.total_tokens);
+    normalized.input_tokens = usage
+        .input_tokens
+        .or(usage.prompt_tokens)
+        .map(u64::from)
+        .unwrap_or(normalized.input_tokens);
+    normalized.output_tokens = usage
+        .output_tokens
+        .or(usage.completion_tokens)
+        .map(u64::from)
+        .unwrap_or(normalized.output_tokens);
+    normalized.raw = raw;
+    normalized
 }
 
 pub(super) fn estimate_missing_usage(
@@ -118,6 +139,7 @@ pub(super) fn estimate_missing_usage(
         total_tokens,
         input_tokens: estimate.prompt_tokens,
         output_tokens: completion_tokens,
+        usage_source: UsageSource::Estimated,
         raw,
         ..TokenUsage::default()
     }

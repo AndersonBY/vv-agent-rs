@@ -37,6 +37,8 @@ fn runtime_execution_context_stream_callback_uses_vv_llm_streaming() {
     assert_eq!(result.final_answer.as_deref(), Some("streamed answer"));
     assert_eq!(probe.completion_calls(), 0);
     assert_eq!(probe.stream_calls(), 1);
+    assert_eq!(result.token_usage.total_tokens, 8);
+    assert_eq!(result.token_usage.cache_usage.read_tokens, Some(2));
     let events = events.lock().expect("stream events lock");
     assert!(events.iter().any(|event| {
         event.get("event") == Some(&json!("assistant_delta"))

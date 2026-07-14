@@ -29,6 +29,14 @@ pub(super) fn token_usage_to_dict(usage: &TokenUsage) -> Value {
             "cache_creation_tokens".to_string(),
             Value::from(usage.cache_creation_tokens),
         ),
+        (
+            "usage_source".to_string(),
+            serde_json::to_value(usage.usage_source).expect("usage source is serializable"),
+        ),
+        (
+            "cache_usage".to_string(),
+            serde_json::to_value(&usage.cache_usage).expect("cache usage is serializable"),
+        ),
         ("raw".to_string(), usage.raw.clone()),
     ]))
 }
@@ -44,6 +52,8 @@ pub(super) fn token_usage_from_dict(value: &Value) -> Result<TokenUsage, String>
         input_tokens: read_u64(object, "input_tokens", 0),
         output_tokens: read_u64(object, "output_tokens", 0),
         cache_creation_tokens: read_u64(object, "cache_creation_tokens", 0),
+        usage_source: read_json_field(object, "usage_source")?,
+        cache_usage: read_json_field(object, "cache_usage")?,
         raw: object
             .get("raw")
             .cloned()
@@ -78,6 +88,10 @@ pub(super) fn task_token_usage_to_dict(usage: &TaskTokenUsage) -> Value {
         (
             "cache_creation_tokens".to_string(),
             Value::from(usage.cache_creation_tokens),
+        ),
+        (
+            "cache_usage".to_string(),
+            serde_json::to_value(&usage.cache_usage).expect("cache usage is serializable"),
         ),
         (
             "cycles".to_string(),
@@ -121,6 +135,19 @@ pub(super) fn task_token_usage_from_dict(value: &Value) -> Result<TaskTokenUsage
         input_tokens: read_u64(object, "input_tokens", 0),
         output_tokens: read_u64(object, "output_tokens", 0),
         cache_creation_tokens: read_u64(object, "cache_creation_tokens", 0),
+        cache_usage: read_json_field(object, "cache_usage")?,
         cycles,
     })
+}
+
+fn read_json_field<T>(object: &serde_json::Map<String, Value>, key: &str) -> Result<T, String>
+where
+    T: serde::de::DeserializeOwned + Default,
+{
+    object.get(key).map_or_else(
+        || Ok(T::default()),
+        |value| {
+            serde_json::from_value(value.clone()).map_err(|error| format!("invalid {key}: {error}"))
+        },
+    )
 }

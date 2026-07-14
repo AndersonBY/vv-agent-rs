@@ -405,7 +405,10 @@ fn build_vv_llm_settings_normalizes_provider_aliases_keys_and_endpoint_options()
     assert_eq!(vv_settings.version.as_deref(), Some("2"));
     assert!(vv_settings.backends.contains_key("deepseek"));
     let backend = vv_settings.backends.get("deepseek").expect("backend");
-    assert_eq!(backend.extra["default_endpoint"], "deepseek-default");
+    assert_eq!(
+        backend.default_endpoint.as_deref(),
+        Some("deepseek-default")
+    );
     let model = backend
         .models
         .get("deepseek-v4-pro")
