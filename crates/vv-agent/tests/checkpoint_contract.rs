@@ -14,7 +14,7 @@ use vv_agent::runtime::stores::sqlite::SqliteStateStore;
 use vv_agent::{AgentResult, AgentStatus, Message};
 
 const FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec_v1.json");
-const FIXTURE_SHA256: &str = "1a08f6a202ce8922e52c90d05dc718b90b05fdd65146f66becf360502d4aa8d0";
+const FIXTURE_SHA256: &str = "7a4b8ae2472eca3e643b37a6fa7f4f10202a31c53fe5e1aeeafe34d524b6069f";
 
 fn checkpoint(task_id: &str) -> Checkpoint {
     Checkpoint {
@@ -153,6 +153,9 @@ fn memory_and_sqlite_revision_leases_reject_stale_commits_and_persist_terminal()
             status: AgentStatus::MaxCycles,
             messages: committed.messages.clone(),
             cycles: committed.cycles.clone(),
+            completion_reason: Some(vv_agent::CompletionReason::MaxCycles),
+            completion_tool_name: None,
+            partial_output: None,
             final_answer: Some("done".to_string()),
             wait_reason: None,
             error: None,
@@ -302,6 +305,9 @@ fn claimed_terminal_result_commits_before_scheduler_acknowledgement() {
         status: AgentStatus::Completed,
         messages: claimed.messages.clone(),
         cycles: claimed.cycles.clone(),
+        completion_reason: Some(vv_agent::CompletionReason::ToolFinish),
+        completion_tool_name: Some("task_finish".to_string()),
+        partial_output: None,
         final_answer: Some("done".to_string()),
         wait_reason: None,
         error: None,
@@ -331,7 +337,25 @@ fn python_and_rust_fixture_copies_are_byte_identical_when_workspace_is_present()
         .join("tests/fixtures/parity/checkpoint_codec_v1.json");
     let python_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../vv-agent/tests/fixtures/parity/checkpoint_codec_v1.json");
-    if python_path.exists() {
+    let rust_lock = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../contract.lock.json");
+    let python_lock =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../vv-agent/contract.lock.json");
+    let locks_match = [rust_lock, python_lock]
+        .map(fs::read_to_string)
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .ok()
+        .and_then(|locks| {
+            locks
+                .into_iter()
+                .map(|lock| serde_json::from_str::<Value>(&lock).ok())
+                .collect::<Option<Vec<_>>>()
+        })
+        .is_some_and(|locks| {
+            locks[0]["contract_version"] == locks[1]["contract_version"]
+                && locks[0]["contract_revision"] == locks[1]["contract_revision"]
+        });
+    if python_path.exists() && locks_match {
         assert_eq!(fs::read(rust_path).unwrap(), fs::read(python_path).unwrap());
     }
 }

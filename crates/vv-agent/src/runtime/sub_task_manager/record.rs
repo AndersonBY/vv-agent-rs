@@ -82,6 +82,16 @@ impl ManagedSubTask {
                 if let Some(error_code) = &outcome.error_code {
                     entry["error_code"] = Value::String(error_code.clone());
                 }
+                if let Some(completion_reason) = outcome.completion_reason {
+                    entry["completion_reason"] =
+                        Value::String(completion_reason.as_str().to_string());
+                }
+                if let Some(completion_tool_name) = &outcome.completion_tool_name {
+                    entry["completion_tool_name"] = Value::String(completion_tool_name.clone());
+                }
+                if let Some(partial_output) = &outcome.partial_output {
+                    entry["partial_output"] = Value::String(partial_output.clone());
+                }
                 if outcome.cycles > 0 {
                     entry["cycles"] = Value::Number(outcome.cycles.into());
                 }

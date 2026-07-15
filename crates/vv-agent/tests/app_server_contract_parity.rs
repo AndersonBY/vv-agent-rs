@@ -183,6 +183,9 @@ fn shared_fixture_nullability_and_restart_recovery_match() {
         run_id: None,
         status: TurnStatus::Failed,
         final_output: None,
+        completion_reason: None,
+        completion_tool_name: None,
+        partial_output: None,
         error: None,
         token_usage: None,
     })
@@ -412,6 +415,23 @@ async fn shared_fixture_allows_connection_reinitialize_and_exports_exact_schema_
         assert_eq!(source, first_typescript);
         assert!(!source.contains("import "));
         assert!(!source.contains("bigint"));
+    }
+    let notification_schema: Value = serde_json::from_str(
+        json_schema
+            .get("ServerNotification")
+            .expect("ServerNotification schema"),
+    )
+    .expect("ServerNotification JSON schema");
+    let completion_properties = &notification_schema["$defs"]["TurnCompletedParams"]["properties"];
+    for field in ["completionReason", "completionToolName", "partialOutput"] {
+        assert!(
+            completion_properties.get(field).is_some(),
+            "missing TurnCompletedParams field: {field}"
+        );
+        assert!(
+            first_typescript.contains(&format!("{field}?: string")),
+            "missing TypeScript completion field: {field}"
+        );
     }
 
     processor

@@ -1,4 +1,6 @@
-use crate::types::{AgentStatus, MessageRole, NoToolPolicy, ToolDirective, ToolResultStatus};
+use crate::types::{
+    AgentStatus, CompletionReason, MessageRole, NoToolPolicy, ToolDirective, ToolResultStatus,
+};
 
 pub(in crate::types::dict) fn message_role_value(role: MessageRole) -> &'static str {
     match role {
@@ -107,5 +109,36 @@ pub(in crate::types::dict) fn parse_agent_status(value: &str) -> Result<AgentSta
         "failed" => Ok(AgentStatus::Failed),
         "max_cycles" => Ok(AgentStatus::MaxCycles),
         other => Err(format!("unknown agent status: {other}")),
+    }
+}
+
+pub(in crate::types::dict) fn completion_reason_value(reason: CompletionReason) -> &'static str {
+    match reason {
+        CompletionReason::ToolFinish => "tool_finish",
+        CompletionReason::NoToolFinish => "no_tool_finish",
+        CompletionReason::StopOnFirstTool => "stop_on_first_tool",
+        CompletionReason::StopAtToolName => "stop_at_tool_name",
+        CompletionReason::WaitUser => "wait_user",
+        CompletionReason::MaxCycles => "max_cycles",
+        CompletionReason::Cancelled => "cancelled",
+        CompletionReason::Failed => "failed",
+        CompletionReason::BudgetExhausted => "budget_exhausted",
+    }
+}
+
+pub(in crate::types::dict) fn parse_completion_reason(
+    value: &str,
+) -> Result<CompletionReason, String> {
+    match value {
+        "tool_finish" => Ok(CompletionReason::ToolFinish),
+        "no_tool_finish" => Ok(CompletionReason::NoToolFinish),
+        "stop_on_first_tool" => Ok(CompletionReason::StopOnFirstTool),
+        "stop_at_tool_name" => Ok(CompletionReason::StopAtToolName),
+        "wait_user" => Ok(CompletionReason::WaitUser),
+        "max_cycles" => Ok(CompletionReason::MaxCycles),
+        "cancelled" => Ok(CompletionReason::Cancelled),
+        "failed" => Ok(CompletionReason::Failed),
+        "budget_exhausted" => Ok(CompletionReason::BudgetExhausted),
+        other => Err(format!("unknown completion reason: {other}")),
     }
 }

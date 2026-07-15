@@ -137,6 +137,16 @@ impl<C: LlmClient> AgentRuntime<C> {
                     "error".to_string(),
                     Value::String(self.preview_text(&result.error.clone().unwrap_or_default())),
                 ),
+                (
+                    "completion_reason".to_string(),
+                    serde_json::to_value(result.completion_reason).unwrap_or(Value::Null),
+                ),
+                (
+                    "partial_output".to_string(),
+                    Value::String(
+                        self.preview_text(&result.partial_output.clone().unwrap_or_default()),
+                    ),
+                ),
             ]),
         );
     }

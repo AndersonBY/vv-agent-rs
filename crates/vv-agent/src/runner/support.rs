@@ -54,15 +54,35 @@ pub(super) fn apply_input_guardrails(
 pub(super) fn apply_output_guardrails(
     agent: &Agent,
     context: &RunContext,
-    result: AgentResult,
+    mut result: AgentResult,
 ) -> AgentResult {
+    normalize_completion_observation(&mut result);
     let mut current = result;
+    if current.completion_reason == Some(crate::types::CompletionReason::Cancelled) {
+        return current;
+    }
     for guardrail in agent.output_guardrails() {
+        let status = current.status;
+        let completion_reason = current.completion_reason;
+        let completion_tool_name = current.completion_tool_name.clone();
+        let partial_output = current.partial_output.clone();
         current = match guardrail.check(context, &current) {
-            GuardrailOutcome::Allow(output) => output,
+            GuardrailOutcome::Allow(mut output) => {
+                output.status = status;
+                output.completion_reason = completion_reason;
+                output.completion_tool_name = completion_tool_name;
+                output.partial_output = partial_output;
+                normalize_completion_observation(&mut output);
+                output
+            }
             GuardrailOutcome::Block { message } | GuardrailOutcome::RequireApproval { message } => {
                 let mut failed = current.clone();
+                let candidate_output = crate::types::last_assistant_output(&failed.cycles)
+                    .or_else(|| failed.partial_output.clone());
                 failed.status = crate::types::AgentStatus::Failed;
+                failed.completion_reason = Some(crate::types::CompletionReason::Failed);
+                failed.completion_tool_name = None;
+                failed.partial_output = candidate_output;
                 failed.error = Some(message);
                 failed.final_answer = None;
                 failed.wait_reason = None;
@@ -71,6 +91,70 @@ pub(super) fn apply_output_guardrails(
         };
     }
     current
+}
+
+fn normalize_completion_observation(result: &mut AgentResult) {
+    match result.status {
+        crate::types::AgentStatus::Completed => {
+            result.partial_output = None;
+            result.error = None;
+            result.wait_reason = None;
+        }
+        crate::types::AgentStatus::WaitUser => {
+            result.completion_reason = Some(crate::types::CompletionReason::WaitUser);
+            result.partial_output = result
+                .partial_output
+                .clone()
+                .or_else(|| crate::types::last_assistant_output(&result.cycles));
+            result.final_answer = None;
+            result.error = None;
+        }
+        crate::types::AgentStatus::MaxCycles => {
+            result.completion_reason = Some(crate::types::CompletionReason::MaxCycles);
+            result.completion_tool_name = None;
+            result.partial_output = result
+                .partial_output
+                .clone()
+                .or_else(|| crate::types::last_assistant_output(&result.cycles));
+            result.wait_reason = None;
+        }
+        crate::types::AgentStatus::Failed => {
+            if result.completion_reason != Some(crate::types::CompletionReason::Cancelled) {
+                result.completion_reason = Some(crate::types::CompletionReason::Failed);
+            }
+            result.completion_tool_name = None;
+            result.partial_output = result
+                .partial_output
+                .clone()
+                .or_else(|| crate::types::last_assistant_output(&result.cycles));
+            result.final_answer = None;
+            result.wait_reason = None;
+        }
+        crate::types::AgentStatus::Pending | crate::types::AgentStatus::Running => {
+            result.completion_reason = None;
+            result.completion_tool_name = None;
+            result.partial_output = None;
+        }
+    }
+}
+
+pub(super) fn apply_cancellation_precedence(
+    mut result: AgentResult,
+    cancellation_token: Option<&crate::runtime::CancellationToken>,
+) -> AgentResult {
+    if result.status == crate::types::AgentStatus::Failed
+        && cancellation_token.is_some_and(crate::runtime::CancellationToken::is_cancelled)
+    {
+        result.completion_reason = Some(crate::types::CompletionReason::Cancelled);
+        result.completion_tool_name = None;
+        result.partial_output = result
+            .partial_output
+            .or_else(|| crate::types::last_assistant_output(&result.cycles));
+        result.error = cancellation_token.and_then(crate::runtime::CancellationToken::reason);
+        result.final_answer = None;
+        result.wait_reason = None;
+    }
+    result
 }
 
 pub(super) fn max_handoff_depth(default_config: &RunConfig, config: &RunConfig) -> u32 {

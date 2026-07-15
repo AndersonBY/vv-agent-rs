@@ -6,6 +6,9 @@ fn public_export_path(id: &str) -> &'static str {
             vv_agent::agent::ToolUseBehavior,
             "vv_agent::agent::ToolUseBehavior"
         ),
+        "agent.no_tool_policy" | "run_config.no_tool_policy" => {
+            export_type!(vv_agent::NoToolPolicy, "vv_agent::NoToolPolicy")
+        }
         "agent.handoff" => export_type!(vv_agent::Handoff, "vv_agent::Handoff"),
         "agent.background_task" => export_type!(
             vv_agent::BackgroundAgentTask,
@@ -43,6 +46,9 @@ fn public_export_path(id: &str) -> &'static str {
         }
         "result.runtime_result" => export_type!(vv_agent::AgentResult, "vv_agent::AgentResult"),
         "result.status" => export_type!(vv_agent::AgentStatus, "vv_agent::AgentStatus"),
+        "result.completion_reason" => {
+            export_type!(vv_agent::CompletionReason, "vv_agent::CompletionReason")
+        }
         "result.usage_source" => export_type!(vv_agent::UsageSource, "vv_agent::UsageSource"),
         "result.cache_usage_status" => export_type!(
             vv_agent::CacheUsageStatus,
@@ -366,6 +372,7 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 output_type_name,
                 hooks,
                 max_cycles,
+                no_tool_policy,
                 tool_policy,
                 tool_use_behavior,
                 metadata,
@@ -420,6 +427,7 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 session,
                 initial_messages,
                 max_cycles,
+                no_tool_policy,
                 max_handoffs,
                 tool_policy,
                 execution_backend,
@@ -460,6 +468,9 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 new_items,
                 final_output,
                 status,
+                completion_reason,
+                completion_tool_name,
+                partial_output,
                 result,
                 events,
                 token_usage,
@@ -808,7 +819,7 @@ fn public_api_manifest_compiles_real_rust_exports() {
             );
         }
     }
-    assert_eq!(capability_ids.len(), 114);
+    assert_eq!(capability_ids.len(), 117);
 
     let surfaces = fixture["surfaces"].as_array().expect("public API surfaces");
     let surface_map = surfaces

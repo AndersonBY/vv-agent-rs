@@ -3,7 +3,9 @@ use std::sync::Arc;
 use crate::runtime::state::{Checkpoint, StateStore};
 use crate::runtime::token_usage::summarize_task_token_usage;
 use crate::runtime::CancellationToken;
-use crate::types::{AgentResult, AgentStatus, AgentTask, Message, Metadata};
+use crate::types::{
+    last_assistant_output, AgentResult, AgentStatus, AgentTask, CompletionReason, Message, Metadata,
+};
 
 use super::super::{failed_backend_result, RuntimeRecipe};
 use super::backend::DistributedBackend;
@@ -379,12 +381,9 @@ impl DistributedBackend {
             "distributed cancellation",
             move |checkpoint| {
                 let (messages, cycles, shared_state) = checkpoint_snapshot(checkpoint);
-                Ok(failed_backend_result(
-                    messages,
-                    cycles,
-                    shared_state,
-                    reason,
-                ))
+                let mut result = failed_backend_result(messages, cycles, shared_state, reason);
+                result.completion_reason = Some(CompletionReason::Cancelled);
+                Ok(result)
             },
         )
     }
@@ -407,10 +406,14 @@ impl DistributedBackend {
                 }
                 let (messages, cycles, shared_state) = checkpoint_snapshot(checkpoint);
                 let token_usage = summarize_task_token_usage(&cycles);
+                let partial_output = last_assistant_output(&cycles);
                 Ok(AgentResult {
                     status: AgentStatus::MaxCycles,
                     messages,
                     cycles,
+                    completion_reason: Some(CompletionReason::MaxCycles),
+                    completion_tool_name: None,
+                    partial_output,
                     final_answer: Some(
                         "Reached max cycles without finish signal.".to_string(),
                     ),

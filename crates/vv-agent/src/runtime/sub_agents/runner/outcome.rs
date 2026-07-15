@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::types::{AgentStatus, SubTaskOutcome};
+use crate::types::{AgentStatus, CompletionReason, SubTaskOutcome};
 use crate::workspace::WorkspaceBackend;
 use std::sync::Arc;
 
@@ -32,6 +32,9 @@ pub(super) fn failed_sub_task_outcome_with_code(
         wait_reason: None,
         error: Some(error.into()),
         error_code: Some(error_code.unwrap_or("sub_task_failed").to_string()),
+        completion_reason: Some(CompletionReason::Failed),
+        completion_tool_name: None,
+        partial_output: None,
         cycles: 0,
         todo_list: Vec::new(),
         resolved: BTreeMap::new(),

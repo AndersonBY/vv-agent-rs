@@ -382,14 +382,17 @@ async fn approval_resume_preserves_runner_default_metadata() {
     let provider = ScriptedModelProvider::new(
         "scripted",
         "approval-model",
-        vec![LLMResponse::with_tool_calls(
-            "write",
-            vec![ToolCall::from_raw_arguments(
+        vec![
+            LLMResponse::with_tool_calls(
                 "write",
-                "guarded_write",
-                json!({"value": "approved"}),
-            )],
-        )],
+                vec![ToolCall::from_raw_arguments(
+                    "write",
+                    "guarded_write",
+                    json!({"value": "approved"}),
+                )],
+            ),
+            finish_response("approved"),
+        ],
     );
     let runner = Runner::builder()
         .model_provider(provider)

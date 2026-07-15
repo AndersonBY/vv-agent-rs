@@ -5,9 +5,9 @@ use serde::Deserialize;
 use serde_json::json;
 use vv_agent::{
     handoff, Agent, AgentStatus, ApprovalPolicy, ExecutionMode, FunctionTool, LLMResponse,
-    MemorySession, Message, MessageRole, ModelRef, ModelSettings, NormalizedInput, RunConfig,
-    RunContext, RunEvent, RunEventPayload, Runner, ScriptStep, ScriptedModelProvider, Session,
-    SessionItem, SubTaskRequest, Tool, ToolCall, ToolContext, ToolOutput, ToolPolicy,
+    MemorySession, Message, MessageRole, ModelRef, ModelSettings, NoToolPolicy, NormalizedInput,
+    RunConfig, RunContext, RunEvent, RunEventPayload, Runner, ScriptStep, ScriptedModelProvider,
+    Session, SessionItem, SubTaskRequest, Tool, ToolCall, ToolContext, ToolOutput, ToolPolicy,
 };
 
 #[tokio::test]
@@ -724,16 +724,30 @@ async fn tool_approval_interrupts_run_and_resume_executes_approved_call() {
         })
         .build()
         .expect("tool");
-    let provider = ScriptedModelProvider::from_callback("scripted", "approval-model", |_request| {
-        Ok(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "call_delete",
-                "delete_file",
-                json!({"path": "danger.txt"}),
-            )],
-        ))
-    });
+    let provider = ScriptedModelProvider::from_steps(
+        "scripted",
+        "approval-model",
+        vec![
+            ScriptStep::callback(|_request| {
+                Ok(LLMResponse::with_tool_calls(
+                    "",
+                    vec![ToolCall::from_raw_arguments(
+                        "call_delete",
+                        "delete_file",
+                        json!({"path": "danger.txt"}),
+                    )],
+                ))
+            }),
+            ScriptStep::callback(|request| {
+                assert!(request.messages.iter().any(|message| {
+                    message.role == MessageRole::Tool
+                        && message.content == "deleted danger.txt"
+                        && message.tool_call_id.as_deref() == Some("call_delete")
+                }));
+                Ok(LLMResponse::new("deleted danger.txt"))
+            }),
+        ],
+    );
     let runner = Runner::builder()
         .model_provider(provider)
         .workspace("./workspace")
@@ -743,6 +757,7 @@ async fn tool_approval_interrupts_run_and_resume_executes_approved_call() {
         .instructions("Delete only after approval.")
         .model(ModelRef::backend("scripted", "approval-model"))
         .tool(delete_file)
+        .no_tool_policy(NoToolPolicy::Finish)
         .tool_policy(ToolPolicy {
             approval: ApprovalPolicy::Always,
             ..ToolPolicy::default()

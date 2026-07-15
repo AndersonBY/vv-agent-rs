@@ -56,11 +56,11 @@ const CONFIGURED_SUB_AGENT_FIXTURE_SHA256: &str =
 const CONFIGURED_SUB_AGENT_EVENTS_FIXTURE: &str =
     include_str!("fixtures/parity/configured_sub_agent_events_v1.jsonl");
 const CONFIGURED_SUB_AGENT_EVENTS_FIXTURE_SHA256: &str =
-    "0fc2e5b09bf7cc9b8e06743d02c0a7bd11e54ca83814f9ab73aec256b3c80618";
+    "c2816a3962a44a3c0f5172edbffe4c88352142fee13f457da9a0667ceef996b0";
 const MANAGER_TOOL_ENVELOPE_FIXTURE: &str =
     include_str!("fixtures/parity/manager_tool_envelope_v1.json");
 const MANAGER_TOOL_ENVELOPE_FIXTURE_SHA256: &str =
-    "c43d111cc29e009c5c071467a33c4a5a5e1e6c7435ffe3a6bf353123c0fa9bda";
+    "2f1dfc343b9c1800b95de8b21e3afa9cdfab7514071c221b6465188441221f02";
 
 type CapturedRuntimeEvents = Vec<(String, BTreeMap<String, Value>)>;
 type SharedRuntimeEvents = Arc<Mutex<CapturedRuntimeEvents>>;
@@ -98,6 +98,9 @@ fn completed_outcome(request: vv_agent::SubTaskRequest) -> SubTaskOutcome {
         wait_reason: None,
         error: None,
         error_code: None,
+        completion_reason: None,
+        completion_tool_name: None,
+        partial_output: None,
         cycles: 1,
         todo_list: Vec::new(),
         resolved: BTreeMap::new(),

@@ -5,8 +5,8 @@ use serde_json::Value;
 use crate::runtime::cancellation::CancellationToken;
 use crate::runtime::token_usage::summarize_task_token_usage;
 use crate::types::{
-    AgentResult, AgentStatus, AgentTask, CycleRecord, Message, MessageRole, TaskTokenUsage,
-    ToolExecutionResult,
+    last_assistant_output, AgentResult, AgentStatus, AgentTask, CompletionReason, CycleRecord,
+    Message, MessageRole, ToolExecutionResult,
 };
 
 use super::RuntimeRunControls;
@@ -91,15 +91,20 @@ pub(super) fn cancelled_agent_result(
     cycles: Vec<CycleRecord>,
     shared_state: BTreeMap<String, Value>,
 ) -> AgentResult {
+    let token_usage = summarize_task_token_usage(&cycles);
+    let partial_output = last_assistant_output(&cycles);
     AgentResult {
         status: AgentStatus::Failed,
         messages,
         cycles,
+        completion_reason: Some(CompletionReason::Cancelled),
+        completion_tool_name: None,
+        partial_output,
         final_answer: None,
         wait_reason: None,
         error: Some("Operation was cancelled".to_string()),
         shared_state,
-        token_usage: TaskTokenUsage::default(),
+        token_usage,
     }
 }
 
@@ -110,10 +115,14 @@ pub(super) fn failed_agent_result(
     error: String,
 ) -> AgentResult {
     let token_usage = summarize_task_token_usage(&cycles);
+    let partial_output = last_assistant_output(&cycles);
     AgentResult {
         status: AgentStatus::Failed,
         messages,
         cycles,
+        completion_reason: Some(CompletionReason::Failed),
+        completion_tool_name: None,
+        partial_output,
         final_answer: None,
         wait_reason: None,
         error: Some(error),

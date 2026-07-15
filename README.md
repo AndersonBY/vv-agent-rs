@@ -6,11 +6,11 @@
 agent runtime, SDK, CLI, tool system, memory layer, and workspace abstraction
 for model-driven automation.
 
-It is designed around explicit agent control flow. A task is not considered
-done because the model wrote a final-looking sentence; the model must call
-`task_finish` to complete or `ask_user` to pause for user input. This keeps
-CLI runs, SDK sessions, background runs, and distributed execution on the same
-result contract.
+It is designed around explicit agent control flow. The backward-compatible
+default uses `task_finish` to complete and `ask_user` to pause. Hosts can
+instead opt into `NoToolPolicy::Finish` or `NoToolPolicy::WaitUser` when a
+normal assistant response should be terminal. The runtime applies the declared
+policy without classifying whether the text looks like a final answer.
 
 ## Architecture
 
@@ -135,6 +135,27 @@ target Agent resolves its own model and model settings, while the active
 session, cancellation token, and mutated shared state continue across the
 transition. `max_handoffs` defaults to `10` and limits control transfers
 independently from `max_cycles`. Approval resume preserves the same behavior.
+
+No-tool completion is an explicit host control. Configure it on an Agent or
+override it for one run; per-run configuration wins over a configured Runner
+default, which wins over the Agent value. Omitting every layer keeps
+`NoToolPolicy::Continue`.
+
+```rust
+use vv_agent::{Agent, NoToolPolicy, RunConfig};
+
+let natural_answer_agent = Agent::builder("assistant")
+    .instructions("Answer from the available context.")
+    .no_tool_policy(NoToolPolicy::Finish)
+    .build()?;
+let force_tool_driven_run = RunConfig::builder()
+    .no_tool_policy(NoToolPolicy::Continue)
+    .build();
+```
+
+Inspect `RunResult::completion_reason()`, `completion_tool_name()`, and
+`partial_output()` to distinguish natural completion, tool-driven completion,
+waits, cancellation, failure, and max-cycle exhaustion.
 
 Reusable run defaults belong in
 `Runner::builder().default_run_config(...)`. Provider resolution is per-run

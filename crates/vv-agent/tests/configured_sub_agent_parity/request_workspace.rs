@@ -185,6 +185,9 @@ fn synchronous_failed_outcome_normalizes_blank_error_code() {
         wait_reason: None,
         error: Some("child failed".to_string()),
         error_code: Some(input_error_code.clone()),
+        completion_reason: Some(vv_agent::CompletionReason::Failed),
+        completion_tool_name: None,
+        partial_output: Some("last child draft".to_string()),
         cycles: 0,
         todo_list: Vec::new(),
         resolved: BTreeMap::new(),
@@ -213,6 +216,56 @@ fn synchronous_failed_outcome_normalizes_blank_error_code() {
     assert_error_metadata_matches_content(&result);
 }
 
+#[test]
+fn synchronous_wait_outcome_preserves_completion_observation() {
+    let fixture = manager_tool_contract();
+    let contract = &fixture["sync_wait_outcome"];
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(".");
+    let outcome = SubTaskOutcome {
+        task_id: "wait-child".to_string(),
+        agent_name: "researcher".to_string(),
+        status: AgentStatus::WaitUser,
+        session_id: Some("wait-session".to_string()),
+        final_answer: None,
+        wait_reason: Some("Approve dangerous.".to_string()),
+        error: None,
+        error_code: None,
+        completion_reason: Some(vv_agent::CompletionReason::WaitUser),
+        completion_tool_name: Some("dangerous".to_string()),
+        partial_output: Some("proposed change".to_string()),
+        cycles: 1,
+        todo_list: Vec::new(),
+        resolved: BTreeMap::new(),
+    };
+    assert_eq!(outcome.error_code, None);
+    assert_eq!(contract["internal_error_code"], Value::Null);
+    let outcome_for_runner = outcome.clone();
+    context.sub_task_runner = Some(Arc::new(move |_request| outcome_for_runner.clone()));
+
+    let result = registry
+        .execute(
+            &ToolCall::new(
+                "sync-wait",
+                "create_sub_task",
+                BTreeMap::from([
+                    ("agent_id".to_string(), json!("researcher")),
+                    ("task_description".to_string(), json!("wait")),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("sync wait result");
+
+    let payload: Value = serde_json::from_str(&result.content).expect("sync wait payload");
+    assert_eq!(payload, contract["expected"]);
+    assert_eq!(
+        result.error_code.as_deref(),
+        contract["sync_single_tool_envelope_error_code"].as_str()
+    );
+    assert_error_metadata_matches_content(&result);
+}
+
 struct PendingContinuationSession;
 
 impl SubAgentSession for PendingContinuationSession {
@@ -230,6 +283,9 @@ impl SubAgentSession for PendingContinuationSession {
             wait_reason: None,
             error: None,
             error_code: None,
+            completion_reason: None,
+            completion_tool_name: None,
+            partial_output: None,
             cycles: 0,
             todo_list: Vec::new(),
             resolved: BTreeMap::new(),

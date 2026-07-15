@@ -281,6 +281,7 @@ async fn run_handle_resume_uses_the_interrupted_runs_origin_context() {
     let dangerous = FunctionTool::builder("dangerous")
         .description("Require manual approval.")
         .json_schema(json!({"type":"object","properties":{},"required":[]}))
+        .needs_approval(true)
         .handler(move |_ctx, _args: serde_json::Value| {
             executions_for_tool.fetch_add(1, Ordering::SeqCst);
             async { Ok(ToolOutput::text("ran from origin")) }
@@ -291,14 +292,24 @@ async fn run_handle_resume_uses_the_interrupted_runs_origin_context() {
         .model_provider(ScriptedModelProvider::new(
             "scripted",
             "demo-model",
-            vec![LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "call_1",
-                    "dangerous",
-                    json!({}),
-                )],
-            )],
+            vec![
+                LLMResponse::with_tool_calls(
+                    "",
+                    vec![ToolCall::from_raw_arguments(
+                        "call_1",
+                        "dangerous",
+                        json!({}),
+                    )],
+                ),
+                LLMResponse::with_tool_calls(
+                    "finish",
+                    vec![ToolCall::from_raw_arguments(
+                        "finish_approved",
+                        "task_finish",
+                        json!({"message": "ran from origin"}),
+                    )],
+                ),
+            ],
         ))
         .workspace("./workspace")
         .build()
@@ -308,7 +319,7 @@ async fn run_handle_resume_uses_the_interrupted_runs_origin_context() {
         .model(ModelRef::named("demo-model"))
         .tool(dangerous)
         .tool_policy(ToolPolicy {
-            approval: ApprovalPolicy::Always,
+            approval: ApprovalPolicy::OnRequest,
             ..ToolPolicy::default()
         })
         .build()

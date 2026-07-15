@@ -111,6 +111,9 @@ async fn run_config_wires_per_run_registry_debug_and_runtime_controls() {
             wait_reason: None,
             error: None,
             error_code: None,
+            completion_reason: None,
+            completion_tool_name: None,
+            partial_output: None,
             cycles: 1,
             todo_list: Vec::new(),
             resolved: BTreeMap::new(),
@@ -278,7 +281,7 @@ fn run_config_control_manifest_has_no_open_capability_gaps() {
     let controls = contract["per_run_controls"]
         .as_array()
         .expect("per-run controls");
-    assert_eq!(controls.len(), 20);
+    assert_eq!(controls.len(), 21);
     assert!(controls.iter().all(|entry| entry["status"] == "equivalent"));
     let capabilities = controls
         .iter()
@@ -288,4 +291,5 @@ fn run_config_control_manifest_has_no_open_capability_gaps() {
     assert!(capabilities.contains("cycle_injection"));
     assert!(capabilities.contains("raw_runtime_observers"));
     assert!(capabilities.contains("diagnostics"));
+    assert!(capabilities.contains("no_tool_policy"));
 }

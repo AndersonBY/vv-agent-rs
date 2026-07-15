@@ -6,7 +6,9 @@ use serde_json::Value;
 use crate::model_settings::ModelSettings;
 use crate::tools::common::trim_portable_whitespace;
 
-use super::{json_value_from_serializable, AgentStatus, Message, Metadata, NoToolPolicy};
+use super::{
+    json_value_from_serializable, AgentStatus, CompletionReason, Message, Metadata, NoToolPolicy,
+};
 
 pub const INVALID_SUB_AGENT_MODEL_CODE: &str = "invalid_sub_agent_model";
 pub const INVALID_SUB_AGENT_MODEL_MESSAGE: &str = "sub-agent model cannot be empty";
@@ -402,9 +404,36 @@ pub struct SubTaskOutcome {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_reason: Option<CompletionReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial_output: Option<String>,
     pub cycles: u32,
     pub todo_list: Vec<Value>,
     pub resolved: BTreeMap<String, String>,
+}
+
+impl Default for SubTaskOutcome {
+    fn default() -> Self {
+        Self {
+            task_id: String::new(),
+            agent_name: String::new(),
+            status: AgentStatus::Pending,
+            session_id: None,
+            final_answer: None,
+            wait_reason: None,
+            error: None,
+            error_code: None,
+            completion_reason: None,
+            completion_tool_name: None,
+            partial_output: None,
+            cycles: 0,
+            todo_list: Vec::new(),
+            resolved: BTreeMap::new(),
+        }
+    }
 }
 
 impl SubTaskOutcome {

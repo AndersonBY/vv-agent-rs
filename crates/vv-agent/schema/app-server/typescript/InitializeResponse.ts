@@ -70,6 +70,7 @@ export interface ThreadClosedParams { threadId: string; }
 export interface TurnStartedParams { threadId: string; turnId: string; }
 export interface TurnCompletedParams {
   threadId: string; turnId: string; runId?: string; status: TurnStatus; finalOutput?: JsonValue;
+  completionReason?: string; completionToolName?: string; partialOutput?: string;
   tokenUsage?: JsonObject; error?: string;
 }
 export type ApprovalResolveResponse = Record<string, never>;

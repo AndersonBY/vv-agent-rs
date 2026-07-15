@@ -1,5 +1,73 @@
 use super::*;
 
+#[test]
+fn manager_outcome_identity_blank_code_and_unicode_preview_match_contract() {
+    let fixture = manager_tool_contract();
+    let contract = &fixture["manager_outcome"];
+    let lookup_task_id = contract["lookup_task_id"].as_str().expect("lookup task id");
+    let manager = SubTaskManager::default();
+    manager.record_outcome(
+        lookup_task_id,
+        SubTaskOutcome {
+            task_id: contract["outcome_task_id"]
+                .as_str()
+                .expect("outcome task id")
+                .to_string(),
+            agent_name: "researcher".to_string(),
+            status: AgentStatus::Failed,
+            session_id: Some("wire-session".to_string()),
+            final_answer: None,
+            wait_reason: None,
+            error: Some("child failed".to_string()),
+            error_code: Some(" ".to_string()),
+            completion_reason: None,
+            completion_tool_name: None,
+            partial_output: None,
+            cycles: 0,
+            todo_list: Vec::new(),
+            resolved: BTreeMap::new(),
+        },
+    );
+
+    let snapshot = manager.get(lookup_task_id).expect("lookup snapshot");
+    assert_eq!(snapshot.task_id, lookup_task_id);
+    let status = manager.status_entries(&[lookup_task_id.to_string()], "basic", 20);
+    assert_eq!(status[0], contract["status_entry"]);
+
+    let preview_contract = &contract["unicode_preview"];
+    let text = preview_contract["text"]
+        .as_str()
+        .expect("preview text")
+        .repeat(preview_contract["repeat"].as_u64().expect("preview repeat") as usize);
+    manager.record_outcome(
+        "unicode-preview",
+        SubTaskOutcome {
+            task_id: "unicode-preview-wire".to_string(),
+            agent_name: "researcher".to_string(),
+            status: AgentStatus::Completed,
+            session_id: Some("unicode-preview-session".to_string()),
+            final_answer: Some(text.clone()),
+            wait_reason: None,
+            error: None,
+            error_code: None,
+            completion_reason: None,
+            completion_tool_name: None,
+            partial_output: None,
+            cycles: 0,
+            todo_list: Vec::new(),
+            resolved: BTreeMap::new(),
+        },
+    );
+    assert_eq!(
+        manager
+            .get("unicode-preview")
+            .expect("unicode preview snapshot")
+            .recent_activity
+            .as_deref(),
+        Some(text.as_str())
+    );
+}
+
 struct PromptCaptureSession {
     prompts: Arc<Mutex<Vec<String>>>,
     task_id: String,
@@ -34,6 +102,9 @@ fn generation_outcome(task_id: &str, session_id: &str, answer: &str) -> SubTaskO
         wait_reason: None,
         error: None,
         error_code: None,
+        completion_reason: None,
+        completion_tool_name: None,
+        partial_output: None,
         cycles: 1,
         todo_list: Vec::new(),
         resolved: BTreeMap::new(),

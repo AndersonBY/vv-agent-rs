@@ -84,6 +84,12 @@ pub struct TurnCompletedParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_output: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial_output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_usage: Option<AppTokenUsage>,

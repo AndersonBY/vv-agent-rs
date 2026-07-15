@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use vv_agent::app_server::protocol::{
     map_run_event_to_notifications, AppItemKind, AppItemStatus, JsonRpcMessage,
@@ -12,9 +12,22 @@ use vv_agent::app_server::{outgoing::OutgoingEnvelope, processor::MessageProcess
 use vv_agent::app_server::{thread_store::SqliteThreadStore, transport::ConnectionId};
 use vv_agent::events::ApprovalAction;
 use vv_agent::{
-    Agent, AgentStatus, LLMResponse, ModelRef, RunEvent, RunEventPayload, Runner,
-    ScriptedModelProvider, ToolCall, ToolStatus,
+    Agent, AgentStatus, CompletionReason, FunctionTool, LLMResponse, ModelRef, NoToolPolicy,
+    RunEvent, RunEventPayload, Runner, ScriptedModelProvider, ToolCall, ToolOutput, ToolStatus,
 };
+
+const APP_SERVER_CONTRACT: &str = include_str!("fixtures/parity/app_server_observable_v1.json");
+
+fn status_projection(name: &str) -> Value {
+    let contract: Value = serde_json::from_str(APP_SERVER_CONTRACT).expect("App Server contract");
+    contract["terminal"]["agentStatusProjection"]
+        .as_array()
+        .expect("agent status projections")
+        .iter()
+        .find(|case| case["name"] == name)
+        .unwrap_or_else(|| panic!("missing App Server projection {name}"))
+        .clone()
+}
 
 #[test]
 fn item_mapping_assistant_delta_becomes_agent_message_delta() {
@@ -266,6 +279,12 @@ async fn json_rpc_thread_turn_streams_notifications_and_replays_items() {
     assert_eq!(completed.turn_id, turn_id);
     assert_eq!(completed.status, TurnStatus::Completed);
     assert_eq!(completed.final_output.as_deref(), Some("hello world"));
+    assert_eq!(completed.completion_reason.as_deref(), Some("tool_finish"));
+    assert_eq!(
+        completed.completion_tool_name.as_deref(),
+        Some("task_finish")
+    );
+    assert_eq!(completed.partial_output, None);
 
     processor
         .process_message(
@@ -283,6 +302,272 @@ async fn json_rpc_thread_turn_streams_notifications_and_replays_items() {
         .items
         .iter()
         .any(|item| item.kind == AppItemKind::ToolCall));
+    let persisted = read
+        .turns
+        .iter()
+        .find(|turn| turn.turn_id == turn_id)
+        .expect("persisted completed turn");
+    assert_eq!(persisted.result["completionReason"], "tool_finish");
+    assert_eq!(persisted.result["completionToolName"], "task_finish");
+    assert!(!persisted.result.contains_key("partialOutput"));
+}
+
+#[tokio::test]
+async fn wait_user_turn_is_interrupted_in_notification_and_persisted_snapshot() {
+    let expected = status_projection("wait_user_is_interrupted_without_error");
+    let runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "demo-model",
+            vec![LLMResponse::new("need more details")],
+        ))
+        .workspace(".")
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("assistant")
+        .instructions("Wait for clarification.")
+        .model(ModelRef::named("demo-model"))
+        .no_tool_policy(NoToolPolicy::WaitUser)
+        .build()
+        .expect("agent");
+    let store = SqliteThreadStore::in_memory().expect("store");
+    let (mut processor, mut outgoing) =
+        MessageProcessor::new_for_tests_with_runtime(32, runner, agent, store);
+    let connection_id = ConnectionId::new(2);
+
+    processor
+        .process_message(connection_id, initialize_request(1))
+        .await;
+    let _ = expect_response(&mut outgoing).await;
+    processor
+        .process_message(connection_id, initialized_notification())
+        .await;
+    processor
+        .process_message(
+            connection_id,
+            request(2, "thread/start", json!({"agentKey": "default"})),
+        )
+        .await;
+    let thread: ThreadStartResponse = decode_response(expect_response(&mut outgoing).await);
+    let _ = next_notification_matching(&mut outgoing, |notification| {
+        matches!(notification, ServerNotification::ThreadStarted(_))
+    })
+    .await;
+    processor
+        .process_message(
+            connection_id,
+            request(
+                3,
+                "turn/start",
+                json!({
+                    "threadId": thread.thread_id,
+                    "input": [{"type": "text", "text": "ambiguous request"}]
+                }),
+            ),
+        )
+        .await;
+    let started: TurnStartResponse = decode_response(expect_response(&mut outgoing).await);
+    let completed = next_notification_matching(&mut outgoing, |notification| {
+        matches!(notification, ServerNotification::TurnCompleted(_))
+    })
+    .await;
+    let ServerNotification::TurnCompleted(completed) = completed else {
+        unreachable!("matched turn completion")
+    };
+
+    assert_eq!(
+        serde_json::to_value(completed.status).expect("turn status"),
+        expected["turnStatus"]
+    );
+    assert_eq!(
+        completed.completion_reason.as_deref(),
+        expected["completionReason"].as_str()
+    );
+    assert_eq!(completed.completion_tool_name, None);
+    assert_eq!(
+        completed.partial_output.as_deref(),
+        Some("need more details")
+    );
+    assert_eq!(completed.final_output.as_deref(), Some("need more details"));
+    assert_eq!(
+        completed.error.is_some(),
+        expected["errorField"] == "present"
+    );
+    assert_eq!(
+        CompletionReason::parse(completed.completion_reason.as_deref().unwrap()),
+        Some(CompletionReason::WaitUser)
+    );
+
+    processor
+        .process_message(
+            connection_id,
+            request(4, "thread/read", json!({"threadId": thread.thread_id})),
+        )
+        .await;
+    let read: ThreadReadResponse = decode_response(expect_response(&mut outgoing).await);
+    let persisted = read
+        .turns
+        .iter()
+        .find(|turn| turn.turn_id == started.turn_id)
+        .expect("persisted wait turn");
+    assert_eq!(
+        serde_json::to_value(persisted.status).expect("persisted turn status"),
+        expected["turnStatus"]
+    );
+    assert_eq!(
+        persisted.result["completionReason"],
+        expected["completionReason"]
+    );
+    assert_eq!(persisted.result["partialOutput"], "need more details");
+    assert_eq!(
+        persisted.result.contains_key("error"),
+        expected["errorField"] == "present"
+    );
+}
+
+#[tokio::test]
+async fn cancelled_failed_turn_stays_failed_in_notification_and_persisted_snapshot() {
+    let expected = status_projection("cancelled_failure_stays_failed");
+    let approval_tool = FunctionTool::builder("approval_tool")
+        .description("Pause at the App Server approval boundary.")
+        .json_schema(json!({"type": "object", "properties": {}, "required": []}))
+        .needs_approval(true)
+        .handler(|_context, _arguments: serde_json::Value| async move {
+            Ok(ToolOutput::text("should not execute"))
+        })
+        .build()
+        .expect("approval tool");
+    let runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "cancel-model",
+            vec![LLMResponse::with_tool_calls(
+                "waiting for approval",
+                vec![ToolCall::from_raw_arguments(
+                    "approval-call",
+                    "approval_tool",
+                    json!({}),
+                )],
+            )],
+        ))
+        .workspace(".")
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("assistant")
+        .instructions("Finish after the blocking model responds.")
+        .model(ModelRef::named("cancel-model"))
+        .tool(approval_tool)
+        .build()
+        .expect("agent");
+    let store = SqliteThreadStore::in_memory().expect("store");
+    let (mut processor, mut outgoing) =
+        MessageProcessor::new_for_tests_with_runtime(32, runner, agent, store);
+    let connection_id = ConnectionId::new(3);
+
+    processor
+        .process_message(connection_id, initialize_request(1))
+        .await;
+    let _ = expect_response(&mut outgoing).await;
+    processor
+        .process_message(connection_id, initialized_notification())
+        .await;
+    processor
+        .process_message(
+            connection_id,
+            request(2, "thread/start", json!({"agentKey": "default"})),
+        )
+        .await;
+    let thread: ThreadStartResponse = decode_response(expect_response(&mut outgoing).await);
+    let _ = next_notification_matching(&mut outgoing, |notification| {
+        matches!(notification, ServerNotification::ThreadStarted(_))
+    })
+    .await;
+    processor
+        .process_message(
+            connection_id,
+            request(
+                3,
+                "turn/start",
+                json!({
+                    "threadId": thread.thread_id,
+                    "input": [{"type": "text", "text": "start and then cancel"}]
+                }),
+            ),
+        )
+        .await;
+    let started: TurnStartResponse = decode_response(expect_response(&mut outgoing).await);
+    let _ = next_notification_matching(&mut outgoing, |notification| {
+        matches!(notification, ServerNotification::ApprovalRequested(_))
+    })
+    .await;
+    let _approval_request = next_server_request(&mut outgoing).await;
+
+    processor
+        .process_message(
+            connection_id,
+            request(
+                4,
+                "turn/interrupt",
+                json!({
+                    "threadId": thread.thread_id,
+                    "expectedTurnId": started.turn_id,
+                    "reason": "stop"
+                }),
+            ),
+        )
+        .await;
+    let interrupt = loop {
+        let response = expect_response(&mut outgoing).await;
+        if response.id == RequestId::Integer(4) {
+            break response;
+        }
+    };
+    assert_eq!(interrupt.result["cancelled"], true);
+
+    let completed = next_notification_matching(&mut outgoing, |notification| {
+        matches!(notification, ServerNotification::TurnCompleted(_))
+    })
+    .await;
+    let ServerNotification::TurnCompleted(completed) = completed else {
+        unreachable!("matched turn completion")
+    };
+    assert_eq!(
+        serde_json::to_value(completed.status).expect("turn status"),
+        expected["turnStatus"]
+    );
+    assert_eq!(
+        completed.completion_reason.as_deref(),
+        expected["completionReason"].as_str()
+    );
+    assert!(completed
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("cancel")));
+
+    processor
+        .process_message(
+            connection_id,
+            request(5, "thread/read", json!({"threadId": thread.thread_id})),
+        )
+        .await;
+    let read: ThreadReadResponse = decode_response(expect_response(&mut outgoing).await);
+    let persisted = read
+        .turns
+        .iter()
+        .find(|turn| turn.turn_id == started.turn_id)
+        .expect("persisted cancelled turn");
+    assert_eq!(
+        serde_json::to_value(persisted.status).expect("persisted turn status"),
+        expected["turnStatus"]
+    );
+    assert_eq!(
+        persisted.result["completionReason"],
+        expected["completionReason"]
+    );
+    assert_eq!(
+        persisted.result.contains_key("error"),
+        expected["errorField"] == "present"
+    );
 }
 
 fn request(id: i64, method: &str, params: serde_json::Value) -> JsonRpcMessage {
@@ -327,6 +612,18 @@ async fn expect_response(rx: &mut mpsc::Receiver<OutgoingEnvelope>) -> JsonRpcRe
         panic!("expected response, got {:?}", envelope.message);
     };
     response
+}
+
+async fn next_server_request(rx: &mut mpsc::Receiver<OutgoingEnvelope>) -> JsonRpcRequest {
+    loop {
+        let envelope = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("message timeout")
+            .expect("outgoing message");
+        if let JsonRpcMessage::Request(request) = envelope.message {
+            return request;
+        }
+    }
 }
 
 async fn expect_notification(rx: &mut mpsc::Receiver<OutgoingEnvelope>) -> ServerNotification {
