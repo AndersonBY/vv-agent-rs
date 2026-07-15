@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::{Error, ErrorKind, Result};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -141,6 +142,25 @@ pub trait StateStore: Send + Sync {
     fn state_store_spec(&self) -> Option<StateStoreSpec>;
 }
 
+pub(crate) struct LeaseOperationClock {
+    now_ms: u64,
+    started: Instant,
+}
+
+impl LeaseOperationClock {
+    pub(crate) fn new(now_ms: u64) -> Self {
+        Self {
+            now_ms,
+            started: Instant::now(),
+        }
+    }
+
+    pub(crate) fn now_ms(&self) -> u64 {
+        self.now_ms
+            .saturating_add(u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX))
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryStateStore {
     checkpoints: Arc<Mutex<BTreeMap<String, Checkpoint>>>,
@@ -238,16 +258,19 @@ impl StateStore for InMemoryStateStore {
         now_ms: u64,
     ) -> Result<bool> {
         validate_renew(claim_token, expected_revision, lease_expires_at_ms, now_ms)?;
+        let clock = LeaseOperationClock::new(now_ms);
         let mut checkpoints = self
             .checkpoints
             .lock()
             .map_err(|_| poisoned("state store"))?;
+        let current_now_ms = clock.now_ms();
         let Some(checkpoint) = checkpoints.get_mut(task_id) else {
             return Ok(false);
         };
         if checkpoint.revision != expected_revision
             || checkpoint.claim_token.as_deref() != Some(claim_token)
-            || checkpoint.lease_expires_at_ms.unwrap_or(0) <= now_ms
+            || checkpoint.lease_expires_at_ms.unwrap_or(0) <= current_now_ms
+            || lease_expires_at_ms <= current_now_ms
         {
             return Ok(false);
         }

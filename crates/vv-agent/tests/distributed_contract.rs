@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -17,6 +17,24 @@ use vv_agent::{
 };
 
 const FIXTURE: &str = include_str!("fixtures/parity/distributed_run_envelope_v1.json");
+
+fn fixture() -> Value {
+    serde_json::from_str(FIXTURE).expect("distributed fixture")
+}
+
+fn lease_lifecycle() -> Value {
+    fixture()["lease_lifecycle"].clone()
+}
+
+fn worker_case(name: &str) -> Value {
+    lease_lifecycle()["worker_cases"]
+        .as_array()
+        .expect("worker cases")
+        .iter()
+        .find(|case| case["name"] == name)
+        .unwrap_or_else(|| panic!("missing worker case {name}"))
+        .clone()
+}
 
 fn set_path(payload: &mut Value, path: &[Value], value: Value) {
     let mut target = payload;
@@ -63,14 +81,17 @@ fn distributed_envelope_invalid_cases_match_shared_contract() {
 #[test]
 fn python_and_rust_distributed_fixture_copies_are_byte_identical() {
     let rust_bytes = FIXTURE.as_bytes();
-    let python_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../vv-agent/tests/fixtures/parity/distributed_run_envelope_v1.json");
-    let python_bytes = std::fs::read(python_path).expect("Python distributed fixture");
-
-    assert_eq!(rust_bytes, python_bytes);
     assert_eq!(
         format!("{:x}", Sha256::digest(rust_bytes)),
-        "9d70267266a6f632b3c269c8ea91fcef477e15b26a5722ddd450b48d4d13b606"
+        "a8d34e27893cc8d694612e9eed17a87746cf3ffba4a47cd5def2c6bc8a272320"
+    );
+    let python_root = std::env::var_os("VV_AGENT_PYTHON_REPO")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../vv-agent"));
+    let python_path = python_root.join("tests/fixtures/parity/distributed_run_envelope_v1.json");
+    assert_eq!(
+        rust_bytes,
+        std::fs::read(python_path).expect("Python distributed fixture")
     );
 }
 
@@ -107,6 +128,77 @@ fn distributed_capability_registry_fails_closed_for_unknown_reference() {
         .expect("unknown capability must fail");
 
     assert_eq!(error.to_string(), unknown["error"].as_str().unwrap());
+}
+
+#[test]
+fn claim_expiry_boundary_matches_shared_contract() {
+    let case = &lease_lifecycle()["claim_boundary_case"];
+    let directory = tempfile::tempdir().expect("claim boundary tempdir");
+    let stores: Vec<Box<dyn StateStore>> = vec![
+        Box::new(vv_agent::InMemoryStateStore::new()),
+        Box::new(
+            vv_agent::SqliteStateStore::new(directory.path().join("claim-boundary.sqlite3"))
+                .expect("SQLite state store"),
+        ),
+    ];
+
+    for (index, store) in stores.into_iter().enumerate() {
+        let task_id = format!("claim-boundary-{index}");
+        assert!(store
+            .create_checkpoint(Checkpoint {
+                task_id: task_id.clone(),
+                cycle_index: 0,
+                status: AgentStatus::Running,
+                messages: vec![Message::system("system"), Message::user("prompt")],
+                cycles: Vec::new(),
+                shared_state: Default::default(),
+                revision: 0,
+                claim_token: None,
+                claimed_cycle: None,
+                lease_expires_at_ms: None,
+                terminal_result: None,
+            })
+            .expect("create checkpoint"));
+        let owner = store
+            .claim_checkpoint(
+                &task_id,
+                1,
+                "owner",
+                case["lease_expires_at_ms"].as_u64().expect("lease expiry"),
+                case["claim_now_ms"].as_u64().expect("claim now"),
+            )
+            .expect("owner claim")
+            .expect("owner checkpoint");
+        let boundary_now_ms = case["boundary_now_ms"].as_u64().expect("boundary now");
+        let owner_renewed = store
+            .renew_checkpoint_claim(
+                &task_id,
+                "owner",
+                owner.revision,
+                boundary_now_ms + 100,
+                boundary_now_ms,
+            )
+            .expect("owner renewal result");
+        assert_eq!(
+            owner_renewed,
+            case["owner_renewed"].as_bool().expect("owner renewed")
+        );
+        let contender = store
+            .claim_checkpoint(
+                &task_id,
+                1,
+                "contender",
+                boundary_now_ms + 100,
+                boundary_now_ms,
+            )
+            .expect("contender claim");
+        assert_eq!(
+            contender.is_some(),
+            case["contender_reclaimed"]
+                .as_bool()
+                .expect("contender reclaimed")
+        );
+    }
 }
 
 #[test]
@@ -299,6 +391,10 @@ fn distributed_worker_resolves_every_capability_before_claiming_checkpoint() {
 
 #[test]
 fn distributed_worker_heartbeat_prevents_claim_theft_during_long_cycle() {
+    let case = worker_case("commit_barrier_keeps_heartbeat_active");
+    let expected = &case["expected"];
+    const LEASE_DURATION_MS: u64 = 3_000;
+
     let temp = tempfile::tempdir().expect("heartbeat tempdir");
     let db_path = temp.path().join("heartbeat.sqlite3");
     let store = vv_agent::SqliteStateStore::new(&db_path).expect("state store");
@@ -320,14 +416,21 @@ fn distributed_worker_heartbeat_prevents_claim_theft_during_long_cycle() {
         })
         .unwrap();
     let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
     let llm_ref = CapabilityRef::new("llm.slow", "1").unwrap();
     let registry = DistributedCapabilityRegistry::new();
+    let release_rx_for_llm = release_rx.clone();
     registry.register_llm_client(
         llm_ref.clone(),
         Arc::new(ScriptedLlmClient::from_steps(vec![ScriptStep::callback(
             move |_request| {
                 started_tx.send(()).expect("signal slow LLM");
-                std::thread::sleep(Duration::from_millis(1_500));
+                release_rx_for_llm
+                    .lock()
+                    .expect("release receiver")
+                    .recv_timeout(Duration::from_secs(30))
+                    .expect("release slow LLM");
                 Ok(LLMResponse::new("done"))
             },
         )])),
@@ -347,32 +450,68 @@ fn distributed_worker_heartbeat_prevents_claim_theft_during_long_cycle() {
         DEFAULT_CYCLE_NAME,
         None,
         Some(2_000_000_000_000),
-        300,
+        LEASE_DURATION_MS,
     )
     .unwrap();
     let worker = DistributedCycleWorker::new(registry);
     let worker_thread = std::thread::spawn(move || worker.run_cycle(envelope));
     started_rx
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(Duration::from_secs(30))
         .expect("slow LLM started");
-    std::thread::sleep(Duration::from_millis(800));
 
     let contender = vv_agent::SqliteStateStore::new(&db_path).expect("contender store");
-    let now_ms: u64 = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis()
-        .try_into()
-        .unwrap();
-    let error = contender
-        .claim_checkpoint(&task.task_id, 1, "contender", now_ms + 100, now_ms)
-        .expect_err("heartbeat must keep the original claim active");
+    let initial_expiry = contender
+        .load_checkpoint(&task.task_id)
+        .expect("load claimed checkpoint")
+        .expect("claimed checkpoint")
+        .lease_expires_at_ms
+        .expect("initial lease expiry");
+    let wait_for_lease_after = |previous_expiry| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let checkpoint = contender
+                .load_checkpoint(&task.task_id)
+                .expect("load renewed checkpoint")
+                .expect("renewed checkpoint");
+            let lease_expires_at_ms = checkpoint
+                .lease_expires_at_ms
+                .expect("active heartbeat lease");
+            if lease_expires_at_ms > previous_expiry {
+                break lease_expires_at_ms;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "heartbeat did not extend lease beyond {previous_expiry}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let first_renewed_expiry = wait_for_lease_after(initial_expiry);
+    assert_eq!(
+        expected["periodic_renewals_during_commit_min"].as_u64(),
+        Some(1)
+    );
+    let contender_expiry = first_renewed_expiry
+        .checked_add(LEASE_DURATION_MS)
+        .expect("contender lease expiry");
+    let claim_result = contender.claim_checkpoint(
+        &task.task_id,
+        1,
+        "contender",
+        contender_expiry,
+        initial_expiry,
+    );
+    release_tx.send(()).expect("release slow LLM");
+    let error = claim_result.expect_err("heartbeat must keep the original claim active");
     assert!(error.to_string().contains("already claimed"));
 
     let result = worker_thread
         .join()
         .expect("worker thread")
         .expect("worker result");
+    assert_eq!(expected["contender_claimed"].as_bool(), Some(false));
+    assert_eq!(expected["commit_calls"].as_u64(), Some(1));
+    assert_eq!(expected["outcome"].as_str(), Some("success"));
     assert!(result.finished);
     assert_eq!(
         result.result.map(|result| result.status),
