@@ -1,4 +1,5 @@
 use serde_json::json;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::NamedTempFile;
 use vv_agent::runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
 use vv_agent::runtime::stores::redis::RedisStateStore;
@@ -219,6 +220,82 @@ fn redis_state_store_round_trips_checkpoints_against_live_redis() {
         .list_checkpoints()
         .expect("list")
         .contains(&"task-live-redis".to_string()));
+
+    let now_ms = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_millis(),
+    )
+    .expect("current unix milliseconds fit u64");
+    let claimed = store
+        .claim_checkpoint("task-live-redis", 5, "live-owner", now_ms + 2_000, now_ms)
+        .expect("claim")
+        .expect("claimed checkpoint");
+    assert!(store
+        .renew_checkpoint_claim(
+            "task-live-redis",
+            "live-owner",
+            claimed.revision,
+            now_ms + 4_000,
+            now_ms,
+        )
+        .expect("atomic Redis renewal"));
+
+    store.delete_checkpoint("task-live-redis").expect("reset");
+    assert!(store
+        .create_checkpoint(checkpoint("task-live-redis", 4))
+        .expect("recreate"));
+    let stale_now_ms = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_millis(),
+    )
+    .expect("current unix milliseconds fit u64");
+    let stale_claim = store
+        .claim_checkpoint(
+            "task-live-redis",
+            5,
+            "stale-owner",
+            stale_now_ms + 80,
+            stale_now_ms,
+        )
+        .expect("stale claim")
+        .expect("claimed checkpoint");
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let expiry_error = store
+        .renew_checkpoint_claim(
+            "task-live-redis",
+            "stale-owner",
+            stale_claim.revision,
+            stale_now_ms + 2_000,
+            stale_now_ms,
+        )
+        .expect_err("Redis TIME must reject the expired owner");
+    assert_eq!(expiry_error.to_string(), "claim lease expired");
+    let persisted = store
+        .load_checkpoint("task-live-redis")
+        .expect("load expired owner")
+        .expect("expired owner checkpoint");
+    assert_eq!(persisted.lease_expires_at_ms, Some(stale_now_ms + 80));
+    let reclaim_now_ms = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_millis(),
+    )
+    .expect("current unix milliseconds fit u64");
+    assert!(store
+        .claim_checkpoint(
+            "task-live-redis",
+            5,
+            "contender",
+            reclaim_now_ms + 2_000,
+            reclaim_now_ms,
+        )
+        .expect("contender claim")
+        .is_some());
 
     store.delete_checkpoint("task-live-redis").expect("delete");
     assert!(store

@@ -291,6 +291,49 @@ fn sqlite_second_connection_waits_for_short_write_contention() {
 }
 
 #[test]
+fn sqlite_renewal_refreshes_time_after_write_lock_wait() {
+    let directory = TempDir::new().expect("temp directory");
+    let path = directory.path().join("renewal-contention.sqlite3");
+    let store = Arc::new(SqliteStateStore::new(&path).expect("state store"));
+    let task_id = "contended-renewal";
+    assert!(store.create_checkpoint(checkpoint(task_id)).unwrap());
+    let claimed = store
+        .claim_checkpoint(task_id, 1, "owner", 150, 100)
+        .expect("claim result")
+        .expect("claimed checkpoint");
+    let locker = Connection::open(&path).expect("locker connection");
+    locker
+        .busy_timeout(Duration::from_secs(5))
+        .expect("locker busy timeout");
+    locker
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("acquire write lock");
+    let worker_store = store.clone();
+    let worker = thread::spawn(move || {
+        worker_store.renew_checkpoint_claim(task_id, "owner", claimed.revision, 300, 100)
+    });
+
+    thread::sleep(Duration::from_millis(80));
+    assert!(
+        !worker.is_finished(),
+        "renewal should wait for the SQLite writer lock"
+    );
+    locker.execute_batch("COMMIT").expect("release write lock");
+    assert!(!worker
+        .join()
+        .expect("renewal worker")
+        .expect("renewal outcome"));
+    assert_eq!(
+        store
+            .load_checkpoint(task_id)
+            .expect("load checkpoint")
+            .expect("persisted checkpoint")
+            .lease_expires_at_ms,
+        Some(150)
+    );
+}
+
+#[test]
 fn claimed_terminal_result_commits_before_scheduler_acknowledgement() {
     let store = InMemoryStateStore::new();
     let task_id = "terminal-claim";

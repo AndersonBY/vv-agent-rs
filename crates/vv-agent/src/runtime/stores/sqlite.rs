@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use crate::runtime::checkpoint_codec::{checkpoint_from_json, validate_checkpoint};
 use crate::runtime::state::{
     check_claim, checkpoint_status_value, clear_claim, validate_claim, validate_renew, Checkpoint,
-    StateStore, StateStoreSpec,
+    LeaseOperationClock, StateStore, StateStoreSpec,
 };
 
 const SELECT_CHECKPOINT: &str = "SELECT task_id, cycle_index, status, messages, cycles, \
@@ -240,10 +240,17 @@ impl StateStore for SqliteStateStore {
         now_ms: u64,
     ) -> Result<bool> {
         validate_renew(claim_token, expected_revision, lease_expires_at_ms, now_ms)?;
-        let changed = self
-            .connection
-            .lock()
-            .map_err(|_| poisoned())?
+        let clock = LeaseOperationClock::new(now_ms);
+        let mut connection = self.connection.lock().map_err(|_| poisoned())?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sqlite_to_io)?;
+        let current_now_ms = clock.now_ms();
+        if lease_expires_at_ms <= current_now_ms {
+            transaction.commit().map_err(sqlite_to_io)?;
+            return Ok(false);
+        }
+        let changed = transaction
             .execute(
                 r#"
                 UPDATE checkpoints
@@ -256,10 +263,11 @@ impl StateStore for SqliteStateStore {
                     task_id,
                     to_sql_u64(expected_revision, "revision")?,
                     claim_token,
-                    to_sql_u64(now_ms, "now_ms")?,
+                    to_sql_u64(current_now_ms, "now_ms")?,
                 ],
             )
             .map_err(sqlite_to_io)?;
+        transaction.commit().map_err(sqlite_to_io)?;
         Ok(changed == 1)
     }
 
