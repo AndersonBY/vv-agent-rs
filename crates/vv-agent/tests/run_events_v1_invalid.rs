@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 use vv_agent::RunEvent;
 
 const FIXTURE: &str = include_str!("fixtures/parity/run_events_v1_invalid.json");
-const FIXTURE_SHA256: &str = "55e3be856d8c1cc1c522cefa8bb0d0aa05b4552e7eda34c0a6c5c04172394e06";
+const FIXTURE_SHA256: &str = "c0ca610bb66aa6b4434c16801f3fffdfcabfbcd87728a6aac57c107b01e12bb6";
 
 fn contract() -> Value {
     assert_eq!(

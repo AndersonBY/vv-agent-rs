@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::types::{Message, ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus};
+use crate::types::{
+    CompletionReason, Message, ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus,
+};
 
 pub(crate) fn needs_tool_call_id(value: &str) -> bool {
     let stripped = value.trim();
@@ -11,9 +13,9 @@ pub(crate) fn apply_tool_use_behavior(
     task: &crate::types::AgentTask,
     call: &ToolCall,
     result: &mut ToolExecutionResult,
-) {
+) -> Option<CompletionReason> {
     if result.directive != ToolDirective::Continue || result.status != ToolResultStatus::Success {
-        return;
+        return None;
     }
     let behavior = task
         .metadata
@@ -35,7 +37,13 @@ pub(crate) fn apply_tool_use_behavior(
     };
     if should_stop {
         result.directive = ToolDirective::Finish;
+        return Some(if behavior == "stop_on_first_tool" {
+            CompletionReason::StopOnFirstTool
+        } else {
+            CompletionReason::StopAtToolName
+        });
     }
+    None
 }
 
 pub(crate) fn skipped_tool_result(

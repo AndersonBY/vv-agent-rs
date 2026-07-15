@@ -12,7 +12,7 @@ use crate::config::ResolvedModelConfig;
 use crate::events::RunEvent;
 use crate::run_config::RunConfig;
 use crate::tools::{ToolContext, ToolOrchestrator, ToolRunOptions};
-use crate::types::{AgentResult, AgentStatus, Message, Metadata, TaskTokenUsage};
+use crate::types::{AgentResult, AgentStatus, CompletionReason, Message, Metadata, TaskTokenUsage};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ApprovalSnapshot {
@@ -134,6 +134,18 @@ impl RunResult {
         self.result.status
     }
 
+    pub fn completion_reason(&self) -> Option<CompletionReason> {
+        self.result.completion_reason
+    }
+
+    pub fn completion_tool_name(&self) -> Option<&str> {
+        self.result.completion_tool_name.as_deref()
+    }
+
+    pub fn partial_output(&self) -> Option<&str> {
+        self.result.partial_output.as_deref()
+    }
+
     pub fn final_output(&self) -> Option<&str> {
         self.result
             .final_answer
@@ -193,6 +205,9 @@ impl RunResult {
             "run_id": self.run_id,
             "metadata": self.metadata,
             "agent_name": self.agent_name,
+            "completion_reason": self.result.completion_reason,
+            "completion_tool_name": self.result.completion_tool_name,
+            "partial_output": self.result.partial_output,
             "resolved_model": self.resolved.as_ref().map(resolved_model_public_value),
         })
     }

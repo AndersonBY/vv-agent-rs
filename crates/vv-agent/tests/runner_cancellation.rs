@@ -4,11 +4,11 @@ use std::time::Duration;
 
 use serde_json::json;
 use vv_agent::{
-    Agent, AgentResult, AgentRuntime, AgentStatus, AgentTask, CancellationToken, ExecutionContext,
-    GuardrailOutcome, LLMResponse, LlmClient, LlmError, LlmRequest, ModelRef, OutputGuardrail,
-    RunConfig, RunContext, RunHandleStatus, Runner, RuntimeExecutionBackend, RuntimeRunControls,
-    ScriptedModelProvider, SubAgentConfig, SubTaskManager, ThreadBackend, ToolCall,
-    ToolResultStatus,
+    Agent, AgentResult, AgentRuntime, AgentStatus, AgentTask, CancellationToken, CompletionReason,
+    ExecutionContext, GuardrailOutcome, LLMResponse, LlmClient, LlmError, LlmRequest, ModelRef,
+    OutputGuardrail, RunConfig, RunContext, RunEventPayload, RunHandleStatus, Runner,
+    RuntimeExecutionBackend, RuntimeRunControls, ScriptedModelProvider, SubAgentConfig,
+    SubTaskManager, ThreadBackend, ToolCall, ToolResultStatus,
 };
 
 #[derive(Clone)]
@@ -309,6 +309,129 @@ impl OutputGuardrail for CancelAfterRuntime {
         self.0.cancel();
         GuardrailOutcome::Allow(output.clone())
     }
+}
+
+#[derive(Clone)]
+struct CancelAndBlock(CancellationToken);
+
+impl OutputGuardrail for CancelAndBlock {
+    fn check(&self, _ctx: &RunContext, _output: &AgentResult) -> GuardrailOutcome<AgentResult> {
+        self.0.cancel();
+        GuardrailOutcome::Block {
+            message: "guardrail blocked while cancelling".to_string(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SideEffectBlock(Arc<Mutex<usize>>);
+
+impl OutputGuardrail for SideEffectBlock {
+    fn check(&self, _ctx: &RunContext, _output: &AgentResult) -> GuardrailOutcome<AgentResult> {
+        *self.0.lock().expect("guardrail calls") += 1;
+        GuardrailOutcome::Block {
+            message: "guardrail must not replace cancellation".to_string(),
+        }
+    }
+}
+
+#[tokio::test]
+async fn cancelled_result_skips_output_guardrails_and_preserves_cancellation_error() {
+    let token = CancellationToken::default();
+    token.cancel_with_reason("cancelled by caller");
+    let guardrail_calls = Arc::new(Mutex::new(0));
+    let runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "cancel-model",
+            vec![finish_response("must not run")],
+        ))
+        .workspace("./workspace")
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("pre-cancelled-agent")
+        .instructions("Do not run after cancellation.")
+        .model(ModelRef::named("cancel-model"))
+        .output_guardrail(Arc::new(SideEffectBlock(guardrail_calls.clone())))
+        .build()
+        .expect("agent");
+
+    let result = runner
+        .run_with_config(
+            &agent,
+            "finish",
+            RunConfig::builder().cancellation_token(token).build(),
+        )
+        .await
+        .expect("cancelled result");
+
+    assert_eq!(*guardrail_calls.lock().expect("guardrail calls"), 0);
+    assert_eq!(result.status(), AgentStatus::Failed);
+    assert_eq!(
+        result.completion_reason(),
+        Some(CompletionReason::Cancelled)
+    );
+    assert_eq!(result.final_output(), Some("cancelled by caller"));
+    assert_eq!(
+        result.result().error.as_deref(),
+        Some("cancelled by caller")
+    );
+    let terminal = result.events().last().expect("terminal event");
+    assert!(matches!(
+        terminal.payload(),
+        RunEventPayload::RunCancelled { .. }
+    ));
+    assert_eq!(
+        terminal.completion_reason(),
+        Some(CompletionReason::Cancelled)
+    );
+}
+
+#[tokio::test]
+async fn cancellation_precedes_output_guardrail_failure_in_result_and_event() {
+    let token = CancellationToken::default();
+    let runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "cancel-model",
+            vec![finish_response("tool final output")],
+        ))
+        .workspace("./workspace")
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("cancel-guardrail-agent")
+        .instructions("Finish immediately.")
+        .model(ModelRef::named("cancel-model"))
+        .output_guardrail(Arc::new(CancelAndBlock(token.clone())))
+        .build()
+        .expect("agent");
+
+    let result = runner
+        .run_with_config(
+            &agent,
+            "finish",
+            RunConfig::builder().cancellation_token(token).build(),
+        )
+        .await
+        .expect("cancelled result");
+
+    assert_eq!(result.status(), AgentStatus::Failed);
+    assert_eq!(
+        result.completion_reason(),
+        Some(CompletionReason::Cancelled)
+    );
+    assert_eq!(result.partial_output(), Some("finished"));
+    assert_eq!(result.final_output(), Some("Operation was cancelled"));
+    let terminal = result.events().last().expect("terminal event");
+    assert!(matches!(
+        terminal.payload(),
+        RunEventPayload::RunCancelled { .. }
+    ));
+    assert_eq!(
+        terminal.completion_reason(),
+        Some(CompletionReason::Cancelled)
+    );
+    assert_eq!(terminal.partial_output(), result.partial_output());
 }
 
 #[tokio::test]

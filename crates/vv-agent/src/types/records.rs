@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    AgentStatus, LLMResponse, Message, Metadata, TaskTokenUsage, TokenUsage, ToolCall,
-    ToolExecutionResult,
+    AgentStatus, CompletionReason, LLMResponse, Message, Metadata, TaskTokenUsage, TokenUsage,
+    ToolCall, ToolExecutionResult,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -38,11 +38,35 @@ pub struct AgentResult {
     pub status: AgentStatus,
     pub messages: Vec<Message>,
     pub cycles: Vec<CycleRecord>,
+    #[serde(default)]
+    pub completion_reason: Option<CompletionReason>,
+    #[serde(default)]
+    pub completion_tool_name: Option<String>,
+    #[serde(default)]
+    pub partial_output: Option<String>,
     pub final_answer: Option<String>,
     pub wait_reason: Option<String>,
     pub error: Option<String>,
     pub shared_state: Metadata,
     pub token_usage: TaskTokenUsage,
+}
+
+impl Default for AgentResult {
+    fn default() -> Self {
+        Self {
+            status: AgentStatus::Pending,
+            messages: Vec::new(),
+            cycles: Vec::new(),
+            completion_reason: None,
+            completion_tool_name: None,
+            partial_output: None,
+            final_answer: None,
+            wait_reason: None,
+            error: None,
+            shared_state: Metadata::new(),
+            token_usage: TaskTokenUsage::default(),
+        }
+    }
 }
 
 impl AgentResult {
@@ -68,6 +92,9 @@ impl AgentResult {
             status: AgentStatus::Completed,
             messages,
             cycles,
+            completion_reason: Some(CompletionReason::ToolFinish),
+            completion_tool_name: None,
+            partial_output: None,
             final_answer: Some(final_answer.into()),
             wait_reason: None,
             error: None,
@@ -81,6 +108,9 @@ impl AgentResult {
             status: AgentStatus::Failed,
             messages: Vec::new(),
             cycles: Vec::new(),
+            completion_reason: Some(CompletionReason::Failed),
+            completion_tool_name: None,
+            partial_output: None,
             final_answer: None,
             wait_reason: None,
             error: Some(error.into()),
@@ -96,4 +126,12 @@ impl AgentResult {
             .cloned()
             .unwrap_or_default()
     }
+}
+
+pub(crate) fn last_assistant_output(cycles: &[CycleRecord]) -> Option<String> {
+    cycles
+        .iter()
+        .rev()
+        .find(|cycle| !cycle.assistant_message.trim().is_empty())
+        .map(|cycle| cycle.assistant_message.clone())
 }

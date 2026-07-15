@@ -5,7 +5,7 @@ handles, interrupted results, approvals, sessions, and runtime observers.
 
 ## Agent And Runner Defaults
 
-`Agent.max_cycles` and `Agent.tool_policy` are optional per-agent defaults.
+`Agent.max_cycles`, `Agent.no_tool_policy`, and `Agent.tool_policy` are optional per-agent defaults.
 Configured `Runner` values are reusable host defaults. The effective cycle
 limit order is:
 
@@ -18,13 +18,19 @@ limit order is:
 `0..=u32::MAX` and defaults to `10`. App Server turns use a separate default
 of `80` cycles.
 
+The no-tool policy order is per-run `RunConfig`, configured Runner default,
+Agent, then `NoToolPolicy::Continue`. `Continue` preserves the tool-driven
+default, `Finish` treats a normal assistant response as successful completion,
+and `WaitUser` pauses on that response. These controls never inspect the text
+or change which tools are available.
+
 ## Per-Run Controls
 
 `RunConfig` can replace or extend these controls for one run:
 
 - model reference, model provider, and model settings;
 - workspace path/backend, session, initial messages, and shared state;
-- cycle/handoff bounds, tool policy, and a fresh tool registry factory;
+- cycle/handoff bounds, no-tool policy, tool policy, and a fresh tool registry factory;
 - execution backend, cancellation, approval provider/broker/timeout;
 - runtime hooks, event store policy, trace sink, trace identity/workflow name,
   context providers, memory providers, and application state;
@@ -119,10 +125,25 @@ child does not cancel the parent.
 
 A run stopped by approval can be converted to `RunState`. Approving an
 interruption and calling `Runner::resume()` executes the captured original tool
-call once; it does not ask the model to recreate the call. The equivalent live
-path is `RunHandle::approve()` through an `ApprovalBroker`. Calling
+call once; it does not ask the model to recreate the call. A normal tool result
+returns to the model loop, explicit wait/finish directives retain their normal
+meaning, and `ToolUseBehavior` stop policies are applied after execution.
+Approval resume receives a fresh run ID, so append-only event stores retain one
+terminal event per run while returned event chains can still include the
+interrupted predecessor. The equivalent live path is `RunHandle::approve()`
+through an `ApprovalBroker`. Calling
 `RunHandle::resume(state)` resolves the Runner and run configuration captured
 by that state, rather than substituting the caller's current Runner defaults.
+
+The fresh approval run remains inside the source trace. If the approved tool
+returns `continue`, the new model loop receives the full configured
+`max_cycles`; predecessor cycles do not reduce that budget. Supplying new input
+for an approved tool call is rejected before cancellation projection or the
+approval claim. With valid input, an already-cancelled resume emits one fresh
+cancelled terminal without claiming the approval, executing the tool, or
+running output guardrails. If approved terminal output fails typed-output
+validation, its fresh terminal is persisted before the validation error is
+returned to the caller.
 
 ## Tracing
 
@@ -156,7 +177,9 @@ pair.
 
 `CancellationToken::cancel()` is idempotent. A callback registered after
 cancellation runs once immediately. Once a terminal result is authoritative,
-later cancellation cannot replace it.
+later cancellation cannot replace it. A cancelled result bypasses output
+guardrails so guardrail side effects or messages cannot replace the recorded
+cancellation reason.
 
 ## V1 Event Producers
 

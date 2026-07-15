@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::types::{AgentResult, CycleRecord, Message};
+use crate::types::{AgentResult, CompletionReason, CycleRecord, Message};
 
 use super::super::common::*;
 use super::super::token_usage::{task_token_usage_from_dict, task_token_usage_to_dict};
@@ -11,6 +11,28 @@ impl AgentResult {
             (
                 "status".to_string(),
                 Value::String(agent_status_value(self.status).to_string()),
+            ),
+            (
+                "completion_reason".to_string(),
+                self.completion_reason
+                    .map(completion_reason_value)
+                    .map(str::to_string)
+                    .map(Value::String)
+                    .unwrap_or(Value::Null),
+            ),
+            (
+                "completion_tool_name".to_string(),
+                self.completion_tool_name
+                    .clone()
+                    .map(Value::String)
+                    .unwrap_or(Value::Null),
+            ),
+            (
+                "partial_output".to_string(),
+                self.partial_output
+                    .clone()
+                    .map(Value::String)
+                    .unwrap_or(Value::Null),
             ),
             (
                 "messages".to_string(),
@@ -65,6 +87,9 @@ impl AgentResult {
             status: parse_agent_status(read_required_string(object, "status")?)?,
             messages,
             cycles,
+            completion_reason: optional_completion_reason(object)?,
+            completion_tool_name: strict_optional_string(object, "completion_tool_name")?,
+            partial_output: strict_optional_string(object, "partial_output")?,
             final_answer: read_optional_string(object, "final_answer"),
             wait_reason: read_optional_string(object, "wait_reason"),
             error: read_optional_string(object, "error"),
@@ -75,5 +100,27 @@ impl AgentResult {
                 .transpose()?
                 .unwrap_or_default(),
         })
+    }
+}
+
+fn optional_completion_reason(
+    object: &serde_json::Map<String, Value>,
+) -> Result<Option<CompletionReason>, String> {
+    strict_optional_string(object, "completion_reason")?
+        .as_deref()
+        .map(parse_completion_reason)
+        .transpose()
+}
+
+fn strict_optional_string(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<String>, String> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(format!(
+            "AgentResult field '{key}' must be a string or null"
+        )),
     }
 }

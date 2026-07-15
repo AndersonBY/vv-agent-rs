@@ -135,6 +135,9 @@ fn cli_task_applies_resolved_vv_llm_token_limits_to_memory_metadata() {
 fn cli_result_payload_matches_shape() {
     let result = AgentResult {
         status: AgentStatus::Completed,
+        completion_reason: Some(vv_agent::CompletionReason::ToolFinish),
+        completion_tool_name: Some("task_finish".to_string()),
+        partial_output: None,
         final_answer: Some("done".to_string()),
         wait_reason: None,
         error: None,

@@ -9,8 +9,11 @@ mod tool_calls;
 
 pub use messages::{LLMResponse, Message, MessageRole};
 pub use metadata::{json_value_from_serializable, Metadata, ToolArguments, ToolSchema};
+pub(crate) use records::last_assistant_output;
 pub use records::{AgentResult, CycleRecord};
-pub use status::{AgentStatus, CycleStatus, NoToolPolicy, ToolDirective, ToolResultStatus};
+pub use status::{
+    AgentStatus, CompletionReason, CycleStatus, NoToolPolicy, ToolDirective, ToolResultStatus,
+};
 pub use tasks::{
     AgentTask, SubAgentConfig, SubAgentConfigValidationError, SubTaskOutcome, SubTaskRequest,
     INVALID_SUB_AGENT_MODEL_CODE, INVALID_SUB_AGENT_MODEL_MESSAGE,

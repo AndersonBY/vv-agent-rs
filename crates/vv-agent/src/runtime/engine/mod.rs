@@ -19,7 +19,10 @@ use serde_json::Value;
 use crate::llm::{LlmClient, LlmError, LlmRequest, LlmStreamCallback};
 use crate::memory::CompactionExhaustedError;
 use crate::tools::{ToolContext, ToolError, ToolOrchestrator, ToolRunOptions, ToolSpecKind};
-use crate::types::{AgentResult, AgentStatus, AgentTask, ToolDirective, ToolExecutionResult};
+use crate::types::{
+    last_assistant_output, AgentResult, AgentStatus, AgentTask, CompletionReason, ToolDirective,
+    ToolExecutionResult,
+};
 
 use super::cancellation::CancellationToken;
 
@@ -106,7 +109,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         let mut pending_error = None;
         let cycle_index_start = controls.cycle_index_start.unwrap_or(1);
         let cycle_count = controls.cycle_count.unwrap_or(task.max_cycles);
-        let result = self.execution_backend.execute_with_state(
+        let mut result = self.execution_backend.execute_with_state(
             &task,
             messages,
             cycles,
@@ -352,7 +355,6 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         }
                         Err(error) => {
                             let message = error.to_string();
-                            pending_error = Some(error);
                             return Some(failed_agent_result(
                                 messages.clone(),
                                 cycles.clone(),
@@ -525,6 +527,8 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 };
 
                 let mut directive_result = None;
+                let mut directive_completion_reason = None;
+                let mut directive_completion_tool_name = None;
                 let mut image_notifications = Vec::new();
                 let tool_orchestrator =
                     ToolOrchestrator::from_tools(self.tool_registry.executors());
@@ -732,7 +736,8 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     if needs_tool_call_id(&result.tool_call_id) {
                         result.tool_call_id = patched_call.id.clone();
                     }
-                    apply_tool_use_behavior(&task, &patched_call, &mut result);
+                    let behavior_reason =
+                        apply_tool_use_behavior(&task, &patched_call, &mut result);
                     if matches!(
                         tool_kind,
                         Some(ToolSpecKind::Agent | ToolSpecKind::BackgroundAgent)
@@ -778,6 +783,13 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     let steering_prompts = drain_steering_queue(&controls);
                     let steering_count = interruption_messages.len() + steering_prompts.len();
                     if steering_count == 0 && result.directive != ToolDirective::Continue {
+                        directive_completion_reason =
+                            behavior_reason.or(Some(match result.directive {
+                                ToolDirective::WaitUser => CompletionReason::WaitUser,
+                                ToolDirective::Finish => CompletionReason::ToolFinish,
+                                ToolDirective::Continue => unreachable!(),
+                            }));
+                        directive_completion_tool_name = Some(patched_call.name.clone());
                         directive_result = Some(result.clone());
                     }
                     messages.push(result.to_message());
@@ -883,6 +895,11 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         task: &task,
                         cycle_index,
                         result: directive_result,
+                        completion_reason: directive_completion_reason
+                            .expect("terminal tool directive has a completion reason"),
+                        completion_tool_name: directive_completion_tool_name
+                            .as_deref()
+                            .expect("terminal tool directive has a tool name"),
                         messages,
                         cycles,
                         shared_state,
@@ -898,6 +915,28 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         );
         if let Some(error) = pending_error {
             return Err(error);
+        }
+        if result.status == AgentStatus::Failed
+            && effective_cancellation_token
+                .as_ref()
+                .is_some_and(CancellationToken::is_cancelled)
+        {
+            result.completion_reason = Some(CompletionReason::Cancelled);
+            result.completion_tool_name = None;
+            result.partial_output = result
+                .partial_output
+                .or_else(|| last_assistant_output(&result.cycles));
+        } else if result.status == AgentStatus::MaxCycles {
+            result.completion_reason = Some(CompletionReason::MaxCycles);
+            result.completion_tool_name = None;
+            result.partial_output = result
+                .partial_output
+                .or_else(|| last_assistant_output(&result.cycles));
+        } else if result.status == AgentStatus::Failed && result.completion_reason.is_none() {
+            result.completion_reason = Some(CompletionReason::Failed);
+            result.partial_output = result
+                .partial_output
+                .or_else(|| last_assistant_output(&result.cycles));
         }
         if result.status == AgentStatus::MaxCycles {
             self.emit_run_max_cycles(&controls, &result);

@@ -20,7 +20,7 @@ use crate::runtime::{
 use crate::sessions::Session;
 use crate::tools::{ToolPolicy, ToolRegistry};
 use crate::tracing::TraceSink;
-use crate::types::{Message, Metadata};
+use crate::types::{Message, Metadata, NoToolPolicy};
 use crate::workspace::WorkspaceBackend;
 
 pub type ToolRegistryFactory = Arc<dyn Fn() -> ToolRegistry + Send + Sync + 'static>;
@@ -45,6 +45,7 @@ pub struct RunConfig {
     pub initial_messages: Option<Vec<Message>>,
     pub max_cycles: Option<u32>,
     pub max_handoffs: Option<u32>,
+    pub no_tool_policy: Option<NoToolPolicy>,
     pub tool_policy: ToolPolicy,
     pub execution_backend: Option<RuntimeExecutionBackend>,
     pub cancellation_token: Option<CancellationToken>,
@@ -156,6 +157,11 @@ impl RunConfigBuilder {
 
     pub fn max_handoffs(mut self, max_handoffs: u32) -> Self {
         self.config.max_handoffs = Some(max_handoffs);
+        self
+    }
+
+    pub fn no_tool_policy(mut self, policy: NoToolPolicy) -> Self {
+        self.config.no_tool_policy = Some(policy);
         self
     }
 

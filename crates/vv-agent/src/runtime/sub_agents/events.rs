@@ -315,6 +315,22 @@ fn sub_run_completed_payload(
     );
     insert_optional_string(&mut payload, "wait_reason", outcome.wait_reason.as_deref());
     insert_optional_string(&mut payload, "error", outcome.error.as_deref());
+    if let Some(reason) = outcome.completion_reason {
+        payload.insert(
+            "completion_reason".to_string(),
+            Value::String(reason.as_str().to_string()),
+        );
+    }
+    insert_optional_string(
+        &mut payload,
+        "completion_tool_name",
+        outcome.completion_tool_name.as_deref(),
+    );
+    insert_optional_string(
+        &mut payload,
+        "partial_output",
+        outcome.partial_output.as_deref(),
+    );
     payload
 }
 
@@ -408,6 +424,9 @@ mod tests {
             wait_reason: None,
             error: None,
             error_code: None,
+            completion_reason: None,
+            completion_tool_name: None,
+            partial_output: None,
             cycles: 0,
             todo_list: Vec::new(),
             resolved: BTreeMap::new(),
@@ -473,6 +492,27 @@ mod tests {
         let wire = mapped_wire(&payload);
         assert_eq!(wire["token_usage"]["total_tokens"], json!(0));
         assert_eq!(wire["token_usage"]["cycles"], json!([]));
+    }
+
+    #[test]
+    fn wait_user_completion_does_not_fabricate_error_code_metadata() {
+        let mut outcome = outcome(AgentStatus::WaitUser);
+        outcome.wait_reason = Some("Approve dangerous.".to_string());
+        outcome.completion_reason = Some(crate::types::CompletionReason::WaitUser);
+        outcome.completion_tool_name = Some("dangerous".to_string());
+        outcome.partial_output = Some("proposed change".to_string());
+
+        let payload = completed_payload(&outcome, None);
+
+        assert!(payload["metadata"].get("error_code").is_none());
+        assert_eq!(payload["completion_reason"], "wait_user");
+        assert_eq!(payload["completion_tool_name"], "dangerous");
+        assert_eq!(payload["partial_output"], "proposed change");
+        let wire = mapped_wire(&payload);
+        assert!(wire["metadata"].get("error_code").is_none());
+        assert_eq!(wire["completion_reason"], "wait_user");
+        assert_eq!(wire["completion_tool_name"], "dangerous");
+        assert_eq!(wire["partial_output"], "proposed change");
     }
 
     #[test]

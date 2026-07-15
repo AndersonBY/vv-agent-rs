@@ -12,7 +12,7 @@ use vv_agent::{
 
 const RUNNER_EVENTS_FIXTURE: &str = include_str!("fixtures/parity/runner_events_v1.jsonl");
 const RUNNER_EVENTS_FIXTURE_SHA256: &str =
-    "15f23c49cac673766db17c42c96b403d2cc1ece8e876c40d772e8d198bfb8adc";
+    "3000b4d1647b39a5b938465a2e9aad2bff49eeb75d4ba31a8a326bf456f80965";
 const PYTHON_RUNNER_TRACE_FIXTURE: &str = include_str!("fixtures/parity/runner_trace_v1.jsonl");
 const PYTHON_RUNNER_TRACE_FIXTURE_SHA256: &str =
     "1396aab48578f9f7f0a6f8202efeeef38c36093b0645c11010f7aed7d93cb62b";

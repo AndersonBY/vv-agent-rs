@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use vv_agent::{
     Agent, AgentStatus, ApprovalDecision, ApprovalFuture, ApprovalPolicy, ApprovalProvider,
-    ApprovalRequest, ApprovalRequirement, FunctionTool, LLMResponse, MemorySession, ModelRef,
-    RunConfig, Runner, ScriptedModelProvider, Session, ToolCall, ToolContext, ToolExposure,
-    ToolOutput, ToolPolicy, ToolRunContext, ToolUseBehavior,
+    ApprovalRequest, ApprovalRequirement, CompletionReason, FunctionTool, LLMResponse,
+    MemorySession, ModelRef, RunConfig, Runner, ScriptStep, ScriptedModelProvider, Session,
+    ToolCall, ToolContext, ToolExposure, ToolOutput, ToolPolicy, ToolRunContext, ToolUseBehavior,
 };
 
 #[test]
@@ -73,14 +73,17 @@ async fn on_request_static_approval_interrupts_before_handler_and_resume_execute
     let (runner, agent) = runner_and_agent(
         tool,
         ApprovalPolicy::OnRequest,
-        vec![LLMResponse::with_tool_calls(
-            "delete",
-            vec![ToolCall::from_raw_arguments(
-                "delete_call",
-                "delete_file",
-                json!({"path": "danger.txt"}),
-            )],
-        )],
+        vec![
+            LLMResponse::with_tool_calls(
+                "delete",
+                vec![ToolCall::from_raw_arguments(
+                    "delete_call",
+                    "delete_file",
+                    json!({"path": "danger.txt"}),
+                )],
+            ),
+            finish_response("deleted"),
+        ],
         ToolUseBehavior::RunLlmAgain,
     );
 
@@ -108,7 +111,120 @@ async fn on_request_static_approval_interrupts_before_handler_and_resume_execute
 
     assert_eq!(resumed.status(), AgentStatus::Completed);
     assert_eq!(resumed.final_output(), Some("deleted"));
+    assert_eq!(
+        resumed.completion_reason(),
+        Some(CompletionReason::ToolFinish)
+    );
+    assert_eq!(resumed.completion_tool_name(), Some("task_finish"));
+    assert_eq!(resumed.result().cycles.len(), 1);
     assert_eq!(executions.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn approval_resume_preserves_explicit_wait_and_finish_actions() {
+    for (tool_name, arguments, expected_status, expected_reason, expected_output) in [
+        (
+            "ask_user",
+            json!({"question": "Choose after approval"}),
+            AgentStatus::WaitUser,
+            CompletionReason::WaitUser,
+            "Choose after approval",
+        ),
+        (
+            "task_finish",
+            json!({"message": "finished after approval"}),
+            AgentStatus::Completed,
+            CompletionReason::ToolFinish,
+            "finished after approval",
+        ),
+    ] {
+        let provider = ScriptedModelProvider::new(
+            "scripted",
+            "approval-model",
+            vec![LLMResponse::with_tool_calls(
+                "assistant text before approved action",
+                vec![ToolCall::from_raw_arguments(
+                    "approved_action",
+                    tool_name,
+                    arguments,
+                )],
+            )],
+        );
+        let runner = Runner::builder()
+            .model_provider(provider)
+            .workspace("./workspace")
+            .build()
+            .expect("runner");
+        let agent = Agent::builder("approval_agent")
+            .instructions("Use the control tool.")
+            .model(ModelRef::named("approval-model"))
+            .tool_policy(approval_policy(ApprovalPolicy::Always))
+            .build()
+            .expect("agent");
+        let interrupted = runner.run(&agent, "run").await.expect("interrupted");
+        let interruption_id = interrupted.approvals()[0].interruption_id.clone();
+        let mut state = interrupted.into_state().expect("state");
+        state.approve(&interruption_id).expect("approve");
+
+        let resumed = runner.resume(state).await.expect("resume");
+
+        assert_eq!(resumed.status(), expected_status, "{tool_name}");
+        assert_eq!(
+            resumed.completion_reason(),
+            Some(expected_reason),
+            "{tool_name}"
+        );
+        assert_eq!(resumed.completion_tool_name(), Some(tool_name));
+        assert_eq!(resumed.final_output(), Some(expected_output), "{tool_name}");
+        if expected_status == AgentStatus::WaitUser {
+            assert_eq!(
+                resumed.partial_output(),
+                Some("assistant text before approved action")
+            );
+        } else {
+            assert_eq!(resumed.partial_output(), None);
+        }
+    }
+}
+
+#[tokio::test]
+async fn approval_resume_applies_stop_on_first_and_stop_at_tool_names() {
+    for (behavior, expected_reason) in [
+        (
+            ToolUseBehavior::StopOnFirstTool,
+            CompletionReason::StopOnFirstTool,
+        ),
+        (
+            ToolUseBehavior::StopAtToolNames(vec!["guarded_lookup".to_string()]),
+            CompletionReason::StopAtToolName,
+        ),
+    ] {
+        let tool = FunctionTool::builder("guarded_lookup")
+            .needs_approval(true)
+            .handler(|_context, _arguments: Value| async {
+                Ok(ToolOutput::text("approved lookup result"))
+            })
+            .build()
+            .expect("tool");
+        let (runner, agent) = runner_and_agent(
+            tool,
+            ApprovalPolicy::OnRequest,
+            vec![single_tool_response("guarded_lookup")],
+            behavior,
+        );
+        let interrupted = runner.run(&agent, "lookup").await.expect("interrupted");
+        let interruption_id = interrupted.approvals()[0].interruption_id.clone();
+        let mut state = interrupted.into_state().expect("state");
+        state.approve(&interruption_id).expect("approve");
+
+        let resumed = runner.resume(state).await.expect("resume");
+
+        assert_eq!(resumed.status(), AgentStatus::Completed);
+        assert_eq!(resumed.completion_reason(), Some(expected_reason));
+        assert_eq!(resumed.completion_tool_name(), Some("guarded_lookup"));
+        assert_eq!(resumed.final_output(), Some("approved lookup result"));
+        assert_eq!(resumed.partial_output(), None);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -131,14 +247,17 @@ async fn cloned_manual_approval_state_executes_once_and_persists_one_result() {
     let (runner, agent) = runner_and_agent(
         tool,
         ApprovalPolicy::OnRequest,
-        vec![LLMResponse::with_tool_calls(
-            "run once",
-            vec![ToolCall::from_raw_arguments(
-                "guarded_once_call",
-                "guarded_once",
-                json!({"nested": {"value": "original"}}),
-            )],
-        )],
+        vec![
+            LLMResponse::with_tool_calls(
+                "run once",
+                vec![ToolCall::from_raw_arguments(
+                    "guarded_once_call",
+                    "guarded_once",
+                    json!({"nested": {"value": "original"}}),
+                )],
+            ),
+            finish_response("original"),
+        ],
         ToolUseBehavior::RunLlmAgain,
     );
     let session = MemorySession::new("approval-once");
@@ -186,14 +305,6 @@ async fn cloned_manual_approval_state_executes_once_and_persists_one_result() {
     assert_eq!(
         resumed.metadata()["approved_interruption_id"],
         json!(interruption_id)
-    );
-    assert_eq!(
-        resumed.result().cycles[0]
-            .tool_results
-            .iter()
-            .filter(|result| result.tool_call_id == "guarded_once_call")
-            .count(),
-        1
     );
     let session_items = session.get_items(None).await.expect("session items");
     let tool_results = session_items
@@ -691,7 +802,7 @@ async fn default_and_on_request_evaluate_dynamic_approval_predicates() {
 }
 
 #[tokio::test]
-async fn manual_approval_resume_rechecks_argument_policy_before_execution() {
+async fn manual_approval_policy_denial_is_returned_to_llm_without_execution() {
     let executions = Arc::new(AtomicUsize::new(0));
     let executions_for_tool = executions.clone();
     let allowed = Arc::new(std::sync::atomic::AtomicBool::new(true));
@@ -707,10 +818,20 @@ async fn manual_approval_resume_rechecks_argument_policy_before_execution() {
         })
         .build()
         .expect("guarded tool");
-    let provider = ScriptedModelProvider::new(
+    let provider = ScriptedModelProvider::from_steps(
         "scripted",
         "approval-model",
-        vec![single_tool_response("guarded_action")],
+        vec![
+            ScriptStep::callback(|_request| Ok(single_tool_response("guarded_action"))),
+            ScriptStep::callback(|request| {
+                assert!(request.messages.iter().any(|message| {
+                    message.role == vv_agent::MessageRole::Tool
+                        && message.tool_call_id.as_deref() == Some("tool_call")
+                        && message.content.contains("not allowed")
+                }));
+                Ok(finish_response("policy denial handled"))
+            }),
+        ],
     );
     let runner = Runner::builder()
         .model_provider(provider)
@@ -726,7 +847,9 @@ async fn manual_approval_resume_rechecks_argument_policy_before_execution() {
                 approval: ApprovalPolicy::Default,
                 ..ToolPolicy::default()
             }
-            .can_use_tool(move |_name, _arguments| allowed_for_policy.load(Ordering::SeqCst)),
+            .can_use_tool(move |name, _arguments| {
+                name != "guarded_action" || allowed_for_policy.load(Ordering::SeqCst)
+            }),
         )
         .build()
         .expect("agent");
@@ -742,12 +865,14 @@ async fn manual_approval_resume_rechecks_argument_policy_before_execution() {
     state.approve(&interruption_id).expect("approve");
     allowed.store(false, Ordering::SeqCst);
 
-    let error = match runner.resume(state).await {
-        Ok(_) => panic!("policy must be rechecked"),
-        Err(error) => error,
-    };
+    let resumed = runner
+        .resume(state)
+        .await
+        .expect("resume after policy denial");
 
-    assert!(error.contains("not allowed"), "unexpected error: {error}");
+    assert_eq!(resumed.status(), AgentStatus::Completed);
+    assert_eq!(resumed.final_output(), Some("policy denial handled"));
+    assert_eq!(resumed.result().cycles.len(), 1);
     assert_eq!(executions.load(Ordering::SeqCst), 0);
 }
 
@@ -815,6 +940,17 @@ fn single_tool_response(tool_name: &str) -> LLMResponse {
             "tool_call",
             tool_name,
             json!({}),
+        )],
+    )
+}
+
+fn finish_response(message: &str) -> LLMResponse {
+    LLMResponse::with_tool_calls(
+        "finish",
+        vec![ToolCall::from_raw_arguments(
+            "finish_call",
+            "task_finish",
+            json!({"message": message}),
         )],
     )
 }

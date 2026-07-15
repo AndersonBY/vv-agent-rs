@@ -1,6 +1,6 @@
 use crate::runtime::hooks::RuntimeHookManager;
 use crate::tools::{ToolError, ToolOrchestrator, ToolRegistry, ToolRunOptions};
-use crate::types::ToolDirective;
+use crate::types::{CompletionReason, ToolDirective};
 
 use super::outcome::ToolRunOutcome;
 use super::request::ToolRunRequest;
@@ -29,6 +29,8 @@ impl ToolCallRunner {
 
     pub fn run(&self, mut request: ToolRunRequest<'_>) -> Result<ToolRunOutcome, String> {
         let mut directive_result = None;
+        let mut completion_reason = None;
+        let mut completion_tool_name = None;
         let mut interruption_messages = Vec::new();
         let mut image_notifications = Vec::new();
         let orchestrator = ToolOrchestrator::from_tools(self.tool_registry.executors());
@@ -74,7 +76,7 @@ impl ToolCallRunner {
             if needs_tool_call_id(&result.tool_call_id) {
                 result.tool_call_id = patched_call.id.clone();
             }
-            apply_tool_use_behavior(request.task, &patched_call, &mut result);
+            let behavior_reason = apply_tool_use_behavior(request.task, &patched_call, &mut result);
 
             request.messages.push(result.to_message());
             if let Some(image_notification) =
@@ -89,6 +91,12 @@ impl ToolCallRunner {
 
             if result.directive != ToolDirective::Continue {
                 directive_result = Some(result.clone());
+                completion_reason = behavior_reason.or(Some(match result.directive {
+                    ToolDirective::WaitUser => CompletionReason::WaitUser,
+                    ToolDirective::Finish => CompletionReason::ToolFinish,
+                    ToolDirective::Continue => unreachable!(),
+                }));
+                completion_tool_name = Some(patched_call.name.clone());
                 let (error_code, message) = match result.directive {
                     ToolDirective::WaitUser => (
                         "skipped_due_to_wait_user",
@@ -135,6 +143,8 @@ impl ToolCallRunner {
         request.messages.extend(image_notifications);
         Ok(ToolRunOutcome {
             directive_result,
+            completion_reason,
+            completion_tool_name,
             interruption_messages,
         })
     }

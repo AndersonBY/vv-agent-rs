@@ -519,6 +519,11 @@ pub fn map_runtime_event(
                 payload.get("wait_reason").and_then(Value::as_str),
                 payload.get("error").and_then(Value::as_str),
                 payload.get("token_usage").cloned(),
+            )
+            .with_completion_details(
+                completion_reason_from_payload(payload, None),
+                payload.get("completion_tool_name").and_then(Value::as_str),
+                payload.get("partial_output").and_then(Value::as_str),
             );
             if let Some(session_id) = child_session_id {
                 event = event.with_session_id(session_id);
@@ -638,6 +643,11 @@ pub fn map_runtime_event(
                     .or_else(|| payload.get("final_answer"))
                     .and_then(Value::as_str)
                     .map(str::to_string),
+            )
+            .with_completion_details(
+                completion_reason_from_payload(payload, None),
+                payload.get("completion_tool_name").and_then(Value::as_str),
+                payload.get("partial_output").and_then(Value::as_str),
             ),
         ),
         "run_wait_user" => Some(
@@ -658,44 +668,82 @@ pub fn map_runtime_event(
                     .get("wait_reason")
                     .and_then(Value::as_str)
                     .map(str::to_string),
+            )
+            .with_completion_details(
+                completion_reason_from_payload(
+                    payload,
+                    Some(crate::types::CompletionReason::WaitUser),
+                ),
+                payload.get("completion_tool_name").and_then(Value::as_str),
+                payload.get("partial_output").and_then(Value::as_str),
             ),
         ),
-        "run_cancelled" => Some(RunEvent::new(
-            &context.run_id,
-            &context.trace_id,
-            &context.agent_name,
-            None,
-            RunEventPayload::RunCancelled {
-                reason: payload
-                    .get("reason")
-                    .and_then(Value::as_str)
-                    .or_else(|| payload.get("error").and_then(Value::as_str))
-                    .unwrap_or("run cancelled")
-                    .to_string(),
-            },
-        )),
-        "run_max_cycles" => Some(RunEvent::run_failed(
-            &context.run_id,
-            &context.trace_id,
-            &context.agent_name,
-            AgentErrorPayload::new(
-                payload
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("run_max_cycles"),
+        "run_cancelled" => Some(
+            RunEvent::new(
+                &context.run_id,
+                &context.trace_id,
+                &context.agent_name,
+                None,
+                RunEventPayload::RunCancelled {
+                    reason: payload
+                        .get("reason")
+                        .and_then(Value::as_str)
+                        .or_else(|| payload.get("error").and_then(Value::as_str))
+                        .unwrap_or("run cancelled")
+                        .to_string(),
+                },
+            )
+            .with_completion_details(
+                completion_reason_from_payload(
+                    payload,
+                    Some(crate::types::CompletionReason::Cancelled),
+                ),
+                None,
+                payload.get("partial_output").and_then(Value::as_str),
             ),
-        )),
-        "run_failed" | "cycle_failed" => Some(RunEvent::run_failed(
-            &context.run_id,
-            &context.trace_id,
-            &context.agent_name,
-            AgentErrorPayload::new(
-                payload
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("cycle failed"),
+        ),
+        "run_max_cycles" => Some(
+            RunEvent::run_failed(
+                &context.run_id,
+                &context.trace_id,
+                &context.agent_name,
+                AgentErrorPayload::new(
+                    payload
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("run_max_cycles"),
+                ),
+            )
+            .with_completion_details(
+                completion_reason_from_payload(
+                    payload,
+                    Some(crate::types::CompletionReason::MaxCycles),
+                ),
+                None,
+                payload.get("partial_output").and_then(Value::as_str),
             ),
-        )),
+        ),
+        "run_failed" | "cycle_failed" => Some(
+            RunEvent::run_failed(
+                &context.run_id,
+                &context.trace_id,
+                &context.agent_name,
+                AgentErrorPayload::new(
+                    payload
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("cycle failed"),
+                ),
+            )
+            .with_completion_details(
+                completion_reason_from_payload(
+                    payload,
+                    Some(crate::types::CompletionReason::Failed),
+                ),
+                None,
+                payload.get("partial_output").and_then(Value::as_str),
+            ),
+        ),
         _ => None,
     };
     mapped.map(|mapped_event| {
@@ -926,6 +974,17 @@ fn agent_status(payload: &std::collections::BTreeMap<String, Value>) -> crate::t
         "max_cycles" => crate::types::AgentStatus::MaxCycles,
         _ => crate::types::AgentStatus::Completed,
     }
+}
+
+fn completion_reason_from_payload(
+    payload: &std::collections::BTreeMap<String, Value>,
+    fallback: Option<crate::types::CompletionReason>,
+) -> Option<crate::types::CompletionReason> {
+    payload
+        .get("completion_reason")
+        .and_then(Value::as_str)
+        .and_then(crate::types::CompletionReason::parse)
+        .or(fallback)
 }
 
 #[cfg(test)]

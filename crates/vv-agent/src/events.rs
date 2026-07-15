@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
-use crate::types::{AgentStatus, Metadata};
+use crate::types::{AgentStatus, CompletionReason, Metadata};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -121,6 +121,7 @@ impl<'de> Deserialize<'de> for RunEvent {
                 )));
             }
         }
+        validate_completion_wire_fields(&value).map_err(D::Error::custom)?;
         if matches!(
             &wire.payload,
             RunEventPayload::ToolCallStarted { arguments, .. } if !arguments.is_object()
@@ -493,6 +494,25 @@ impl RunEvent {
         )
     }
 
+    pub fn completion_reason(&self) -> Option<CompletionReason> {
+        self.extra_fields
+            .get("completion_reason")
+            .and_then(Value::as_str)
+            .and_then(CompletionReason::parse)
+    }
+
+    pub fn completion_tool_name(&self) -> Option<&str> {
+        self.extra_fields
+            .get("completion_tool_name")
+            .and_then(Value::as_str)
+    }
+
+    pub fn partial_output(&self) -> Option<&str> {
+        self.extra_fields
+            .get("partial_output")
+            .and_then(Value::as_str)
+    }
+
     pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
         self.session_id = Some(session_id.into());
         self
@@ -586,6 +606,30 @@ impl RunEvent {
             "final_output".to_string(),
             final_output.map_or(Value::Null, Value::String),
         );
+        self
+    }
+
+    pub fn with_completion_details(
+        mut self,
+        completion_reason: Option<CompletionReason>,
+        completion_tool_name: Option<&str>,
+        partial_output: Option<&str>,
+    ) -> Self {
+        if let Some(reason) = completion_reason {
+            self.extra_fields.insert(
+                "completion_reason".to_string(),
+                Value::String(reason.as_str().to_string()),
+            );
+        }
+        for (key, value) in [
+            ("completion_tool_name", completion_tool_name),
+            ("partial_output", partial_output),
+        ] {
+            if let Some(value) = value {
+                self.extra_fields
+                    .insert(key.to_string(), Value::String(value.to_string()));
+            }
+        }
         self
     }
 
@@ -762,6 +806,30 @@ fn timestamp_seconds() -> f64 {
         .unwrap_or_default()
 }
 
+fn validate_completion_wire_fields(value: &Value) -> Result<(), String> {
+    if let Some(value) = value.get("completion_reason") {
+        match value {
+            Value::Null => {}
+            Value::String(reason) if CompletionReason::parse(reason).is_some() => {}
+            Value::String(reason) => {
+                return Err(format!(
+                    "unsupported run event completion_reason `{reason}`"
+                ));
+            }
+            _ => return Err("run event completion_reason must be a string or null".to_string()),
+        }
+    }
+    for field in ["completion_tool_name", "partial_output"] {
+        if value
+            .get(field)
+            .is_some_and(|value| !value.is_null() && !value.is_string())
+        {
+            return Err(format!("run event {field} must be a string or null"));
+        }
+    }
+    Ok(())
+}
+
 fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload) -> Metadata {
     let Some(object) = value.as_object() else {
         return Metadata::new();
@@ -774,11 +842,22 @@ fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload) -> Metadat
             "task_id",
             "wait_reason",
             "error",
+            "completion_reason",
+            "completion_tool_name",
+            "partial_output",
             "token_usage",
         ],
         RunEventPayload::HandoffStarted { .. } => &["status", "child_session_id"],
         RunEventPayload::HandoffCompleted { .. } => &["status", "child_session_id", "child_run_id"],
-        RunEventPayload::RunCompleted { .. } => &["final_output"],
+        RunEventPayload::RunCompleted { .. } => &[
+            "final_output",
+            "completion_reason",
+            "completion_tool_name",
+            "partial_output",
+        ],
+        RunEventPayload::RunFailed { .. } | RunEventPayload::RunCancelled { .. } => {
+            &["completion_reason", "partial_output"]
+        }
         _ => &[],
     };
     keys.iter()

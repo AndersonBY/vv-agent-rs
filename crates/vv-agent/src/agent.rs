@@ -12,7 +12,7 @@ use crate::runtime::RuntimeHook;
 use crate::tools::common::trim_portable_whitespace;
 use crate::tools::{AgentToolBuilder, BackgroundAgentTaskBuilder};
 use crate::tools::{Tool, ToolPolicy};
-use crate::types::{Metadata, SubAgentConfig};
+use crate::types::{Metadata, NoToolPolicy, SubAgentConfig};
 
 pub type InstructionProvider =
     Arc<dyn Fn(&crate::context::RunContext, &Agent) -> String + Send + Sync>;
@@ -33,6 +33,7 @@ pub struct Agent {
     output_validator: Option<OutputValidator>,
     hooks: Vec<Arc<dyn RuntimeHook>>,
     max_cycles: Option<u32>,
+    no_tool_policy: Option<NoToolPolicy>,
     tool_use_behavior: ToolUseBehavior,
     tool_policy: ToolPolicy,
     sub_agents: BTreeMap<String, SubAgentConfig>,
@@ -56,6 +57,7 @@ impl Agent {
                 output_validator: None,
                 hooks: Vec::new(),
                 max_cycles: None,
+                no_tool_policy: None,
                 tool_use_behavior: ToolUseBehavior::default(),
                 tool_policy: ToolPolicy::default(),
                 sub_agents: BTreeMap::new(),
@@ -121,6 +123,10 @@ impl Agent {
 
     pub fn max_cycles(&self) -> Option<u32> {
         self.max_cycles
+    }
+
+    pub fn no_tool_policy(&self) -> Option<NoToolPolicy> {
+        self.no_tool_policy
     }
 
     pub fn tool_use_behavior(&self) -> &ToolUseBehavior {
@@ -234,6 +240,11 @@ impl AgentBuilder {
 
     pub fn max_cycles(mut self, max_cycles: u32) -> Self {
         self.agent.max_cycles = Some(max_cycles);
+        self
+    }
+
+    pub fn no_tool_policy(mut self, policy: NoToolPolicy) -> Self {
+        self.agent.no_tool_policy = Some(policy);
         self
     }
 

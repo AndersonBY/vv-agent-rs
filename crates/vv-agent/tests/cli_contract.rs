@@ -35,6 +35,15 @@ fn resolved() -> ResolvedModelConfig {
 fn result(status: AgentStatus, error: Option<&str>) -> AgentResult {
     AgentResult {
         status,
+        completion_reason: match status {
+            AgentStatus::Completed => Some(vv_agent::CompletionReason::ToolFinish),
+            AgentStatus::WaitUser => Some(vv_agent::CompletionReason::WaitUser),
+            AgentStatus::Failed => Some(vv_agent::CompletionReason::Failed),
+            AgentStatus::MaxCycles => Some(vv_agent::CompletionReason::MaxCycles),
+            AgentStatus::Pending | AgentStatus::Running => None,
+        },
+        completion_tool_name: None,
+        partial_output: None,
         final_answer: (status == AgentStatus::Completed).then(|| "done".to_string()),
         wait_reason: None,
         error: error.map(str::to_string),

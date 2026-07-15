@@ -6,7 +6,7 @@ use crate::agent::Agent;
 use crate::events::{AgentErrorPayload, RunEvent, RunEventPayload};
 use crate::model::{ModelProvider, ModelRef};
 use crate::run_config::RunConfig;
-use crate::types::{AgentResult, AgentStatus};
+use crate::types::{AgentResult, AgentStatus, CompletionReason};
 
 pub(super) fn is_runtime_terminal_log(event: &str) -> bool {
     matches!(
@@ -31,8 +31,9 @@ pub(super) fn terminal_event(
     let cycle_index = u32::try_from(result.cycles.len())
         .ok()
         .filter(|value| *value > 0);
-    let cancelled = result.status == AgentStatus::Failed
-        && cancellation_token.is_some_and(crate::runtime::CancellationToken::is_cancelled);
+    let cancelled = result.completion_reason == Some(CompletionReason::Cancelled)
+        || (result.status == AgentStatus::Failed
+            && cancellation_token.is_some_and(crate::runtime::CancellationToken::is_cancelled));
     let mut event = if cancelled {
         RunEvent::new(
             run_id,
@@ -77,6 +78,11 @@ pub(super) fn terminal_event(
                 .or_else(|| result.error.clone()),
         )
     };
+    event = event.with_completion_details(
+        result.completion_reason,
+        result.completion_tool_name.as_deref(),
+        result.partial_output.as_deref(),
+    );
     if let Some(session_id) = session_id {
         event = event.with_session_id(session_id);
     }

@@ -14,7 +14,7 @@ pub(super) fn assistant_message_from_response(response: &LLMResponse) -> Message
     message
 }
 
-pub(super) fn extract_final_message(result: &ToolExecutionResult) -> String {
+pub(crate) fn extract_final_message(result: &ToolExecutionResult) -> String {
     result
         .metadata
         .get("final_message")
@@ -33,7 +33,7 @@ pub(super) fn extract_final_message(result: &ToolExecutionResult) -> String {
         .unwrap_or_else(|| result.content.clone())
 }
 
-pub(super) fn extract_wait_reason(result: &ToolExecutionResult) -> String {
+pub(crate) fn extract_wait_reason(result: &ToolExecutionResult) -> String {
     result
         .metadata
         .get("question")

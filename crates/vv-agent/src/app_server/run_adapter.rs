@@ -406,32 +406,67 @@ impl AppServerRunAdapter {
         owner_connection_id: ConnectionId,
         result: Result<RunResult, String>,
     ) {
-        let (status, run_id, final_output, error, token_usage) = match result {
+        let (
+            status,
+            run_id,
+            final_output,
+            completion_reason,
+            completion_tool_name,
+            partial_output,
+            error,
+            token_usage,
+        ) = match result {
             Ok(result) => {
                 let status = turn_status(result.status());
-                let error = if status == TurnStatus::Completed {
-                    None
-                } else {
+                let error = if status == TurnStatus::Failed {
                     result
                         .result()
                         .error
                         .clone()
                         .or_else(|| result.result().wait_reason.clone())
                         .or_else(|| Some("Turn failed".to_string()))
+                } else {
+                    None
                 };
                 (
                     status,
                     Some(result.run_id().to_string()),
                     result.final_output().map(str::to_string),
+                    result
+                        .completion_reason()
+                        .map(|reason| reason.as_str().to_string()),
+                    result.completion_tool_name().map(str::to_string),
+                    result.partial_output().map(str::to_string),
                     error,
                     Some(app_token_usage(&result.result().token_usage)),
                 )
             }
-            Err(error) => (TurnStatus::Failed, None, None, Some(error), None),
+            Err(error) => (
+                TurnStatus::Failed,
+                None,
+                None,
+                Some("failed".to_string()),
+                None,
+                None,
+                Some(error),
+                None,
+            ),
         };
         let mut stored_result = std::collections::BTreeMap::new();
         if let Some(final_output) = &final_output {
             stored_result.insert("finalOutput".to_string(), json!(final_output));
+        }
+        if let Some(completion_reason) = &completion_reason {
+            stored_result.insert("completionReason".to_string(), json!(completion_reason));
+        }
+        if let Some(completion_tool_name) = &completion_tool_name {
+            stored_result.insert(
+                "completionToolName".to_string(),
+                json!(completion_tool_name),
+            );
+        }
+        if let Some(partial_output) = &partial_output {
+            stored_result.insert("partialOutput".to_string(), json!(partial_output));
         }
         if let Some(error) = &error {
             stored_result.insert("error".to_string(), json!(error));
@@ -468,6 +503,9 @@ impl AppServerRunAdapter {
                     run_id,
                     status,
                     final_output,
+                    completion_reason,
+                    completion_tool_name,
+                    partial_output,
                     error,
                     token_usage,
                 }),
@@ -709,9 +747,10 @@ fn input_text(input: &[UserInput]) -> String {
 
 fn turn_status(status: AgentStatus) -> TurnStatus {
     match status {
+        AgentStatus::WaitUser => TurnStatus::Interrupted,
         AgentStatus::Completed => TurnStatus::Completed,
         AgentStatus::Pending | AgentStatus::Running => TurnStatus::Running,
-        AgentStatus::WaitUser | AgentStatus::Failed | AgentStatus::MaxCycles => TurnStatus::Failed,
+        AgentStatus::Failed | AgentStatus::MaxCycles => TurnStatus::Failed,
     }
 }
 

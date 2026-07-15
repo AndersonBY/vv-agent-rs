@@ -31,7 +31,7 @@ use crate::runtime::tool_planner::project_tool_policy;
 use crate::runtime::{AgentRuntime, ExecutionContext, RuntimeRunControls};
 use crate::sessions::SessionItem;
 use crate::tools::{ToolEnablementContext, ToolRegistry};
-use crate::types::{AgentResult, AgentStatus, AgentTask, MessageRole, NoToolPolicy};
+use crate::types::{AgentResult, AgentStatus, AgentTask, MessageRole};
 use crate::workspace::LocalWorkspaceBackend;
 
 pub use builder::RunnerBuilder;
@@ -45,8 +45,9 @@ use helpers::{
 };
 use session_blocking::block_on_session;
 use support::{
-    apply_input_guardrails, apply_output_guardrails, capture_event, effective_event_store,
-    extract_handoff, insert_context_metadata, merged_tool_policy, ApprovalHook, SingleRunOutcome,
+    apply_cancellation_precedence, apply_input_guardrails, apply_output_guardrails, capture_event,
+    effective_event_store, extract_handoff, insert_context_metadata, merged_tool_policy,
+    ApprovalHook, SingleRunOutcome,
 };
 use trace_lifecycle::RunTrace;
 
@@ -174,6 +175,11 @@ impl Runner {
                 .or(agent.max_cycles())
                 .unwrap_or(10),
         )?;
+        let no_tool_policy = config
+            .no_tool_policy
+            .or(self.default_run_config.no_tool_policy)
+            .or(agent.no_tool_policy())
+            .unwrap_or_default();
         let provider = config
             .model_provider
             .clone()
@@ -277,6 +283,11 @@ impl Runner {
                     &trace_id,
                     agent.name(),
                     AgentErrorPayload::new(&message),
+                )
+                .with_completion_details(
+                    Some(crate::types::CompletionReason::Failed),
+                    None,
+                    None,
                 );
                 if let Some(session_id) = event_session_id.as_ref() {
                     failed_event = failed_event.with_session_id(session_id);
@@ -377,7 +388,7 @@ impl Runner {
             input_text.clone(),
         );
         task.max_cycles = max_cycles;
-        task.no_tool_policy = NoToolPolicy::Continue;
+        task.no_tool_policy = no_tool_policy;
         task.has_sub_agents = false;
         task.sub_agents = agent.sub_agents().clone();
         task.metadata = agent.metadata().clone();
@@ -736,6 +747,7 @@ impl Runner {
             return Err(error);
         }
         let result = apply_output_guardrails(agent, &run_context, result);
+        let result = apply_cancellation_precedence(result, cancellation_token.as_ref());
         let output_validation_error = if result.status == AgentStatus::Completed {
             result.final_answer.as_deref().and_then(|output| {
                 agent.validate_output(output).err().map(|error| {
@@ -851,14 +863,14 @@ impl Runner {
         Ok(SingleRunOutcome {
             result: RunResult::new(agent.name().to_string(), result, resolved)
                 .with_ids(&run_context.run_id, &trace_id)
-                .with_input(&input_text)
+                .with_input(&original_input)
                 .with_new_items(new_items)
                 .with_events(events)
                 .with_metadata(result_metadata)
                 .with_resume_context(RunResumeContext {
                     agent: agent.clone(),
                     input: NormalizedInput {
-                        text: input_text.clone(),
+                        text: original_input.clone(),
                     },
                     config,
                     runner: self.clone(),

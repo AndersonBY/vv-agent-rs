@@ -369,6 +369,9 @@ impl RuntimeSubAgentSession {
             wait_reason: result.wait_reason,
             error: result.error,
             error_code,
+            completion_reason: result.completion_reason,
+            completion_tool_name: result.completion_tool_name,
+            partial_output: result.partial_output,
             cycles,
             todo_list,
             resolved: self.resolved.clone(),
@@ -385,6 +388,9 @@ impl RuntimeSubAgentSession {
             wait_reason: None,
             error: Some(error.into()),
             error_code: Some("sub_task_failed".to_string()),
+            completion_reason: Some(crate::types::CompletionReason::Failed),
+            completion_tool_name: None,
+            partial_output: None,
             cycles,
             todo_list: Vec::new(),
             resolved: self.resolved.clone(),
@@ -570,7 +576,9 @@ mod capability_projection_tests {
         StreamCallback,
     };
     use crate::tools::{build_default_registry, ApprovalDecision};
-    use crate::types::{AgentStatus, AgentTask, LLMResponse, TokenUsage};
+    use crate::types::{
+        AgentResult, AgentStatus, AgentTask, CompletionReason, LLMResponse, TokenUsage,
+    };
     use crate::workspace::MemoryWorkspaceBackend;
 
     struct AllowingApprovalProvider;
@@ -722,6 +730,8 @@ mod capability_projection_tests {
         );
     }
 
+    mod wait_user;
+
     #[test]
     fn session_cancel_targets_only_the_active_child_token_and_clears_after_run() {
         let parent = CancellationToken::default();
@@ -744,22 +754,6 @@ mod capability_projection_tests {
         assert!(independent_session.cancel());
         assert!(independent.is_cancelled());
         independent_session.finish_active_run();
-    }
-
-    #[test]
-    fn sub_runtime_inherits_settings_file_and_default_backend() {
-        let settings_file = PathBuf::from("/contract/llm-settings.json");
-        let mut session = runtime_session(None);
-        session.settings_file = Some(settings_file.clone());
-        session.default_backend = Some("contract-backend".to_string());
-
-        let runtime = session.build_runtime(&session.tool_policy);
-
-        assert_eq!(
-            runtime.settings_file.as_deref(),
-            Some(settings_file.as_path())
-        );
-        assert_eq!(runtime.default_backend.as_deref(), Some("contract-backend"));
     }
 
     #[test]

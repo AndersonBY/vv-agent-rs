@@ -347,10 +347,14 @@ fn failed_result(
     shared_state: Metadata,
 ) -> AgentResult {
     let token_usage = crate::runtime::summarize_task_token_usage(&cycles);
+    let partial_output = crate::types::last_assistant_output(&cycles);
     AgentResult {
         status: AgentStatus::Failed,
         messages,
         cycles,
+        completion_reason: Some(crate::types::CompletionReason::Failed),
+        completion_tool_name: None,
+        partial_output,
         final_answer: None,
         wait_reason: None,
         error: Some(error),

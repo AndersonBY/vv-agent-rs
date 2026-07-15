@@ -4,10 +4,16 @@ use serde_json::Value;
 
 use crate::events::{RunEvent, RunEventPayload};
 use crate::result::{PendingToolApproval, RunResult, RunResumeContext, RunState};
-use crate::types::{AgentResult, ToolResultStatus};
+use crate::types::{
+    last_assistant_output, AgentResult, AgentStatus, CompletionReason, ToolDirective,
+};
 
+use super::helpers::terminal_event;
 use super::session_blocking::block_on_session;
-use super::support::{capture_event, effective_event_store, extract_handoff, SingleRunOutcome};
+use super::support::{
+    apply_cancellation_precedence, apply_output_guardrails, capture_event, effective_event_store,
+    extract_handoff, SingleRunOutcome,
+};
 use super::{effective_session_id, NormalizedInput, Runner};
 
 impl Runner {
@@ -40,6 +46,7 @@ impl Runner {
                 &resume_context,
                 &approved_ids,
                 &approval_consumption,
+                input.as_ref(),
             )
             .await
         {
@@ -65,6 +72,7 @@ impl Runner {
         resume_context: &RunResumeContext,
         approved_ids: &[String],
         approval_consumption: &Arc<Mutex<std::collections::BTreeSet<String>>>,
+        resume_input: Option<&NormalizedInput>,
     ) -> Option<Result<RunResult, String>> {
         let approval = match select_approved_tool_context(
             resume_context.pending_tool_approval.as_ref(),
@@ -77,6 +85,40 @@ impl Runner {
         if !approval_snapshot_matches_result(source.result(), &approval) {
             return Some(Err(
                 "approved tool call does not match the captured interruption".to_string(),
+            ));
+        }
+        if resume_input.is_some() {
+            return Some(Err(
+                "input cannot be provided when resuming an approved tool call".to_string(),
+            ));
+        }
+        let cancellation_token = resume_context
+            .config
+            .cancellation_token
+            .as_ref()
+            .or(self.default_run_config.cancellation_token.as_ref());
+        if cancellation_token.is_some_and(crate::runtime::CancellationToken::is_cancelled) {
+            let mut cancelled = source.result().clone();
+            cancelled.status = AgentStatus::Failed;
+            cancelled.completion_reason = Some(CompletionReason::Cancelled);
+            cancelled.completion_tool_name = None;
+            cancelled.partial_output = cancelled
+                .partial_output
+                .or_else(|| last_assistant_output(&cancelled.cycles));
+            cancelled.error = Some(
+                cancellation_token
+                    .and_then(crate::runtime::CancellationToken::reason)
+                    .unwrap_or_else(|| "run cancelled".to_string()),
+            );
+            cancelled.final_answer = None;
+            cancelled.wait_reason = None;
+            return Some(self.finalize_approval_terminal(
+                source,
+                resume_context,
+                &approval.interruption_id,
+                cancelled,
+                source.new_items().to_vec(),
+                cancellation_token,
             ));
         }
         {
@@ -104,22 +146,20 @@ impl Runner {
             Ok(result) => result,
             Err(error) => return Some(Err(error)),
         };
-        let tool_result = approval.hook_manager.apply_after_tool_call(
+        let mut tool_result = approval.hook_manager.apply_after_tool_call(
             &approval.task,
             approval.cycle_index,
             &call,
             &context,
             tool_result,
         );
-        if tool_result.status != ToolResultStatus::Success {
-            return Some(Err(tool_result.content));
-        }
+        let behavior_reason = crate::runtime::tool_call_runner::apply_tool_use_behavior(
+            &approval.task,
+            &call,
+            &mut tool_result,
+        );
         let mut agent_result = source.result().clone();
         agent_result.shared_state = context.shared_state.clone();
-        agent_result.status = crate::types::AgentStatus::Completed;
-        agent_result.final_answer = Some(tool_result.content.clone());
-        agent_result.wait_reason = None;
-        agent_result.error = None;
         if let Some(cycle) = agent_result
             .cycles
             .iter_mut()
@@ -145,13 +185,14 @@ impl Runner {
         });
         agent_result.messages.push(tool_message.clone());
         if let Some(session) = resume_context.config.session.as_ref() {
-            let Some(session_item) = crate::sessions::SessionItem::from_message(&tool_message)
-            else {
+            let session_items =
+                crate::sessions::SessionItem::from_message(&tool_message).map(|item| vec![item]);
+            let Some(session_items) = session_items else {
                 return Some(Err(
-                    "approved tool result cannot be persisted to session".to_string()
+                    "approved resume messages cannot be persisted to session".to_string(),
                 ));
             };
-            if let Err(error) = block_on_session(session.add_items(vec![session_item])) {
+            if let Err(error) = block_on_session(session.add_items(session_items)) {
                 return Some(Err(error));
             }
         }
@@ -165,34 +206,103 @@ impl Runner {
             .cloned()
             .collect::<Vec<_>>();
         new_items.push(tool_message);
-        let mut resumed = RunResult::new(
-            resume_context.agent.name().to_string(),
+
+        if tool_result.directive == ToolDirective::Continue {
+            let mut config = resume_context.config.clone();
+            config.initial_messages = Some(agent_result.messages.clone());
+            config.initial_shared_state = agent_result.shared_state.clone();
+            config.trace_id = Some(source.trace_id().to_string());
+            let result = self
+                .run_with_config(&resume_context.agent, source.input().to_string(), config)
+                .await
+                .map(|result| {
+                    let mut metadata = result.metadata().clone();
+                    metadata.insert("resumed".to_string(), Value::Bool(true));
+                    metadata.insert(
+                        "approved_interruption_id".to_string(),
+                        Value::String(approval.interruption_id.clone()),
+                    );
+                    result.with_metadata(metadata)
+                });
+            return Some(result);
+        }
+
+        let completion_reason = behavior_reason.unwrap_or(match tool_result.directive {
+            ToolDirective::Finish => CompletionReason::ToolFinish,
+            ToolDirective::WaitUser => CompletionReason::WaitUser,
+            ToolDirective::Continue => unreachable!(),
+        });
+        agent_result.completion_reason = Some(completion_reason);
+        agent_result.completion_tool_name = Some(call.name.clone());
+        agent_result.error = None;
+        match tool_result.directive {
+            ToolDirective::Finish => {
+                agent_result.status = AgentStatus::Completed;
+                agent_result.partial_output = None;
+                agent_result.final_answer =
+                    Some(crate::runtime::extract_final_message(&tool_result));
+                agent_result.wait_reason = None;
+            }
+            ToolDirective::WaitUser => {
+                agent_result.status = AgentStatus::WaitUser;
+                agent_result.partial_output = last_assistant_output(&agent_result.cycles);
+                agent_result.final_answer = None;
+                agent_result.wait_reason = Some(crate::runtime::extract_wait_reason(&tool_result));
+            }
+            ToolDirective::Continue => unreachable!(),
+        }
+        let guardrail_context = context
+            .run_context
+            .clone()
+            .unwrap_or_else(|| crate::RunContext {
+                run_id: source.run_id().to_string(),
+                agent_name: resume_context.agent.name().to_string(),
+                metadata: source.metadata().clone(),
+                ..crate::RunContext::default()
+            });
+        agent_result =
+            apply_output_guardrails(&resume_context.agent, &guardrail_context, agent_result);
+        agent_result = apply_cancellation_precedence(agent_result, cancellation_token);
+        let output_validation_error = agent_result
+            .final_answer
+            .as_deref()
+            .filter(|_| agent_result.status == AgentStatus::Completed)
+            .and_then(|output| {
+                resume_context
+                    .agent
+                    .validate_output(output)
+                    .err()
+                    .map(|error| {
+                        format!(
+                            "failed to validate final output for agent `{}` as `{}`: {error}",
+                            resume_context.agent.name(),
+                            resume_context
+                                .agent
+                                .output_type_name()
+                                .unwrap_or("configured output type")
+                        )
+                    })
+            });
+        let mut resumed = match self.finalize_approval_terminal(
+            source,
+            resume_context,
+            &approval.interruption_id,
             agent_result,
-            source
-                .resolved_model()
-                .cloned()
-                .expect("interrupted runs have a resolved model"),
-        )
-        .with_ids(source.run_id(), source.trace_id())
-        .with_input(source.input())
-        .with_new_items(new_items)
-        .with_events(source.events().to_vec())
-        .with_metadata({
-            let mut metadata = source.metadata().clone();
-            metadata.insert("resumed".to_string(), Value::Bool(true));
-            metadata.insert(
-                "approved_interruption_id".to_string(),
-                Value::String(approval.interruption_id.clone()),
-            );
-            metadata
-        })
-        .with_resume_context(resume_context.clone());
+            new_items,
+            cancellation_token,
+        ) {
+            Ok(resumed) => resumed,
+            Err(error) => return Some(Err(error)),
+        };
+        if let Some(error) = output_validation_error {
+            return Some(Err(error));
+        }
+        let session_id = effective_session_id(&self.default_run_config, &resume_context.config);
         let Some(handoff) = extract_handoff(resumed.result()) else {
             return Some(Ok(resumed));
         };
 
         let event_collector = Arc::new(Mutex::new(resumed.events().to_vec()));
-        let session_id = effective_session_id(&self.default_run_config, &resume_context.config);
         let mut legacy_event = RunEvent::new(
             resumed.run_id(),
             resumed.trace_id(),
@@ -249,6 +359,64 @@ impl Runner {
             .map_err(|error| format!("resume handoff task failed: {error}"))
             .and_then(|result| result),
         )
+    }
+
+    fn finalize_approval_terminal(
+        &self,
+        source: &RunResult,
+        resume_context: &RunResumeContext,
+        interruption_id: &str,
+        agent_result: AgentResult,
+        new_items: Vec<crate::types::Message>,
+        cancellation_token: Option<&crate::runtime::CancellationToken>,
+    ) -> Result<RunResult, String> {
+        let resumed_run_id = format!("run_{}", uuid::Uuid::new_v4().simple());
+        let mut resumed = RunResult::new(
+            resume_context.agent.name().to_string(),
+            agent_result,
+            source
+                .resolved_model()
+                .cloned()
+                .expect("interrupted runs have a resolved model"),
+        )
+        .with_ids(&resumed_run_id, source.trace_id())
+        .with_input(source.input())
+        .with_new_items(new_items)
+        .with_events(source.events().to_vec())
+        .with_metadata({
+            let mut metadata = source.metadata().clone();
+            metadata.insert("resumed".to_string(), Value::Bool(true));
+            metadata.insert(
+                "approved_interruption_id".to_string(),
+                Value::String(interruption_id.to_string()),
+            );
+            metadata
+        })
+        .with_resume_context(resume_context.clone());
+        let event_collector = Arc::new(Mutex::new(resumed.events().to_vec()));
+        let session_id = effective_session_id(&self.default_run_config, &resume_context.config);
+        let (event_store, event_store_fail_closed) =
+            effective_event_store(&self.default_run_config, &resume_context.config);
+        capture_event(
+            Some(&event_collector),
+            None,
+            event_store.as_ref(),
+            event_store_fail_closed,
+            terminal_event(
+                resumed.result(),
+                resumed.run_id(),
+                resumed.trace_id(),
+                resume_context.agent.name(),
+                session_id.as_deref(),
+                cancellation_token,
+            ),
+        )?;
+        let events = event_collector
+            .lock()
+            .map(|events| events.clone())
+            .unwrap_or_default();
+        resumed = resumed.with_events(events);
+        Ok(resumed)
     }
 }
 

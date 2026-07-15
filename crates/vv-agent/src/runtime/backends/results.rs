@@ -1,6 +1,9 @@
 use super::super::token_usage::summarize_task_token_usage;
 use crate::runtime::CancellationToken;
-use crate::types::{AgentResult, AgentStatus, CycleRecord, Message, Metadata};
+use crate::types::{
+    last_assistant_output, AgentResult, AgentStatus, CompletionReason, CycleRecord, Message,
+    Metadata,
+};
 
 pub(crate) fn execute_cycle_loop<F>(
     messages: Vec<Message>,
@@ -65,10 +68,14 @@ where
     }
 
     let token_usage = summarize_task_token_usage(&cycles);
+    let partial_output = last_assistant_output(&cycles);
     AgentResult {
         status: AgentStatus::MaxCycles,
         messages,
         cycles,
+        completion_reason: Some(CompletionReason::MaxCycles),
+        completion_tool_name: None,
+        partial_output,
         final_answer: Some("Reached max cycles without finish signal.".to_string()),
         wait_reason: None,
         error: None,
@@ -83,10 +90,14 @@ pub(crate) fn cancelled_backend_result(
     shared_state: Metadata,
 ) -> AgentResult {
     let token_usage = summarize_task_token_usage(&cycles);
+    let partial_output = last_assistant_output(&cycles);
     AgentResult {
         status: AgentStatus::Failed,
         messages,
         cycles,
+        completion_reason: Some(CompletionReason::Cancelled),
+        completion_tool_name: None,
+        partial_output,
         final_answer: None,
         wait_reason: None,
         error: Some("Operation was cancelled".to_string()),
@@ -102,10 +113,14 @@ pub(crate) fn failed_backend_result(
     error: String,
 ) -> AgentResult {
     let token_usage = summarize_task_token_usage(&cycles);
+    let partial_output = last_assistant_output(&cycles);
     AgentResult {
         status: AgentStatus::Failed,
         messages,
         cycles,
+        completion_reason: Some(CompletionReason::Failed),
+        completion_tool_name: None,
+        partial_output,
         final_answer: None,
         wait_reason: None,
         error: Some(error),

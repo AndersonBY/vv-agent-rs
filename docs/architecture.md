@@ -28,9 +28,10 @@ CLI / SDK / embedding application
   -> RunResult / AgentResult
 ```
 
-Task completion is tool-driven. The model must call `task_finish` or `ask_user`
-to finish, wait for user input, or continue; the runtime does not infer success
-from an assistant prose message.
+The backward-compatible default is tool-driven: `task_finish` finishes and
+`ask_user` waits for input. `Agent` and `RunConfig` can explicitly select a
+no-tool finish or wait policy. The runtime applies that control without
+classifying assistant text or inferring task-specific success.
 
 Token accounting keeps provider truth separate from compatibility values.
 `TokenUsage::usage_source` identifies provider-reported, estimated, or missing
@@ -182,7 +183,8 @@ outside-workspace access are boundary concerns, not handler-specific shortcuts.
 - Requested model keys resolve exactly; independent provider models are not
   aliases for one another.
 - Provider HTTP and request serialization stay in `vv-llm`.
-- Terminal agent states are explicit tool outcomes.
+- Terminal agent states come from explicit tool directives, declared no-tool
+  policy, cancellation, failure, or resource bounds.
 - Runtime hooks, cancellation, streaming, memory compaction, and execution
   backends must compose without changing public result shapes.
 - Large tool outputs keep model-facing text and structured metadata separated.

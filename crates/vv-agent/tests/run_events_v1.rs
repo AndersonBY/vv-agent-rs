@@ -5,7 +5,7 @@ use vv_agent::{AgentErrorPayload, AgentStatus, RunEvent, RunEventPayload};
 
 const PARITY_FIXTURE: &str = include_str!("fixtures/parity/run_events_v1.jsonl");
 const PARITY_FIXTURE_SHA256: &str =
-    "6636e5aaf840173cfb06302bf40b90b72d74307fcaf396d1d150b3dcd1cb220b";
+    "7d0d80a2587f242c2bdc04afc7452a632fab781845f2ea9a63742d2c62a0174e";
 
 #[test]
 fn run_event_v1_has_identity_trace_session_and_timing() {

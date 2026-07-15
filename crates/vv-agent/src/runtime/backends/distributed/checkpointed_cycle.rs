@@ -1,6 +1,8 @@
 use crate::runtime::state::StateStore;
 use crate::runtime::CancellationToken;
-use crate::types::{AgentResult, AgentStatus, AgentTask, CycleRecord, Message, Metadata};
+use crate::types::{
+    AgentResult, AgentStatus, AgentTask, CompletionReason, CycleRecord, Message, Metadata,
+};
 
 use super::CycleDispatchResult;
 
@@ -54,6 +56,9 @@ where
             status: AgentStatus::Failed,
             messages: Vec::new(),
             cycles: Vec::new(),
+            completion_reason: Some(CompletionReason::Failed),
+            completion_tool_name: None,
+            partial_output: None,
             final_answer: None,
             wait_reason: None,
             error: Some(format!("No checkpoint found for task {}", task.task_id)),

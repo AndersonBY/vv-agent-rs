@@ -755,10 +755,19 @@
     "TurnCompletedParams": {
       "additionalProperties": false,
       "properties": {
+        "completionReason": {
+          "type": "string"
+        },
+        "completionToolName": {
+          "type": "string"
+        },
         "error": {
           "type": "string"
         },
         "finalOutput": {},
+        "partialOutput": {
+          "type": "string"
+        },
         "runId": {
           "type": "string"
         },
