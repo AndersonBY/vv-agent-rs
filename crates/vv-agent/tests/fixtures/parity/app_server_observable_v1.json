@@ -94,8 +94,38 @@
     "optionalFieldsOmittedWhenAbsent": [
       "runId",
       "finalOutput",
+      "completionReason",
+      "completionToolName",
+      "partialOutput",
       "error",
       "tokenUsage"
+    ],
+    "completionReasonValues": [
+      "tool_finish",
+      "no_tool_finish",
+      "stop_on_first_tool",
+      "stop_at_tool_name",
+      "wait_user",
+      "max_cycles",
+      "cancelled",
+      "failed",
+      "budget_exhausted"
+    ],
+    "agentStatusProjection": [
+      {
+        "name": "wait_user_is_interrupted_without_error",
+        "agentStatus": "wait_user",
+        "turnStatus": "interrupted",
+        "completionReason": "wait_user",
+        "errorField": "omitted"
+      },
+      {
+        "name": "cancelled_failure_stays_failed",
+        "agentStatus": "failed",
+        "turnStatus": "failed",
+        "completionReason": "cancelled",
+        "errorField": "present"
+      }
     ]
   },
   "nullability": {
