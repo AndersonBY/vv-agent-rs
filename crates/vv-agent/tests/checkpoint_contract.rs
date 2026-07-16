@@ -14,7 +14,7 @@ use vv_agent::runtime::stores::sqlite::SqliteStateStore;
 use vv_agent::{AgentResult, AgentStatus, Message};
 
 const FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec_v1.json");
-const FIXTURE_SHA256: &str = "7a4b8ae2472eca3e643b37a6fa7f4f10202a31c53fe5e1aeeafe34d524b6069f";
+const FIXTURE_SHA256: &str = "e7be2cfafca7f741d32b4537cb003f0179f69162171432c17cd746a0ff2119cf";
 
 fn checkpoint(task_id: &str) -> Checkpoint {
     Checkpoint {
@@ -31,6 +31,7 @@ fn checkpoint(task_id: &str) -> Checkpoint {
         claimed_cycle: None,
         lease_expires_at_ms: None,
         terminal_result: None,
+        budget_usage: None,
     }
 }
 
@@ -161,6 +162,8 @@ fn memory_and_sqlite_revision_leases_reject_stale_commits_and_persist_terminal()
             error: None,
             shared_state: committed.shared_state.clone(),
             token_usage: Default::default(),
+            budget_usage: None,
+            budget_exhaustion: None,
         };
         let revision = committed.revision;
         committed.status = result.status;
@@ -356,6 +359,8 @@ fn claimed_terminal_result_commits_before_scheduler_acknowledgement() {
         error: None,
         shared_state: claimed.shared_state.clone(),
         token_usage: Default::default(),
+        budget_usage: None,
+        budget_exhaustion: None,
     });
     let revision = claimed.revision;
 

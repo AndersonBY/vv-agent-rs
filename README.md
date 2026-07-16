@@ -226,6 +226,19 @@ modes. `Default` inherits the next configured policy; explicit `OnRequest`
 follows each tool's static or dynamic approval declaration. `Always` forces
 approval and `Never` bypasses it without evaluating a dynamic tool predicate.
 
+### Run Budgets
+
+`RunConfig::budget_limits` can independently limit total tokens, uncached input
+tokens, total or exact-name tool calls, active wall time, and host-metered cost.
+All limits are optional and task-neutral: the framework does not inspect the
+prompt, task category, milestones, or answer quality when enforcing them.
+
+Inspect `result.budget_usage()` and `result.budget_exhaustion()`. A budget stop
+is a typed failed result with completion reason `budget_exhausted`, not a
+successful answer. Runs without configured limits preserve the existing event
+flow. See [Run Budgets](docs/run-budgets.md) and
+`crates/vv-agent/examples/07_token_budget_guard.rs`.
+
 ### App Server
 
 Use the App Server when a product shell needs to drive `vv-agent` over a stable

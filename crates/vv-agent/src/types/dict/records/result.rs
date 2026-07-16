@@ -7,7 +7,7 @@ use super::super::token_usage::{task_token_usage_from_dict, task_token_usage_to_
 
 impl AgentResult {
     pub fn to_dict(&self) -> Value {
-        Value::Object(serde_json::Map::from_iter([
+        let mut payload = serde_json::Map::from_iter([
             (
                 "status".to_string(),
                 Value::String(agent_status_value(self.status).to_string()),
@@ -68,7 +68,22 @@ impl AgentResult {
                 "token_usage".to_string(),
                 task_token_usage_to_dict(&self.token_usage),
             ),
-        ]))
+        ]);
+        if let Some(budget_usage) = &self.budget_usage {
+            payload.insert(
+                "budget_usage".to_string(),
+                serde_json::to_value(budget_usage)
+                    .expect("validated budget usage always serializes"),
+            );
+        }
+        if let Some(budget_exhaustion) = &self.budget_exhaustion {
+            payload.insert(
+                "budget_exhaustion".to_string(),
+                serde_json::to_value(budget_exhaustion)
+                    .expect("validated budget exhaustion always serializes"),
+            );
+        }
+        Value::Object(payload)
     }
 
     pub fn from_dict(data: &Value) -> Result<Self, String> {
@@ -90,6 +105,26 @@ impl AgentResult {
             completion_reason: optional_completion_reason(object)?,
             completion_tool_name: strict_optional_string(object, "completion_tool_name")?,
             partial_output: strict_optional_string(object, "partial_output")?,
+            budget_usage: object
+                .get("budget_usage")
+                .filter(|value| !value.is_null())
+                .map(|value| {
+                    serde_json::from_value(value.clone()).map_err(|error| {
+                        format!("AgentResult field 'budget_usage' must be a valid object: {error}")
+                    })
+                })
+                .transpose()?,
+            budget_exhaustion: object
+                .get("budget_exhaustion")
+                .filter(|value| !value.is_null())
+                .map(|value| {
+                    serde_json::from_value(value.clone()).map_err(|error| {
+                        format!(
+                            "AgentResult field 'budget_exhaustion' must be a valid object: {error}"
+                        )
+                    })
+                })
+                .transpose()?,
             final_answer: read_optional_string(object, "final_answer"),
             wait_reason: read_optional_string(object, "wait_reason"),
             error: read_optional_string(object, "error"),

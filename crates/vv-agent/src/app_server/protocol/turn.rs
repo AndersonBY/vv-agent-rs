@@ -93,6 +93,10 @@ pub struct TurnCompletedParams {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_usage: Option<AppTokenUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_usage: Option<BTreeMap<String, Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_exhaustion: Option<BTreeMap<String, Value>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]

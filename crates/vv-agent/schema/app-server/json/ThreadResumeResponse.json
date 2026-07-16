@@ -755,6 +755,14 @@
     "TurnCompletedParams": {
       "additionalProperties": false,
       "properties": {
+        "budgetExhaustion": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "budgetUsage": {
+          "additionalProperties": true,
+          "type": "object"
+        },
         "completionReason": {
           "type": "string"
         },

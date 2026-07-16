@@ -55,7 +55,7 @@ cargo run -p vv-agent --example 03_sdk_client
 | `04_session_api` | Long-lived `MemorySession` with `RunConfig`. |
 | `05_ask_user_resume` | `ask_user` wait state and resume flow. |
 | `06_runtime_hooks` | Before-LLM and before-tool hooks. |
-| `07_token_budget_guard` | Token budget monitoring and forced finish behavior. |
+| `07_token_budget_guard` | Public token and tool-call run budgets. |
 | `08_custom_tool` | Registering and invoking a custom tool. |
 | `09_resource_loader` | Loading agent, prompt, and skill resources from a workspace. |
 | `10_read_image` | Multimodal image reading through the `read_image` tool. |

@@ -5,6 +5,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::approval::{ApprovalBroker, ApprovalProvider};
+use crate::budget::{HostCostMeter, RunBudgetLimits};
 use crate::context_providers::ContextProvider;
 use crate::event_store::RunEventStore;
 use crate::execution_mode::ExecutionMode;
@@ -24,6 +25,8 @@ use crate::types::{Message, Metadata, NoToolPolicy};
 use crate::workspace::WorkspaceBackend;
 
 pub type ToolRegistryFactory = Arc<dyn Fn() -> ToolRegistry + Send + Sync + 'static>;
+
+pub(crate) const INITIAL_BUDGET_USAGE_METADATA_KEY: &str = "_vv_agent_initial_budget_usage";
 
 pub(crate) const MAX_CYCLES_RANGE_ERROR: &str = "max_cycles must be between 1 and 4294967295";
 
@@ -71,6 +74,8 @@ pub struct RunConfig {
     pub sub_task_manager: Option<SubTaskManager>,
     pub runtime_log_handler: Option<RuntimeEventHandler>,
     pub runtime_stream_callback: Option<LlmStreamCallback>,
+    pub budget_limits: Option<RunBudgetLimits>,
+    pub host_cost_meter: Option<Arc<dyn HostCostMeter>>,
     pub metadata: Metadata,
 }
 
@@ -95,6 +100,8 @@ impl RunConfig {
         child.sub_task_manager = None;
         child.runtime_log_handler = None;
         child.runtime_stream_callback = None;
+        child.host_cost_meter = None;
+        child.metadata.remove(INITIAL_BUDGET_USAGE_METADATA_KEY);
         child
     }
 }
@@ -344,6 +351,21 @@ impl RunConfigBuilder {
 
     pub fn runtime_stream_callback_arc(mut self, callback: LlmStreamCallback) -> Self {
         self.config.runtime_stream_callback = Some(callback);
+        self
+    }
+
+    pub fn budget_limits(mut self, limits: RunBudgetLimits) -> Self {
+        self.config.budget_limits = Some(limits);
+        self
+    }
+
+    pub fn host_cost_meter(mut self, meter: impl HostCostMeter + 'static) -> Self {
+        self.config.host_cost_meter = Some(Arc::new(meter));
+        self
+    }
+
+    pub fn host_cost_meter_arc(mut self, meter: Arc<dyn HostCostMeter>) -> Self {
+        self.config.host_cost_meter = Some(meter);
         self
     }
 

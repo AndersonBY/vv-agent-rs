@@ -66,6 +66,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             model_provider: controls.model_provider,
             parent_run_context: controls.parent_run_context,
             tool_policy: controls.tool_policy,
+            budget_limits: controls.budget_limits,
         };
         Some(Arc::new(move |request| {
             run_sub_task(sub_task_context.clone(), request)
@@ -215,6 +216,8 @@ fn complete_failed_sub_run(
         lifecycle,
         &outcome,
         None,
+        None,
+        None,
     ) {
         outcome = failed_sub_task_outcome(
             &lifecycle.task_id,
@@ -222,7 +225,14 @@ fn complete_failed_sub_run(
             &lifecycle.session_id,
             sink_error,
         );
-        emit_sub_run_completed_to_log(&context.parent_log_handler, lifecycle, &outcome, None);
+        emit_sub_run_completed_to_log(
+            &context.parent_log_handler,
+            lifecycle,
+            &outcome,
+            None,
+            None,
+            None,
+        );
     }
     record_sub_task_outcome(
         context,
@@ -316,6 +326,7 @@ mod parity_event_tests {
                 ..RunContext::default()
             }),
             tool_policy: None,
+            budget_limits: None,
         }
     }
 

@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::budget::{BudgetExhaustion, BudgetUsageSnapshot};
 use crate::runtime::sub_agents::events::{
     canonicalize_sub_agent_stream_event, emit_parent_sub_agent_event,
     emit_parent_sub_agent_stream_event, emit_sub_agent_session_event, emit_sub_run_completed,
@@ -18,11 +19,20 @@ use crate::tools::ToolPolicy;
 use crate::types::{AgentResult, AgentStatus, SubTaskOutcome, TaskTokenUsage};
 use crate::RunContext;
 
+mod progress;
+
 use super::projection::project_execution_context;
 use super::RuntimeSubAgentSession;
 use crate::runtime::sub_agents::task::canonical_sub_run_metadata;
+use progress::ObservedRunProgress;
 
 type RunPromptError = Box<(String, Option<TaskTokenUsage>)>;
+type RunPromptSuccess = (
+    SubTaskOutcome,
+    Option<TaskTokenUsage>,
+    Option<BudgetUsageSnapshot>,
+    Option<BudgetExhaustion>,
+);
 
 impl RuntimeSubAgentSession {
     pub(super) fn run_prompt(
@@ -46,7 +56,7 @@ impl RuntimeSubAgentSession {
                 &lifecycle,
             ) {
                 let outcome = self.failed_outcome(error, 0);
-                return Ok(self.finish_outcome(&controls, &lifecycle, outcome, None));
+                return Ok(self.finish_outcome(&controls, &lifecycle, outcome, None, None, None));
             }
         }
         let observed_progress = Arc::new(ObservedRunProgress::default());
@@ -59,21 +69,33 @@ impl RuntimeSubAgentSession {
                 observed_progress.clone(),
             )
         })) {
-            Ok(Ok((outcome, token_usage))) => {
-                self.finish_outcome(&controls, &lifecycle, outcome, token_usage.as_ref())
-            }
+            Ok(Ok((outcome, token_usage, budget_usage, budget_exhaustion))) => self.finish_outcome(
+                &controls,
+                &lifecycle,
+                outcome,
+                token_usage.as_ref(),
+                budget_usage.as_ref(),
+                budget_exhaustion.as_ref(),
+            ),
             Ok(Err(error)) => {
                 let (error, token_usage) = *error;
                 let (observed_cycles, observed_usage) = observed_progress.snapshot();
                 let outcome = self.failed_outcome(error, observed_cycles);
                 let token_usage = token_usage.as_ref().or(observed_usage.as_ref());
-                self.finish_outcome(&controls, &lifecycle, outcome, token_usage)
+                self.finish_outcome(&controls, &lifecycle, outcome, token_usage, None, None)
             }
             Err(payload) => {
                 let (observed_cycles, token_usage) = observed_progress.snapshot();
                 let outcome =
                     self.failed_outcome(panic_payload_to_string(payload.as_ref()), observed_cycles);
-                self.finish_outcome(&controls, &lifecycle, outcome, token_usage.as_ref())
+                self.finish_outcome(
+                    &controls,
+                    &lifecycle,
+                    outcome,
+                    token_usage.as_ref(),
+                    None,
+                    None,
+                )
             }
         };
         Ok(outcome)
@@ -86,7 +108,7 @@ impl RuntimeSubAgentSession {
         cancellation_token: CancellationToken,
         controls: &EffectiveTurnControls,
         observed_progress: Arc<ObservedRunProgress>,
-    ) -> Result<(SubTaskOutcome, Option<TaskTokenUsage>), RunPromptError> {
+    ) -> Result<RunPromptSuccess, RunPromptError> {
         let (initial_messages, shared_state) = {
             let state = self.state.lock().map_err(|_| {
                 Box::new((
@@ -181,12 +203,16 @@ impl RuntimeSubAgentSession {
                     model_provider: self.model_provider.clone(),
                     run_context: Some(child_run_context),
                     sub_task_manager: None,
+                    budget_limits: self.budget_limits.clone(),
+                    host_cost_meter: None,
                     background_parent_run_config: None,
                     initial_messages: None,
                     initial_shared_state: None,
                     initial_cycles: None,
                     cycle_index_start: None,
                     cycle_count: None,
+                    initial_budget_usage: None,
+                    defer_terminal_on_max_cycles: false,
                 },
             )
             .map_err(|error| Box::new((error.to_string(), observed_progress.token_usage())))?;
@@ -207,7 +233,14 @@ impl RuntimeSubAgentSession {
             state.shared_state = result.shared_state.clone();
         }
         self.emit_session_run_end(&result);
-        Ok((self.outcome_from_result(result), token_usage))
+        let budget_usage = result.budget_usage.clone();
+        let budget_exhaustion = result.budget_exhaustion.clone();
+        Ok((
+            self.outcome_from_result(result),
+            token_usage,
+            budget_usage,
+            budget_exhaustion,
+        ))
     }
 
     fn build_runtime(
@@ -403,6 +436,8 @@ impl RuntimeSubAgentSession {
         lifecycle: &super::super::types::SubRunLifecycle,
         outcome: SubTaskOutcome,
         token_usage: Option<&TaskTokenUsage>,
+        budget_usage: Option<&BudgetUsageSnapshot>,
+        budget_exhaustion: Option<&BudgetExhaustion>,
     ) -> SubTaskOutcome {
         match emit_sub_run_completed(
             &self.parent_log_handler,
@@ -410,6 +445,8 @@ impl RuntimeSubAgentSession {
             lifecycle,
             &outcome,
             token_usage,
+            budget_usage,
+            budget_exhaustion,
         ) {
             Ok(()) => outcome,
             Err(error) => {
@@ -419,6 +456,8 @@ impl RuntimeSubAgentSession {
                     lifecycle,
                     &failed,
                     token_usage,
+                    budget_usage,
+                    budget_exhaustion,
                 );
                 failed
             }
@@ -512,46 +551,6 @@ fn emit_inherited_stream_observer(callback: &StreamCallback, canonical: &BTreeMa
     let _ = catch_unwind(AssertUnwindSafe(|| callback(canonical)));
 }
 
-#[derive(Default)]
-struct ObservedRunProgress {
-    completed_cycles: AtomicU32,
-    token_usage: Mutex<Option<TaskTokenUsage>>,
-}
-
-impl ObservedRunProgress {
-    fn record_completed_cycle(&self, payload: &BTreeMap<String, Value>) {
-        let cycle_index = payload
-            .get("cycle")
-            .and_then(Value::as_u64)
-            .unwrap_or_default() as u32;
-        self.completed_cycles
-            .fetch_max(cycle_index, Ordering::Relaxed);
-
-        let Some(raw_usage) = payload.get("token_usage") else {
-            return;
-        };
-        let Ok(usage) = serde_json::from_value(raw_usage.clone()) else {
-            return;
-        };
-        if let Ok(mut observed) = self.token_usage.lock() {
-            observed
-                .get_or_insert_with(TaskTokenUsage::default)
-                .add_cycle(cycle_index, usage);
-        }
-    }
-
-    fn token_usage(&self) -> Option<TaskTokenUsage> {
-        self.token_usage.lock().ok().and_then(|usage| usage.clone())
-    }
-
-    fn snapshot(&self) -> (u32, Option<TaskTokenUsage>) {
-        (
-            self.completed_cycles.load(Ordering::Relaxed),
-            self.token_usage(),
-        )
-    }
-}
-
 #[cfg(test)]
 mod capability_projection_tests {
     use std::any::Any;
@@ -642,6 +641,7 @@ mod capability_projection_tests {
             model_provider: None,
             run_model_ref: ModelRef::named("child-model"),
             tool_policy: crate::tools::ToolPolicy::default(),
+            budget_limits: None,
             initial_lifecycle: SubRunLifecycle {
                 run_id: "child-run".to_string(),
                 trace_id: "trace-contract".to_string(),

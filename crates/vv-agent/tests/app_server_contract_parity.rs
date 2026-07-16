@@ -14,7 +14,10 @@ use vv_agent::app_server::protocol::{
 };
 use vv_agent::app_server::thread_store::SqliteThreadStore;
 use vv_agent::app_server::transport::ConnectionId;
-use vv_agent::{Agent, LLMResponse, ModelRef, Runner, ScriptedModelProvider, ToolCall};
+use vv_agent::{
+    Agent, CacheUsage, CacheUsageStatus, LLMResponse, ModelRef, NoToolPolicy, RunBudgetLimits,
+    RunConfig, Runner, ScriptedModelProvider, TokenUsage, ToolCall, UsageSource,
+};
 
 const CONTRACT_SOURCE: &str = include_str!("fixtures/parity/app_server_observable_v1.json");
 
@@ -188,6 +191,8 @@ fn shared_fixture_nullability_and_restart_recovery_match() {
         partial_output: None,
         error: None,
         token_usage: None,
+        budget_usage: None,
+        budget_exhaustion: None,
     })
     .expect("terminal payload");
     for field in contract["terminal"]["optionalFieldsOmittedWhenAbsent"]
@@ -213,6 +218,118 @@ fn shared_fixture_nullability_and_restart_recovery_match() {
     assert_eq!(
         serde_json::to_value(recovered.status).expect("status"),
         contract["restart"]["staleRunningThreadStatus"]
+    );
+}
+
+#[tokio::test]
+async fn budget_exhaustion_projects_typed_usage_to_turn_and_store() {
+    let expected = contract()["terminal"]["agentStatusProjection"]
+        .as_array()
+        .expect("status projections")
+        .iter()
+        .find(|case| case["name"] == "budget_exhaustion_is_failed_with_typed_observation")
+        .expect("budget status projection")
+        .clone();
+    let mut response = LLMResponse::new("draft over budget");
+    response.token_usage = TokenUsage {
+        prompt_tokens: 12,
+        total_tokens: 12,
+        usage_source: UsageSource::ProviderReported,
+        cache_usage: CacheUsage {
+            status: CacheUsageStatus::ProviderReported,
+            uncached_input_tokens: Some(12),
+            ..CacheUsage::default()
+        },
+        ..TokenUsage::default()
+    };
+    let runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "budget-model",
+            vec![response],
+        ))
+        .workspace(".")
+        .default_run_config(
+            RunConfig::builder()
+                .budget_limits(
+                    RunBudgetLimits::builder()
+                        .max_total_tokens(10)
+                        .build()
+                        .expect("budget limits"),
+                )
+                .build(),
+        )
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("assistant")
+        .instructions("Return the scripted draft.")
+        .model(ModelRef::named("budget-model"))
+        .no_tool_policy(NoToolPolicy::Finish)
+        .build()
+        .expect("agent");
+    let store = SqliteThreadStore::in_memory().expect("store");
+    let (mut processor, mut outgoing) =
+        MessageProcessor::new_for_tests_with_runtime(64, runner, agent, store.clone());
+    let connection_id = ConnectionId::new(1);
+    initialize(&mut processor, &mut outgoing, connection_id, 1).await;
+
+    processor
+        .process_message(
+            connection_id,
+            request(2, "thread/start", json!({"agentKey": "default"})),
+        )
+        .await;
+    let thread: ThreadStartResponse = decode_response(expect_response(&mut outgoing).await);
+    let _ = expect_notification(&mut outgoing).await;
+    processor
+        .process_message(
+            connection_id,
+            request(
+                3,
+                "turn/start",
+                json!({
+                    "threadId": thread.thread_id,
+                    "input": [{"type": "text", "text": "run"}]
+                }),
+            ),
+        )
+        .await;
+    let turn: TurnStartResponse = decode_response(expect_response(&mut outgoing).await);
+
+    let completed = loop {
+        if let ServerNotification::TurnCompleted(completed) =
+            expect_notification(&mut outgoing).await
+        {
+            break completed;
+        }
+    };
+
+    assert_eq!(completed.status, TurnStatus::Failed);
+    assert_eq!(expected["turnStatus"], "failed");
+    assert_eq!(
+        completed.completion_reason.as_deref(),
+        Some("budget_exhausted")
+    );
+    assert!(completed.error.is_some());
+    let budget_usage = completed.budget_usage.expect("budget usage");
+    assert_eq!(budget_usage["cycles"], 1);
+    assert_eq!(budget_usage["total_tokens"], 12);
+    let budget_exhaustion = completed.budget_exhaustion.expect("budget exhaustion");
+    assert_eq!(budget_exhaustion["dimension"], "total_tokens");
+    assert_eq!(budget_exhaustion["limit"], 10);
+    assert_eq!(budget_exhaustion["observed"], 12);
+
+    let stored_turn = store
+        .list_turns(&thread.thread_id)
+        .expect("stored turns")
+        .into_iter()
+        .find(|stored| stored.turn_id == turn.turn_id)
+        .expect("stored turn");
+    assert_eq!(stored_turn.status, TurnStatus::Failed);
+    assert_eq!(stored_turn.result["budgetUsage"], json!(budget_usage));
+    assert_eq!(
+        stored_turn.result["budgetExhaustion"],
+        json!(budget_exhaustion)
     );
 }
 
@@ -431,6 +548,16 @@ async fn shared_fixture_allows_connection_reinitialize_and_exports_exact_schema_
         assert!(
             first_typescript.contains(&format!("{field}?: string")),
             "missing TypeScript completion field: {field}"
+        );
+    }
+    for field in ["budgetUsage", "budgetExhaustion"] {
+        assert_eq!(
+            completion_properties[field]["type"], "object",
+            "budget observation must be an object: {field}"
+        );
+        assert!(
+            first_typescript.contains(&format!("{field}?: JsonObject")),
+            "missing TypeScript budget field: {field}"
         );
     }
 

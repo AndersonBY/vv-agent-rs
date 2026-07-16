@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::budget::{BudgetExhaustion, BudgetUsageSnapshot};
+
 use super::{
     AgentStatus, CompletionReason, LLMResponse, Message, Metadata, TaskTokenUsage, TokenUsage,
     ToolCall, ToolExecutionResult,
@@ -44,6 +46,10 @@ pub struct AgentResult {
     pub completion_tool_name: Option<String>,
     #[serde(default)]
     pub partial_output: Option<String>,
+    #[serde(default)]
+    pub budget_usage: Option<BudgetUsageSnapshot>,
+    #[serde(default)]
+    pub budget_exhaustion: Option<BudgetExhaustion>,
     pub final_answer: Option<String>,
     pub wait_reason: Option<String>,
     pub error: Option<String>,
@@ -60,6 +66,8 @@ impl Default for AgentResult {
             completion_reason: None,
             completion_tool_name: None,
             partial_output: None,
+            budget_usage: None,
+            budget_exhaustion: None,
             final_answer: None,
             wait_reason: None,
             error: None,
@@ -95,6 +103,8 @@ impl AgentResult {
             completion_reason: Some(CompletionReason::ToolFinish),
             completion_tool_name: None,
             partial_output: None,
+            budget_usage: None,
+            budget_exhaustion: None,
             final_answer: Some(final_answer.into()),
             wait_reason: None,
             error: None,
@@ -111,6 +121,8 @@ impl AgentResult {
             completion_reason: Some(CompletionReason::Failed),
             completion_tool_name: None,
             partial_output: None,
+            budget_usage: None,
+            budget_exhaustion: None,
             final_answer: None,
             wait_reason: None,
             error: Some(error.into()),

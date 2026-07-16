@@ -6,6 +6,7 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::budget::BudgetUsageSnapshot;
 use crate::types::{AgentStatus, CycleRecord, Message, Metadata};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -26,6 +27,8 @@ pub struct Checkpoint {
     pub lease_expires_at_ms: Option<u64>,
     #[serde(default)]
     pub terminal_result: Option<crate::types::AgentResult>,
+    #[serde(default)]
+    pub budget_usage: Option<BudgetUsageSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

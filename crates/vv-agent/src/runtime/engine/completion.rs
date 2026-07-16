@@ -99,6 +99,8 @@ pub(super) fn handle_no_tool_response<C: LlmClient>(
                 completion_tool_name: None,
                 partial_output: (!response.content.trim().is_empty())
                     .then(|| response.content.clone()),
+                budget_usage: None,
+                budget_exhaustion: None,
                 final_answer: None,
                 wait_reason: Some(wait_reason),
                 error: None,
@@ -213,6 +215,8 @@ pub(super) fn handle_directive_result<C: LlmClient>(
                 completion_reason: Some(CompletionReason::WaitUser),
                 completion_tool_name: Some(completion_tool_name.to_string()),
                 partial_output: last_assistant_output(cycles),
+                budget_usage: None,
+                budget_exhaustion: None,
                 final_answer: None,
                 wait_reason: Some(wait_reason),
                 error: None,

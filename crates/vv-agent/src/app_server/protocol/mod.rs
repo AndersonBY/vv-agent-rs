@@ -104,6 +104,7 @@ impl ClientRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[allow(clippy::large_enum_variant)] // Preserve the stable unboxed protocol enum API.
 #[serde(tag = "method", content = "params")]
 pub enum ServerNotification {
     #[serde(rename = "thread/started")]

@@ -36,5 +36,6 @@ pub(super) fn terminal_checkpoint(checkpoint: &Checkpoint, result: &AgentResult)
         claimed_cycle: None,
         lease_expires_at_ms: None,
         terminal_result: Some(result.clone()),
+        budget_usage: result.budget_usage.clone(),
     }
 }

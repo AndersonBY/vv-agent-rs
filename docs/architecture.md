@@ -51,6 +51,7 @@ fields remain available but do not prove cache-accounting availability.
 | `crates/vv-agent/src/run_handle.rs` | Live run handle for event subscription, result synchronization, cancellation, state reads, and approval decisions. |
 | `crates/vv-agent/src/interactive.rs` | Embedded stateful session facade for stable identity, live steering, follow-ups, cancellation, and session events. |
 | `crates/vv-agent/src/run_config.rs` | Per-run overrides for model, workspace, bounds, tool registry/policy, runtime injection, diagnostics, providers, session, hooks, cancellation, event store, and metadata. |
+| `crates/vv-agent/src/budget.rs` | Task-neutral run limits, cumulative observations, host-cost meter protocol, and deterministic enforcement. |
 | `crates/vv-agent/src/approval.rs` | Host approval protocol, broker, request payload, async decision future, and approval errors. |
 | `crates/vv-agent/src/context_providers.rs` | Context fragment collection, ordering, prompt-budget assembly, source metadata, and stable fragment reporting. |
 | `crates/vv-agent/src/event_store.rs` | Append-only run event storage and replay query contract, including JSONL storage. |
@@ -78,6 +79,13 @@ fields remain available but do not prove cache-accounting availability.
 
 Distributed and checkpointed paths must preserve the same public result and
 checkpoint payload shape as inline execution.
+
+Optional run budgets are evaluated at stable runtime boundaries shared by all
+backends. Inline and thread runs keep one evaluator for the active run.
+Distributed limits travel in each envelope, while cumulative usage is stored
+in the checkpoint so each worker adds only its active monotonic segment. Host
+cost remains a worker-local capability and is never reconstructed from a price
+table. See `run-budgets.md` for public API and terminal precedence.
 
 Distributed mode sends a versioned `DistributedRunEnvelope` for each cycle.
 Workers resolve all referenced capabilities before claiming state, then use a
@@ -129,8 +137,9 @@ Core responsibilities:
   live entrypoints.
 - `RunConfig`: per-call model, model settings, workspace, bounds, session,
   tool registry/policy, runtime message injection and observers, diagnostics,
-  hooks, cancellation, public `ExecutionMode`, providers, event store, and
-  metadata override. See `runtime-control.md` for the complete surface.
+  hooks, cancellation, optional run budgets, public `ExecutionMode`, providers,
+  event store, and metadata override. See `runtime-control.md` for the complete
+  surface.
 - `RunHandle`: live event stream, cancellation, state, approval decisions, and
   final result synchronization.
 - `InteractiveAgentClient` / `InteractiveSession`: embedded stateful control over

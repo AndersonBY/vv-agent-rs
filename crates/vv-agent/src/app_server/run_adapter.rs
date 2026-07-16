@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -415,6 +415,8 @@ impl AppServerRunAdapter {
             partial_output,
             error,
             token_usage,
+            budget_usage,
+            budget_exhaustion,
         ) = match result {
             Ok(result) => {
                 let status = turn_status(result.status());
@@ -439,6 +441,8 @@ impl AppServerRunAdapter {
                     result.partial_output().map(str::to_string),
                     error,
                     Some(app_token_usage(&result.result().token_usage)),
+                    result.budget_usage().map(app_json_object),
+                    result.budget_exhaustion().map(app_json_object),
                 )
             }
             Err(error) => (
@@ -449,6 +453,8 @@ impl AppServerRunAdapter {
                 None,
                 None,
                 Some(error),
+                None,
+                None,
                 None,
             ),
         };
@@ -473,6 +479,12 @@ impl AppServerRunAdapter {
         }
         if let Some(token_usage) = &token_usage {
             stored_result.insert("tokenUsage".to_string(), json!(token_usage));
+        }
+        if let Some(budget_usage) = &budget_usage {
+            stored_result.insert("budgetUsage".to_string(), json!(budget_usage));
+        }
+        if let Some(budget_exhaustion) = &budget_exhaustion {
+            stored_result.insert("budgetExhaustion".to_string(), json!(budget_exhaustion));
         }
         let _ = self
             .store
@@ -508,6 +520,8 @@ impl AppServerRunAdapter {
                     partial_output,
                     error,
                     token_usage,
+                    budget_usage,
+                    budget_exhaustion,
                 }),
             )
             .await;
@@ -777,6 +791,15 @@ fn app_token_usage(usage: &TaskTokenUsage) -> AppTokenUsage {
             source: usage.cache_usage.source.clone(),
         },
     }
+}
+
+fn app_json_object(value: &impl serde::Serialize) -> BTreeMap<String, Value> {
+    let Value::Object(fields) =
+        serde_json::to_value(value).expect("typed App Server observation must serialize")
+    else {
+        unreachable!("typed App Server observation must serialize as an object");
+    };
+    fields.into_iter().collect()
 }
 
 fn store_error(error: ThreadStoreError) -> AppServerError {

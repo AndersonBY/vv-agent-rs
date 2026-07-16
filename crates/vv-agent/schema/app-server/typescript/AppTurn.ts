@@ -71,7 +71,7 @@ export interface TurnStartedParams { threadId: string; turnId: string; }
 export interface TurnCompletedParams {
   threadId: string; turnId: string; runId?: string; status: TurnStatus; finalOutput?: JsonValue;
   completionReason?: string; completionToolName?: string; partialOutput?: string;
-  tokenUsage?: JsonObject; error?: string;
+  tokenUsage?: JsonObject; budgetUsage?: JsonObject; budgetExhaustion?: JsonObject; error?: string;
 }
 export type ApprovalResolveResponse = Record<string, never>;
 export interface SchemaExportResponse { jsonSchema: Record<string, string>; typescript: Record<string, string>; }

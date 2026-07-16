@@ -180,10 +180,12 @@ Example notifications:
 {"method":"turn/completed","params":{"threadId":"thread_1","turnId":"turn_1","runId":"assistant_run","status":"completed","finalOutput":"The workspace contains...","tokenUsage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14,"cached_tokens":0,"reasoning_tokens":0,"input_tokens":10,"output_tokens":4,"cache_creation_tokens":0,"cache_usage":{"status":"provider_reported","read_tokens":0,"write_tokens":null,"uncached_input_tokens":10,"source":"provider_usage"}}}}
 ```
 
-Terminal notifications preserve `finalOutput`, `error`, and `tokenUsage` when
-those values are available. `cache_usage.read_tokens: 0` is an observed zero;
-`null` with `status: "accounting_missing"` means the provider did not supply
-enough cache accounting and must not be reported as a zero-percent hit.
+Terminal notifications preserve `finalOutput`, `error`, `tokenUsage`,
+`budgetUsage`, and `budgetExhaustion` when those values are available. The same
+objects are stored in the turn result for replay. `cache_usage.read_tokens: 0`
+is an observed zero; `null` with `status: "accounting_missing"` means the
+provider did not supply enough cache accounting and must not be reported as a
+zero-percent hit.
 
 Use `turn/steer` to add input to the active turn and `turn/followUp` to queue a
 new turn after it completes. Both take `threadId`, `expectedTurnId`, and

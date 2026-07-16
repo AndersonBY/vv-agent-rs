@@ -5,7 +5,10 @@ use vv_agent::{AgentErrorPayload, AgentStatus, RunEvent, RunEventPayload};
 
 const PARITY_FIXTURE: &str = include_str!("fixtures/parity/run_events_v1.jsonl");
 const PARITY_FIXTURE_SHA256: &str =
-    "7d0d80a2587f242c2bdc04afc7452a632fab781845f2ea9a63742d2c62a0174e";
+    "67751ad33c4705e87477bbe4bdfadd43ea5f674cbfa2ec9073d13600dfd05275";
+const BUDGET_FIXTURE: &str = include_str!("fixtures/parity/budget_events_v1.jsonl");
+const BUDGET_FIXTURE_SHA256: &str =
+    "3267292737ac6bf63ec4ee691fe0ef07f3e2cadd5a69098e3e267f4f6b692d2e";
 
 #[test]
 fn run_event_v1_has_identity_trace_session_and_timing() {
@@ -94,6 +97,8 @@ fn run_events_v1_parity_fixture_has_stable_bytes_and_round_trips() {
         "run_completed",
         "run_failed",
         "run_cancelled",
+        "budget_snapshot",
+        "budget_exhausted",
     ];
     let mut actual_types = Vec::new();
 
@@ -103,10 +108,42 @@ fn run_events_v1_parity_fixture_has_stable_bytes_and_round_trips() {
         let encoded = serde_json::to_value(&event).expect("serialize fixture event");
 
         actual_types.push(expected["type"].as_str().expect("event type").to_string());
-        assert_eq!(event.event_id().as_str(), "evt_parity");
-        assert_eq!(event.run_id(), "run_parity");
-        assert_eq!(event.trace_id(), "trace_parity");
-        assert_eq!(event.created_at(), 123.456789);
+        if !expected["type"]
+            .as_str()
+            .expect("event type")
+            .starts_with("budget_")
+        {
+            assert_eq!(event.event_id().as_str(), "evt_parity");
+            assert_eq!(event.run_id(), "run_parity");
+            assert_eq!(event.trace_id(), "trace_parity");
+            assert_eq!(event.created_at(), 123.456789);
+        }
+        assert_eq!(encoded, expected);
+    }
+
+    assert_eq!(actual_types, expected_types);
+}
+
+#[test]
+fn budget_events_v1_fixture_has_stable_bytes_and_round_trips() {
+    assert_eq!(
+        format!("{:x}", Sha256::digest(BUDGET_FIXTURE.as_bytes())),
+        BUDGET_FIXTURE_SHA256
+    );
+    let expected_types = [
+        "budget_snapshot",
+        "budget_exhausted",
+        "run_failed",
+        "run_completed",
+    ];
+    let mut actual_types = Vec::new();
+
+    for line in BUDGET_FIXTURE.lines() {
+        let expected: serde_json::Value = serde_json::from_str(line).expect("fixture JSON");
+        let event: RunEvent = serde_json::from_str(line).expect("deserialize budget event");
+        let encoded = serde_json::to_value(&event).expect("serialize budget event");
+
+        actual_types.push(expected["type"].as_str().expect("event type").to_string());
         assert_eq!(encoded, expected);
     }
 

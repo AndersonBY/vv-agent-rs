@@ -211,6 +211,17 @@ let result = handle.result().await?;
 `Default` 继续继承下一层配置；显式 `OnRequest` 按每个工具的静态或动态审批声明决定。
 `Always` 强制审批，`Never` 跳过审批，二者都不会执行动态工具审批 predicate。
 
+### 运行预算
+
+`RunConfig::budget_limits` 可以分别限制总 token、未缓存输入 token、工具总调用数、
+指定工具调用数、活跃运行时间和宿主计量成本。所有限制都是可选且任务无关的：框架不会
+根据 prompt、任务类型、里程碑或答案质量来执行预算。
+
+可以通过 `result.budget_usage()` 和 `result.budget_exhaustion()` 查看结果。预算耗尽会
+得到 completion reason 为 `budget_exhausted` 的类型化失败终态，不会伪装成任务成功。
+未配置预算时保留原有事件流。详见[运行预算](docs/run-budgets.md)和
+`crates/vv-agent/examples/07_token_budget_guard.rs`。
+
 ### App Server
 
 当产品宿主需要通过稳定 JSON-RPC 协议驱动 `vv-agent`，而不是直接链接 runtime 内部实现时，

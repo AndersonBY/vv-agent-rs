@@ -10,7 +10,7 @@ use vv_agent::{
 };
 
 const FIXTURE: &str = include_str!("fixtures/parity/completion_policy_v1.json");
-const FIXTURE_SHA256: &str = "d3ad0e8fb074b07b4bbd738b58739f61b129890392f8a73620a2abc852c2ceac";
+const FIXTURE_SHA256: &str = "84c75dacbb43659a07c0fa1347c83e44a609a411d7896cae5a2276a3b6792135";
 const CONTINUATION_HINT: &str = "Continue. If the task is complete, call task_finish.";
 
 #[derive(Debug, Deserialize)]
@@ -29,8 +29,9 @@ struct CompletionRules {
     completion_policy_does_not_change_tool_availability: bool,
     explicit_tool_directive_precedes_no_tool_policy: bool,
     partial_output_only_for_non_completed_status: bool,
-    budget_exhausted_reserved_until_0_4: bool,
-    approval_resume_uses_fresh_run_budget: bool,
+    budget_exhausted_is_defined_by_run_budget_v1: bool,
+    approval_resume_uses_fresh_cycle_budget: bool,
+    approval_resume_preserves_resource_budget: bool,
     approved_resume_rejects_input_before_claim: bool,
     pre_cancelled_approval_resume_skips_side_effects: bool,
     guardrail_allow_preserves_completion_observation: bool,
@@ -131,8 +132,9 @@ fn completion_policy_fixture_declares_the_public_closed_sets() {
             .explicit_tool_directive_precedes_no_tool_policy
     );
     assert!(contract.rules.partial_output_only_for_non_completed_status);
-    assert!(contract.rules.budget_exhausted_reserved_until_0_4);
-    assert!(contract.rules.approval_resume_uses_fresh_run_budget);
+    assert!(contract.rules.budget_exhausted_is_defined_by_run_budget_v1);
+    assert!(contract.rules.approval_resume_uses_fresh_cycle_budget);
+    assert!(contract.rules.approval_resume_preserves_resource_budget);
     assert!(contract.rules.approved_resume_rejects_input_before_claim);
     assert!(
         contract

@@ -44,6 +44,7 @@ fn claimed_checkpoint(
             claimed_cycle: None,
             lease_expires_at_ms: None,
             terminal_result: None,
+            budget_usage: None,
         })
         .expect("create checkpoint");
     let now_ms = now_unix_ms().expect("current time");
@@ -66,6 +67,7 @@ fn envelope(task: AgentTask, lease_duration_ms: u64) -> DistributedRunEnvelope {
         None,
         None,
         lease_duration_ms,
+        None,
     )
     .expect("distributed envelope")
 }

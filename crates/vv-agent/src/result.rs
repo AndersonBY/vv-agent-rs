@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 
 use crate::agent::Agent;
+use crate::budget::{BudgetExhaustion, BudgetUsageSnapshot};
 use crate::config::ResolvedModelConfig;
 use crate::events::RunEvent;
 use crate::run_config::RunConfig;
@@ -146,6 +147,14 @@ impl RunResult {
         self.result.partial_output.as_deref()
     }
 
+    pub fn budget_usage(&self) -> Option<&BudgetUsageSnapshot> {
+        self.result.budget_usage.as_ref()
+    }
+
+    pub fn budget_exhaustion(&self) -> Option<&BudgetExhaustion> {
+        self.result.budget_exhaustion.as_ref()
+    }
+
     pub fn final_output(&self) -> Option<&str> {
         self.result
             .final_answer
@@ -208,6 +217,8 @@ impl RunResult {
             "completion_reason": self.result.completion_reason,
             "completion_tool_name": self.result.completion_tool_name,
             "partial_output": self.result.partial_output,
+            "budget_usage": self.result.budget_usage,
+            "budget_exhaustion": self.result.budget_exhaustion,
             "resolved_model": self.resolved.as_ref().map(resolved_model_public_value),
         })
     }

@@ -1,3 +1,6 @@
+mod budget_events;
+mod payload;
+
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::thread::ThreadId;
@@ -8,6 +11,8 @@ use tokio::sync::broadcast;
 use crate::events::{AgentErrorPayload, ApprovalAction, RunEvent, RunEventPayload, ToolStatus};
 use crate::result::RunResult;
 use crate::run_handle::{active_sub_run_ids, SharedRunResult};
+
+use payload::{agent_status, completion_reason_from_payload};
 
 const TRUSTED_STREAM_RECEIPT_KEY: &str = "_vv_agent_stream_receipt";
 const TRUSTED_STREAM_SEQUENCE_KEY: &str = "_vv_agent_stream_sequence";
@@ -330,6 +335,8 @@ pub fn map_runtime_event(
                 .map(|cycle| cycle as u32),
             RunEventPayload::SessionPersisted,
         )),
+        "budget_snapshot" => budget_events::map_budget_snapshot(payload, context),
+        "budget_exhausted" => budget_events::map_budget_exhausted(payload, context),
         "assistant_delta" => Some(RunEvent::assistant_delta(
             &context.run_id,
             &context.trace_id,
@@ -519,6 +526,16 @@ pub fn map_runtime_event(
                 payload.get("wait_reason").and_then(Value::as_str),
                 payload.get("error").and_then(Value::as_str),
                 payload.get("token_usage").cloned(),
+            )
+            .with_budget_details(
+                payload
+                    .get("budget_usage")
+                    .and_then(|value| serde_json::from_value(value.clone()).ok())
+                    .as_ref(),
+                payload
+                    .get("budget_exhaustion")
+                    .and_then(|value| serde_json::from_value(value.clone()).ok())
+                    .as_ref(),
             )
             .with_completion_details(
                 completion_reason_from_payload(payload, None),
@@ -764,6 +781,8 @@ pub fn map_runtime_event(
                 | "sub_agent_tool_call_progress"
                 | "sub_run_started"
                 | "sub_run_completed"
+                | "budget_snapshot"
+                | "budget_exhausted"
         );
         let event = if handoff_payload || typed_metadata_payload {
             mapped_event
@@ -957,34 +976,6 @@ fn valid_stream_receipt(marker: &str) -> bool {
     marker.strip_prefix("stream_").is_some_and(|value| {
         value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
     })
-}
-
-fn agent_status(payload: &std::collections::BTreeMap<String, Value>) -> crate::types::AgentStatus {
-    match payload
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or("completed")
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "pending" => crate::types::AgentStatus::Pending,
-        "running" => crate::types::AgentStatus::Running,
-        "wait_user" | "wait_response" => crate::types::AgentStatus::WaitUser,
-        "failed" | "error" => crate::types::AgentStatus::Failed,
-        "max_cycles" => crate::types::AgentStatus::MaxCycles,
-        _ => crate::types::AgentStatus::Completed,
-    }
-}
-
-fn completion_reason_from_payload(
-    payload: &std::collections::BTreeMap<String, Value>,
-    fallback: Option<crate::types::CompletionReason>,
-) -> Option<crate::types::CompletionReason> {
-    payload
-        .get("completion_reason")
-        .and_then(Value::as_str)
-        .and_then(crate::types::CompletionReason::parse)
-        .or(fallback)
 }
 
 #[cfg(test)]

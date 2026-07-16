@@ -1,20 +1,22 @@
 mod common;
 
-use common::{print_run_result, run_facade_prompt, ExampleConfig};
-use vv_agent::{ModelSettings, RunConfig};
+use common::{env_u64, print_run_result, run_facade_prompt, ExampleConfig};
+use vv_agent::{RunBudgetLimits, RunConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ExampleConfig::load();
+    let budget_limits = RunBudgetLimits::builder()
+        .max_total_tokens(env_u64("V_AGENT_EXAMPLE_TOKEN_BUDGET", 4_000))
+        .max_tool_calls(env_u64("V_AGENT_EXAMPLE_TOOL_BUDGET", 12))
+        .build()
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
     let result = run_facade_prompt(
         &config,
         "budgeted-agent",
-        "你是受预算约束的执行 Agent。保持步骤简洁，尽早调用 task_finish。",
-        "用不超过五点说明当前 workspace 的主要内容。",
-        RunConfig::builder()
-            .model_settings(ModelSettings::builder().max_output_tokens(800).build())
-            .max_cycles(5)
-            .build(),
+        "Keep the answer concise and call task_finish when the work is complete.",
+        "Summarize how Agent run budgets work.",
+        RunConfig::builder().budget_limits(budget_limits).build(),
     )
     .await?;
     print_run_result(&result)

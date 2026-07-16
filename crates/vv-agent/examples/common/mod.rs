@@ -231,6 +231,8 @@ pub fn print_run_result(result: &RunResult) -> Result<(), Box<dyn std::error::Er
             "error": result.result().error,
             "cycles": result.result().cycles.len(),
             "token_usage": result.result().token_usage,
+            "budget_usage": result.budget_usage(),
+            "budget_exhaustion": result.budget_exhaustion(),
             "resolved": {
                 "backend": resolved.map(|model| &model.backend),
                 "selected_model": resolved.map(|model| &model.selected_model),

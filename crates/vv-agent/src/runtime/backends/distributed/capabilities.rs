@@ -4,6 +4,7 @@ use std::sync::{Arc, RwLock};
 use sha2::{Digest, Sha256};
 
 use crate::approval::{ApprovalBroker, ApprovalProvider};
+use crate::budget::HostCostMeter;
 use crate::llm::LlmClient;
 use crate::memory::MemoryProvider;
 use crate::runtime::engine::RuntimeEventHandler;
@@ -47,6 +48,7 @@ struct CapabilityMaps {
     approval_brokers: BTreeMap<CapabilityKey, ApprovalBroker>,
     cancellations: BTreeMap<CapabilityKey, CancellationToken>,
     event_sinks: BTreeMap<CapabilityKey, RuntimeEventHandler>,
+    host_cost_meters: BTreeMap<CapabilityKey, Arc<dyn HostCostMeter>>,
     app_states: BTreeMap<CapabilityKey, Arc<dyn std::any::Any + Send + Sync>>,
     memory_providers: BTreeMap<CapabilityKey, Arc<dyn MemoryProvider>>,
     hooks: BTreeMap<CapabilityKey, Arc<dyn RuntimeHook>>,
@@ -146,6 +148,16 @@ impl DistributedCapabilityRegistry {
             .insert(key(&reference), sink);
     }
 
+    pub fn register_host_cost_meter(
+        &self,
+        reference: CapabilityRef,
+        meter: Arc<dyn HostCostMeter>,
+    ) {
+        self.write_unpoisoned()
+            .host_cost_meters
+            .insert(key(&reference), meter);
+    }
+
     pub fn register_app_state(
         &self,
         reference: CapabilityRef,
@@ -232,6 +244,11 @@ impl DistributedCapabilityRegistry {
             "event_sink",
             &capabilities.event_sink_ref,
         )?;
+        let host_cost_meter = optional(
+            &maps.host_cost_meters,
+            "host_cost_meter",
+            &capabilities.host_cost_meter_ref,
+        )?;
         let app_state = optional(&maps.app_states, "app_state", &capabilities.app_state_ref)?;
         let sub_task_manager = optional(
             &maps.sub_task_managers,
@@ -255,6 +272,7 @@ impl DistributedCapabilityRegistry {
             approval_timeout_seconds: capabilities.approval_timeout_seconds,
             cancellation,
             event_sink,
+            host_cost_meter,
             app_state,
             memory_providers,
             hooks,
@@ -297,6 +315,7 @@ pub struct ResolvedDistributedCapabilities {
     pub approval_timeout_seconds: Option<f64>,
     pub cancellation: Option<CancellationToken>,
     pub event_sink: Option<RuntimeEventHandler>,
+    pub host_cost_meter: Option<Arc<dyn HostCostMeter>>,
     pub app_state: Option<Arc<dyn std::any::Any + Send + Sync>>,
     pub memory_providers: Vec<Arc<dyn MemoryProvider>>,
     pub hooks: Vec<Arc<dyn RuntimeHook>>,
