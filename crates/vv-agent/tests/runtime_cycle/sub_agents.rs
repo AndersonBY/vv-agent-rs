@@ -1,5 +1,13 @@
 use super::*;
 
+struct ConstantHostCostMeter;
+
+impl HostCostMeter for ConstantHostCostMeter {
+    fn read(&self) -> Result<Option<HostCost>, String> {
+        Ok(Some(HostCost::new("credits", 0).expect("host cost")))
+    }
+}
+
 #[test]
 fn runtime_executes_configured_sub_agent_with_real_runner() {
     let mut sub_task_args = BTreeMap::new();
@@ -65,6 +73,122 @@ fn runtime_executes_configured_sub_agent_with_real_runner() {
     assert_eq!(payload["status"], "completed");
     assert_eq!(payload["agent_name"], "researcher");
     assert_eq!(payload["final_answer"], "child found vv-llm");
+}
+
+#[test]
+fn configured_sub_agent_inherits_limits_with_fresh_counters_and_without_parent_meter() {
+    let mut sub_task_args = BTreeMap::new();
+    sub_task_args.insert("agent_id".to_string(), json!("researcher"));
+    sub_task_args.insert(
+        "task_description".to_string(),
+        json!("Find the target crate"),
+    );
+    let mut child_finish_args = BTreeMap::new();
+    child_finish_args.insert("message".to_string(), json!("child done"));
+    let mut parent_finish_args = BTreeMap::new();
+    parent_finish_args.insert("message".to_string(), json!("parent done"));
+
+    let mut parent_delegate = LLMResponse::with_tool_calls(
+        "delegate",
+        vec![ToolCall::new(
+            "parent_sub_call",
+            "create_sub_task",
+            sub_task_args,
+        )],
+    );
+    parent_delegate.token_usage = TokenUsage {
+        total_tokens: 4,
+        usage_source: UsageSource::ProviderReported,
+        ..TokenUsage::default()
+    };
+    let mut child_finish = LLMResponse::with_tool_calls(
+        "child work",
+        vec![ToolCall::new(
+            "child_finish",
+            "task_finish",
+            child_finish_args,
+        )],
+    );
+    child_finish.token_usage = TokenUsage {
+        total_tokens: 4,
+        usage_source: UsageSource::ProviderReported,
+        ..TokenUsage::default()
+    };
+    let mut parent_finish = LLMResponse::with_tool_calls(
+        "parent synthesis",
+        vec![ToolCall::new(
+            "parent_finish",
+            "task_finish",
+            parent_finish_args,
+        )],
+    );
+    parent_finish.token_usage = TokenUsage {
+        total_tokens: 1,
+        usage_source: UsageSource::ProviderReported,
+        ..TokenUsage::default()
+    };
+    let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![
+        parent_delegate,
+        child_finish,
+        parent_finish,
+    ]));
+    let mut task = AgentTask::new("parent-budget", "demo", "parent system", "delegate");
+    task.sub_agents.insert(
+        "researcher".to_string(),
+        SubAgentConfig::new("demo", "research profile"),
+    );
+    let child_events = Arc::new(Mutex::new(Vec::<BTreeMap<String, serde_json::Value>>::new()));
+    let child_events_for_handler = child_events.clone();
+    let limits = RunBudgetLimits::builder()
+        .max_total_tokens(5)
+        .max_host_cost(HostCost::new("credits", 100).expect("host limit"))
+        .build()
+        .expect("budget limits");
+
+    let result = runtime
+        .run_with_controls(
+            task,
+            RuntimeRunControls {
+                log_handler: Some(Arc::new(move |event, payload| {
+                    if event == "sub_run_completed" {
+                        child_events_for_handler
+                            .lock()
+                            .expect("child events")
+                            .push(payload.clone());
+                    }
+                })),
+                budget_limits: Some(limits),
+                host_cost_meter: Some(Arc::new(ConstantHostCostMeter)),
+                ..RuntimeRunControls::default()
+            },
+        )
+        .expect("budgeted parent run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    let parent_usage = result.budget_usage.expect("parent budget usage");
+    assert_eq!(parent_usage.cycles, 2);
+    assert_eq!(parent_usage.total_tokens, Some(5));
+    assert_eq!(
+        parent_usage
+            .host_cost
+            .as_ref()
+            .map(|cost| cost.amount_microunits),
+        Some(0)
+    );
+    let child_events = child_events.lock().expect("child events");
+    assert_eq!(child_events.len(), 1);
+    let child_usage = &child_events[0]["budget_usage"];
+    assert_eq!(child_usage["cycles"], 1);
+    assert_eq!(child_usage["total_tokens"], 4);
+    assert_eq!(child_usage["host_cost"], serde_json::Value::Null);
+    let host_unavailable = child_usage["unavailable_dimensions"]
+        .as_array()
+        .expect("unavailable dimensions")
+        .iter()
+        .find(|item| item["dimension"] == "host_cost")
+        .expect("host cost unavailable");
+    assert_eq!(host_unavailable["reason"], "meter_missing");
+    assert!(!child_events[0].contains_key("budget_exhaustion"));
 }
 
 #[test]

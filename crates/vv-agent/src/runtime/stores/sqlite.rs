@@ -13,7 +13,7 @@ use crate::runtime::state::{
 };
 
 const SELECT_CHECKPOINT: &str = "SELECT task_id, cycle_index, status, messages, cycles, \
-    shared_state, revision, claim_token, claimed_cycle, lease_expires_at_ms, terminal_result \
+    shared_state, revision, claim_token, claimed_cycle, lease_expires_at_ms, terminal_result, budget_usage \
     FROM checkpoints";
 
 #[derive(Debug)]
@@ -45,7 +45,8 @@ impl SqliteStateStore {
                     claim_token TEXT,
                     claimed_cycle INTEGER,
                     lease_expires_at_ms INTEGER,
-                    terminal_result TEXT
+                    terminal_result TEXT,
+                    budget_usage TEXT
                 );
                 "#,
             )
@@ -77,8 +78,9 @@ impl StateStore for SqliteStateStore {
                 r#"
                 INSERT OR IGNORE INTO checkpoints
                     (task_id, cycle_index, status, messages, cycles, shared_state,
-                     revision, claim_token, claimed_cycle, lease_expires_at_ms, terminal_result)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                     revision, claim_token, claimed_cycle, lease_expires_at_ms, terminal_result,
+                     budget_usage)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                 "#,
                 params![
                     values.task_id,
@@ -92,6 +94,7 @@ impl StateStore for SqliteStateStore {
                     values.claimed_cycle,
                     values.lease_expires_at_ms,
                     values.terminal_result,
+                    values.budget_usage,
                 ],
             )
             .map_err(sqlite_to_io)?;
@@ -107,8 +110,9 @@ impl StateStore for SqliteStateStore {
                 r#"
                 INSERT OR REPLACE INTO checkpoints
                     (task_id, cycle_index, status, messages, cycles, shared_state,
-                     revision, claim_token, claimed_cycle, lease_expires_at_ms, terminal_result)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                     revision, claim_token, claimed_cycle, lease_expires_at_ms, terminal_result,
+                     budget_usage)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                 "#,
                 params![
                     values.task_id,
@@ -122,6 +126,7 @@ impl StateStore for SqliteStateStore {
                     values.claimed_cycle,
                     values.lease_expires_at_ms,
                     values.terminal_result,
+                    values.budget_usage,
                 ],
             )
             .map_err(sqlite_to_io)?;
@@ -210,8 +215,9 @@ impl StateStore for SqliteStateStore {
                 UPDATE checkpoints
                 SET cycle_index = ?1, status = ?2, messages = ?3, cycles = ?4,
                     shared_state = ?5, revision = ?6, claim_token = NULL,
-                    claimed_cycle = NULL, lease_expires_at_ms = NULL, terminal_result = ?7
-                WHERE task_id = ?8 AND revision = ?9 AND claim_token = ?10 AND claimed_cycle = ?11
+                    claimed_cycle = NULL, lease_expires_at_ms = NULL, terminal_result = ?7,
+                    budget_usage = ?8
+                WHERE task_id = ?9 AND revision = ?10 AND claim_token = ?11 AND claimed_cycle = ?12
                 "#,
                 params![
                     values.cycle_index,
@@ -221,6 +227,7 @@ impl StateStore for SqliteStateStore {
                     values.shared_state,
                     values.revision,
                     values.terminal_result,
+                    values.budget_usage,
                     values.task_id,
                     to_sql_u64(expected_revision, "revision")?,
                     claim_token,
@@ -296,8 +303,9 @@ impl StateStore for SqliteStateStore {
                 UPDATE checkpoints
                 SET cycle_index = ?1, status = ?2, messages = ?3, cycles = ?4,
                     shared_state = ?5, revision = ?6, claim_token = NULL,
-                    claimed_cycle = NULL, lease_expires_at_ms = NULL, terminal_result = ?7
-                WHERE task_id = ?8 AND revision = ?9 AND claim_token IS NULL
+                    claimed_cycle = NULL, lease_expires_at_ms = NULL, terminal_result = ?7,
+                    budget_usage = ?8
+                WHERE task_id = ?9 AND revision = ?10 AND claim_token IS NULL
                   AND terminal_result IS NULL
                 "#,
                 params![
@@ -308,6 +316,7 @@ impl StateStore for SqliteStateStore {
                     values.shared_state,
                     values.revision,
                     values.terminal_result,
+                    values.budget_usage,
                     values.task_id,
                     to_sql_u64(expected_revision, "revision")?,
                 ],
@@ -373,6 +382,7 @@ struct CheckpointValues {
     claimed_cycle: Option<u32>,
     lease_expires_at_ms: Option<i64>,
     terminal_result: Option<String>,
+    budget_usage: Option<String>,
 }
 
 fn checkpoint_values(checkpoint: &Checkpoint) -> Result<CheckpointValues> {
@@ -410,6 +420,11 @@ fn checkpoint_values(checkpoint: &Checkpoint) -> Result<CheckpointValues> {
             .as_ref()
             .map(|result| serde_json::to_string(&result.to_dict()).map_err(json_to_io))
             .transpose()?,
+        budget_usage: checkpoint
+            .budget_usage
+            .as_ref()
+            .map(|usage| serde_json::to_string(usage).map_err(json_to_io))
+            .transpose()?,
     })
 }
 
@@ -424,6 +439,7 @@ type CheckpointRow = (
     Option<String>,
     Option<u32>,
     Option<i64>,
+    Option<String>,
     Option<String>,
 );
 
@@ -445,6 +461,7 @@ fn load_checkpoint_row(connection: &Connection, task_id: &str) -> Result<Option<
                     row.get(8)?,
                     row.get(9)?,
                     row.get(10)?,
+                    row.get(11)?,
                 ))
             },
         )
@@ -483,6 +500,7 @@ fn checkpoint_from_row(row: CheckpointRow) -> Result<Checkpoint> {
         "claimed_cycle": row.8,
         "lease_expires_at_ms": lease_expires_at_ms,
         "terminal_result": row.10.as_deref().map(|value| parse_json(value, "terminal_result")).transpose()?,
+        "budget_usage": row.11.as_deref().map(|value| parse_json(value, "budget_usage")).transpose()?,
     });
     checkpoint_from_json(&payload.to_string())
 }
@@ -516,6 +534,7 @@ fn migrate_control_columns(connection: &Connection) -> Result<()> {
         ("claimed_cycle", "INTEGER"),
         ("lease_expires_at_ms", "INTEGER"),
         ("terminal_result", "TEXT"),
+        ("budget_usage", "TEXT"),
     ] {
         if !columns.contains(name) {
             connection

@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
+use crate::budget::{BudgetUsageSnapshot, HostCostMeter, RunBudgetLimits};
 use crate::model::ModelProvider;
 use crate::runtime::cancellation::CancellationToken;
 use crate::runtime::context::{ExecutionContext, StreamCallback};
@@ -32,6 +33,8 @@ pub struct RuntimeRunControls {
     pub model_provider: Option<Arc<dyn ModelProvider>>,
     pub run_context: Option<RunContext>,
     pub sub_task_manager: Option<SubTaskManager>,
+    pub budget_limits: Option<RunBudgetLimits>,
+    pub host_cost_meter: Option<Arc<dyn HostCostMeter>>,
     #[doc(hidden)]
     pub background_parent_run_config: Option<RunConfig>,
     #[doc(hidden)]
@@ -44,6 +47,10 @@ pub struct RuntimeRunControls {
     pub cycle_index_start: Option<u32>,
     #[doc(hidden)]
     pub cycle_count: Option<u32>,
+    #[doc(hidden)]
+    pub initial_budget_usage: Option<BudgetUsageSnapshot>,
+    #[doc(hidden)]
+    pub defer_terminal_on_max_cycles: bool,
 }
 
 impl RuntimeRunControls {

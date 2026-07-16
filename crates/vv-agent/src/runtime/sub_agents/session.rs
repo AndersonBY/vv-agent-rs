@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
 
+use crate::budget::RunBudgetLimits;
 use crate::llm::LlmClient;
 use crate::runtime::sub_agent_sessions::{
     SubAgentSession, SubAgentSessionListener, SubAgentSessionUnsubscribe,
@@ -46,6 +47,7 @@ pub(in crate::runtime::sub_agents) struct RuntimeSubAgentSession {
     model_provider: Option<Arc<dyn ModelProvider>>,
     run_model_ref: ModelRef,
     tool_policy: ToolPolicy,
+    budget_limits: Option<RunBudgetLimits>,
     lifecycle_template: SubRunLifecycle,
     initial_lifecycle_pending: AtomicBool,
     state: Mutex<RuntimeSubAgentSessionState>,
@@ -84,6 +86,7 @@ impl RuntimeSubAgentSession {
             model_provider: parts.model_provider,
             run_model_ref: parts.run_model_ref,
             tool_policy: parts.tool_policy,
+            budget_limits: parts.budget_limits,
             lifecycle_template,
             initial_lifecycle_pending: AtomicBool::new(true),
             state: Mutex::new(state),

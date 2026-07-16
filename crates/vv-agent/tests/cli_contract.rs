@@ -51,6 +51,8 @@ fn result(status: AgentStatus, error: Option<&str>) -> AgentResult {
         cycles: vec![],
         shared_state: Default::default(),
         token_usage: Default::default(),
+        budget_usage: None,
+        budget_exhaustion: None,
     }
 }
 

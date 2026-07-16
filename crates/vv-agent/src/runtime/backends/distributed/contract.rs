@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::budget::{RunBudgetLimits, MAX_WIRE_INTEGER};
 use crate::types::AgentTask;
 
 use super::super::RuntimeRecipe;
@@ -187,6 +188,7 @@ pub struct DistributedCapabilities {
     pub approval_timeout_seconds: Option<f64>,
     pub cancellation_ref: Option<CapabilityRef>,
     pub event_sink_ref: Option<CapabilityRef>,
+    pub host_cost_meter_ref: Option<CapabilityRef>,
     pub app_state_ref: Option<CapabilityRef>,
     pub sub_task_manager_ref: Option<CapabilityRef>,
     #[serde(default)]
@@ -222,6 +224,7 @@ impl DistributedCapabilities {
             ("approval_broker_ref", self.approval_broker_ref.as_ref()),
             ("cancellation_ref", self.cancellation_ref.as_ref()),
             ("event_sink_ref", self.event_sink_ref.as_ref()),
+            ("host_cost_meter_ref", self.host_cost_meter_ref.as_ref()),
             ("app_state_ref", self.app_state_ref.as_ref()),
             ("sub_task_manager_ref", self.sub_task_manager_ref.as_ref()),
         ] {
@@ -252,6 +255,7 @@ impl DistributedCapabilities {
             "approval_timeout_seconds": self.approval_timeout_seconds,
             "cancellation_ref": self.cancellation_ref,
             "event_sink_ref": self.event_sink_ref,
+            "host_cost_meter_ref": self.host_cost_meter_ref,
             "app_state_ref": self.app_state_ref,
             "sub_task_manager_ref": self.sub_task_manager_ref,
             "memory_provider_refs": self.memory_provider_refs,
@@ -274,6 +278,8 @@ pub struct DistributedRunEnvelope {
     pub job_id: String,
     pub run_id: String,
     pub task: AgentTask,
+    #[serde(default)]
+    pub budget_limits: Option<RunBudgetLimits>,
     pub recipe: RuntimeRecipe,
     pub cycle_name: String,
     pub cycle_index: u32,
@@ -292,6 +298,7 @@ impl DistributedRunEnvelope {
         run_id: Option<String>,
         deadline_unix_ms: Option<u64>,
         lease_duration_ms: u64,
+        budget_limits: Option<RunBudgetLimits>,
     ) -> Result<Self, String> {
         let run_id = run_id
             .filter(|value| !value.trim().is_empty())
@@ -309,6 +316,7 @@ impl DistributedRunEnvelope {
             job_id: idempotency_key.clone(),
             run_id,
             task,
+            budget_limits,
             recipe,
             cycle_name: cycle_name.into(),
             cycle_index,
@@ -346,6 +354,9 @@ impl DistributedRunEnvelope {
             );
         }
         self.recipe.validate()?;
+        if let Some(limits) = &self.budget_limits {
+            limits.validate()?;
+        }
         Ok(())
     }
 
@@ -377,6 +388,7 @@ impl DistributedRunEnvelope {
             "job_id": self.job_id,
             "run_id": self.run_id,
             "task": self.task.to_dict(),
+            "budget_limits": self.budget_limits,
             "recipe": self.recipe.to_dict(),
             "cycle_name": self.cycle_name,
             "cycle_index": self.cycle_index,
@@ -387,8 +399,21 @@ impl DistributedRunEnvelope {
     }
 
     pub fn from_dict(payload: &Value) -> Result<Self, String> {
-        let envelope: Self = serde_json::from_value(payload.clone())
-            .map_err(|_| "distributed envelope must be an object".to_string())?;
+        if !payload.is_object() {
+            return Err("distributed envelope must be an object".to_string());
+        }
+        if let Some(budget_limits) = payload
+            .get("budget_limits")
+            .filter(|budget_limits| !budget_limits.is_null())
+        {
+            serde_json::from_value::<RunBudgetLimits>(budget_limits.clone()).map_err(|error| {
+                format!(
+                    "distributed envelope budget limit must be between 0 and {MAX_WIRE_INTEGER}: {error}"
+                )
+            })?;
+        }
+        let envelope: Self =
+            serde_json::from_value(payload.clone()).map_err(|error| error.to_string())?;
         envelope.validate()?;
         Ok(envelope)
     }

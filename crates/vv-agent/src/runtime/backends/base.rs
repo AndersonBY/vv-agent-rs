@@ -1,6 +1,7 @@
 use super::distributed::DistributedBackend;
 use super::inline::InlineBackend;
 use super::thread::ThreadBackend;
+use crate::budget::{BudgetUsageSnapshot, RunBudgetLimits};
 use crate::runtime::CancellationToken;
 use crate::types::{AgentResult, AgentTask, CycleRecord, Message, Metadata};
 
@@ -37,6 +38,10 @@ impl From<DistributedBackend> for RuntimeExecutionBackend {
 }
 
 impl RuntimeExecutionBackend {
+    pub(crate) fn manages_run_budget(&self) -> bool {
+        matches!(self, Self::Distributed(backend) if backend.runtime_recipe().is_some())
+    }
+
     pub fn execute<F>(
         &self,
         task: &AgentTask,
@@ -94,6 +99,8 @@ impl RuntimeExecutionBackend {
         cancellation_token: Option<&CancellationToken>,
         cycle_index_start: u32,
         cycle_count: u32,
+        budget_limits: Option<RunBudgetLimits>,
+        initial_budget_usage: Option<BudgetUsageSnapshot>,
     ) -> AgentResult
     where
         F: FnMut(
@@ -134,6 +141,8 @@ impl RuntimeExecutionBackend {
                 cancellation_token,
                 cycle_index_start,
                 cycle_count,
+                budget_limits,
+                initial_budget_usage,
             ),
         }
     }

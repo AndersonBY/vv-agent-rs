@@ -309,6 +309,7 @@ impl DistributedCycleWorker {
                     checkpoint.messages = result.messages.clone();
                     checkpoint.cycles = result.cycles.clone();
                     checkpoint.shared_state = result.shared_state.clone();
+                    checkpoint.budget_usage = result.budget_usage.clone();
                     let expected_revision = checkpoint.revision;
                     heartbeat_status.begin_commit()?;
                     if result.status == AgentStatus::MaxCycles
@@ -676,11 +677,15 @@ fn worker_controls(
             ..RunContext::default()
         }),
         sub_task_manager: resolved.sub_task_manager.clone(),
+        budget_limits: envelope.budget_limits.clone(),
+        host_cost_meter: resolved.host_cost_meter.clone(),
         initial_messages: Some(checkpoint.messages.clone()),
         initial_shared_state: Some(checkpoint.shared_state.clone()),
         initial_cycles: Some(checkpoint.cycles.clone()),
         cycle_index_start: Some(envelope.cycle_index),
         cycle_count: Some(1),
+        initial_budget_usage: checkpoint.budget_usage.clone(),
+        defer_terminal_on_max_cycles: true,
         ..RuntimeRunControls::default()
     }
 }
@@ -717,6 +722,8 @@ fn failed_result(
         completion_reason: Some(crate::types::CompletionReason::Failed),
         completion_tool_name: None,
         partial_output,
+        budget_usage: None,
+        budget_exhaustion: None,
         final_answer: None,
         wait_reason: None,
         error: Some(error),

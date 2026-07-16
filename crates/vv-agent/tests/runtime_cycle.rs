@@ -5,9 +5,10 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use vv_agent::{
     memory::CLEARED_MARKER, AgentRuntime, AgentStatus, AgentTask, BeforeLlmPatch,
-    BeforeToolCallPatch, CancellationToken, ExecutionContext, LLMResponse, LlmClient, LlmError,
-    LlmRequest, LlmStreamCallback, Message, RuntimeHook, RuntimeRunControls, ScriptedLlmClient,
-    SubAgentConfig, TokenUsage, ToolCall, ToolDirective, ToolExecutionResult,
+    BeforeToolCallPatch, CancellationToken, ExecutionContext, HostCost, HostCostMeter, LLMResponse,
+    LlmClient, LlmError, LlmRequest, LlmStreamCallback, Message, RunBudgetLimits, RuntimeHook,
+    RuntimeRunControls, ScriptedLlmClient, SubAgentConfig, TokenUsage, ToolCall, ToolDirective,
+    ToolExecutionResult, UsageSource,
 };
 
 const PNG_1X1: &[u8] = &[

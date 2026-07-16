@@ -26,7 +26,7 @@ use crate::guardrails::GuardrailOutcome;
 use crate::llm::LlmClient;
 use crate::model::{ModelError, ModelProvider, ModelRef};
 use crate::result::{RunResult, RunResumeContext};
-use crate::run_config::{validate_max_cycles, RunConfig};
+use crate::run_config::{validate_max_cycles, RunConfig, INITIAL_BUDGET_USAGE_METADATA_KEY};
 use crate::runtime::tool_planner::project_tool_policy;
 use crate::runtime::{AgentRuntime, ExecutionContext, RuntimeRunControls};
 use crate::sessions::SessionItem;
@@ -46,8 +46,8 @@ use helpers::{
 use session_blocking::block_on_session;
 use support::{
     apply_cancellation_precedence, apply_input_guardrails, apply_output_guardrails, capture_event,
-    effective_event_store, extract_handoff, insert_context_metadata, merged_tool_policy,
-    ApprovalHook, SingleRunOutcome,
+    effective_event_store, effective_session_id, extract_handoff, initial_budget_usage,
+    insert_context_metadata, merged_tool_policy, ApprovalHook, SingleRunOutcome,
 };
 use trace_lifecycle::RunTrace;
 
@@ -79,26 +79,6 @@ struct InstructionBuildRequest<'a> {
     trace_id: &'a str,
     session: Option<Arc<dyn crate::sessions::Session>>,
     workspace: &'a std::path::Path,
-}
-
-fn effective_session_id(default_config: &RunConfig, config: &RunConfig) -> Option<String> {
-    config
-        .session
-        .as_ref()
-        .or(default_config.session.as_ref())
-        .map(|session| session.session_id().trim())
-        .filter(|session_id| !session_id.is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            config
-                .metadata
-                .get("session_id")
-                .or_else(|| default_config.metadata.get("session_id"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|session_id| !session_id.is_empty())
-                .map(str::to_string)
-        })
 }
 
 #[derive(Clone)]
@@ -223,6 +203,16 @@ impl Runner {
             .cancellation_token
             .clone()
             .or_else(|| self.default_run_config.cancellation_token.clone());
+        let budget_limits = config
+            .budget_limits
+            .clone()
+            .or_else(|| self.default_run_config.budget_limits.clone());
+        let host_cost_meter = config
+            .host_cost_meter
+            .clone()
+            .or_else(|| self.default_run_config.host_cost_meter.clone());
+        let initial_budget_usage =
+            initial_budget_usage(&self.default_run_config.metadata, &config.metadata)?;
         let memory_providers = self
             .default_run_config
             .memory_providers
@@ -234,6 +224,7 @@ impl Runner {
         let mut run_metadata = agent.metadata().clone();
         run_metadata.extend(self.default_run_config.metadata.clone());
         run_metadata.extend(config.metadata.clone());
+        run_metadata.remove(INITIAL_BUDGET_USAGE_METADATA_KEY);
         let trace_id = effective_trace_id(&self.default_run_config, &config, &run_metadata);
         let workflow_name = effective_workflow_name(&self.default_run_config, &config);
         run_metadata.insert("trace_id".to_string(), Value::String(trace_id.clone()));
@@ -395,6 +386,7 @@ impl Runner {
         task.metadata
             .extend(self.default_run_config.metadata.clone());
         task.metadata.extend(config.metadata.clone());
+        task.metadata.remove(INITIAL_BUDGET_USAGE_METADATA_KEY);
         task.metadata
             .entry("agent_name".to_string())
             .or_insert_with(|| Value::String(agent.name().to_string()));
@@ -700,10 +692,15 @@ impl Runner {
             .or_else(|| self.default_run_config.sub_task_manager.clone());
         background_parent_run_config.runtime_log_handler = runtime_log_handler;
         background_parent_run_config.runtime_stream_callback = runtime_stream_callback;
+        background_parent_run_config.budget_limits = budget_limits.clone();
+        background_parent_run_config.host_cost_meter = host_cost_meter.clone();
         background_parent_run_config.metadata = self.default_run_config.metadata.clone();
         background_parent_run_config
             .metadata
             .extend(config.metadata.clone());
+        background_parent_run_config
+            .metadata
+            .remove(INITIAL_BUDGET_USAGE_METADATA_KEY);
         let controls = RuntimeRunControls {
             log_handler,
             before_cycle_messages: config
@@ -734,6 +731,9 @@ impl Runner {
                 .sub_task_manager
                 .clone()
                 .or_else(|| self.default_run_config.sub_task_manager.clone()),
+            budget_limits,
+            host_cost_meter,
+            initial_budget_usage,
             ..RuntimeRunControls::default()
         };
         let result = runtime

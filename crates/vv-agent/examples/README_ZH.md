@@ -53,7 +53,7 @@ cargo run -p vv-agent --example 03_sdk_client
 | `04_session_api` | 基于 `RunConfig` 的长会话 `MemorySession`。 |
 | `05_ask_user_resume` | `ask_user` 等待状态和继续执行。 |
 | `06_runtime_hooks` | before-LLM / before-tool hook。 |
-| `07_token_budget_guard` | token 预算监控和强制收尾。 |
+| `07_token_budget_guard` | 使用公共 API 限制整次运行的 token 和工具调用预算。 |
 | `08_custom_tool` | 注册并调用自定义工具。 |
 | `09_resource_loader` | 从 workspace 加载 Agent、prompt 和 skill 资源。 |
 | `10_read_image` | 通过 `read_image` 工具读取图片。 |

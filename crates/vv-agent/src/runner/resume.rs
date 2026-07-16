@@ -2,8 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
+use crate::budget::{BudgetEnforcementBoundary, BudgetEvaluator};
 use crate::events::{RunEvent, RunEventPayload};
 use crate::result::{PendingToolApproval, RunResult, RunResumeContext, RunState};
+use crate::run_config::INITIAL_BUDGET_USAGE_METADATA_KEY;
 use crate::types::{
     last_assistant_output, AgentResult, AgentStatus, CompletionReason, ToolDirective,
 };
@@ -40,21 +42,21 @@ impl Runner {
             return Err("run state does not include resume context".to_string());
         };
         let origin_runner = resume_context.runner.clone();
-        if let Some(result) = origin_runner
-            .resume_approved_tool_call(
-                &source,
-                &resume_context,
-                &approved_ids,
-                &approval_consumption,
-                input.as_ref(),
-            )
-            .await
+        if let Some(result) = Box::pin(origin_runner.resume_approved_tool_call(
+            &source,
+            &resume_context,
+            &approved_ids,
+            &approval_consumption,
+            input.as_ref(),
+        ))
+        .await
         {
             return result;
         }
         let mut config = resume_context.config;
         config.initial_messages = Some(source.result().messages.clone());
         config.initial_shared_state = source.result().shared_state.clone();
+        set_initial_budget_usage(&mut config, source.budget_usage())?;
         let result = origin_runner
             .run_with_config(
                 &resume_context.agent,
@@ -110,6 +112,7 @@ impl Runner {
                     .and_then(crate::runtime::CancellationToken::reason)
                     .unwrap_or_else(|| "run cancelled".to_string()),
             );
+            cancelled.budget_exhaustion = None;
             cancelled.final_answer = None;
             cancelled.wait_reason = None;
             return Some(self.finalize_approval_terminal(
@@ -119,6 +122,8 @@ impl Runner {
                 cancelled,
                 source.new_items().to_vec(),
                 cancellation_token,
+                None,
+                Vec::new(),
             ));
         }
         {
@@ -129,6 +134,27 @@ impl Runner {
                 return Some(Err("approval_already_consumed".to_string()));
             }
         }
+        let resumed_run_id = format!("run_{}", uuid::Uuid::new_v4().simple());
+        let budget_limits = resume_context
+            .config
+            .budget_limits
+            .clone()
+            .or_else(|| self.default_run_config.budget_limits.clone());
+        let host_cost_meter = resume_context
+            .config
+            .host_cost_meter
+            .clone()
+            .or_else(|| self.default_run_config.host_cost_meter.clone());
+        let mut budget_evaluator = match budget_limits.filter(|limits| limits.has_limits()) {
+            Some(limits) => {
+                match BudgetEvaluator::new(limits, host_cost_meter, source.budget_usage().cloned())
+                {
+                    Ok(evaluator) => Some(Box::new(evaluator)),
+                    Err(error) => return Some(Err(error)),
+                }
+            }
+            None => None,
+        };
         let mut context = approval.context.clone();
         context.shared_state = source.result().shared_state.clone();
         let call = approval.call.clone();
@@ -207,49 +233,120 @@ impl Runner {
             .collect::<Vec<_>>();
         new_items.push(tool_message);
 
-        if tool_result.directive == ToolDirective::Continue {
+        let mut resume_budget_events = Vec::new();
+        if let Some(evaluator) = &mut budget_evaluator {
+            let observed_exhaustion = evaluator.tool_batch_complete(false);
+            let snapshot = evaluator.snapshot();
+            let cancelled =
+                cancellation_token.is_some_and(crate::runtime::CancellationToken::is_cancelled);
+            let exhaustion = (!cancelled).then_some(observed_exhaustion).flatten();
+            agent_result.budget_usage = Some(snapshot.clone());
+            agent_result.budget_exhaustion = exhaustion.clone();
+            if exhaustion.is_some() {
+                agent_result.status = AgentStatus::Failed;
+                agent_result.completion_reason = Some(CompletionReason::BudgetExhausted);
+                agent_result.completion_tool_name = None;
+                agent_result.partial_output = last_assistant_output(&agent_result.cycles);
+                agent_result.final_answer = None;
+                agent_result.wait_reason = None;
+                agent_result.error = Some("Run budget exhausted.".to_string());
+            }
+            let payload = match exhaustion.clone() {
+                Some(budget_exhaustion) => RunEventPayload::BudgetExhausted {
+                    enforcement_boundary: BudgetEnforcementBoundary::ToolBatchComplete,
+                    budget_usage: snapshot,
+                    budget_exhaustion,
+                },
+                None => RunEventPayload::BudgetSnapshot {
+                    enforcement_boundary: BudgetEnforcementBoundary::ToolBatchComplete,
+                    budget_usage: snapshot,
+                },
+            };
+            let mut budget_event = RunEvent::new(
+                &resumed_run_id,
+                source.trace_id(),
+                source.agent_name(),
+                Some(approval.cycle_index),
+                payload,
+            );
+            let session_id = effective_session_id(&self.default_run_config, &resume_context.config);
+            if let Some(session_id) = session_id.as_deref() {
+                budget_event = budget_event.with_session_id(session_id);
+            }
+            let (event_store, event_store_fail_closed) =
+                effective_event_store(&self.default_run_config, &resume_context.config);
+            if let Err(error) = capture_event(
+                None,
+                None,
+                event_store.as_ref(),
+                event_store_fail_closed,
+                budget_event.clone(),
+            ) {
+                return Some(Err(error));
+            }
+            resume_budget_events.push(budget_event);
+        }
+
+        if agent_result.completion_reason != Some(CompletionReason::BudgetExhausted)
+            && tool_result.directive == ToolDirective::Continue
+        {
             let mut config = resume_context.config.clone();
             config.initial_messages = Some(agent_result.messages.clone());
             config.initial_shared_state = agent_result.shared_state.clone();
             config.trace_id = Some(source.trace_id().to_string());
+            if let Err(error) =
+                set_initial_budget_usage(&mut config, agent_result.budget_usage.as_ref())
+            {
+                return Some(Err(error));
+            }
+            let mut prior_events = Vec::new();
+            if !resume_budget_events.is_empty() {
+                prior_events.extend_from_slice(source.events());
+                prior_events.extend(resume_budget_events);
+            }
             let result = self
                 .run_with_config(&resume_context.agent, source.input().to_string(), config)
                 .await
-                .map(|result| {
+                .map(move |result| {
+                    let mut events = prior_events;
+                    events.extend_from_slice(result.events());
                     let mut metadata = result.metadata().clone();
                     metadata.insert("resumed".to_string(), Value::Bool(true));
                     metadata.insert(
                         "approved_interruption_id".to_string(),
                         Value::String(approval.interruption_id.clone()),
                     );
-                    result.with_metadata(metadata)
+                    result.with_events(events).with_metadata(metadata)
                 });
             return Some(result);
         }
 
-        let completion_reason = behavior_reason.unwrap_or(match tool_result.directive {
-            ToolDirective::Finish => CompletionReason::ToolFinish,
-            ToolDirective::WaitUser => CompletionReason::WaitUser,
-            ToolDirective::Continue => unreachable!(),
-        });
-        agent_result.completion_reason = Some(completion_reason);
-        agent_result.completion_tool_name = Some(call.name.clone());
-        agent_result.error = None;
-        match tool_result.directive {
-            ToolDirective::Finish => {
-                agent_result.status = AgentStatus::Completed;
-                agent_result.partial_output = None;
-                agent_result.final_answer =
-                    Some(crate::runtime::extract_final_message(&tool_result));
-                agent_result.wait_reason = None;
+        if agent_result.completion_reason != Some(CompletionReason::BudgetExhausted) {
+            let completion_reason = behavior_reason.unwrap_or(match tool_result.directive {
+                ToolDirective::Finish => CompletionReason::ToolFinish,
+                ToolDirective::WaitUser => CompletionReason::WaitUser,
+                ToolDirective::Continue => unreachable!(),
+            });
+            agent_result.completion_reason = Some(completion_reason);
+            agent_result.completion_tool_name = Some(call.name.clone());
+            agent_result.error = None;
+            match tool_result.directive {
+                ToolDirective::Finish => {
+                    agent_result.status = AgentStatus::Completed;
+                    agent_result.partial_output = None;
+                    agent_result.final_answer =
+                        Some(crate::runtime::extract_final_message(&tool_result));
+                    agent_result.wait_reason = None;
+                }
+                ToolDirective::WaitUser => {
+                    agent_result.status = AgentStatus::WaitUser;
+                    agent_result.partial_output = last_assistant_output(&agent_result.cycles);
+                    agent_result.final_answer = None;
+                    agent_result.wait_reason =
+                        Some(crate::runtime::extract_wait_reason(&tool_result));
+                }
+                ToolDirective::Continue => unreachable!(),
             }
-            ToolDirective::WaitUser => {
-                agent_result.status = AgentStatus::WaitUser;
-                agent_result.partial_output = last_assistant_output(&agent_result.cycles);
-                agent_result.final_answer = None;
-                agent_result.wait_reason = Some(crate::runtime::extract_wait_reason(&tool_result));
-            }
-            ToolDirective::Continue => unreachable!(),
         }
         let guardrail_context = context
             .run_context
@@ -290,6 +387,8 @@ impl Runner {
             agent_result,
             new_items,
             cancellation_token,
+            Some(resumed_run_id),
+            resume_budget_events,
         ) {
             Ok(resumed) => resumed,
             Err(error) => return Some(Err(error)),
@@ -361,6 +460,7 @@ impl Runner {
         )
     }
 
+    #[allow(clippy::too_many_arguments)] // Keep the terminal commit context explicit and atomic.
     fn finalize_approval_terminal(
         &self,
         source: &RunResult,
@@ -369,8 +469,13 @@ impl Runner {
         agent_result: AgentResult,
         new_items: Vec<crate::types::Message>,
         cancellation_token: Option<&crate::runtime::CancellationToken>,
+        resumed_run_id: Option<String>,
+        additional_events: Vec<RunEvent>,
     ) -> Result<RunResult, String> {
-        let resumed_run_id = format!("run_{}", uuid::Uuid::new_v4().simple());
+        let resumed_run_id =
+            resumed_run_id.unwrap_or_else(|| format!("run_{}", uuid::Uuid::new_v4().simple()));
+        let mut events = source.events().to_vec();
+        events.extend(additional_events);
         let mut resumed = RunResult::new(
             resume_context.agent.name().to_string(),
             agent_result,
@@ -382,7 +487,7 @@ impl Runner {
         .with_ids(&resumed_run_id, source.trace_id())
         .with_input(source.input())
         .with_new_items(new_items)
-        .with_events(source.events().to_vec())
+        .with_events(events)
         .with_metadata({
             let mut metadata = source.metadata().clone();
             metadata.insert("resumed".to_string(), Value::Bool(true));
@@ -418,6 +523,25 @@ impl Runner {
         resumed = resumed.with_events(events);
         Ok(resumed)
     }
+}
+
+fn set_initial_budget_usage(
+    config: &mut crate::run_config::RunConfig,
+    usage: Option<&crate::budget::BudgetUsageSnapshot>,
+) -> Result<(), String> {
+    match usage {
+        Some(usage) => {
+            let value = serde_json::to_value(usage)
+                .map_err(|error| format!("failed to serialize resumed budget usage: {error}"))?;
+            config
+                .metadata
+                .insert(INITIAL_BUDGET_USAGE_METADATA_KEY.to_string(), value);
+        }
+        None => {
+            config.metadata.remove(INITIAL_BUDGET_USAGE_METADATA_KEY);
+        }
+    }
+    Ok(())
 }
 
 fn select_approved_tool_context<'a>(

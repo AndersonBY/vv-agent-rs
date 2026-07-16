@@ -39,6 +39,16 @@ fn public_export_path(id: &str) -> &'static str {
         "run_config.context_provider" => {
             export_type!(dyn vv_agent::ContextProvider, "vv_agent::ContextProvider")
         }
+        "run_config.run_budget_limits" => {
+            export_type!(vv_agent::RunBudgetLimits, "vv_agent::RunBudgetLimits")
+        }
+        "run_config.host_cost_meter" => {
+            export_type!(dyn vv_agent::HostCostMeter, "vv_agent::HostCostMeter")
+        }
+        "run_config.unavailable_metric_policy" => export_type!(
+            vv_agent::UnavailableMetricPolicy,
+            "vv_agent::UnavailableMetricPolicy"
+        ),
         "result.public" => export_type!(vv_agent::RunResult, "vv_agent::RunResult"),
         "result.resume_state" => export_type!(vv_agent::RunState, "vv_agent::RunState"),
         "result.approval_snapshot" => {
@@ -58,6 +68,33 @@ fn public_export_path(id: &str) -> &'static str {
         "result.token_usage" => export_type!(vv_agent::TokenUsage, "vv_agent::TokenUsage"),
         "result.task_token_usage" => {
             export_type!(vv_agent::TaskTokenUsage, "vv_agent::TaskTokenUsage")
+        }
+        "result.host_cost" => export_type!(vv_agent::HostCost, "vv_agent::HostCost"),
+        "result.budget_dimension" => {
+            export_type!(vv_agent::BudgetDimension, "vv_agent::BudgetDimension")
+        }
+        "result.budget_enforcement_boundary" => export_type!(
+            vv_agent::BudgetEnforcementBoundary,
+            "vv_agent::BudgetEnforcementBoundary"
+        ),
+        "result.budget_exhaustion_reason" => export_type!(
+            vv_agent::BudgetExhaustionReason,
+            "vv_agent::BudgetExhaustionReason"
+        ),
+        "result.budget_unavailable_reason" => export_type!(
+            vv_agent::BudgetUnavailableReason,
+            "vv_agent::BudgetUnavailableReason"
+        ),
+        "result.budget_unavailable_dimension" => export_type!(
+            vv_agent::BudgetUnavailableDimension,
+            "vv_agent::BudgetUnavailableDimension"
+        ),
+        "result.budget_usage_snapshot" => export_type!(
+            vv_agent::BudgetUsageSnapshot,
+            "vv_agent::BudgetUsageSnapshot"
+        ),
+        "result.budget_exhaustion" => {
+            export_type!(vv_agent::BudgetExhaustion, "vv_agent::BudgetExhaustion")
         }
         "run_handle.live" => export_type!(vv_agent::RunHandle, "vv_agent::RunHandle"),
         "run_handle.snapshot" => {
@@ -439,6 +476,8 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 approval_timeout,
                 approval_broker,
                 context_providers,
+                budget_limits,
+                host_cost_meter,
                 max_context_chars,
                 memory_providers,
                 app_state,
@@ -471,6 +510,8 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 completion_reason,
                 completion_tool_name,
                 partial_output,
+                budget_usage,
+                budget_exhaustion,
                 result,
                 events,
                 token_usage,
@@ -766,6 +807,9 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 [resolve, client, default_settings, default_model_ref,]
             )
         }
+        ("host_cost_meter", "vv_agent::HostCostMeter", "method") => {
+            compile_methods!(name, dyn vv_agent::HostCostMeter, [read])
+        }
         ("runtime_backend", "vv_agent::RuntimeExecutionBackend", "method") => match name {
             "execute" => {
                 type CycleFn = fn(
@@ -819,7 +863,7 @@ fn public_api_manifest_compiles_real_rust_exports() {
             );
         }
     }
-    assert_eq!(capability_ids.len(), 117);
+    assert_eq!(capability_ids.len(), 128);
 
     let surfaces = fixture["surfaces"].as_array().expect("public API surfaces");
     let surface_map = surfaces

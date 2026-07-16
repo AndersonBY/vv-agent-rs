@@ -2,6 +2,7 @@ use std::io::{Error, ErrorKind, Result};
 
 use serde_json::Value;
 
+use crate::budget::BudgetUsageSnapshot;
 use crate::runtime::state::{checkpoint_status_from_value, checkpoint_status_value, Checkpoint};
 use crate::types::{CycleRecord, Message, MessageRole};
 
@@ -54,6 +55,12 @@ pub(crate) fn checkpoint_to_json(checkpoint: &Checkpoint) -> Result<String> {
     if let Some(terminal_result) = &checkpoint.terminal_result {
         payload.insert("terminal_result".to_string(), terminal_result.to_dict());
     }
+    if let Some(budget_usage) = &checkpoint.budget_usage {
+        payload.insert(
+            "budget_usage".to_string(),
+            serde_json::to_value(budget_usage).map_err(json_to_io)?,
+        );
+    }
     serde_json::to_string(&Value::Object(payload)).map_err(json_to_io)
 }
 
@@ -105,6 +112,17 @@ pub(crate) fn checkpoint_from_json(raw: &str) -> Result<Checkpoint> {
                 format!("invalid checkpoint terminal_result: {error}"),
             )
         })?;
+    let budget_usage = object
+        .get("budget_usage")
+        .filter(|value| !value.is_null())
+        .map(|value| serde_json::from_value::<BudgetUsageSnapshot>(value.clone()))
+        .transpose()
+        .map_err(|error| {
+            Error::new(
+                ErrorKind::InvalidData,
+                format!("invalid checkpoint budget_usage: {error}"),
+            )
+        })?;
     let checkpoint = Checkpoint {
         task_id,
         cycle_index,
@@ -117,6 +135,7 @@ pub(crate) fn checkpoint_from_json(raw: &str) -> Result<Checkpoint> {
         claimed_cycle,
         lease_expires_at_ms,
         terminal_result,
+        budget_usage,
     };
     validate_checkpoint(&checkpoint)?;
     Ok(checkpoint)
@@ -170,6 +189,11 @@ pub(crate) fn validate_checkpoint(checkpoint: &Checkpoint) -> Result<()> {
             ErrorKind::InvalidData,
             "checkpoint terminal_result status must match checkpoint status",
         ));
+    }
+    if let Some(budget_usage) = &checkpoint.budget_usage {
+        budget_usage
+            .validate()
+            .map_err(|error| Error::new(ErrorKind::InvalidData, error))?;
     }
     Ok(())
 }

@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+use crate::budget::{BudgetEnforcementBoundary, BudgetExhaustion, BudgetUsageSnapshot};
 use crate::types::{AgentStatus, CompletionReason, Metadata};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,6 +123,7 @@ impl<'de> Deserialize<'de> for RunEvent {
             }
         }
         validate_completion_wire_fields(&value).map_err(D::Error::custom)?;
+        validate_budget_wire_fields(&value).map_err(D::Error::custom)?;
         if matches!(
             &wire.payload,
             RunEventPayload::ToolCallStarted { arguments, .. } if !arguments.is_object()
@@ -153,6 +155,18 @@ impl<'de> Deserialize<'de> for RunEvent {
                 )));
             }
             *approved = action.is_approved();
+        }
+        if let RunEventPayload::BudgetExhausted {
+            enforcement_boundary,
+            budget_exhaustion,
+            ..
+        } = &wire.payload
+        {
+            if budget_exhaustion.enforcement_boundary != *enforcement_boundary {
+                return Err(D::Error::custom(
+                    "run event budget exhaustion boundaries must match",
+                ));
+            }
         }
         let created_at = match (wire.created_at, wire.created_at_ms) {
             (Some(seconds), _) => seconds,
@@ -633,6 +647,37 @@ impl RunEvent {
         self
     }
 
+    pub fn with_budget_details(
+        mut self,
+        budget_usage: Option<&BudgetUsageSnapshot>,
+        budget_exhaustion: Option<&BudgetExhaustion>,
+    ) -> Self {
+        if let Some(budget_usage) = budget_usage {
+            self.extra_fields.insert(
+                "budget_usage".to_string(),
+                serde_json::to_value(budget_usage).expect("budget usage serializes"),
+            );
+            self.extra_fields
+                .entry("completion_tool_name".to_string())
+                .or_insert(Value::Null);
+            self.extra_fields
+                .entry("partial_output".to_string())
+                .or_insert(Value::Null);
+            if matches!(self.payload, RunEventPayload::RunFailed { .. }) {
+                self.extra_fields
+                    .entry("status".to_string())
+                    .or_insert_with(|| Value::String("failed".to_string()));
+            }
+        }
+        if let Some(budget_exhaustion) = budget_exhaustion {
+            self.extra_fields.insert(
+                "budget_exhaustion".to_string(),
+                serde_json::to_value(budget_exhaustion).expect("budget exhaustion serializes"),
+            );
+        }
+        self
+    }
+
     pub fn final_output(&self) -> Option<&str> {
         self.extra_fields
             .get("final_output")
@@ -721,6 +766,15 @@ pub enum RunEventPayload {
         tool_call_id: String,
     },
     SessionPersisted,
+    BudgetSnapshot {
+        enforcement_boundary: BudgetEnforcementBoundary,
+        budget_usage: BudgetUsageSnapshot,
+    },
+    BudgetExhausted {
+        enforcement_boundary: BudgetEnforcementBoundary,
+        budget_usage: BudgetUsageSnapshot,
+        budget_exhaustion: BudgetExhaustion,
+    },
     RunCompleted {
         status: AgentStatus,
     },
@@ -830,6 +884,30 @@ fn validate_completion_wire_fields(value: &Value) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_budget_wire_fields(value: &Value) -> Result<(), String> {
+    if let Some(value) = value.get("budget_usage") {
+        match value {
+            Value::Null => {}
+            Value::Object(_) => {
+                serde_json::from_value::<BudgetUsageSnapshot>(value.clone())
+                    .map_err(|error| format!("invalid run event budget_usage: {error}"))?;
+            }
+            _ => return Err("run event budget_usage must be an object or null".to_string()),
+        }
+    }
+    if let Some(value) = value.get("budget_exhaustion") {
+        match value {
+            Value::Null => {}
+            Value::Object(_) => {
+                serde_json::from_value::<BudgetExhaustion>(value.clone())
+                    .map_err(|error| format!("invalid run event budget_exhaustion: {error}"))?;
+            }
+            _ => return Err("run event budget_exhaustion must be an object or null".to_string()),
+        }
+    }
+    Ok(())
+}
+
 fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload) -> Metadata {
     let Some(object) = value.as_object() else {
         return Metadata::new();
@@ -846,6 +924,8 @@ fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload) -> Metadat
             "completion_tool_name",
             "partial_output",
             "token_usage",
+            "budget_usage",
+            "budget_exhaustion",
         ],
         RunEventPayload::HandoffStarted { .. } => &["status", "child_session_id"],
         RunEventPayload::HandoffCompleted { .. } => &["status", "child_session_id", "child_run_id"],
@@ -854,10 +934,17 @@ fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload) -> Metadat
             "completion_reason",
             "completion_tool_name",
             "partial_output",
+            "budget_usage",
+            "budget_exhaustion",
         ],
-        RunEventPayload::RunFailed { .. } | RunEventPayload::RunCancelled { .. } => {
-            &["completion_reason", "partial_output"]
-        }
+        RunEventPayload::RunFailed { .. } | RunEventPayload::RunCancelled { .. } => &[
+            "status",
+            "completion_reason",
+            "completion_tool_name",
+            "partial_output",
+            "budget_usage",
+            "budget_exhaustion",
+        ],
         _ => &[],
     };
     keys.iter()

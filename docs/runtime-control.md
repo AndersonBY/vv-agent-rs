@@ -32,6 +32,8 @@ or change which tools are available.
 - workspace path/backend, session, initial messages, and shared state;
 - cycle/handoff bounds, no-tool policy, tool policy, and a fresh tool registry factory;
 - execution backend, cancellation, approval provider/broker/timeout;
+- optional run-budget limits and a host-scoped cumulative cost meter; see
+  `run-budgets.md`;
 - runtime hooks, event store policy, trace sink, trace identity/workflow name,
   context providers, memory providers, and application state;
 - before-cycle and interruption message providers plus a specific

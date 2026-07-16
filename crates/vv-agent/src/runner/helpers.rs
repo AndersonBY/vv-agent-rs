@@ -83,6 +83,10 @@ pub(super) fn terminal_event(
         result.completion_tool_name.as_deref(),
         result.partial_output.as_deref(),
     );
+    event = event.with_budget_details(
+        result.budget_usage.as_ref(),
+        result.budget_exhaustion.as_ref(),
+    );
     if let Some(session_id) = session_id {
         event = event.with_session_id(session_id);
     }

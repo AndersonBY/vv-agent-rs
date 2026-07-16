@@ -45,6 +45,7 @@ fn checkpoint(task_id: &str, cycle_index: u32) -> Checkpoint {
         claimed_cycle: None,
         lease_expires_at_ms: None,
         terminal_result: None,
+        budget_usage: None,
     }
 }
 

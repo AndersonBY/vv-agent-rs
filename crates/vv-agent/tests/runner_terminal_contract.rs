@@ -6,13 +6,13 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use vv_agent::{
     Agent, AgentResult, AgentStatus, CompletionReason, EventStoreError, GuardrailOutcome,
-    LLMResponse, MemorySession, ModelRef, OutputGuardrail, RunConfig, RunContext, RunEvent,
-    RunEventIter, RunEventPayload, RunEventReplayQuery, RunEventStore, Runner,
-    ScriptedModelProvider, ToolCall,
+    LLMResponse, MemorySession, ModelRef, NoToolPolicy, OutputGuardrail, RunBudgetLimits,
+    RunConfig, RunContext, RunEvent, RunEventIter, RunEventPayload, RunEventReplayQuery,
+    RunEventStore, Runner, ScriptedModelProvider, TokenUsage, ToolCall, UsageSource,
 };
 
 const FIXTURE: &str = include_str!("fixtures/parity/runner_terminal_v1.json");
-const FIXTURE_SHA256: &str = "927c76bcb770364314fd42966a942b552ec6f3ccc1afcdcc419c571358ffc3de";
+const FIXTURE_SHA256: &str = "2c6f7e7477d95a817a5fa2df7cf0b11be65e43a67206ff5181b593aec5845593";
 const COMPLETION_FIXTURE: &str = include_str!("fixtures/parity/completion_policy_v1.json");
 
 fn contract() -> Value {
@@ -217,6 +217,81 @@ async fn llm_call_failure_returns_typed_failed_result_and_terminal_event() {
     );
 }
 
+#[tokio::test]
+async fn budget_exhaustion_emits_observation_before_the_only_terminal() {
+    let expected = &contract()["budget_exhausted"];
+    let mut response =
+        LLMResponse::new(expected["partial_output"].as_str().expect("partial output"));
+    response.token_usage = TokenUsage {
+        total_tokens: 12,
+        usage_source: UsageSource::ProviderReported,
+        cache_usage: vv_agent::CacheUsage {
+            status: vv_agent::CacheUsageStatus::ProviderReported,
+            uncached_input_tokens: Some(12),
+            ..vv_agent::CacheUsage::default()
+        },
+        ..TokenUsage::default()
+    };
+    let runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "terminal-model",
+            vec![response],
+        ))
+        .workspace("./workspace")
+        .build()
+        .expect("runner");
+    let budget_agent = Agent::builder("budget-terminal-agent")
+        .instructions("Return the scripted draft.")
+        .model(ModelRef::named("terminal-model"))
+        .no_tool_policy(NoToolPolicy::Finish)
+        .build()
+        .expect("agent");
+    let result = runner
+        .run_with_config(
+            &budget_agent,
+            "go",
+            RunConfig::builder()
+                .budget_limits(
+                    RunBudgetLimits::builder()
+                        .max_total_tokens(10)
+                        .build()
+                        .unwrap(),
+                )
+                .build(),
+        )
+        .await
+        .expect("budget result");
+    let terminals = result.events().iter().filter(terminal).collect::<Vec<_>>();
+    let tail = result
+        .events()
+        .iter()
+        .rev()
+        .take(2)
+        .map(event_type)
+        .collect::<Vec<_>>();
+
+    assert_eq!(tail, ["run_failed", "budget_exhausted"]);
+    assert_eq!(
+        terminals.len(),
+        expected["terminal_count"].as_u64().unwrap() as usize
+    );
+    assert_eq!(
+        event_type(terminals[0]),
+        expected["terminal"].as_str().unwrap()
+    );
+    assert_eq!(result.status(), AgentStatus::Failed);
+    assert_eq!(
+        result.completion_reason(),
+        Some(CompletionReason::BudgetExhausted)
+    );
+    assert_eq!(result.completion_tool_name(), None);
+    assert_eq!(result.partial_output(), expected["partial_output"].as_str());
+    assert_eq!(result.result().error.as_deref(), expected["error"].as_str());
+    assert!(result.budget_usage().is_some());
+    assert!(result.budget_exhaustion().is_some());
+}
+
 struct FailingStore;
 
 impl RunEventStore for FailingStore {
@@ -269,6 +344,7 @@ fn finish_response(message: &str) -> LLMResponse {
 fn event_type(event: &RunEvent) -> &'static str {
     match event.payload() {
         RunEventPayload::SessionPersisted => "session_persisted",
+        RunEventPayload::BudgetExhausted { .. } => "budget_exhausted",
         RunEventPayload::RunCompleted { .. } => "run_completed",
         RunEventPayload::RunFailed { .. } => "run_failed",
         RunEventPayload::RunCancelled { .. } => "run_cancelled",

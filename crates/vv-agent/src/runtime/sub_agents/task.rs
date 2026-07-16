@@ -426,6 +426,7 @@ mod parity_tests {
             model_provider: None,
             parent_run_context: None,
             tool_policy: None,
+            budget_limits: None,
         };
         let task = build_sub_agent_task(
             &context,

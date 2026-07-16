@@ -53,6 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         messages: result.messages.clone(),
         cycles: result.cycles.clone(),
         shared_state: result.shared_state.clone(),
+        budget_usage: result.budget_usage.clone(),
         revision: 0,
         claim_token: None,
         claimed_cycle: None,

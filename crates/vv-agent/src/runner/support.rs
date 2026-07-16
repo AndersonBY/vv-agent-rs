@@ -5,12 +5,13 @@ use serde_json::{json, Value};
 use tokio::sync::broadcast;
 
 use crate::agent::Agent;
+use crate::budget::BudgetUsageSnapshot;
 use crate::context::RunContext;
 use crate::context_providers::ContextBundle;
 use crate::events::RunEvent;
 use crate::guardrails::GuardrailOutcome;
 use crate::result::RunResult;
-use crate::run_config::RunConfig;
+use crate::run_config::{RunConfig, INITIAL_BUDGET_USAGE_METADATA_KEY};
 use crate::runtime::{BeforeLlmEvent, BeforeLlmPatch, RuntimeHook};
 use crate::tools::{ApprovalPolicy, ToolPolicy};
 use crate::types::AgentResult;
@@ -58,7 +59,13 @@ pub(super) fn apply_output_guardrails(
 ) -> AgentResult {
     normalize_completion_observation(&mut result);
     let mut current = result;
-    if current.completion_reason == Some(crate::types::CompletionReason::Cancelled) {
+    if matches!(
+        current.completion_reason,
+        Some(
+            crate::types::CompletionReason::Cancelled
+                | crate::types::CompletionReason::BudgetExhausted
+        )
+    ) {
         return current;
     }
     for guardrail in agent.output_guardrails() {
@@ -66,12 +73,16 @@ pub(super) fn apply_output_guardrails(
         let completion_reason = current.completion_reason;
         let completion_tool_name = current.completion_tool_name.clone();
         let partial_output = current.partial_output.clone();
+        let budget_usage = current.budget_usage.clone();
+        let budget_exhaustion = current.budget_exhaustion.clone();
         current = match guardrail.check(context, &current) {
             GuardrailOutcome::Allow(mut output) => {
                 output.status = status;
                 output.completion_reason = completion_reason;
                 output.completion_tool_name = completion_tool_name;
                 output.partial_output = partial_output;
+                output.budget_usage = budget_usage;
+                output.budget_exhaustion = budget_exhaustion;
                 normalize_completion_observation(&mut output);
                 output
             }
@@ -119,7 +130,13 @@ fn normalize_completion_observation(result: &mut AgentResult) {
             result.wait_reason = None;
         }
         crate::types::AgentStatus::Failed => {
-            if result.completion_reason != Some(crate::types::CompletionReason::Cancelled) {
+            if !matches!(
+                result.completion_reason,
+                Some(
+                    crate::types::CompletionReason::Cancelled
+                        | crate::types::CompletionReason::BudgetExhausted
+                )
+            ) {
                 result.completion_reason = Some(crate::types::CompletionReason::Failed);
             }
             result.completion_tool_name = None;
@@ -151,6 +168,7 @@ pub(super) fn apply_cancellation_precedence(
             .partial_output
             .or_else(|| crate::types::last_assistant_output(&result.cycles));
         result.error = cancellation_token.and_then(crate::runtime::CancellationToken::reason);
+        result.budget_exhaustion = None;
         result.final_answer = None;
         result.wait_reason = None;
     }
@@ -162,6 +180,51 @@ pub(super) fn max_handoff_depth(default_config: &RunConfig, config: &RunConfig) 
         .max_handoffs
         .or(default_config.max_handoffs)
         .unwrap_or(10)
+}
+
+pub(super) fn effective_session_id(
+    default_config: &RunConfig,
+    config: &RunConfig,
+) -> Option<String> {
+    config
+        .session
+        .as_ref()
+        .or(default_config.session.as_ref())
+        .map(|session| session.session_id().trim())
+        .filter(|session_id| !session_id.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            config
+                .metadata
+                .get("session_id")
+                .or_else(|| default_config.metadata.get("session_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|session_id| !session_id.is_empty())
+                .map(str::to_string)
+        })
+}
+
+pub(super) fn initial_budget_usage(
+    default_metadata: &crate::types::Metadata,
+    run_metadata: &crate::types::Metadata,
+) -> Result<Option<BudgetUsageSnapshot>, String> {
+    let value = run_metadata
+        .get(INITIAL_BUDGET_USAGE_METADATA_KEY)
+        .or_else(|| default_metadata.get(INITIAL_BUDGET_USAGE_METADATA_KEY));
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Object(_)) => serde_json::from_value(value.cloned().expect("matched value"))
+            .map(Some)
+            .map_err(|error| {
+                format!(
+                    "RunConfig.metadata[{INITIAL_BUDGET_USAGE_METADATA_KEY:?}] is invalid: {error}"
+                )
+            }),
+        Some(_) => Err(format!(
+            "RunConfig.metadata[{INITIAL_BUDGET_USAGE_METADATA_KEY:?}] must be an object"
+        )),
+    }
 }
 
 pub(super) fn effective_event_store(

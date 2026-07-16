@@ -145,6 +145,8 @@ fn cli_result_payload_matches_shape() {
         cycles: vec![],
         shared_state: Default::default(),
         token_usage: Default::default(),
+        budget_usage: None,
+        budget_exhaustion: None,
     };
     let resolved = ResolvedModelConfig::new(
         "deepseek",

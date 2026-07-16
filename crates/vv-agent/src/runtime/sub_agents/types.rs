@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::budget::RunBudgetLimits;
 use crate::llm::LlmClient;
 use crate::model::ModelProvider;
 use crate::model::ModelRef;
@@ -27,6 +28,7 @@ pub(in crate::runtime) struct SubTaskRunControls {
     pub(in crate::runtime) model_provider: Option<Arc<dyn ModelProvider>>,
     pub(in crate::runtime) parent_run_context: Option<RunContext>,
     pub(in crate::runtime) tool_policy: Option<ToolPolicy>,
+    pub(in crate::runtime) budget_limits: Option<RunBudgetLimits>,
 }
 
 #[derive(Clone)]
@@ -49,6 +51,7 @@ pub(super) struct SubTaskRunContext {
     pub(super) model_provider: Option<Arc<dyn ModelProvider>>,
     pub(super) parent_run_context: Option<RunContext>,
     pub(super) tool_policy: Option<ToolPolicy>,
+    pub(super) budget_limits: Option<RunBudgetLimits>,
 }
 
 pub(super) struct SubTaskBuildInputs<'a> {
@@ -103,6 +106,7 @@ pub(super) struct RuntimeSubAgentSessionParts {
     pub(super) model_provider: Option<Arc<dyn ModelProvider>>,
     pub(super) run_model_ref: ModelRef,
     pub(super) tool_policy: ToolPolicy,
+    pub(super) budget_limits: Option<RunBudgetLimits>,
     pub(super) initial_lifecycle: SubRunLifecycle,
 }
 

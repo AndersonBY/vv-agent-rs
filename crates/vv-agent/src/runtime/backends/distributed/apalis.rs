@@ -35,6 +35,7 @@ impl ApalisCycleJob {
                 None,
                 None,
                 DEFAULT_LEASE_DURATION_MS,
+                None,
             )
             .expect("ApalisCycleJob inputs must satisfy the distributed envelope contract"),
         )
@@ -185,6 +186,7 @@ where
             None,
             now_ms.checked_add(10 * 60 * 1000),
             DEFAULT_LEASE_DURATION_MS,
+            None,
         )?;
         self.dispatch_envelope(&envelope)
     }

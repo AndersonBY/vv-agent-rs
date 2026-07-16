@@ -79,6 +79,8 @@ where
             completion_reason: Some(CompletionReason::Failed),
             completion_tool_name: None,
             partial_output: None,
+            budget_usage: None,
+            budget_exhaustion: None,
             final_answer: None,
             wait_reason: None,
             error: Some(format!("No checkpoint found for task {}", task.task_id)),
@@ -256,6 +258,7 @@ mod tests {
                 claimed_cycle: None,
                 lease_expires_at_ms: None,
                 terminal_result: None,
+                budget_usage: None,
             })
             .expect("seed checkpoint");
         let mut operation_called = false;

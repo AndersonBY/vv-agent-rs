@@ -14,6 +14,7 @@ duplicating the details.
 | `interactive-sessions.md` | Embedded session lifecycle, live control, events, and typed final output. |
 | `model-settings.md` | `LLM_SETTINGS`, key-file handling, exact model resolution, defaults, and `vv-llm` boundaries. |
 | `runtime-control.md` | Per-run controls, language adaptations, resume, approvals, sessions, cancellation, and event producers. |
+| `run-budgets.md` | Token, tool, wall-time, and host-cost limits; observations, resume, and distributed behavior. |
 | `app_server.md` | JSONL protocol, lifecycle, approval, schema generation, CLI startup, and host boundary. |
 
 ## Existing Entry Points

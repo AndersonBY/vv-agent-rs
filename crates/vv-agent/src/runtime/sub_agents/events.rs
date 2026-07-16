@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
+use crate::budget::{BudgetExhaustion, BudgetUsageSnapshot};
 use crate::runtime::sub_agent_sessions::SubAgentSessionListener;
 use crate::runtime::{RuntimeEventHandler, RuntimeLogHandler};
 use crate::types::{AgentStatus, SubTaskOutcome, TaskTokenUsage};
@@ -236,8 +237,16 @@ pub(super) fn emit_sub_run_completed(
     lifecycle: &SubRunLifecycle,
     outcome: &SubTaskOutcome,
     token_usage: Option<&TaskTokenUsage>,
+    budget_usage: Option<&BudgetUsageSnapshot>,
+    budget_exhaustion: Option<&BudgetExhaustion>,
 ) -> Result<(), String> {
-    let payload = sub_run_completed_payload(lifecycle, outcome, token_usage);
+    let payload = sub_run_completed_payload(
+        lifecycle,
+        outcome,
+        token_usage,
+        budget_usage,
+        budget_exhaustion,
+    );
     emit_trusted_lifecycle_event(parent_event_handler, "sub_run_completed", &payload)?;
     emit_parent_log_event(parent_log_handler, "sub_run_completed", &payload);
     Ok(())
@@ -248,8 +257,16 @@ pub(super) fn emit_sub_run_completed_to_log(
     lifecycle: &SubRunLifecycle,
     outcome: &SubTaskOutcome,
     token_usage: Option<&TaskTokenUsage>,
+    budget_usage: Option<&BudgetUsageSnapshot>,
+    budget_exhaustion: Option<&BudgetExhaustion>,
 ) {
-    let payload = sub_run_completed_payload(lifecycle, outcome, token_usage);
+    let payload = sub_run_completed_payload(
+        lifecycle,
+        outcome,
+        token_usage,
+        budget_usage,
+        budget_exhaustion,
+    );
     emit_parent_log_event(parent_log_handler, "sub_run_completed", &payload);
 }
 
@@ -257,6 +274,8 @@ fn sub_run_completed_payload(
     lifecycle: &SubRunLifecycle,
     outcome: &SubTaskOutcome,
     token_usage: Option<&TaskTokenUsage>,
+    budget_usage: Option<&BudgetUsageSnapshot>,
+    budget_exhaustion: Option<&BudgetExhaustion>,
 ) -> BTreeMap<String, Value> {
     let mut metadata =
         serde_json::Map::from_iter([("cycles".to_string(), Value::from(outcome.cycles as u64))]);
@@ -305,6 +324,18 @@ fn sub_run_completed_payload(
         payload.insert(
             "token_usage".to_string(),
             serde_json::to_value(token_usage).unwrap_or(Value::Null),
+        );
+    }
+    if let Some(budget_usage) = budget_usage {
+        payload.insert(
+            "budget_usage".to_string(),
+            serde_json::to_value(budget_usage).unwrap_or(Value::Null),
+        );
+    }
+    if let Some(budget_exhaustion) = budget_exhaustion {
+        payload.insert(
+            "budget_exhaustion".to_string(),
+            serde_json::to_value(budget_exhaustion).unwrap_or(Value::Null),
         );
     }
     insert_nonempty_string(&mut payload, "parent_run_id", &lifecycle.parent_run_id);
@@ -444,8 +475,16 @@ mod tests {
                 *captured_for_handler.lock().expect("captured payload") = Some(payload.clone());
             }
         });
-        emit_sub_run_completed(&None, &Some(handler), &lifecycle(), outcome, token_usage)
-            .expect("completion sink");
+        emit_sub_run_completed(
+            &None,
+            &Some(handler),
+            &lifecycle(),
+            outcome,
+            token_usage,
+            None,
+            None,
+        )
+        .expect("completion sink");
         let payload = captured
             .lock()
             .expect("captured payload")

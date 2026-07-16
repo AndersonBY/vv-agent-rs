@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
+use crate::llm::LlmClient;
 use crate::runtime::cancellation::CancellationToken;
 use crate::runtime::token_usage::summarize_task_token_usage;
 use crate::types::{
@@ -9,7 +10,7 @@ use crate::types::{
     Message, MessageRole, ToolExecutionResult,
 };
 
-use super::RuntimeRunControls;
+use super::{AgentRuntime, RuntimeRunControls};
 
 pub(super) fn drain_steering_queue(controls: &RuntimeRunControls) -> Vec<String> {
     let Some(queue) = &controls.steering_queue else {
@@ -60,6 +61,38 @@ pub(super) fn controls_cancelled(controls: &RuntimeRunControls) -> bool {
         .is_some_and(CancellationToken::is_cancelled)
 }
 
+pub(super) fn project_cycle_cancellation<C: LlmClient>(
+    runtime: &AgentRuntime<C>,
+    controls: &RuntimeRunControls,
+    cycle_index: u32,
+    cancellation_token: Option<&CancellationToken>,
+    messages: &[Message],
+    cycles: &[CycleRecord],
+    shared_state: &BTreeMap<String, Value>,
+) -> Option<AgentResult> {
+    if !cancellation_token.is_some_and(CancellationToken::is_cancelled)
+        && !controls_cancelled(controls)
+    {
+        return None;
+    }
+    runtime.emit_log(
+        controls,
+        "run_cancelled",
+        BTreeMap::from([
+            ("cycle".to_string(), Value::from(cycle_index)),
+            (
+                "error".to_string(),
+                Value::String("Operation was cancelled".to_string()),
+            ),
+        ]),
+    );
+    Some(cancelled_agent_result(
+        messages.to_vec(),
+        cycles.to_vec(),
+        shared_state.clone(),
+    ))
+}
+
 pub(super) fn seed_skill_state_from_task_metadata(
     shared_state: &mut BTreeMap<String, Value>,
     metadata: &BTreeMap<String, Value>,
@@ -100,6 +133,8 @@ pub(super) fn cancelled_agent_result(
         completion_reason: Some(CompletionReason::Cancelled),
         completion_tool_name: None,
         partial_output,
+        budget_usage: None,
+        budget_exhaustion: None,
         final_answer: None,
         wait_reason: None,
         error: Some("Operation was cancelled".to_string()),
@@ -123,12 +158,46 @@ pub(super) fn failed_agent_result(
         completion_reason: Some(CompletionReason::Failed),
         completion_tool_name: None,
         partial_output,
+        budget_usage: None,
+        budget_exhaustion: None,
         final_answer: None,
         wait_reason: None,
         error: Some(error),
         shared_state,
         token_usage,
     }
+}
+
+pub(super) fn finalize_terminal_projection<C: LlmClient>(
+    runtime: &AgentRuntime<C>,
+    controls: &RuntimeRunControls,
+    cancellation_token: Option<&CancellationToken>,
+    mut result: AgentResult,
+) -> AgentResult {
+    if result.status == AgentStatus::Failed
+        && cancellation_token.is_some_and(CancellationToken::is_cancelled)
+    {
+        result.completion_reason = Some(CompletionReason::Cancelled);
+        result.completion_tool_name = None;
+        result.partial_output = result
+            .partial_output
+            .or_else(|| last_assistant_output(&result.cycles));
+    } else if result.status == AgentStatus::MaxCycles {
+        result.completion_reason = Some(CompletionReason::MaxCycles);
+        result.completion_tool_name = None;
+        result.partial_output = result
+            .partial_output
+            .or_else(|| last_assistant_output(&result.cycles));
+    } else if result.status == AgentStatus::Failed && result.completion_reason.is_none() {
+        result.completion_reason = Some(CompletionReason::Failed);
+        result.partial_output = result
+            .partial_output
+            .or_else(|| last_assistant_output(&result.cycles));
+    }
+    if result.status == AgentStatus::MaxCycles {
+        runtime.emit_run_max_cycles(controls, &result);
+    }
+    result
 }
 
 pub(super) fn build_initial_messages(task: &AgentTask) -> Vec<Message> {

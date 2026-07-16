@@ -6,6 +6,7 @@
 pub mod agent;
 pub mod app_server;
 pub mod approval;
+pub mod budget;
 pub mod cli;
 pub mod config;
 pub mod constants;
@@ -42,6 +43,12 @@ pub use app_server::{
 };
 pub use approval::{
     ApprovalBroker, ApprovalError, ApprovalFuture, ApprovalProvider, ApprovalRequest,
+};
+pub use budget::{
+    BudgetDimension, BudgetEnforcementBoundary, BudgetExhaustion, BudgetExhaustionReason,
+    BudgetUnavailableDimension, BudgetUnavailableReason, BudgetUsageSnapshot, HostCost,
+    HostCostMeter, RunBudgetLimits, RunBudgetLimitsBuilder, UnavailableMetricPolicy,
+    MAX_WIRE_INTEGER,
 };
 pub use config::{
     apply_resolved_model_limits, build_vv_llm_from_local_settings, build_vv_llm_settings,

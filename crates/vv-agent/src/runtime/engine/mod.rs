@@ -1,4 +1,5 @@
 mod approval;
+mod budget;
 mod completion;
 mod construction;
 mod controls;
@@ -13,16 +14,12 @@ mod state;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use futures_util::FutureExt;
 use serde_json::Value;
 
 use crate::llm::{LlmClient, LlmError, LlmRequest, LlmStreamCallback};
 use crate::memory::CompactionExhaustedError;
-use crate::tools::{ToolContext, ToolError, ToolOrchestrator, ToolRunOptions, ToolSpecKind};
-use crate::types::{
-    last_assistant_output, AgentResult, AgentStatus, AgentTask, CompletionReason, ToolDirective,
-    ToolExecutionResult,
-};
+use crate::tools::{ToolContext, ToolOrchestrator, ToolRunOptions, ToolSpecKind};
+use crate::types::{AgentResult, AgentTask, CompletionReason, ToolDirective, ToolExecutionResult};
 
 use super::cancellation::CancellationToken;
 
@@ -32,18 +29,23 @@ use super::token_usage::normalize_token_usage;
 use super::tool_call_runner::{apply_tool_use_behavior, needs_tool_call_id, skipped_tool_result};
 
 use self::approval::{approval_error_result, approval_provider_result, PendingToolApprovalCapture};
+use self::budget::{
+    enforce_cycle_start, finalize_run_budget, observe_llm_completion,
+    observe_tool_batch_completion, preflight_tool_batch, PreparedRunBudget,
+};
 use self::completion::{
     handle_directive_result, handle_no_tool_response, DirectiveResultRequest, NoToolResponseRequest,
 };
 use self::helpers::{
     cancelled_agent_result, collect_interruption_messages, controls_cancelled,
-    drain_steering_queue, failed_agent_result, image_notification_from_tool_result,
-    previous_cycle_memory_usage,
+    drain_steering_queue, failed_agent_result, finalize_terminal_projection,
+    image_notification_from_tool_result, previous_cycle_memory_usage, project_cycle_cancellation,
 };
 use self::memory::{
     memory_compact_completed_event, memory_compact_event_payload, memory_compact_started_event,
     notify_memory_after_compact, notify_memory_before_compact,
 };
+use self::planning::block_on_engine_tool_run;
 use self::run_setup::{prepare_run_setup, PreparedRun};
 pub use self::state::AgentRuntime;
 
@@ -86,13 +88,23 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             mut memory_manager,
         } = prepare_run_setup(self, task, &controls);
         self.emit_run_started(&controls, &task, &workspace_path);
+        let PreparedRunBudget {
+            limits: effective_budget_limits,
+            controller: mut budget_controller,
+            early_result,
+        } = self.prepare_run_budget(&controls, &messages, &cycles, &shared_state);
+        let configured_budget = effective_budget_limits.is_some();
+        let child_budget_limits = effective_budget_limits.clone();
+        if let Some(result) = early_result {
+            return Ok(result);
+        }
         self.emit_log(
             &controls,
             "agent_started",
             BTreeMap::from([("model".to_string(), Value::String(task.model.clone()))]),
         );
 
-        if controls_cancelled(&controls) {
+        if !configured_budget && controls_cancelled(&controls) {
             self.emit_log(
                 &controls,
                 "run_cancelled",
@@ -116,46 +128,38 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             shared_state,
             |cycle_index, messages, cycles, shared_state, cancellation_token| {
                 let _cancellation_scope = CancellationToken::enter_scope(cancellation_token);
-                if cancellation_token.is_some_and(CancellationToken::is_cancelled)
-                    || controls_cancelled(&controls)
-                {
-                    self.emit_log(
-                        &controls,
-                        "run_cancelled",
-                        BTreeMap::from([
-                            ("cycle".to_string(), Value::from(cycle_index)),
-                            (
-                                "error".to_string(),
-                                Value::String("Operation was cancelled".to_string()),
-                            ),
-                        ]),
-                    );
-                    return Some(cancelled_agent_result(
-                        messages.clone(),
-                        cycles.clone(),
-                        shared_state.clone(),
-                    ));
+                if let Some(result) = project_cycle_cancellation(
+                    self,
+                    &controls,
+                    cycle_index,
+                    cancellation_token,
+                    messages,
+                    cycles,
+                    shared_state,
+                ) {
+                    return Some(result);
                 }
                 self.apply_cycle_inputs(&controls, cycle_index, messages, shared_state);
-                if cancellation_token.is_some_and(CancellationToken::is_cancelled)
-                    || controls_cancelled(&controls)
-                {
-                    self.emit_log(
-                        &controls,
-                        "run_cancelled",
-                        BTreeMap::from([
-                            ("cycle".to_string(), Value::from(cycle_index)),
-                            (
-                                "error".to_string(),
-                                Value::String("Operation was cancelled".to_string()),
-                            ),
-                        ]),
-                    );
-                    return Some(cancelled_agent_result(
-                        messages.clone(),
-                        cycles.clone(),
-                        shared_state.clone(),
-                    ));
+                if let Some(result) = project_cycle_cancellation(
+                    self,
+                    &controls,
+                    cycle_index,
+                    cancellation_token,
+                    messages,
+                    cycles,
+                    shared_state,
+                ) {
+                    return Some(result);
+                }
+                if let Some(result) = enforce_cycle_start(
+                    &mut budget_controller,
+                    &controls,
+                    cycle_index,
+                    messages,
+                    cycles,
+                    shared_state,
+                ) {
+                    return Some(result);
                 }
                 self.emit_log(
                     &controls,
@@ -386,6 +390,20 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 }
                 self.emit_cycle_llm_response(&controls, &cycle);
 
+                if let Some(result) = observe_llm_completion(
+                    &mut budget_controller,
+                    &controls,
+                    cycle_index,
+                    &cycle.token_usage,
+                    cancellation_token,
+                    &cycle,
+                    messages,
+                    cycles,
+                    shared_state,
+                ) {
+                    return Some(result);
+                }
+
                 if response.tool_calls.is_empty() {
                     if let Some(result) = handle_no_tool_response(NoToolResponseRequest {
                         runtime: self,
@@ -403,6 +421,19 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     return None;
                 }
 
+                if let Some(result) = preflight_tool_batch(
+                    &mut budget_controller,
+                    &controls,
+                    cycle_index,
+                    &response.tool_calls,
+                    &cycle,
+                    messages,
+                    cycles,
+                    shared_state,
+                ) {
+                    return Some(result);
+                }
+
                 let sub_task_runner = self.build_sub_task_runner(
                     &task,
                     workspace_path.clone(),
@@ -418,6 +449,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         model_provider: controls.model_provider.clone(),
                         parent_run_context: controls.run_context.clone(),
                         tool_policy: self.tool_policy.clone(),
+                        budget_limits: child_budget_limits.clone(),
                     },
                 );
                 let mut tool_metadata = task.metadata.clone();
@@ -547,6 +579,9 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         || controls_cancelled(&controls)
                     {
                         *shared_state = context.shared_state.clone();
+                        if let Some(controller) = &mut budget_controller {
+                            controller.tool_batch_complete(&controls, cycle_index, false, true);
+                        }
                         cycles.push(cycle);
                         self.emit_log(
                             &controls,
@@ -705,6 +740,9 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         };
                         if let Some(error) = approval_failure {
                             *shared_state = context.shared_state.clone();
+                            if let Some(controller) = &mut budget_controller {
+                                controller.tool_batch_complete(&controls, cycle_index, true, false);
+                            }
                             cycles.push(cycle);
                             self.emit_log(
                                 &controls,
@@ -888,6 +926,17 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 *shared_state = context.shared_state.clone();
 
                 cycles.push(cycle);
+                if let Some(result) = observe_tool_batch_completion(
+                    &mut budget_controller,
+                    &controls,
+                    cycle_index,
+                    cancellation_token,
+                    messages,
+                    cycles,
+                    shared_state,
+                ) {
+                    return Some(result);
+                }
                 if let Some(directive_result) = directive_result.as_ref() {
                     if let Some(result) = handle_directive_result(DirectiveResultRequest {
                         runtime: self,
@@ -912,57 +961,24 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             effective_cancellation_token.as_ref(),
             cycle_index_start,
             cycle_count,
+            effective_budget_limits,
+            controls.initial_budget_usage.clone(),
         );
         if let Some(error) = pending_error {
             return Err(error);
         }
-        if result.status == AgentStatus::Failed
-            && effective_cancellation_token
-                .as_ref()
-                .is_some_and(CancellationToken::is_cancelled)
-        {
-            result.completion_reason = Some(CompletionReason::Cancelled);
-            result.completion_tool_name = None;
-            result.partial_output = result
-                .partial_output
-                .or_else(|| last_assistant_output(&result.cycles));
-        } else if result.status == AgentStatus::MaxCycles {
-            result.completion_reason = Some(CompletionReason::MaxCycles);
-            result.completion_tool_name = None;
-            result.partial_output = result
-                .partial_output
-                .or_else(|| last_assistant_output(&result.cycles));
-        } else if result.status == AgentStatus::Failed && result.completion_reason.is_none() {
-            result.completion_reason = Some(CompletionReason::Failed);
-            result.partial_output = result
-                .partial_output
-                .or_else(|| last_assistant_output(&result.cycles));
-        }
-        if result.status == AgentStatus::MaxCycles {
-            self.emit_run_max_cycles(&controls, &result);
-        }
+        result = finalize_run_budget(
+            &mut budget_controller,
+            &controls,
+            effective_cancellation_token.as_ref(),
+            result,
+        );
+        result = finalize_terminal_projection(
+            self,
+            &controls,
+            effective_cancellation_token.as_ref(),
+            result,
+        );
         Ok(result)
-    }
-}
-
-fn block_on_engine_tool_run<'a>(
-    future: impl std::future::Future<Output = Result<ToolExecutionResult, ToolError>> + 'a,
-) -> Result<ToolExecutionResult, ToolError> {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
-            tokio::task::block_in_place(|| handle.block_on(future))
-        } else {
-            future.now_or_never().unwrap_or_else(|| {
-                Err(ToolError::new(
-                    "tool future cannot be driven from a current-thread runtime",
-                ))
-            })
-        }
-    } else {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| ToolError::new(error.to_string()))?
-            .block_on(future)
     }
 }

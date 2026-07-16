@@ -53,6 +53,7 @@ pub(super) fn run_attached_sub_agent_session(
         model_provider: context.model_provider.clone(),
         run_model_ref: resolved_client.run_model_ref,
         tool_policy,
+        budget_limits: context.budget_limits.clone(),
         initial_lifecycle: lifecycle.clone(),
     }));
     let sub_agent_session: Arc<dyn SubAgentSession> = session.clone();

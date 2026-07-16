@@ -1,3 +1,4 @@
+use crate::budget::{BudgetUsageSnapshot, RunBudgetLimits};
 use crate::runtime::CancellationToken;
 use crate::types::{AgentResult, AgentTask, CycleRecord, Message, Metadata};
 
@@ -40,6 +41,8 @@ impl DistributedBackend {
                         cycle_dispatcher,
                         cancellation_token,
                         max_cycles,
+                        budget_limits: None,
+                        initial_budget_usage: None,
                     },
                 );
             }
@@ -73,6 +76,8 @@ impl DistributedBackend {
         cancellation_token: Option<&CancellationToken>,
         cycle_index_start: u32,
         cycle_count: u32,
+        budget_limits: Option<RunBudgetLimits>,
+        initial_budget_usage: Option<BudgetUsageSnapshot>,
     ) -> AgentResult
     where
         F: FnMut(
@@ -92,14 +97,33 @@ impl DistributedBackend {
             );
         }
         if self.runtime_recipe.is_some() {
-            return self.execute(
-                task,
-                initial_messages,
-                shared_state,
-                cycle_executor,
-                cancellation_token,
-                cycle_count,
-            );
+            return match (
+                &self.runtime_recipe,
+                &self.state_store,
+                &self.cycle_dispatcher,
+            ) {
+                (Some(recipe), Some(state_store), Some(cycle_dispatcher)) => self
+                    .execute_distributed(
+                        initial_messages,
+                        shared_state,
+                        DistributedRunContext {
+                            task,
+                            recipe,
+                            state_store,
+                            cycle_dispatcher,
+                            cancellation_token,
+                            max_cycles: cycle_count,
+                            budget_limits,
+                            initial_budget_usage,
+                        },
+                    ),
+                _ => failed_backend_result(
+                    initial_messages,
+                    initial_cycles,
+                    shared_state,
+                    "Distributed backend requires a state_store and cycle_dispatcher".to_string(),
+                ),
+            };
         }
         execute_cycle_loop_with_state(
             initial_messages,

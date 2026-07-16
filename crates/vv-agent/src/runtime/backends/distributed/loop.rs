@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::budget::{BudgetUsageSnapshot, RunBudgetLimits};
 use crate::runtime::state::{Checkpoint, StateStore};
 use crate::runtime::token_usage::summarize_task_token_usage;
 use crate::runtime::CancellationToken;
@@ -20,6 +21,8 @@ pub(super) struct DistributedRunContext<'a> {
     pub cycle_dispatcher: &'a Arc<dyn CycleDispatcher>,
     pub cancellation_token: Option<&'a CancellationToken>,
     pub max_cycles: u32,
+    pub budget_limits: Option<RunBudgetLimits>,
+    pub initial_budget_usage: Option<BudgetUsageSnapshot>,
 }
 
 impl DistributedBackend {
@@ -41,6 +44,7 @@ impl DistributedBackend {
             claimed_cycle: None,
             lease_expires_at_ms: None,
             terminal_result: None,
+            budget_usage: context.initial_budget_usage.clone(),
         };
         match context.state_store.create_checkpoint(checkpoint.clone()) {
             Ok(true) => self.distributed_loop(&context, checkpoint),
@@ -187,6 +191,7 @@ impl DistributedBackend {
                 None,
                 Some(deadline_unix_ms),
                 self.lease_duration_ms,
+                context.budget_limits.clone(),
             ) {
                 Ok(envelope) => envelope,
                 Err(error) => {
@@ -414,6 +419,8 @@ impl DistributedBackend {
                     completion_reason: Some(CompletionReason::MaxCycles),
                     completion_tool_name: None,
                     partial_output,
+                    budget_usage: None,
+                    budget_exhaustion: None,
                     final_answer: Some(
                         "Reached max cycles without finish signal.".to_string(),
                     ),

@@ -775,6 +775,7 @@ mod tests {
             claimed_cycle: Some(1),
             lease_expires_at_ms: Some(lease_expires_at_ms),
             terminal_result: None,
+            budget_usage: None,
         }
     }
 }

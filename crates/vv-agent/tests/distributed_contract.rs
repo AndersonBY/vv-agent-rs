@@ -83,7 +83,7 @@ fn python_and_rust_distributed_fixture_copies_are_byte_identical() {
     let rust_bytes = FIXTURE.as_bytes();
     assert_eq!(
         format!("{:x}", Sha256::digest(rust_bytes)),
-        "a8d34e27893cc8d694612e9eed17a87746cf3ffba4a47cd5def2c6bc8a272320"
+        "c1eb11591c93e8ac880fd4688cf06e0fe60a8b4522f7707ea13e1cccf40208e0"
     );
     let python_root = std::env::var_os("VV_AGENT_PYTHON_REPO")
         .map(PathBuf::from)
@@ -157,6 +157,7 @@ fn claim_expiry_boundary_matches_shared_contract() {
                 claimed_cycle: None,
                 lease_expires_at_ms: None,
                 terminal_result: None,
+                budget_usage: None,
             })
             .expect("create checkpoint"));
         let owner = store
@@ -221,6 +222,7 @@ fn distributed_worker_reconstructs_custom_tool_policy_and_app_state() {
             claimed_cycle: None,
             lease_expires_at_ms: None,
             terminal_result: None,
+            budget_usage: None,
         })
         .expect("initial checkpoint");
 
@@ -304,6 +306,7 @@ fn distributed_worker_reconstructs_custom_tool_policy_and_app_state() {
         Some("run-worker-custom".to_string()),
         Some(2_000_000_000_000),
         DEFAULT_LEASE_DURATION_MS,
+        None,
     )
     .expect("worker envelope");
 
@@ -352,6 +355,7 @@ fn distributed_worker_resolves_every_capability_before_claiming_checkpoint() {
             claimed_cycle: None,
             lease_expires_at_ms: None,
             terminal_result: None,
+            budget_usage: None,
         })
         .unwrap();
     let mut recipe = RuntimeRecipe::new(
@@ -373,6 +377,7 @@ fn distributed_worker_resolves_every_capability_before_claiming_checkpoint() {
         None,
         Some(2_000_000_000_000),
         DEFAULT_LEASE_DURATION_MS,
+        None,
     )
     .unwrap();
 
@@ -413,6 +418,7 @@ fn distributed_worker_heartbeat_prevents_claim_theft_during_long_cycle() {
             claimed_cycle: None,
             lease_expires_at_ms: None,
             terminal_result: None,
+            budget_usage: None,
         })
         .unwrap();
     let (started_tx, started_rx) = std::sync::mpsc::channel();
@@ -451,6 +457,7 @@ fn distributed_worker_heartbeat_prevents_claim_theft_during_long_cycle() {
         None,
         Some(2_000_000_000_000),
         LEASE_DURATION_MS,
+        None,
     )
     .unwrap();
     let worker = DistributedCycleWorker::new(registry);

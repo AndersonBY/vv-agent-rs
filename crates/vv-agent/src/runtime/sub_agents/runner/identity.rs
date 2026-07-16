@@ -118,6 +118,7 @@ mod tests {
             model_provider: None,
             parent_run_context: None,
             tool_policy: None,
+            budget_limits: None,
         }
     }
 
