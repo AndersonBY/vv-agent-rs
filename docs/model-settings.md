@@ -97,6 +97,16 @@ default is explicit.
 contract and are forwarded to runtime request metadata while the runtime
 continues to use `vv-llm` for provider transport.
 
+## Streaming Usage Accounting
+
+OpenAI-compatible request serialization remains owned by `vv-llm`. This
+repository requires `vv-llm` 0.4.2 or newer so streaming calls request the
+provider's final usage chunk by default. Explicit provider cache details are
+then projected into `TokenUsage` as `provider_reported`; if the provider omits
+them, the runtime keeps cache accounting unavailable instead of manufacturing
+a zero. Keep the request-body regression in `tests/vv_llm_integration.rs`
+rather than duplicating `stream_options` assembly in the Agent runtime.
+
 ## Exact Model Resolution
 
 Model keys are exact. `resolve_model_endpoint(settings, backend, model)` asks
