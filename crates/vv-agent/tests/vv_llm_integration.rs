@@ -1,9 +1,13 @@
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::Path;
+use std::thread;
+use std::time::Duration;
 
 use vv_agent::{
     build_vv_llm_from_local_settings, build_vv_llm_settings, decode_api_key,
     load_llm_settings_from_file, load_memory_summary_defaults_from_file, resolve_model_endpoint,
+    CacheUsageStatus, LlmClient, LlmRequest, Message, UsageSource,
 };
 
 #[test]
@@ -60,6 +64,129 @@ fn settings_builder_returns_vv_llm_backed_client() {
     assert_eq!(resolved.endpoint().unwrap().endpoint_id, "moonshot-default");
     assert_eq!(client.provider_name(), "openai-compatible");
     assert_eq!(client.model_id(), "kimi-k2.6");
+}
+
+#[test]
+fn openai_compatible_stream_requests_and_reports_provider_cache_usage() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind completion server");
+    let api_base = format!("http://{}", listener.local_addr().expect("server address"));
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().expect("accept completion request");
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set read timeout");
+        let request = read_http_request(&mut socket);
+        let body = request.split("\r\n\r\n").nth(1).expect("request body");
+        let payload: serde_json::Value = serde_json::from_str(body).expect("request JSON");
+
+        assert!(request.starts_with("POST /chat/completions "));
+        assert_eq!(payload["stream"], true);
+        assert_eq!(
+            payload["stream_options"],
+            serde_json::json!({"include_usage": true})
+        );
+
+        let content_chunk = serde_json::json!({
+            "id": "chatcmpl-agent-stream",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "kimi-k2.6",
+            "choices": [{
+                "index": 0,
+                "delta": {"content": "ok"},
+                "finish_reason": null
+            }]
+        });
+        let finish_chunk = serde_json::json!({
+            "id": "chatcmpl-agent-stream",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "kimi-k2.6",
+            "choices": [{
+                "index": 0,
+                "delta": {},
+                "finish_reason": "stop"
+            }],
+            "usage": null
+        });
+        let usage_chunk = serde_json::json!({
+            "id": "chatcmpl-agent-stream",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "kimi-k2.6",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 11,
+                "completion_tokens": 7,
+                "total_tokens": 18,
+                "prompt_tokens_details": {"cached_tokens": 6}
+            }
+        });
+        let body = format!(
+            "data: {content_chunk}\n\ndata: {finish_chunk}\n\ndata: {usage_chunk}\n\ndata: [DONE]\n\n"
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        socket
+            .write_all(response.as_bytes())
+            .expect("write completion response");
+    });
+
+    let mut settings_file = tempfile::NamedTempFile::new().expect("settings file");
+    serde_json::to_writer(
+        &mut settings_file,
+        &serde_json::json!({
+            "VERSION": "2",
+            "endpoints": [{
+                "id": "moonshot-default",
+                "api_base": api_base,
+                "api_key": "sk-test"
+            }],
+            "backends": {
+                "moonshot": {
+                    "models": {
+                        "kimi-k2.6": {
+                            "id": "kimi-k2.6",
+                            "endpoints": [{
+                                "endpoint_id": "moonshot-default",
+                                "model_id": "kimi-k2.6"
+                            }]
+                        }
+                    }
+                }
+            },
+            "embedding_backends": {},
+            "rerank_backends": {}
+        }),
+    )
+    .expect("write settings");
+    settings_file.flush().expect("flush settings");
+
+    let (client, _) =
+        build_vv_llm_from_local_settings(settings_file.path(), "moonshot", "kimi-k2.6", 5.0)
+            .expect("build llm");
+    let response = client
+        .complete(LlmRequest::new("kimi-k2.6", vec![Message::user("hello")]))
+        .expect("stream completion");
+    server.join().expect("completion server");
+
+    assert_eq!(response.content, "ok");
+    assert_eq!(
+        response.token_usage.usage_source,
+        UsageSource::ProviderReported
+    );
+    assert_eq!(
+        response.token_usage.cache_usage.status,
+        CacheUsageStatus::ProviderReported
+    );
+    assert_eq!(response.token_usage.prompt_tokens, 11);
+    assert_eq!(response.token_usage.completion_tokens, 7);
+    assert_eq!(response.token_usage.total_tokens, 18);
+    assert_eq!(response.token_usage.cached_tokens, 6);
+    assert_eq!(response.token_usage.cache_usage.read_tokens, Some(6));
 }
 
 #[test]
@@ -638,6 +765,33 @@ fn memory_summary_defaults_load_from_json_settings_file() {
         Some("settings-backend")
     );
     assert_eq!(summary_defaults.model.as_deref(), Some("settings-model"));
+}
+
+fn read_http_request(socket: &mut TcpStream) -> String {
+    let mut reader = BufReader::new(socket);
+    let mut request = String::new();
+    let mut content_length = 0usize;
+
+    loop {
+        let mut line = String::new();
+        let read = reader.read_line(&mut line).expect("read request header");
+        assert!(read > 0, "request ended before headers completed");
+        request.push_str(&line);
+        if line == "\r\n" {
+            break;
+        }
+        if let Some(value) = line
+            .strip_prefix("content-length:")
+            .or_else(|| line.strip_prefix("Content-Length:"))
+        {
+            content_length = value.trim().parse().expect("content length");
+        }
+    }
+
+    let mut body = vec![0u8; content_length];
+    reader.read_exact(&mut body).expect("read request body");
+    request.push_str(std::str::from_utf8(&body).expect("UTF-8 request body"));
+    request
 }
 
 fn rust_source_files(root: &Path) -> Vec<std::path::PathBuf> {
