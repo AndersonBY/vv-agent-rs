@@ -67,7 +67,7 @@ const EXPECTED_INTERACTIVE_SESSION_MEMBERS: [&str; 20] = [
     "replace_messages",
     "replace_shared_state",
 ];
-const EXPECTED_APP_SERVER_PROTOCOL_OPERATIONS: [&str; 15] = [
+const EXPECTED_APP_SERVER_PROTOCOL_OPERATIONS: [&str; 16] = [
     "initialize",
     "thread/start",
     "thread/resume",
@@ -77,6 +77,7 @@ const EXPECTED_APP_SERVER_PROTOCOL_OPERATIONS: [&str; 15] = [
     "thread/unsubscribe",
     "turn/start",
     "turn/interrupt",
+    "turn/resume",
     "turn/steer",
     "turn/followUp",
     "approval/resolve",

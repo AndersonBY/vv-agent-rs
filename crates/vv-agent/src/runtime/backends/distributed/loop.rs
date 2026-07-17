@@ -421,6 +421,8 @@ impl DistributedBackend {
                     partial_output,
                     budget_usage: None,
                     budget_exhaustion: None,
+                    checkpoint_key: None,
+                    resume_observation: None,
                     final_answer: Some(
                         "Reached max cycles without finish signal.".to_string(),
                     ),

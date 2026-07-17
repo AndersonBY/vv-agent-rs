@@ -1,15 +1,19 @@
 pub mod backends;
 pub mod background_sessions;
 pub mod cancellation;
-mod checkpoint_codec;
+pub(crate) mod checkpoint_codec;
+pub mod checkpoint_codec_v2;
+pub(crate) mod checkpoint_resume;
 pub mod context;
 pub mod cycle_runner;
 pub mod engine;
 pub mod hooks;
 pub mod processes;
 mod results;
+pub(crate) mod run_definition_v2;
 pub mod shell;
 pub mod state;
+pub mod state_v2;
 pub mod stores;
 mod sub_agent_sessions;
 mod sub_agents;
@@ -30,8 +34,9 @@ pub use cycle_runner::{
     MAX_PTL_RETRIES,
 };
 pub use engine::{
-    AgentRuntime, BeforeCycleMessageProvider, InterruptionMessageProvider, RuntimeEventHandler,
-    RuntimeLogCallback, RuntimeLogHandler, RuntimeRunControls,
+    AgentRuntime, BeforeCycleMessageProvider, CheckpointRuntimeControl,
+    InterruptionMessageProvider, RuntimeEventHandler, RuntimeLogCallback, RuntimeLogHandler,
+    RuntimeRunControls,
 };
 pub use hooks::{
     AfterLlmEvent, AfterToolCallEvent, BeforeLlmEvent, BeforeLlmPatch, BeforeMemoryCompactEvent,

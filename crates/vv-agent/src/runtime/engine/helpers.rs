@@ -135,6 +135,8 @@ pub(super) fn cancelled_agent_result(
         partial_output,
         budget_usage: None,
         budget_exhaustion: None,
+        checkpoint_key: None,
+        resume_observation: None,
         final_answer: None,
         wait_reason: None,
         error: Some("Operation was cancelled".to_string()),
@@ -160,6 +162,8 @@ pub(super) fn failed_agent_result(
         partial_output,
         budget_usage: None,
         budget_exhaustion: None,
+        checkpoint_key: None,
+        resume_observation: None,
         final_answer: None,
         wait_reason: None,
         error: Some(error),
@@ -200,7 +204,7 @@ pub(super) fn finalize_terminal_projection<C: LlmClient>(
     result
 }
 
-pub(super) fn build_initial_messages(task: &AgentTask) -> Vec<Message> {
+pub(crate) fn build_initial_messages(task: &AgentTask) -> Vec<Message> {
     if !task.initial_messages.is_empty() {
         let mut messages = task.initial_messages.clone();
         let starts_with_system = messages

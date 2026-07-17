@@ -213,6 +213,7 @@ impl RuntimeSubAgentSession {
                     cycle_count: None,
                     initial_budget_usage: None,
                     defer_terminal_on_max_cycles: false,
+                    checkpoint_controller: None,
                 },
             )
             .map_err(|error| Box::new((error.to_string(), observed_progress.token_usage())))?;

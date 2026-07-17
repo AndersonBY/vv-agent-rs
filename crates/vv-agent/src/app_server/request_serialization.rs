@@ -63,8 +63,8 @@ impl RequestSerializationScope {
         match method {
             "thread/start" => Some(Self::exclusive_global("thread")),
             "thread/resume" | "thread/read" => thread_id(params).map(Self::shared_thread),
-            "thread/archive" | "thread/unsubscribe" | "turn/start" | "turn/interrupt"
-            | "turn/steer" | "turn/followUp" | "approval/resolve" => {
+            "thread/archive" | "thread/unsubscribe" | "turn/start" | "turn/resume"
+            | "turn/interrupt" | "turn/steer" | "turn/followUp" | "approval/resolve" => {
                 thread_id(params).map(Self::exclusive_thread)
             }
             "thread/list" => Some(Self::shared_global("thread/list")),

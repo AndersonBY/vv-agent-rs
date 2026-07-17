@@ -193,6 +193,8 @@ fn shared_fixture_nullability_and_restart_recovery_match() {
         token_usage: None,
         budget_usage: None,
         budget_exhaustion: None,
+        checkpoint: None,
+        interruption: None,
     })
     .expect("terminal payload");
     for field in contract["terminal"]["optionalFieldsOmittedWhenAbsent"]
@@ -517,8 +519,8 @@ async fn shared_fixture_allows_connection_reinitialize_and_exports_exact_schema_
         .iter()
         .map(|name| name.as_str().expect("TypeScript schema name").to_string())
         .collect::<Vec<_>>();
-    assert_eq!(json_schema.len(), 17);
-    assert_eq!(typescript.len(), 16);
+    assert_eq!(json_schema.len(), 19);
+    assert_eq!(typescript.len(), 18);
     assert_eq!(
         json_schema.keys().cloned().collect::<Vec<_>>(),
         expected_json

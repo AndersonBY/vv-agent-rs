@@ -17,6 +17,7 @@ pub(super) fn agent_status(payload: &BTreeMap<String, Value>) -> AgentStatus {
         "wait_user" | "wait_response" => AgentStatus::WaitUser,
         "failed" | "error" => AgentStatus::Failed,
         "max_cycles" => AgentStatus::MaxCycles,
+        "reconciliation_required" => AgentStatus::ReconciliationRequired,
         _ => AgentStatus::Completed,
     }
 }

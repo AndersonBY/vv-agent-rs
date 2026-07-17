@@ -34,8 +34,10 @@ pub use thread::{
     ThreadUnsubscribeResponse,
 };
 pub use turn::{
-    AppCacheUsage, AppTokenUsage, AppTurn, TurnCompletedParams, TurnControlResponse,
-    TurnFollowUpParams, TurnFollowUpResponse, TurnInterruptParams, TurnInterruptResponse,
+    AppCacheUsage, AppTokenUsage, AppTurn, CheckpointSummary, CheckpointSummaryStatus,
+    InterruptionIdempotencySupport, InterruptionOperationKind, InterruptionSummary,
+    TurnCompletedParams, TurnControlResponse, TurnFollowUpParams, TurnFollowUpResponse,
+    TurnInterruptParams, TurnInterruptResponse, TurnResumeParams, TurnResumeResponse,
     TurnStartParams, TurnStartResponse, TurnStartedParams, TurnStatus, TurnSteerParams,
     TurnSteerResponse, UserInput,
 };
@@ -65,6 +67,8 @@ pub enum ClientRequest {
     ThreadUnsubscribe(ThreadUnsubscribeParams),
     #[serde(rename = "turn/start")]
     TurnStart(TurnStartParams),
+    #[serde(rename = "turn/resume")]
+    TurnResume(TurnResumeParams),
     #[serde(rename = "turn/interrupt")]
     TurnInterrupt(TurnInterruptParams),
     #[serde(rename = "turn/steer")]
@@ -92,6 +96,7 @@ impl ClientRequest {
             "thread/archive",
             "thread/unsubscribe",
             "turn/start",
+            "turn/resume",
             "turn/interrupt",
             "turn/steer",
             "turn/followUp",

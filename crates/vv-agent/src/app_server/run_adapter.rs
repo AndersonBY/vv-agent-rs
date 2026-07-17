@@ -4,22 +4,34 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use crate::app_server::durable_resume::{
+    validate_completion, DurableTurnCompletionFuture, DurableTurnResumeOutcome,
+    DurableTurnResumeProvider, DurableTurnResumeRequest,
+};
 use crate::app_server::host::{
     AgentResolutionRequest, AppServerHost, DefaultAppServerHost, RunConfigResolutionRequest,
 };
 use crate::app_server::outgoing::OutgoingMessageSender;
 use crate::app_server::protocol::{
     map_run_event_to_notifications, AgentMessageDeltaParams, AppCacheUsage, AppItem,
-    AppServerError, AppServerErrorCode, AppTokenUsage, AppTurn, ApprovalDecision,
-    ApprovalRequestParams, ApprovalResolveParams, ItemCompletedParams, ItemStartedParams,
-    JsonRpcError, JsonRpcErrorBody, RequestId, ServerNotification, ServerRequest, ThreadStatus,
-    ThreadStatusChangedParams, TurnCompletedParams, TurnStartParams, TurnStartedParams, TurnStatus,
-    UserInput,
+    AppServerError, AppServerErrorCode, AppThread, AppTokenUsage, AppTurn, ApprovalDecision,
+    ApprovalRequestParams, ApprovalResolveParams, CheckpointSummary, CheckpointSummaryStatus,
+    InterruptionIdempotencySupport, InterruptionOperationKind, InterruptionSummary,
+    ItemCompletedParams, ItemStartedParams, JsonRpcError, JsonRpcErrorBody, RequestId,
+    ServerNotification, ServerRequest, ThreadStatus, ThreadStatusChangedParams,
+    TurnCompletedParams, TurnResumeParams, TurnResumeResponse, TurnStartParams, TurnStartedParams,
+    TurnStatus, UserInput,
 };
 use crate::app_server::thread_state::{ActiveTurn, SteeringQueue, ThreadStateManager};
-use crate::app_server::thread_store::{SqliteThreadStore, ThreadStoreError};
+use crate::app_server::thread_store::{ItemAppendOutcome, SqliteThreadStore, ThreadStoreError};
 use crate::app_server::transport::ConnectionId;
+use crate::checkpoint::{
+    CheckpointStatus, OperationKind, ResumeObservation, ResumePolicy, ToolIdempotency,
+    MAX_CHECKPOINT_KEY_BYTES,
+};
 use crate::events::RunEventPayload;
+use crate::runner::CheckpointStartOutcome;
+use crate::runtime::state_v2::{CheckpointStoreV2, CheckpointV2};
 use crate::tools::ApprovalDecision as ToolApprovalDecision;
 use crate::types::{AgentStatus, CacheUsageStatus, Metadata, TaskTokenUsage, ToolExecutionResult};
 use crate::{
@@ -27,6 +39,12 @@ use crate::{
     BeforeLlmPatch, BeforeToolCallEvent, BeforeToolCallPatch, Message, RunConfig, RunHandle,
     RunResult, Runner, RuntimeHook,
 };
+
+mod approval;
+mod resume;
+
+use approval::tool_approval_decision_from_response;
+use resume::{checkpoint_projection, turn_completion_result};
 
 #[derive(Clone)]
 pub struct AppServerRunAdapter {
@@ -37,6 +55,22 @@ pub struct AppServerRunAdapter {
     outgoing: OutgoingMessageSender,
     approval_request_timeout: Duration,
     turn_approval_timeouts: Arc<Mutex<HashMap<(String, String), Duration>>>,
+    durable_resume_provider: Option<Arc<dyn DurableTurnResumeProvider>>,
+}
+pub(crate) struct PreparedTurnResume {
+    response: TurnResumeResponse,
+    continuation: Option<PreparedTurnResumeContinuation>,
+}
+
+struct PreparedTurnResumeContinuation {
+    request: DurableTurnResumeRequest,
+    completion: DurableTurnCompletionFuture,
+}
+
+impl PreparedTurnResume {
+    pub(crate) fn response(&self) -> &TurnResumeResponse {
+        &self.response
+    }
 }
 
 impl AppServerRunAdapter {
@@ -71,11 +105,20 @@ impl AppServerRunAdapter {
             outgoing,
             approval_request_timeout: Duration::from_secs(30),
             turn_approval_timeouts: Arc::new(Mutex::new(HashMap::new())),
+            durable_resume_provider: None,
         }
     }
 
     pub fn with_approval_request_timeout(mut self, timeout: Duration) -> Self {
         self.approval_request_timeout = timeout;
+        self
+    }
+
+    pub fn with_durable_resume_provider(
+        mut self,
+        provider: Arc<dyn DurableTurnResumeProvider>,
+    ) -> Self {
+        self.durable_resume_provider = Some(provider);
         self
     }
 
@@ -100,7 +143,9 @@ impl AppServerRunAdapter {
         if thread.archived_at.is_some() {
             return Err(AppServerError::thread_archived());
         }
-        if self.state.active_turn(&params.thread_id).await.is_some() {
+        if thread.status == ThreadStatus::Running
+            || self.state.has_active_turn(&params.thread_id).await
+        {
             return Err(AppServerError::invalid_params(
                 "Thread already has an active turn",
             ));
@@ -155,6 +200,10 @@ impl AppServerRunAdapter {
         config
             .metadata
             .insert("session_id".to_string(), json!(turn.thread_id));
+        let checkpoint_store = config
+            .checkpoint_config
+            .as_ref()
+            .and_then(|checkpoint| checkpoint.store.clone());
 
         let handle = self
             .runner
@@ -179,6 +228,7 @@ impl AppServerRunAdapter {
                     handle,
                     steering,
                     owner_connection_id,
+                    checkpoint_store,
                 },
             )
             .await;
@@ -199,6 +249,8 @@ impl AppServerRunAdapter {
             ServerNotification::TurnStarted(TurnStartedParams {
                 thread_id: turn.thread_id.clone(),
                 turn_id: turn.turn_id.clone(),
+                run_id: None,
+                status: None,
             }),
         )
         .await
@@ -227,25 +279,44 @@ impl AppServerRunAdapter {
                         {
                             tool_arguments.insert(tool_call_id.clone(), arguments.clone());
                         }
-                        let notifications =
+                        let mut notifications =
                             map_run_event_to_notifications(&thread_id, &turn_id, &event);
-                        for mut notification in notifications {
-                            // The route owns the canonical decision. The runtime event currently
-                            // carries only `approved`, so forwarding it would collapse
-                            // `allow_session` to `allow` and emit a duplicate resolution.
-                            if matches!(notification, ServerNotification::ApprovalResolved(_)) {
-                                continue;
-                            }
-                            if let ServerNotification::ApprovalRequested(approval) =
-                                &mut notification
-                            {
+                        for notification in &mut notifications {
+                            if let ServerNotification::ApprovalRequested(approval) = notification {
                                 if let Some(arguments) = tool_arguments.get(&approval.tool_call_id)
                                 {
                                     approval.arguments = arguments.clone();
                                 }
                             }
-                            if let Some(item) = item_from_notification(&notification) {
-                                let _ = adapter.store.append_item(&thread_id, &turn_id, item);
+                        }
+                        if let Some(item) = notifications.iter().find_map(item_from_notification) {
+                            match adapter.store.append_item(&thread_id, &turn_id, item) {
+                                Ok(ItemAppendOutcome::Inserted) => {}
+                                Ok(ItemAppendOutcome::AlreadyPresent) => continue,
+                                Err(error) => {
+                                    let _ = adapter
+                                        .broadcast_to_thread(
+                                            &thread_id,
+                                            ServerNotification::ErrorWarning(
+                                                crate::app_server::protocol::WarningParams {
+                                                    message: error.to_string(),
+                                                    code: Some(
+                                                        "item_identity_conflict".to_string(),
+                                                    ),
+                                                },
+                                            ),
+                                        )
+                                        .await;
+                                    continue;
+                                }
+                            }
+                        }
+                        for notification in notifications {
+                            // The route owns the canonical decision. The runtime event currently
+                            // carries only `approved`, so forwarding it would collapse
+                            // `allow_session` to `allow` and emit a duplicate resolution.
+                            if matches!(notification, ServerNotification::ApprovalResolved(_)) {
+                                continue;
                             }
                             let _ = adapter
                                 .broadcast_to_thread(&thread_id, notification.clone())
@@ -280,7 +351,13 @@ impl AppServerRunAdapter {
             }
             let result = events.into_result().await;
             adapter
-                .complete_turn(thread_id, turn_id, active.owner_connection_id, result)
+                .complete_turn(
+                    thread_id,
+                    turn_id,
+                    active.owner_connection_id,
+                    active.checkpoint_store,
+                    result,
+                )
                 .await;
         });
     }
@@ -399,11 +476,26 @@ impl AppServerRunAdapter {
         Ok(active)
     }
 
+    fn persist_turn_completion(
+        &self,
+        completion: &TurnCompletedParams,
+    ) -> Result<AppTurn, AppServerError> {
+        self.store
+            .update_turn(
+                &completion.turn_id,
+                completion.status,
+                completion.run_id.as_deref(),
+                &turn_completion_result(completion),
+            )
+            .map_err(store_error)
+    }
+
     async fn complete_turn(
         &self,
         thread_id: String,
         turn_id: String,
         owner_connection_id: ConnectionId,
+        checkpoint_store: Option<Arc<dyn CheckpointStoreV2>>,
         result: Result<RunResult, String>,
     ) {
         let (
@@ -417,6 +509,8 @@ impl AppServerRunAdapter {
             token_usage,
             budget_usage,
             budget_exhaustion,
+            checkpoint,
+            interruption,
         ) = match result {
             Ok(result) => {
                 let status = turn_status(result.status());
@@ -430,6 +524,16 @@ impl AppServerRunAdapter {
                 } else {
                     None
                 };
+                let (checkpoint, interruption) =
+                    checkpoint_projection(&result, checkpoint_store.as_ref()).unwrap_or_else(
+                        |error| {
+                            eprintln!(
+                        "warning: App Server checkpoint projection failed for turn {}: {error}",
+                        turn_id
+                    );
+                            (None, None)
+                        },
+                    );
                 (
                     status,
                     Some(result.run_id().to_string()),
@@ -443,6 +547,8 @@ impl AppServerRunAdapter {
                     Some(app_token_usage(&result.result().token_usage)),
                     result.budget_usage().map(app_json_object),
                     result.budget_exhaustion().map(app_json_object),
+                    checkpoint,
+                    interruption,
                 )
             }
             Err(error) => (
@@ -453,6 +559,8 @@ impl AppServerRunAdapter {
                 None,
                 None,
                 Some(error),
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -485,6 +593,12 @@ impl AppServerRunAdapter {
         }
         if let Some(budget_exhaustion) = &budget_exhaustion {
             stored_result.insert("budgetExhaustion".to_string(), json!(budget_exhaustion));
+        }
+        if let Some(checkpoint) = &checkpoint {
+            stored_result.insert("checkpoint".to_string(), json!(checkpoint));
+        }
+        if let Some(interruption) = &interruption {
+            stored_result.insert("interruption".to_string(), json!(interruption));
         }
         let _ = self
             .store
@@ -522,6 +636,8 @@ impl AppServerRunAdapter {
                     token_usage,
                     budget_usage,
                     budget_exhaustion,
+                    checkpoint,
+                    interruption,
                 }),
             )
             .await;
@@ -761,7 +877,7 @@ fn input_text(input: &[UserInput]) -> String {
 
 fn turn_status(status: AgentStatus) -> TurnStatus {
     match status {
-        AgentStatus::WaitUser => TurnStatus::Interrupted,
+        AgentStatus::WaitUser | AgentStatus::ReconciliationRequired => TurnStatus::Interrupted,
         AgentStatus::Completed => TurnStatus::Completed,
         AgentStatus::Pending | AgentStatus::Running => TurnStatus::Running,
         AgentStatus::Failed | AgentStatus::MaxCycles => TurnStatus::Failed,
@@ -804,66 +920,6 @@ fn app_json_object(value: &impl serde::Serialize) -> BTreeMap<String, Value> {
 
 fn store_error(error: ThreadStoreError) -> AppServerError {
     AppServerError::internal(error.to_string())
-}
-
-fn tool_approval_decision_from_response(value: Value) -> (ToolApprovalDecision, ApprovalDecision) {
-    let action = value
-        .get("decision")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let supplied_reason = value
-        .get("reason")
-        .or_else(|| value.get("message"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let metadata = value
-        .get("metadata")
-        .and_then(Value::as_object)
-        .map(|metadata| {
-            metadata
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect::<Metadata>()
-        })
-        .unwrap_or_default();
-    let (decision, protocol_decision) = match action {
-        "allow" => (ToolApprovalDecision::allow(), ApprovalDecision::Allow),
-        "allow_session" => (
-            ToolApprovalDecision::allow_session(),
-            ApprovalDecision::AllowSession,
-        ),
-        "deny" => (
-            ToolApprovalDecision::deny(if supplied_reason.is_empty() {
-                "approval denied"
-            } else {
-                supplied_reason
-            }),
-            ApprovalDecision::Deny,
-        ),
-        "timeout" => (
-            ToolApprovalDecision::timeout(if supplied_reason.is_empty() {
-                "approval request timed out"
-            } else {
-                supplied_reason
-            }),
-            ApprovalDecision::Timeout,
-        ),
-        _ => (
-            ToolApprovalDecision::deny("invalid approval response"),
-            ApprovalDecision::Deny,
-        ),
-    };
-    let decision = if supplied_reason.is_empty() {
-        decision
-    } else {
-        decision.with_reason(supplied_reason)
-    };
-    let decision = if metadata.is_empty() {
-        decision
-    } else {
-        decision.with_metadata(metadata)
-    };
-    (decision, protocol_decision)
 }
 
 #[cfg(test)]

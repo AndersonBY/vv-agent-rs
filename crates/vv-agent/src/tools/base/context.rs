@@ -22,6 +22,7 @@ pub struct ToolContext {
     pub tool_call_id: String,
     pub tool_name: String,
     pub arguments: ToolArguments,
+    pub idempotency_key: Option<String>,
     pub metadata: BTreeMap<String, Value>,
     pub app_state: Option<Arc<dyn std::any::Any + Send + Sync>>,
     pub workspace_backend: Arc<dyn WorkspaceBackend>,
@@ -46,6 +47,7 @@ impl std::fmt::Debug for ToolContext {
             .field("tool_call_id", &self.tool_call_id)
             .field("tool_name", &self.tool_name)
             .field("arguments", &self.arguments)
+            .field("idempotency_key", &self.idempotency_key)
             .field("metadata", &self.metadata)
             .field("has_app_state", &self.app_state.is_some())
             .field("has_model_provider", &self.model_provider.is_some())
@@ -76,6 +78,7 @@ impl ToolContext {
             tool_call_id: String::new(),
             tool_name: String::new(),
             arguments: ToolArguments::new(),
+            idempotency_key: None,
             metadata: BTreeMap::new(),
             app_state: None,
             workspace_backend: Arc::new(crate::workspace::LocalWorkspaceBackend::new(workspace)),

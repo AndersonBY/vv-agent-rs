@@ -3,7 +3,8 @@ use vv_agent::app_server::protocol::{
     AppClientCapabilities, AppClientInfo, AppServerCapabilities, AppServerErrorCode,
     ApprovalDecision, ApprovalRequestParams, ApprovalResolveParams, ClientRequest,
     InitializeParams, InitializeResponse, JsonRpcError, JsonRpcMessage, JsonRpcRequest, RequestId,
-    ServerNotification, ServerRequest, ThreadStartParams,
+    ServerNotification, ServerRequest, ThreadStartParams, TurnResumeParams, TurnResumeResponse,
+    TurnStatus,
 };
 
 #[test]
@@ -90,7 +91,7 @@ fn error_response_preserves_code_message_and_data() {
 #[test]
 fn stable_client_request_methods_cover_mvp_surface() {
     let methods = ClientRequest::stable_method_names();
-    assert_eq!(methods.len(), 15);
+    assert_eq!(methods.len(), 16);
     assert!(methods.contains(&"initialize"));
     assert!(methods.contains(&"thread/start"));
     assert!(methods.contains(&"thread/resume"));
@@ -99,6 +100,7 @@ fn stable_client_request_methods_cover_mvp_surface() {
     assert!(methods.contains(&"thread/archive"));
     assert!(methods.contains(&"thread/unsubscribe"));
     assert!(methods.contains(&"turn/start"));
+    assert!(methods.contains(&"turn/resume"));
     assert!(methods.contains(&"turn/interrupt"));
     assert!(methods.contains(&"turn/steer"));
     assert!(methods.contains(&"turn/followUp"));
@@ -179,6 +181,38 @@ fn client_request_serializes_with_stable_method_name() {
     assert_eq!(value["method"], "thread/start");
     assert_eq!(value["params"]["agentKey"], "assistant");
     assert_eq!(value["params"]["metadata"]["source"], "protocol-test");
+}
+
+#[test]
+fn turn_resume_wire_is_closed_and_has_no_input_field() {
+    let params: TurnResumeParams = serde_json::from_value(json!({
+        "threadId": "thread_1",
+        "turnId": "turn_1",
+        "checkpointKey": "tenant-7/run-42"
+    }))
+    .expect("turn resume params");
+    let value = serde_json::to_value(params).expect("serialize params");
+    let fields = value.as_object().expect("object");
+    assert_eq!(fields.len(), 3);
+    for field in ["threadId", "turnId", "checkpointKey"] {
+        assert!(fields.contains_key(field));
+    }
+    assert!(serde_json::from_value::<TurnResumeParams>(json!({
+        "threadId": "thread_1",
+        "turnId": "turn_1",
+        "checkpointKey": "tenant-7/run-42",
+        "input": []
+    }))
+    .is_err());
+
+    assert!(serde_json::from_value::<TurnResumeResponse>(json!({
+        "threadId": "thread_1",
+        "turnId": "turn_1",
+        "runId": "run_1",
+        "status": TurnStatus::Running,
+        "runDefinition": {"secret": true}
+    }))
+    .is_err());
 }
 
 #[test]

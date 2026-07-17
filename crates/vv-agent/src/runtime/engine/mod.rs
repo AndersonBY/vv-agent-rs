@@ -1,5 +1,6 @@
 mod approval;
 mod budget;
+mod checkpoint;
 mod completion;
 mod construction;
 mod controls;
@@ -7,18 +8,19 @@ mod cycle_inputs;
 mod helpers;
 mod logging;
 mod memory;
+mod model_request;
 mod planning;
 mod run_setup;
 mod state;
+mod tool_batch;
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::llm::{LlmClient, LlmError, LlmRequest, LlmStreamCallback};
+use crate::llm::{LlmClient, LlmError};
 use crate::memory::CompactionExhaustedError;
-use crate::tools::{ToolContext, ToolOrchestrator, ToolRunOptions, ToolSpecKind};
+use crate::tools::ToolSpecKind;
 use crate::types::{AgentResult, AgentTask, CompletionReason, ToolDirective, ToolExecutionResult};
 
 use super::cancellation::CancellationToken;
@@ -33,6 +35,7 @@ use self::budget::{
     enforce_cycle_start, finalize_run_budget, observe_llm_completion,
     observe_tool_batch_completion, preflight_tool_batch, PreparedRunBudget,
 };
+use self::checkpoint::{CheckpointCoordinator, CheckpointModelCompletion, CheckpointToolPlan};
 use self::completion::{
     handle_directive_result, handle_no_tool_response, DirectiveResultRequest, NoToolResponseRequest,
 };
@@ -45,18 +48,21 @@ use self::memory::{
     memory_compact_completed_event, memory_compact_event_payload, memory_compact_started_event,
     notify_memory_after_compact, notify_memory_before_compact,
 };
+use self::model_request::{build_model_request, cycle_stream_callback};
 use self::planning::block_on_engine_tool_run;
 use self::run_setup::{prepare_run_setup, PreparedRun};
 pub use self::state::AgentRuntime;
+use self::tool_batch::{PreparedToolBatch, ToolBatchSetup};
 
 pub use crate::runtime::sub_agent_sessions::{
     _register_sub_agent_session, _unregister_sub_agent_session, get_sub_agent_session,
     steer_sub_agent_session, subscribe_sub_agent_session,
 };
 pub use controls::{
-    BeforeCycleMessageProvider, InterruptionMessageProvider, RuntimeEventHandler,
-    RuntimeLogCallback, RuntimeLogHandler, RuntimeRunControls,
+    BeforeCycleMessageProvider, CheckpointRuntimeControl, InterruptionMessageProvider,
+    RuntimeEventHandler, RuntimeLogCallback, RuntimeLogHandler, RuntimeRunControls,
 };
+pub(crate) use helpers::build_initial_messages;
 
 impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
     pub fn set_tool_policy(&mut self, tool_policy: crate::tools::ToolPolicy) {
@@ -87,6 +93,15 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             sub_task_manager,
             mut memory_manager,
         } = prepare_run_setup(self, task, &controls);
+        let cycle_index_start = controls.cycle_index_start.unwrap_or(1);
+        let backend_manages_checkpoint_cycles = self.execution_backend.manages_checkpoint_cycles();
+        let checkpoint =
+            CheckpointCoordinator::new(controls.effective_checkpoint_controller().cloned());
+        if !backend_manages_checkpoint_cycles {
+            if let Some(result) = checkpoint.begin_run_cycle(cycle_index_start)? {
+                return Ok(result);
+            }
+        }
         self.emit_run_started(&controls, &task, &workspace_path);
         let PreparedRunBudget {
             limits: effective_budget_limits,
@@ -119,7 +134,6 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         let effective_cancellation_token = controls.effective_cancellation_token();
         let effective_stream_callback = controls.effective_stream_callback();
         let mut pending_error = None;
-        let cycle_index_start = controls.cycle_index_start.unwrap_or(1);
         let cycle_count = controls.cycle_count.unwrap_or(task.max_cycles);
         let mut result = self.execution_backend.execute_with_state(
             &task,
@@ -128,6 +142,13 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             shared_state,
             |cycle_index, messages, cycles, shared_state, cancellation_token| {
                 let _cancellation_scope = CancellationToken::enter_scope(cancellation_token);
+                if !backend_manages_checkpoint_cycles {
+                    if let Some(result) =
+                        checkpoint.begin_cycle(cycle_index, messages, cycles, shared_state)
+                    {
+                        return Some(result);
+                    }
+                }
                 if let Some(result) = project_cycle_cancellation(
                     self,
                     &controls,
@@ -155,6 +176,14 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     &mut budget_controller,
                     &controls,
                     cycle_index,
+                    messages,
+                    cycles,
+                    shared_state,
+                ) {
+                    return Some(result);
+                }
+                if let Some(result) = checkpoint.update_budget_usage(
+                    || budget_controller.as_ref().map(|value| value.snapshot()),
                     messages,
                     cycles,
                     shared_state,
@@ -254,27 +283,31 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         ),
                     ]),
                 );
-                let cycle_stream_callback = effective_stream_callback.as_ref().map(|callback| {
-                    let callback = callback.clone();
-                    Arc::new(move |event: &BTreeMap<String, Value>| {
-                        let mut event = event.clone();
-                        event.insert("cycle".to_string(), Value::from(cycle_index));
-                        callback(&event);
-                    }) as LlmStreamCallback
-                });
+                let cycle_stream_callback =
+                    cycle_stream_callback(effective_stream_callback.as_ref(), cycle_index);
                 let response = loop {
-                    let mut request = LlmRequest::new(task.model.clone(), request_messages.clone());
-                    request.tools = request_tool_schemas.clone();
-                    let mut request_metadata = task.metadata.clone();
-                    if let Some(execution_context) = controls.execution_context.as_ref() {
-                        request_metadata.extend(execution_context.metadata.clone());
-                    }
-                    request.metadata = Value::Object(request_metadata.into_iter().collect());
-                    request.model_settings = task.model_settings.clone();
-                    match self
-                        .llm_client
-                        .complete_with_stream(request, cycle_stream_callback.clone())
-                    {
+                    let request = build_model_request(
+                        &task,
+                        &controls,
+                        &request_messages,
+                        &request_tool_schemas,
+                    );
+                    let completion = checkpoint.complete_model(
+                        cycle_index,
+                        &format!("main:{}", prompt_too_long_retries + 1),
+                        request,
+                        || budget_controller.as_ref().map(|value| value.snapshot()),
+                        |request| {
+                            self.llm_client
+                                .complete_with_stream(request, cycle_stream_callback.clone())
+                        },
+                        (messages, cycles, shared_state),
+                    );
+                    let completion = match completion {
+                        CheckpointModelCompletion::Continue(completion) => *completion,
+                        CheckpointModelCompletion::Stop(result) => return Some(*result),
+                    };
+                    match completion {
                         Ok(response) => break response,
                         Err(error) if is_prompt_too_long_error(&error) => {
                             prompt_too_long_retries += 1;
@@ -390,7 +423,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 }
                 self.emit_cycle_llm_response(&controls, &cycle);
 
-                if let Some(result) = observe_llm_completion(
+                let llm_boundary_result = observe_llm_completion(
                     &mut budget_controller,
                     &controls,
                     cycle_index,
@@ -400,7 +433,16 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     messages,
                     cycles,
                     shared_state,
+                );
+                if let Some(result) = checkpoint.update_budget_usage(
+                    || budget_controller.as_ref().map(|value| value.snapshot()),
+                    messages,
+                    cycles,
+                    shared_state,
                 ) {
+                    return Some(result);
+                }
+                if let Some(result) = llm_boundary_result {
                     return Some(result);
                 }
 
@@ -418,6 +460,17 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     }) {
                         return Some(result);
                     }
+                    if cycle_index < task.max_cycles {
+                        if let Some(result) = checkpoint.commit_cycle(
+                            cycle_index,
+                            messages,
+                            cycles,
+                            shared_state,
+                            || budget_controller.as_ref().map(|value| value.snapshot()),
+                        ) {
+                            return Some(result);
+                        }
+                    }
                     return None;
                 }
 
@@ -434,146 +487,28 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     return Some(result);
                 }
 
-                let sub_task_runner = self.build_sub_task_runner(
-                    &task,
-                    workspace_path.clone(),
-                    workspace_backend.clone(),
-                    shared_state.clone(),
-                    sub_task_manager.clone(),
-                    super::sub_agents::SubTaskRunControls {
-                        parent_cancellation_token: cancellation_token.cloned(),
-                        stream_callback: effective_stream_callback.clone(),
-                        parent_log_handler: self.log_handler.clone(),
-                        parent_event_handler: controls.log_handler.clone(),
-                        parent_execution_context: controls.execution_context.clone(),
-                        model_provider: controls.model_provider.clone(),
-                        parent_run_context: controls.run_context.clone(),
-                        tool_policy: self.tool_policy.clone(),
-                        budget_limits: child_budget_limits.clone(),
-                    },
-                );
-                let mut tool_metadata = task.metadata.clone();
-                for key in [
-                    "_vv_agent_agent_name",
-                    "_vv_agent_parent_run_id",
-                    "_vv_agent_parent_tool_call_id",
-                    "_vv_agent_run_id",
-                    "_vv_agent_session_id",
-                    "_vv_agent_trace_id",
-                ] {
-                    tool_metadata.remove(key);
-                }
-                if let Some(execution_context) = controls.execution_context.as_ref() {
-                    tool_metadata.extend(execution_context.metadata.clone());
-                }
-                let trace_id = controls
-                    .execution_context
-                    .as_ref()
-                    .and_then(|context| {
-                        ["_vv_agent_trace_id", "trace_id"]
-                            .into_iter()
-                            .find_map(|key| {
-                                context
-                                    .metadata
-                                    .get(key)
-                                    .and_then(Value::as_str)
-                                    .map(str::trim)
-                                    .filter(|value| !value.is_empty())
-                                    .map(str::to_string)
-                            })
-                    })
-                    .or_else(|| {
-                        controls.run_context.as_ref().and_then(|run| {
-                            ["_vv_agent_trace_id", "trace_id"]
-                                .into_iter()
-                                .find_map(|key| {
-                                    run.metadata
-                                        .get(key)
-                                        .and_then(Value::as_str)
-                                        .map(str::trim)
-                                        .filter(|value| !value.is_empty())
-                                        .map(str::to_string)
-                                })
-                        })
-                    })
-                    .or_else(|| {
-                        ["_vv_agent_trace_id", "trace_id"]
-                            .into_iter()
-                            .find_map(|key| {
-                                task.metadata
-                                    .get(key)
-                                    .and_then(Value::as_str)
-                                    .map(str::trim)
-                                    .filter(|value| !value.is_empty())
-                                    .map(str::to_string)
-                            })
-                    });
-                let parent_run_id = controls
-                    .run_context
-                    .as_ref()
-                    .map(|run| run.run_id.trim())
-                    .filter(|run_id| !run_id.is_empty())
-                    .map(str::to_string)
-                    .or_else(|| {
-                        controls.execution_context.as_ref().and_then(|context| {
-                            context
-                                .metadata
-                                .get("_vv_agent_run_id")
-                                .and_then(Value::as_str)
-                                .map(str::trim)
-                                .filter(|value| !value.is_empty())
-                                .map(str::to_string)
-                        })
-                    });
-                let mut context = ToolContext {
-                    workspace: workspace_path.clone(),
-                    shared_state: shared_state.clone(),
+                let PreparedToolBatch {
+                    mut context,
+                    orchestrator: tool_orchestrator,
+                    options: tool_run_options,
+                } = self.prepare_tool_batch(ToolBatchSetup {
+                    task: &task,
+                    controls: &controls,
+                    workspace_path: &workspace_path,
+                    workspace_backend: &workspace_backend,
+                    shared_state,
+                    sub_task_manager: &sub_task_manager,
                     cycle_index,
-                    task_id: task.task_id.clone(),
-                    tool_call_id: String::new(),
-                    tool_name: String::new(),
-                    arguments: crate::types::ToolArguments::new(),
-                    metadata: tool_metadata,
-                    app_state: controls
-                        .execution_context
-                        .as_ref()
-                        .and_then(|context| context.app_state.clone()),
-                    workspace_backend: workspace_backend.clone(),
-                    model_provider: controls.model_provider.clone(),
-                    run_context: controls.run_context.clone(),
-                    sub_task_runner,
-                    sub_task_manager: Some(sub_task_manager.clone()),
-                    sub_task_turn_snapshot: Some(super::sub_task_manager::SubTaskTurnSnapshot {
-                        cancellation_token: cancellation_token.cloned(),
-                        event_handler: controls.log_handler.clone(),
-                        stream_callback: effective_stream_callback.clone(),
-                        trace_id,
-                        parent_run_id,
-                        parent_tool_call_id: None,
-                        parent_execution_context: controls.execution_context.clone(),
-                        parent_run_context: controls.run_context.clone(),
-                        tool_policy: self.tool_policy.clone().unwrap_or_default(),
-                    }),
-                    execution_backend: Some(self.execution_backend.clone()),
-                    background_parent_run_config: controls.background_parent_run_config.clone(),
-                };
+                    cancellation_token,
+                    stream_callback: &effective_stream_callback,
+                    child_budget_limits: &child_budget_limits,
+                    request_tool_schemas: &request_tool_schemas,
+                });
 
                 let mut directive_result = None;
                 let mut directive_completion_reason = None;
                 let mut directive_completion_tool_name = None;
                 let mut image_notifications = Vec::new();
-                let tool_orchestrator =
-                    ToolOrchestrator::from_tools(self.tool_registry.executors());
-                let planned_tool_names = request_tool_schemas
-                    .iter()
-                    .filter_map(|schema| schema["function"]["name"].as_str().map(str::to_string))
-                    .collect::<Vec<_>>();
-                let tool_run_options = self
-                    .tool_policy
-                    .as_ref()
-                    .map(ToolRunOptions::from_policy)
-                    .unwrap_or_default()
-                    .planned_names(planned_tool_names);
                 for (call_index, call) in response.tool_calls.iter().enumerate() {
                     if cancellation_token.is_some_and(CancellationToken::is_cancelled)
                         || controls_cancelled(&controls)
@@ -606,6 +541,26 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         call.clone(),
                         &context,
                     );
+                    let checkpoint_plan = checkpoint.plan_tool(
+                        cycle_index,
+                        &patched_call,
+                        || {
+                            let idempotency = super::run_definition_v2::tool_idempotency_for(
+                                &self.tool_registry,
+                                &patched_call.name,
+                            );
+                            let budget_usage =
+                                budget_controller.as_ref().map(|value| value.snapshot());
+                            (idempotency, budget_usage)
+                        },
+                        messages,
+                        cycles,
+                        shared_state,
+                    );
+                    let checkpoint_plan = match checkpoint_plan {
+                        CheckpointToolPlan::Continue(plan) => plan,
+                        CheckpointToolPlan::Stop(result) => return Some(*result),
+                    };
                     self.emit_log(
                         &controls,
                         "tool_call_started",
@@ -681,13 +636,29 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             result.tool_call_id = call.id.clone();
                         }
                         result
+                    } else if let Some(result) = checkpoint_plan
+                        .as_ref()
+                        .and_then(|plan| plan.replay_result.clone())
+                    {
+                        context.idempotency_key = checkpoint_plan
+                            .as_ref()
+                            .map(|plan| plan.idempotency_key.clone());
+                        result
                     } else {
                         let mut approval_failure = None;
+                        let effective_tool_run_options = checkpoint.before_tool_dispatch(
+                            tool_run_options.clone().idempotency_key(
+                                checkpoint_plan
+                                    .as_ref()
+                                    .map(|plan| plan.idempotency_key.clone()),
+                            ),
+                            cycle_index,
+                        );
                         let mut result = match block_on_engine_tool_run(
                             tool_orchestrator.run_one_with_approval_and_metadata(
                                 patched_call.clone(),
                                 &mut context,
-                                tool_run_options.clone(),
+                                effective_tool_run_options.clone(),
                                 |call, effective_requirement, approval_context, tool_metadata| {
                                     let result = match approval_provider_result(
                                         self,
@@ -719,7 +690,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                                 cycle_index,
                                                 call,
                                                 context: approval_context,
-                                                options: &tool_run_options,
+                                                options: &effective_tool_run_options,
                                                 orchestrator: &tool_orchestrator,
                                                 result: result
                                                     .as_ref()
@@ -738,6 +709,11 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 error.to_string(),
                             ),
                         };
+                        if let Some(result) =
+                            checkpoint.pending_failure(messages, cycles, shared_state)
+                        {
+                            return Some(result);
+                        }
                         if let Some(error) = approval_failure {
                             *shared_state = context.shared_state.clone();
                             if let Some(controller) = &mut budget_controller {
@@ -773,6 +749,15 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     );
                     if needs_tool_call_id(&result.tool_call_id) {
                         result.tool_call_id = patched_call.id.clone();
+                    }
+                    if let Some(result) = checkpoint.finish_tool(
+                        cycle_index,
+                        &patched_call,
+                        &result,
+                        || budget_controller.as_ref().map(|value| value.snapshot()),
+                        (messages, cycles, shared_state),
+                    ) {
+                        return Some(result);
                     }
                     let behavior_reason =
                         apply_tool_use_behavior(&task, &patched_call, &mut result);
@@ -926,7 +911,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 *shared_state = context.shared_state.clone();
 
                 cycles.push(cycle);
-                if let Some(result) = observe_tool_batch_completion(
+                let tool_boundary_result = observe_tool_batch_completion(
                     &mut budget_controller,
                     &controls,
                     cycle_index,
@@ -934,7 +919,16 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     messages,
                     cycles,
                     shared_state,
+                );
+                if let Some(result) = checkpoint.update_budget_usage(
+                    || budget_controller.as_ref().map(|value| value.snapshot()),
+                    messages,
+                    cycles,
+                    shared_state,
                 ) {
+                    return Some(result);
+                }
+                if let Some(result) = tool_boundary_result {
                     return Some(result);
                 }
                 if let Some(directive_result) = directive_result.as_ref() {
@@ -956,6 +950,15 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         return Some(result);
                     }
                 }
+                if cycle_index < task.max_cycles {
+                    if let Some(result) =
+                        checkpoint.commit_cycle(cycle_index, messages, cycles, shared_state, || {
+                            budget_controller.as_ref().map(|value| value.snapshot())
+                        })
+                    {
+                        return Some(result);
+                    }
+                }
                 None
             },
             effective_cancellation_token.as_ref(),
@@ -963,7 +966,14 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             cycle_count,
             effective_budget_limits,
             controls.initial_budget_usage.clone(),
+            controls
+                .checkpoint_controller
+                .clone()
+                .map(CheckpointRuntimeControl::into_controller),
         );
+        if let Some(error) = checkpoint.take_llm_error() {
+            return Err(error);
+        }
         if let Some(error) = pending_error {
             return Err(error);
         }

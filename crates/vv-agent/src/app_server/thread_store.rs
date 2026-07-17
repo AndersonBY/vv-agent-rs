@@ -19,6 +19,12 @@ pub struct SqliteThreadStore {
     next_turn_id: Arc<AtomicU64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemAppendOutcome {
+    Inserted,
+    AlreadyPresent,
+}
+
 impl SqliteThreadStore {
     pub fn in_memory() -> Result<Self, ThreadStoreError> {
         let connection = Connection::open_in_memory().map_err(ThreadStoreError::sql)?;
@@ -167,6 +173,45 @@ impl SqliteThreadStore {
         Ok(turn)
     }
 
+    pub fn get_turn(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<AppTurn>, ThreadStoreError> {
+        let connection = self.connection.lock().map_err(ThreadStoreError::poisoned)?;
+        connection
+            .query_row(
+                "SELECT turn_id, thread_id, run_id, status, started_at, completed_at, input_json, result_json
+                 FROM app_server_turns WHERE thread_id = ?1 AND turn_id = ?2",
+                params![thread_id, turn_id],
+                row_to_turn,
+            )
+            .optional()
+            .map_err(ThreadStoreError::sql)
+    }
+
+    pub fn mark_turn_running(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+        run_id: &str,
+    ) -> Result<AppTurn, ThreadStoreError> {
+        let connection = self.connection.lock().map_err(ThreadStoreError::poisoned)?;
+        let changed = connection
+            .execute(
+                "UPDATE app_server_turns
+                 SET status = 'running', run_id = ?3, completed_at = NULL, result_json = '{}'
+                 WHERE thread_id = ?1 AND turn_id = ?2",
+                params![thread_id, turn_id, run_id],
+            )
+            .map_err(ThreadStoreError::sql)?;
+        if changed == 0 {
+            return Err(ThreadStoreError::not_found("turn", turn_id));
+        }
+        query_turn(&connection, turn_id)?
+            .ok_or_else(|| ThreadStoreError::not_found("turn", turn_id))
+    }
+
     pub fn update_turn(
         &self,
         turn_id: &str,
@@ -218,7 +263,10 @@ impl SqliteThreadStore {
         thread_id: &str,
         turn_id: &str,
         item: AppItem,
-    ) -> Result<(), ThreadStoreError> {
+    ) -> Result<ItemAppendOutcome, ThreadStoreError> {
+        if item.thread_id != thread_id || item.turn_id != turn_id {
+            return Err(ThreadStoreError::item_identity_conflict(&item.item_id));
+        }
         let payload_json = serde_json::to_string(&item).map_err(ThreadStoreError::json)?;
         let connection = self.connection.lock().map_err(ThreadStoreError::poisoned)?;
         let sequence: i64 = connection
@@ -228,15 +276,43 @@ impl SqliteThreadStore {
                 |row| row.get(0),
             )
             .map_err(ThreadStoreError::sql)?;
-        connection
+        let inserted = connection
             .execute(
-                "INSERT INTO app_server_items
+                "INSERT OR IGNORE INTO app_server_items
                  (item_id, thread_id, turn_id, sequence, payload_json)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![item.item_id, thread_id, turn_id, sequence, payload_json],
+                params![&item.item_id, thread_id, turn_id, sequence, payload_json],
             )
             .map_err(ThreadStoreError::sql)?;
-        Ok(())
+        if inserted == 1 {
+            return Ok(ItemAppendOutcome::Inserted);
+        }
+
+        let existing = connection
+            .query_row(
+                "SELECT thread_id, turn_id, payload_json
+                 FROM app_server_items WHERE item_id = ?1",
+                params![&item.item_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(ThreadStoreError::sql)?;
+        let Some((existing_thread_id, existing_turn_id, existing_payload)) = existing else {
+            return Err(ThreadStoreError::item_identity_conflict(&item.item_id));
+        };
+        let existing_item = serde_json::from_str::<AppItem>(&existing_payload)
+            .map_err(|_| ThreadStoreError::item_identity_conflict(&item.item_id))?;
+        if existing_thread_id == thread_id && existing_turn_id == turn_id && existing_item == item {
+            Ok(ItemAppendOutcome::AlreadyPresent)
+        } else {
+            Err(ThreadStoreError::item_identity_conflict(&item.item_id))
+        }
     }
 
     pub fn replay_items(&self, thread_id: &str) -> Result<Vec<AppItem>, ThreadStoreError> {
@@ -403,6 +479,12 @@ impl ThreadStoreError {
     fn not_found(kind: &str, id: &str) -> Self {
         Self {
             message: format!("unknown {kind}: {id}"),
+        }
+    }
+
+    fn item_identity_conflict(item_id: &str) -> Self {
+        Self {
+            message: format!("app_server_item_identity_conflict: {item_id}"),
         }
     }
 }
@@ -599,8 +681,10 @@ mod tests {
     use crate::app_server::protocol::{AppItemKind, AppItemStatus};
 
     #[test]
-    fn duplicate_item_ids_fail_without_replacing_or_reordering_replay() {
-        let store = SqliteThreadStore::in_memory().expect("store");
+    fn item_append_redelivery_survives_restart_and_rejects_conflicts() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("thread-store.sqlite");
+        let store = SqliteThreadStore::open(&path).expect("store");
         let thread = store
             .create_thread(ThreadStartParams {
                 agent_key: "default".to_string(),
@@ -608,28 +692,70 @@ mod tests {
                 metadata: Default::default(),
             })
             .expect("thread");
+        let turn = store
+            .create_turn(&thread.thread_id, Vec::new())
+            .expect("turn");
         let item = AppItem {
             item_id: "item_1".to_string(),
             thread_id: thread.thread_id.clone(),
-            turn_id: "turn_1".to_string(),
+            turn_id: turn.turn_id.clone(),
             kind: AppItemKind::AgentMessage,
             status: AppItemStatus::Completed,
             payload: serde_json::json!({"text": "original"}),
             created_at: 1.0,
             updated_at: 1.0,
         };
-        store
-            .append_item(&thread.thread_id, "turn_1", item.clone())
-            .expect("first append");
-        let mut replacement = item;
+        assert_eq!(
+            store
+                .append_item(&thread.thread_id, &turn.turn_id, item.clone())
+                .expect("first append"),
+            ItemAppendOutcome::Inserted
+        );
+        drop(store);
+
+        let store = SqliteThreadStore::open(&path).expect("reopened store");
+        assert_eq!(
+            store
+                .append_item(&thread.thread_id, &turn.turn_id, item.clone())
+                .expect("same event redelivery after restart"),
+            ItemAppendOutcome::AlreadyPresent
+        );
+        let mut replacement = item.clone();
         replacement.payload = serde_json::json!({"text": "replacement"});
 
-        assert!(store
-            .append_item(&thread.thread_id, "turn_1", replacement)
-            .is_err());
+        let error = store
+            .append_item(&thread.thread_id, &turn.turn_id, replacement)
+            .expect_err("conflicting projection");
+        assert_eq!(
+            error.to_string(),
+            "app_server_item_identity_conflict: item_1"
+        );
+        let other_turn = store
+            .create_turn(&thread.thread_id, Vec::new())
+            .expect("other turn");
+        let mut misplaced = item.clone();
+        misplaced.turn_id = other_turn.turn_id.clone();
+        let error = store
+            .append_item(&thread.thread_id, &other_turn.turn_id, misplaced)
+            .expect_err("same identity cannot move to another turn");
+        assert_eq!(
+            error.to_string(),
+            "app_server_item_identity_conflict: item_1"
+        );
+
+        let mut next = item.clone();
+        next.item_id = "item_2".to_string();
+        next.payload = serde_json::json!({"text": "next"});
+        assert_eq!(
+            store
+                .append_item(&thread.thread_id, &turn.turn_id, next)
+                .expect("next append"),
+            ItemAppendOutcome::Inserted
+        );
         let replay = store.replay_items(&thread.thread_id).expect("replay");
-        assert_eq!(replay.len(), 1);
-        assert_eq!(replay[0].payload, serde_json::json!({"text": "original"}));
+        assert_eq!(replay.len(), 2);
+        assert_eq!(replay[0], item);
+        assert_eq!(replay[1].item_id, "item_2");
     }
 
     #[test]

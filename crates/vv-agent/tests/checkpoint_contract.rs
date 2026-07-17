@@ -164,6 +164,8 @@ fn memory_and_sqlite_revision_leases_reject_stale_commits_and_persist_terminal()
             token_usage: Default::default(),
             budget_usage: None,
             budget_exhaustion: None,
+            checkpoint_key: None,
+            resume_observation: None,
         };
         let revision = committed.revision;
         committed.status = result.status;
@@ -361,6 +363,8 @@ fn claimed_terminal_result_commits_before_scheduler_acknowledgement() {
         token_usage: Default::default(),
         budget_usage: None,
         budget_exhaustion: None,
+        checkpoint_key: None,
+        resume_observation: None,
     });
     let revision = claimed.revision;
 

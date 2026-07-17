@@ -2,13 +2,17 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use redis::{Commands, Connection as RedisConnection};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::types::{Message, MessageRole, ToolCall};
+
+mod redis_store;
+
+pub use redis_store::RedisSessionStore;
 
 pub trait Session: Send + Sync {
     fn session_id(&self) -> &str;
@@ -17,13 +21,76 @@ pub trait Session: Send + Sync {
     fn pop_item(&self) -> SessionFuture<Option<SessionItem>>;
     fn clear(&self) -> SessionFuture<()>;
 
+    fn supports_add_items_once(&self) -> bool {
+        false
+    }
+
+    fn add_items_once(
+        &self,
+        _commit_id: String,
+        _payload_digest: String,
+        _items: Vec<SessionItem>,
+    ) -> SessionFuture<SessionAppendOutcome> {
+        Box::pin(async {
+            Err("checkpoint_session_idempotency_unsupported: session does not support add_items_once"
+                .to_string())
+        })
+    }
+
     fn clear_session(&self) -> SessionFuture<()> {
         self.clear()
     }
 }
-
 pub type SessionFuture<T> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, String>> + Send>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionAppendOutcome {
+    Committed,
+    Replayed,
+}
+
+pub fn checkpoint_session_commit_id(checkpoint_key: &str) -> String {
+    let digest = Sha256::digest(checkpoint_key.as_bytes());
+    format!("vv-agent:checkpoint-v2:session:{digest:x}")
+}
+
+pub fn session_commit_payload_digest(items: &[SessionItem]) -> Result<String, String> {
+    let payload = serde_json::json!({
+        "schema_version": "vv-agent.session-commit.v1",
+        "items": items,
+    });
+    let bytes = crate::checkpoint::canonical_json_bytes(&payload, "session commit payload")
+        .map_err(|error| error.to_string())?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn validate_session_commit(
+    commit_id: &str,
+    payload_digest: &str,
+    items: &[SessionItem],
+) -> Result<(), String> {
+    if commit_id.trim().is_empty() {
+        return Err("session_commit_identity_invalid: commit_id must be non-empty".to_string());
+    }
+    if payload_digest.len() != 64
+        || !payload_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(
+            "session_commit_payload_digest_invalid: payload_digest must be lowercase SHA-256"
+                .to_string(),
+        );
+    }
+    if session_commit_payload_digest(items)? != payload_digest {
+        return Err(
+            "session_commit_payload_digest_mismatch: payload_digest does not match items"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SessionItem {
@@ -258,6 +325,7 @@ impl Serialize for SessionToolFunctionWire<'_> {
 pub struct MemorySession {
     session_id: Arc<String>,
     items: Arc<Mutex<Vec<SessionItem>>>,
+    commits: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl MemorySession {
@@ -265,6 +333,7 @@ impl MemorySession {
         Self {
             session_id: Arc::new(session_id.into()),
             items: Arc::new(Mutex::new(Vec::new())),
+            commits: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -307,6 +376,41 @@ impl Session for MemorySession {
         })
     }
 
+    fn supports_add_items_once(&self) -> bool {
+        true
+    }
+
+    fn add_items_once(
+        &self,
+        commit_id: String,
+        payload_digest: String,
+        new_items: Vec<SessionItem>,
+    ) -> SessionFuture<SessionAppendOutcome> {
+        let items = self.items.clone();
+        let commits = self.commits.clone();
+        Box::pin(async move {
+            validate_session_commit(&commit_id, &payload_digest, &new_items)?;
+            let mut commits = commits
+                .lock()
+                .map_err(|_| "session commit lock poisoned".to_string())?;
+            if let Some(existing) = commits.get(&commit_id) {
+                if existing != &payload_digest {
+                    return Err(
+                        "session_commit_identity_conflict: commit_id has a different payload"
+                            .to_string(),
+                    );
+                }
+                return Ok(SessionAppendOutcome::Replayed);
+            }
+            items
+                .lock()
+                .map_err(|_| "session lock poisoned".to_string())?
+                .extend(new_items);
+            commits.insert(commit_id, payload_digest);
+            Ok(SessionAppendOutcome::Committed)
+        })
+    }
+
     fn pop_item(&self) -> SessionFuture<Option<SessionItem>> {
         let items = self.items.clone();
         Box::pin(async move {
@@ -319,10 +423,15 @@ impl Session for MemorySession {
 
     fn clear(&self) -> SessionFuture<()> {
         let items = self.items.clone();
+        let commits = self.commits.clone();
         Box::pin(async move {
             items
                 .lock()
                 .map_err(|_| "session lock poisoned".to_string())?
+                .clear();
+            commits
+                .lock()
+                .map_err(|_| "session commit lock poisoned".to_string())?
                 .clear();
             Ok(())
         })
@@ -379,6 +488,14 @@ const CREATE_SESSION_ITEMS_TABLE: &str = r#"
 const CREATE_SESSION_ITEMS_INDEX: &str = r#"
     CREATE INDEX IF NOT EXISTS idx_session_items_session_id_item_index
         ON session_items (session_id, item_index)
+"#;
+const CREATE_SESSION_COMMITS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS session_commits (
+        session_id TEXT NOT NULL,
+        commit_id TEXT NOT NULL,
+        payload_digest TEXT NOT NULL,
+        PRIMARY KEY (session_id, commit_id)
+    )
 "#;
 
 impl SqliteSessionStore {
@@ -506,6 +623,68 @@ impl Session for SqliteSession {
         })
     }
 
+    fn supports_add_items_once(&self) -> bool {
+        true
+    }
+
+    fn add_items_once(
+        &self,
+        commit_id: String,
+        payload_digest: String,
+        items: Vec<SessionItem>,
+    ) -> SessionFuture<SessionAppendOutcome> {
+        let session_id = self.session_id.to_string();
+        let connection = self.connection.clone();
+        Box::pin(async move {
+            validate_session_commit(&commit_id, &payload_digest, &items)?;
+            let payloads = items
+                .iter()
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(json_error)?;
+            let mut connection = connection
+                .lock()
+                .map_err(|_| "sqlite session store lock poisoned".to_string())?;
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(sqlite_error)?;
+            let existing = transaction
+                .query_row(
+                    "SELECT payload_digest FROM session_commits WHERE session_id = ?1 AND commit_id = ?2",
+                    params![session_id, commit_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(sqlite_error)?;
+            if let Some(existing) = existing {
+                if existing != payload_digest {
+                    return Err(
+                        "session_commit_identity_conflict: commit_id has a different payload"
+                            .to_string(),
+                    );
+                }
+                transaction.commit().map_err(sqlite_error)?;
+                return Ok(SessionAppendOutcome::Replayed);
+            }
+            for payload in payloads {
+                transaction
+                    .execute(
+                        "INSERT INTO session_items (session_id, payload) VALUES (?1, ?2)",
+                        params![session_id, payload],
+                    )
+                    .map_err(sqlite_error)?;
+            }
+            transaction
+                .execute(
+                    "INSERT INTO session_commits (session_id, commit_id, payload_digest) VALUES (?1, ?2, ?3)",
+                    params![session_id, commit_id, payload_digest],
+                )
+                .map_err(sqlite_error)?;
+            transaction.commit().map_err(sqlite_error)?;
+            Ok(SessionAppendOutcome::Committed)
+        })
+    }
+
     fn pop_item(&self) -> SessionFuture<Option<SessionItem>> {
         let session_id = self.session_id.to_string();
         let connection = self.connection.clone();
@@ -558,6 +737,12 @@ impl Session for SqliteSession {
                     params![session_id],
                 )
                 .map_err(sqlite_error)?;
+            transaction
+                .execute(
+                    "DELETE FROM session_commits WHERE session_id = ?1",
+                    params![session_id],
+                )
+                .map_err(sqlite_error)?;
             transaction.commit().map_err(sqlite_error)?;
             Ok(())
         })
@@ -604,6 +789,9 @@ fn initialize_sqlite_session_schema(connection: &mut Connection) -> Result<(), S
 
     transaction
         .execute_batch(CREATE_SESSION_ITEMS_INDEX)
+        .map_err(sqlite_error)?;
+    transaction
+        .execute_batch(CREATE_SESSION_COMMITS_TABLE)
         .map_err(sqlite_error)?;
     transaction
         .execute_batch("PRAGMA user_version = 1;")
@@ -687,142 +875,7 @@ fn migrate_rust_legacy_session_schema(connection: &Connection) -> Result<(), Str
     Ok(())
 }
 
-const REDIS_SESSION_KEY_PREFIX: &str = "vv-agent-session";
-
-#[derive(Clone)]
-pub struct RedisSessionStore {
-    connection: Arc<Mutex<RedisConnection>>,
-    key_prefix: Arc<String>,
-}
-
-impl RedisSessionStore {
-    pub fn new(redis_url: impl AsRef<str>) -> Result<Self, String> {
-        Self::with_key_prefix(redis_url, REDIS_SESSION_KEY_PREFIX)
-    }
-
-    pub fn with_key_prefix(
-        redis_url: impl AsRef<str>,
-        key_prefix: impl Into<String>,
-    ) -> Result<Self, String> {
-        let client = redis::Client::open(redis_url.as_ref()).map_err(redis_error)?;
-        let connection = client.get_connection().map_err(redis_error)?;
-        Ok(Self {
-            connection: Arc::new(Mutex::new(connection)),
-            key_prefix: Arc::new(key_prefix.into()),
-        })
-    }
-
-    pub fn session(&self, session_id: &str) -> Arc<dyn Session> {
-        <Self as SessionStore>::session(self, session_id)
-    }
-}
-
-impl SessionStore for RedisSessionStore {
-    fn session(&self, session_id: &str) -> Arc<dyn Session> {
-        Arc::new(RedisSession {
-            session_id: Arc::new(session_id.to_string()),
-            connection: self.connection.clone(),
-            key_prefix: self.key_prefix.clone(),
-        })
-    }
-}
-
-#[derive(Clone)]
-struct RedisSession {
-    session_id: Arc<String>,
-    connection: Arc<Mutex<RedisConnection>>,
-    key_prefix: Arc<String>,
-}
-
-impl RedisSession {
-    fn key(&self) -> String {
-        format!("{}:{}", self.key_prefix, self.session_id)
-    }
-}
-
-impl Session for RedisSession {
-    fn session_id(&self) -> &str {
-        self.session_id.as_str()
-    }
-
-    fn get_items(&self, limit: Option<usize>) -> SessionFuture<Vec<SessionItem>> {
-        let connection = self.connection.clone();
-        let key = self.key();
-        Box::pin(async move {
-            let raw_items: Vec<String> = {
-                let mut connection = connection
-                    .lock()
-                    .map_err(|_| "redis session store lock poisoned".to_string())?;
-                match limit {
-                    Some(0) => return Ok(Vec::new()),
-                    Some(limit) => {
-                        let limit = isize::try_from(limit).unwrap_or(isize::MAX);
-                        connection.lrange(&key, -limit, -1).map_err(redis_error)?
-                    }
-                    None => connection.lrange(&key, 0, -1).map_err(redis_error)?,
-                }
-            };
-            raw_items
-                .into_iter()
-                .map(|item_json| serde_json::from_str(&item_json).map_err(json_error))
-                .collect()
-        })
-    }
-
-    fn add_items(&self, items: Vec<SessionItem>) -> SessionFuture<()> {
-        let connection = self.connection.clone();
-        let key = self.key();
-        Box::pin(async move {
-            if items.is_empty() {
-                return Ok(());
-            }
-            let payloads = items
-                .iter()
-                .map(serde_json::to_string)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(json_error)?;
-            connection
-                .lock()
-                .map_err(|_| "redis session store lock poisoned".to_string())?
-                .rpush::<_, _, usize>(key, payloads)
-                .map_err(redis_error)?;
-            Ok(())
-        })
-    }
-
-    fn pop_item(&self) -> SessionFuture<Option<SessionItem>> {
-        let connection = self.connection.clone();
-        let key = self.key();
-        Box::pin(async move {
-            let raw: Option<String> = connection
-                .lock()
-                .map_err(|_| "redis session store lock poisoned".to_string())?
-                .rpop(key, None)
-                .map_err(redis_error)?;
-            raw.map(|item_json| serde_json::from_str(&item_json).map_err(json_error))
-                .transpose()
-        })
-    }
-
-    fn clear(&self) -> SessionFuture<()> {
-        let connection = self.connection.clone();
-        let key = self.key();
-        Box::pin(async move {
-            connection
-                .lock()
-                .map_err(|_| "redis session store lock poisoned".to_string())?
-                .del::<_, usize>(key)
-                .map_err(redis_error)?;
-            Ok(())
-        })
-    }
-}
-
 fn sqlite_error(error: rusqlite::Error) -> String {
-    error.to_string()
-}
-
-fn redis_error(error: redis::RedisError) -> String {
     error.to_string()
 }
 

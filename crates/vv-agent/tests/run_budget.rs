@@ -930,6 +930,7 @@ fn status_name(status: AgentStatus) -> &'static str {
         AgentStatus::Completed => "completed",
         AgentStatus::Failed => "failed",
         AgentStatus::MaxCycles => "max_cycles",
+        AgentStatus::ReconciliationRequired => "reconciliation_required",
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::app_server::protocol::{
     AppServerError, JsonRpcRequest, TurnControlResponse, TurnFollowUpParams, TurnInterruptParams,
-    TurnInterruptResponse, TurnStartParams, TurnStartResponse, TurnSteerParams,
+    TurnInterruptResponse, TurnResumeParams, TurnStartParams, TurnStartResponse, TurnSteerParams,
 };
 use crate::app_server::transport::ConnectionId;
 
@@ -60,6 +60,54 @@ impl MessageProcessor {
         adapter
             .spawn_event_forwarding(turn.thread_id.clone(), turn.turn_id.clone())
             .await;
+    }
+
+    pub(super) async fn process_turn_resume(
+        &mut self,
+        connection_id: ConnectionId,
+        request: JsonRpcRequest,
+    ) {
+        let params = match parse_params::<TurnResumeParams>(request.params) {
+            Ok(params) => params,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+                return;
+            }
+        };
+        let Some(adapter) = self.run_adapter.clone() else {
+            let _ = self
+                .outgoing
+                .send_error(
+                    connection_id,
+                    request.id,
+                    AppServerError::internal("App Server runtime is not configured"),
+                )
+                .await;
+            return;
+        };
+        let prepared = match adapter.prepare_turn_resume(params).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+                return;
+            }
+        };
+        self.thread_state
+            .subscribe(prepared.response().thread_id.clone(), connection_id)
+            .await;
+        let result =
+            serde_json::to_value(prepared.response()).expect("turn resume response serializes");
+        let _ = self
+            .outgoing
+            .send_response(connection_id, request.id, result)
+            .await;
+        adapter.dispatch_turn_resume(prepared).await;
     }
 
     pub(super) async fn process_turn_steer(

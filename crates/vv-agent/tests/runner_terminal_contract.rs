@@ -12,7 +12,7 @@ use vv_agent::{
 };
 
 const FIXTURE: &str = include_str!("fixtures/parity/runner_terminal_v1.json");
-const FIXTURE_SHA256: &str = "2c6f7e7477d95a817a5fa2df7cf0b11be65e43a67206ff5181b593aec5845593";
+const FIXTURE_SHA256: &str = "e202e1156e2bf93995168316b83ccd811ee6b4bba17154b740d6d12768eebdd6";
 const COMPLETION_FIXTURE: &str = include_str!("fixtures/parity/completion_policy_v1.json");
 
 fn contract() -> Value {

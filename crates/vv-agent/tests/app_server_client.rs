@@ -392,6 +392,7 @@ fn client_facade_covers_stable_method_inventory() {
             "thread/archive",
             "thread/unsubscribe",
             "turn/start",
+            "turn/resume",
             "turn/interrupt",
             "turn/steer",
             "turn/followUp",
@@ -410,6 +411,7 @@ fn client_facade_covers_stable_method_inventory() {
     let _ = AppServerClient::archive_thread;
     let _ = AppServerClient::unsubscribe_thread;
     let _ = AppServerClient::start_turn;
+    let _ = AppServerClient::resume_turn;
     let _ = AppServerClient::interrupt_turn;
     let _ = AppServerClient::steer_turn;
     let _ = AppServerClient::follow_up_turn;

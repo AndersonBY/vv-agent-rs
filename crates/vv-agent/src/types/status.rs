@@ -9,6 +9,7 @@ pub enum AgentStatus {
     Completed,
     Failed,
     MaxCycles,
+    ReconciliationRequired,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

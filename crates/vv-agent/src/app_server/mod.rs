@@ -1,4 +1,5 @@
 pub mod client;
+pub mod durable_resume;
 pub mod host;
 pub mod outgoing;
 pub mod processor;
@@ -12,6 +13,10 @@ pub mod thread_store;
 pub mod transport;
 
 pub use client::{AppServerClient, AppServerClientError};
+pub use durable_resume::{
+    DurableTurnCompletionFuture, DurableTurnResumeFuture, DurableTurnResumeOutcome,
+    DurableTurnResumeProvider, DurableTurnResumeRequest,
+};
 pub use host::{
     AgentResolutionRequest, AppServerHost, AppServerHostError, DefaultAppServerHost,
     RunConfigResolutionRequest,

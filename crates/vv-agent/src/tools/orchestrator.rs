@@ -9,6 +9,13 @@ use crate::tools::{
 };
 use crate::types::{Metadata, ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
+pub type BeforeToolDispatch = Arc<
+    dyn Fn(&ToolCall, &mut ToolContext) -> Result<(), crate::tools::ToolError>
+        + Send
+        + Sync
+        + 'static,
+>;
+
 #[derive(Clone, Default)]
 pub struct ToolRunOptions {
     planned_tools: Option<Vec<String>>,
@@ -16,6 +23,8 @@ pub struct ToolRunOptions {
     disallowed_tools: Vec<String>,
     can_use_tool: Option<CanUseToolPredicate>,
     approval: ApprovalPolicy,
+    idempotency_key: Option<String>,
+    before_dispatch: Option<BeforeToolDispatch>,
 }
 
 impl ToolRunOptions {
@@ -26,6 +35,8 @@ impl ToolRunOptions {
             disallowed_tools: policy.disallowed_tools.clone(),
             can_use_tool: policy.can_use_tool.clone(),
             approval: policy.approval,
+            idempotency_key: None,
+            before_dispatch: None,
         }
     }
 
@@ -49,6 +60,16 @@ impl ToolRunOptions {
         F: Fn(&str, &crate::types::ToolArguments) -> bool + Send + Sync + 'static,
     {
         self.can_use_tool = Some(Arc::new(predicate));
+        self
+    }
+
+    pub fn idempotency_key(mut self, idempotency_key: Option<String>) -> Self {
+        self.idempotency_key = idempotency_key;
+        self
+    }
+
+    pub fn before_dispatch(mut self, callback: BeforeToolDispatch) -> Self {
+        self.before_dispatch = Some(callback);
         self
     }
 }
@@ -148,6 +169,7 @@ impl ToolOrchestrator {
         };
 
         context.begin_tool_call(&call);
+        context.idempotency_key = options.idempotency_key.clone();
         let approval_requirement = match options.approval {
             ApprovalPolicy::Never => ApprovalRequirement::NotRequired,
             ApprovalPolicy::Always => ApprovalRequirement::Required,
@@ -161,6 +183,10 @@ impl ToolOrchestrator {
                 result.tool_call_id = call.id;
             }
             return Ok(result);
+        }
+
+        if let Some(callback) = options.before_dispatch.as_ref() {
+            callback(&call, context)?;
         }
 
         let future = tool.run(call.clone(), ToolRunContext::new(context));

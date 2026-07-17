@@ -35,6 +35,23 @@ impl AgentResult {
                     .unwrap_or(Value::Null),
             ),
             (
+                "checkpoint_key".to_string(),
+                self.checkpoint_key
+                    .clone()
+                    .map(Value::String)
+                    .unwrap_or(Value::Null),
+            ),
+            (
+                "resume_observation".to_string(),
+                self.resume_observation
+                    .as_ref()
+                    .map(|observation| {
+                        serde_json::to_value(observation)
+                            .expect("validated resume observation always serializes")
+                    })
+                    .unwrap_or(Value::Null),
+            ),
+            (
                 "messages".to_string(),
                 Value::Array(self.messages.iter().map(Message::to_dict).collect()),
             ),
@@ -121,6 +138,18 @@ impl AgentResult {
                     serde_json::from_value(value.clone()).map_err(|error| {
                         format!(
                             "AgentResult field 'budget_exhaustion' must be a valid object: {error}"
+                        )
+                    })
+                })
+                .transpose()?,
+            checkpoint_key: strict_optional_string(object, "checkpoint_key")?,
+            resume_observation: object
+                .get("resume_observation")
+                .filter(|value| !value.is_null())
+                .map(|value| {
+                    serde_json::from_value(value.clone()).map_err(|error| {
+                        format!(
+                            "AgentResult field 'resume_observation' must be a valid object: {error}"
                         )
                     })
                 })

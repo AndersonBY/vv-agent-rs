@@ -5,7 +5,7 @@ use vv_agent::{AgentErrorPayload, AgentStatus, RunEvent, RunEventPayload};
 
 const PARITY_FIXTURE: &str = include_str!("fixtures/parity/run_events_v1.jsonl");
 const PARITY_FIXTURE_SHA256: &str =
-    "67751ad33c4705e87477bbe4bdfadd43ea5f674cbfa2ec9073d13600dfd05275";
+    "3e09ca1c3987a50b95805f029ddf8e9fecf82541cdbea8a50f637000a01c90da";
 const BUDGET_FIXTURE: &str = include_str!("fixtures/parity/budget_events_v1.jsonl");
 const BUDGET_FIXTURE_SHA256: &str =
     "3267292737ac6bf63ec4ee691fe0ef07f3e2cadd5a69098e3e267f4f6b692d2e";
@@ -99,6 +99,13 @@ fn run_events_v1_parity_fixture_has_stable_bytes_and_round_trips() {
         "run_cancelled",
         "budget_snapshot",
         "budget_exhausted",
+        "checkpoint_created",
+        "checkpoint_resumed",
+        "operation_replayed",
+        "operation_ambiguous",
+        "model_retry_duplicate_risk",
+        "reconciliation_resolved",
+        "reconciliation_required",
     ];
     let mut actual_types = Vec::new();
 
@@ -108,11 +115,7 @@ fn run_events_v1_parity_fixture_has_stable_bytes_and_round_trips() {
         let encoded = serde_json::to_value(&event).expect("serialize fixture event");
 
         actual_types.push(expected["type"].as_str().expect("event type").to_string());
-        if !expected["type"]
-            .as_str()
-            .expect("event type")
-            .starts_with("budget_")
-        {
+        if event.run_id() == "run_parity" {
             assert_eq!(event.event_id().as_str(), "evt_parity");
             assert_eq!(event.run_id(), "run_parity");
             assert_eq!(event.trace_id(), "trace_parity");

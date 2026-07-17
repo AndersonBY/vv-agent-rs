@@ -4,6 +4,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use super::ToolContext;
+use crate::checkpoint::ToolIdempotency;
 use crate::tools::ToolApprovalRule;
 use crate::types::{Metadata, ToolArguments, ToolExecutionResult};
 
@@ -24,6 +25,7 @@ pub struct ToolSpec {
     pub exposure: crate::tools::ToolExposure,
     pub timeout: Option<Duration>,
     pub approval: ToolApprovalRule,
+    pub idempotency: ToolIdempotency,
     pub metadata: Metadata,
 }
 
@@ -67,6 +69,7 @@ impl ToolSpec {
             exposure: crate::tools::ToolExposure::Direct,
             timeout: None,
             approval: ToolApprovalRule::default(),
+            idempotency: ToolIdempotency::Unknown,
             metadata: Metadata::new(),
         }
     }

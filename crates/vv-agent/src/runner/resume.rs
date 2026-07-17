@@ -20,7 +20,7 @@ use super::{effective_session_id, NormalizedInput, Runner};
 
 impl Runner {
     pub async fn resume(&self, state: RunState) -> Result<RunResult, String> {
-        self.resume_with_optional_input(state, None).await
+        Box::pin(self.resume_with_optional_input(state, None)).await
     }
 
     pub async fn resume_with_input(
@@ -28,8 +28,7 @@ impl Runner {
         state: RunState,
         input: impl Into<NormalizedInput>,
     ) -> Result<RunResult, String> {
-        self.resume_with_optional_input(state, Some(input.into()))
-            .await
+        Box::pin(self.resume_with_optional_input(state, Some(input.into()))).await
     }
 
     async fn resume_with_optional_input(
@@ -450,6 +449,7 @@ impl Runner {
                     input,
                     config,
                     Some(event_collector),
+                    None,
                     None,
                     Some(initial_outcome),
                 )
