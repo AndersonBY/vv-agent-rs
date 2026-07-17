@@ -40,7 +40,9 @@ fn result(status: AgentStatus, error: Option<&str>) -> AgentResult {
             AgentStatus::WaitUser => Some(vv_agent::CompletionReason::WaitUser),
             AgentStatus::Failed => Some(vv_agent::CompletionReason::Failed),
             AgentStatus::MaxCycles => Some(vv_agent::CompletionReason::MaxCycles),
-            AgentStatus::Pending | AgentStatus::Running => None,
+            AgentStatus::Pending | AgentStatus::Running | AgentStatus::ReconciliationRequired => {
+                None
+            }
         },
         completion_tool_name: None,
         partial_output: None,
@@ -53,6 +55,8 @@ fn result(status: AgentStatus, error: Option<&str>) -> AgentResult {
         token_usage: Default::default(),
         budget_usage: None,
         budget_exhaustion: None,
+        checkpoint_key: None,
+        resume_observation: None,
     }
 }
 

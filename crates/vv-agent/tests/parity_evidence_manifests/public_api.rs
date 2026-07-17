@@ -49,6 +49,31 @@ fn public_export_path(id: &str) -> &'static str {
             vv_agent::UnavailableMetricPolicy,
             "vv_agent::UnavailableMetricPolicy"
         ),
+        "run_config.checkpoint_config" => {
+            export_type!(vv_agent::CheckpointConfig, "vv_agent::CheckpointConfig")
+        }
+        "checkpoint_config.capability_refs" => {
+            let accessor = |value: &vv_agent::CheckpointConfig| {
+                let _ = &value.capability_refs;
+            };
+            let _ = accessor;
+            "vv_agent::CheckpointConfig::capability_refs"
+        }
+        "checkpoint_config.credential_slots" => {
+            let accessor = |value: &vv_agent::CheckpointConfig| {
+                let _ = &value.credential_slots;
+            };
+            let _ = accessor;
+            "vv_agent::CheckpointConfig::credential_slots"
+        }
+        "run_config.checkpoint_extension" => export_type!(
+            dyn vv_agent::CheckpointExtension,
+            "vv_agent::CheckpointExtension"
+        ),
+        "run_config.reconciliation_provider" => export_type!(
+            dyn vv_agent::ReconciliationProvider,
+            "vv_agent::ReconciliationProvider"
+        ),
         "result.public" => export_type!(vv_agent::RunResult, "vv_agent::RunResult"),
         "result.resume_state" => export_type!(vv_agent::RunState, "vv_agent::RunState"),
         "result.approval_snapshot" => {
@@ -95,6 +120,9 @@ fn public_export_path(id: &str) -> &'static str {
         ),
         "result.budget_exhaustion" => {
             export_type!(vv_agent::BudgetExhaustion, "vv_agent::BudgetExhaustion")
+        }
+        "result.resume_observation" => {
+            export_type!(vv_agent::ResumeObservation, "vv_agent::ResumeObservation")
         }
         "run_handle.live" => export_type!(vv_agent::RunHandle, "vv_agent::RunHandle"),
         "run_handle.snapshot" => {
@@ -171,6 +199,14 @@ fn public_export_path(id: &str) -> &'static str {
             vv_agent::app_server::protocol::JsonRpcMessage,
             "vv_agent::app_server::protocol::JsonRpcMessage"
         ),
+        "app_server.turn_resume_params" => export_type!(
+            vv_agent::app_server::protocol::TurnResumeParams,
+            "vv_agent::app_server::protocol::TurnResumeParams"
+        ),
+        "app_server.turn_resume_response" => export_type!(
+            vv_agent::app_server::protocol::TurnResumeResponse,
+            "vv_agent::app_server::protocol::TurnResumeResponse"
+        ),
         "tools.public_tool" => export_type!(dyn vv_agent::Tool, "vv_agent::Tool"),
         "tools.function_tool" => {
             export_type!(vv_agent::FunctionTool, "vv_agent::FunctionTool")
@@ -192,6 +228,9 @@ fn public_export_path(id: &str) -> &'static str {
         }
         "tools.not_found_error" => {
             export_type!(vv_agent::ToolNotFoundError, "vv_agent::ToolNotFoundError")
+        }
+        "tools.idempotency" => {
+            export_type!(vv_agent::ToolIdempotency, "vv_agent::ToolIdempotency")
         }
         "workspace.backend" => {
             export_type!(dyn vv_agent::WorkspaceBackend, "vv_agent::WorkspaceBackend")
@@ -354,6 +393,20 @@ fn public_export_path(id: &str) -> &'static str {
         "runtime_backend.checkpoint" => {
             export_type!(vv_agent::Checkpoint, "vv_agent::Checkpoint")
         }
+        "runtime_backend.checkpoint_v2" => {
+            export_type!(vv_agent::CheckpointV2, "vv_agent::CheckpointV2")
+        }
+        "runtime_backend.checkpoint_store_v2" => {
+            export_type!(dyn vv_agent::CheckpointStoreV2, "vv_agent::CheckpointStoreV2")
+        }
+        "runtime_backend.idempotent_event_store" => export_type!(
+            dyn vv_agent::IdempotentRunEventStore,
+            "vv_agent::IdempotentRunEventStore"
+        ),
+        "runtime_backend.operation_journal" => export_type!(
+            vv_agent::OperationJournalEntry,
+            "vv_agent::OperationJournalEntry"
+        ),
         "runtime_backend.agent_runtime" => {
             export_type!(
                 vv_agent::AgentRuntime<vv_agent::ScriptedLlmClient>,
@@ -490,6 +543,9 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 sub_task_manager,
                 runtime_log_handler,
                 runtime_stream_callback,
+                checkpoint_config,
+                checkpoint_extensions,
+                reconciliation_provider,
                 metadata,
                 trace_sink,
                 trace_id,
@@ -512,6 +568,8 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 partial_output,
                 budget_usage,
                 budget_exhaustion,
+                checkpoint_key,
+                resume_observation,
                 result,
                 events,
                 token_usage,
@@ -645,6 +703,7 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                     unsubscribe_thread,
                     start_turn,
                     interrupt_turn,
+                    resume_turn,
                     steer_turn,
                     follow_up_turn,
                     resolve_approval_request,
@@ -668,6 +727,7 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 exposure,
                 timeout,
                 approval_rule,
+                idempotency,
                 is_enabled,
                 as_tool_spec,
             ]
@@ -863,7 +923,7 @@ fn public_api_manifest_compiles_real_rust_exports() {
             );
         }
     }
-    assert_eq!(capability_ids.len(), 128);
+    assert_eq!(capability_ids.len(), 141);
 
     let surfaces = fixture["surfaces"].as_array().expect("public API surfaces");
     let surface_map = surfaces

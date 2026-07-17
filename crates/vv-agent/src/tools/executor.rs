@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::checkpoint::ToolIdempotency;
 use crate::context::RunContext;
 use crate::tools::{ToolContext, ToolSpec};
 use crate::types::{Metadata, ToolArguments, ToolCall, ToolExecutionResult};
@@ -196,6 +197,9 @@ pub trait ToolExecutor: Send + Sync {
     fn timeout(&self) -> Option<Duration> {
         None
     }
+    fn idempotency(&self) -> ToolIdempotency {
+        ToolIdempotency::Unknown
+    }
     fn spec(&self, _ctx: &ToolSpecContext) -> Result<ToolSpec, ToolError>;
     fn approval_requirement(
         &self,
@@ -252,6 +256,10 @@ impl ToolExecutor for ToolSpecExecutor {
 
     fn timeout(&self) -> Option<Duration> {
         self.spec.timeout
+    }
+
+    fn idempotency(&self) -> ToolIdempotency {
+        self.spec.idempotency
     }
 
     fn spec(&self, _ctx: &ToolSpecContext) -> Result<ToolSpec, ToolError> {

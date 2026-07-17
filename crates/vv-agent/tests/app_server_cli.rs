@@ -29,6 +29,8 @@ const JSON_SCHEMA_NAMES: &[&str] = &[
     "ThreadReadResponse",
     "ThreadResumeResponse",
     "ThreadStartResponse",
+    "TurnResumeParams",
+    "TurnResumeResponse",
     "TurnStartResponse",
 ];
 
@@ -439,6 +441,8 @@ fn cli_schema_generation_writes_json_and_typescript_files() {
     assert!(ts_out.join("ClientRequest.ts").exists());
     assert!(ts_out.join("ServerNotification.ts").exists());
     assert!(ts_out.join("ServerRequest.ts").exists());
+    assert!(ts_out.join("TurnResumeParams.ts").exists());
+    assert!(ts_out.join("TurnResumeResponse.ts").exists());
 
     let alias_status = Command::new(env!("CARGO_BIN_EXE_vv-agent"))
         .args([
@@ -455,6 +459,7 @@ fn cli_schema_generation_writes_json_and_typescript_files() {
     let client_request =
         fs::read_to_string(json_out.join("json/ClientRequest.json")).expect("schema file");
     assert!(client_request.contains("thread/start"));
+    assert!(client_request.contains("turn/resume"));
     let aggregate: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(json_out.join("json/vv_agent_app_server.schemas.json"))
             .expect("aggregate schema file"),

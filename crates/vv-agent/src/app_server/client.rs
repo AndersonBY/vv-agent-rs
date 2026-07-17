@@ -16,7 +16,8 @@ use crate::app_server::protocol::{
     ThreadReadParams, ThreadReadResponse, ThreadResumeParams, ThreadResumeResponse,
     ThreadStartParams, ThreadStartResponse, ThreadUnsubscribeParams, ThreadUnsubscribeResponse,
     TurnFollowUpParams, TurnFollowUpResponse, TurnInterruptParams, TurnInterruptResponse,
-    TurnStartParams, TurnStartResponse, TurnSteerParams, TurnSteerResponse,
+    TurnResumeParams, TurnResumeResponse, TurnStartParams, TurnStartResponse, TurnSteerParams,
+    TurnSteerResponse,
 };
 use crate::app_server::transport::ConnectionId;
 
@@ -117,6 +118,14 @@ impl AppServerClient {
         params: TurnStartParams,
     ) -> Result<TurnStartResponse, AppServerClientError> {
         self.send_request("turn/start", serde_json::to_value(params)?)
+            .await
+    }
+
+    pub async fn resume_turn(
+        &mut self,
+        params: TurnResumeParams,
+    ) -> Result<TurnResumeResponse, AppServerClientError> {
+        self.send_request("turn/resume", serde_json::to_value(params)?)
             .await
     }
 

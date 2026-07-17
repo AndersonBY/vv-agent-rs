@@ -18,6 +18,8 @@ fn json_schema_bundle_contains_protocol_envelopes() {
     assert!(bundle.contains_key("ServerNotification"));
     assert!(bundle.contains_key("ServerRequest"));
     assert!(bundle.contains_key("JsonRpcMessage"));
+    assert!(bundle.contains_key("TurnResumeParams"));
+    assert!(bundle.contains_key("TurnResumeResponse"));
     let approval = bundle
         .get("ApprovalDecision")
         .expect("approval decision schema");
@@ -37,6 +39,29 @@ fn json_schema_bundle_contains_protocol_envelopes() {
         .expect("required fields")
         .iter()
         .any(|field| field == "reason" || field == "metadata"));
+
+    let resume: serde_json::Value = serde_json::from_str(
+        bundle
+            .get("TurnResumeResponse")
+            .expect("turn resume response schema"),
+    )
+    .expect("valid turn resume response schema");
+    for sensitive in [
+        "runDefinition",
+        "runDefinitionDigest",
+        "operationArguments",
+        "operationResponse",
+        "extensionState",
+        "idempotencyKey",
+    ] {
+        assert!(
+            !resume["properties"]
+                .as_object()
+                .expect("resume properties")
+                .contains_key(sensitive),
+            "sensitive field entered resume schema: {sensitive}"
+        );
+    }
 }
 
 #[test]
@@ -45,10 +70,17 @@ fn typescript_bundle_contains_generated_protocol_types() {
     assert!(bundle.contains_key("ClientRequest.ts"));
     assert!(bundle.contains_key("ServerNotification.ts"));
     assert!(bundle.contains_key("ServerRequest.ts"));
+    assert!(bundle.contains_key("TurnResumeParams.ts"));
+    assert!(bundle.contains_key("TurnResumeResponse.ts"));
     assert!(bundle
         .get("ApprovalDecision.ts")
         .expect("approval decision TypeScript")
         .contains("allow_session"));
+    let resume = bundle
+        .get("TurnResumeResponse.ts")
+        .expect("turn resume TypeScript");
+    assert!(resume.contains("interface TurnResumeResponse"));
+    assert!(resume.contains("method: \"turn/resume\""));
 }
 
 #[test]

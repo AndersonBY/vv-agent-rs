@@ -5,6 +5,7 @@ use tokio::sync::Mutex;
 
 use crate::app_server::protocol::{AppTurn, UserInput};
 use crate::app_server::transport::ConnectionId;
+use crate::runtime::state_v2::CheckpointStoreV2;
 use crate::RunHandle;
 
 pub type SteeringQueue = Arc<StdMutex<VecDeque<Vec<UserInput>>>>;
@@ -18,6 +19,7 @@ pub struct ThreadStateManager {
 struct ThreadStateInner {
     subscribers: HashMap<String, HashSet<ConnectionId>>,
     active_turns: HashMap<String, ActiveTurn>,
+    durable_resumes: HashMap<String, String>,
     pending_approvals: HashMap<String, PendingApproval>,
     follow_ups: HashMap<String, VecDeque<Vec<UserInput>>>,
     closed_threads: HashSet<String>,
@@ -29,6 +31,7 @@ pub struct ActiveTurn {
     pub handle: RunHandle,
     pub steering: SteeringQueue,
     pub owner_connection_id: ConnectionId,
+    pub checkpoint_store: Option<Arc<dyn CheckpointStoreV2>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,7 +98,8 @@ impl ThreadStateManager {
             }
         }
         let closed = !inner.subscribers.contains_key(thread_id)
-            && !inner.active_turns.contains_key(thread_id);
+            && !inner.active_turns.contains_key(thread_id)
+            && !inner.durable_resumes.contains_key(thread_id);
         if closed {
             inner.closed_threads.insert(thread_id.to_string());
         }
@@ -146,6 +150,42 @@ impl ThreadStateManager {
 
     pub async fn active_turn(&self, thread_id: &str) -> Option<ActiveTurn> {
         self.inner.lock().await.active_turns.get(thread_id).cloned()
+    }
+
+    pub async fn active_turn_id(&self, thread_id: &str) -> Option<String> {
+        let inner = self.inner.lock().await;
+        inner
+            .active_turns
+            .get(thread_id)
+            .map(|active| active.turn.turn_id.clone())
+            .or_else(|| inner.durable_resumes.get(thread_id).cloned())
+    }
+
+    pub async fn has_active_turn(&self, thread_id: &str) -> bool {
+        let inner = self.inner.lock().await;
+        inner.active_turns.contains_key(thread_id) || inner.durable_resumes.contains_key(thread_id)
+    }
+
+    pub async fn set_durable_resume(
+        &self,
+        thread_id: impl Into<String>,
+        turn_id: impl Into<String>,
+    ) {
+        let thread_id = thread_id.into();
+        let mut inner = self.inner.lock().await;
+        inner.closed_threads.remove(&thread_id);
+        inner.durable_resumes.insert(thread_id, turn_id.into());
+    }
+
+    pub async fn clear_durable_resume(&self, thread_id: &str, turn_id: &str) {
+        let mut inner = self.inner.lock().await;
+        if inner
+            .durable_resumes
+            .get(thread_id)
+            .is_some_and(|active_turn_id| active_turn_id == turn_id)
+        {
+            inner.durable_resumes.remove(thread_id);
+        }
     }
 
     pub async fn clear_active_turn(&self, thread_id: &str, turn_id: &str) {

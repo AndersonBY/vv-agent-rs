@@ -75,6 +75,10 @@ impl Agent {
         &self.instructions
     }
 
+    pub(crate) fn has_dynamic_instructions(&self) -> bool {
+        self.instruction_provider.is_some()
+    }
+
     pub fn resolve_instructions(&self, context: &crate::context::RunContext) -> String {
         self.instruction_provider
             .as_ref()

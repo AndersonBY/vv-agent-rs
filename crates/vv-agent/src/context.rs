@@ -26,6 +26,7 @@ pub struct ToolCallContext {
     pub tool_call_id: String,
     pub tool_name: String,
     pub raw_arguments: serde_json::Value,
+    pub idempotency_key: Option<String>,
     pub metadata: Metadata,
     pub app_state: Option<Arc<dyn std::any::Any + Send + Sync>>,
     pub shared_state: Arc<Mutex<Metadata>>,

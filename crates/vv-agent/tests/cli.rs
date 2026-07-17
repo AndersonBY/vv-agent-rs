@@ -147,6 +147,8 @@ fn cli_result_payload_matches_shape() {
         token_usage: Default::default(),
         budget_usage: None,
         budget_exhaustion: None,
+        checkpoint_key: None,
+        resume_observation: None,
     };
     let resolved = ResolvedModelConfig::new(
         "deepseek",

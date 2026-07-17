@@ -7,6 +7,7 @@ pub mod agent;
 pub mod app_server;
 pub mod approval;
 pub mod budget;
+pub mod checkpoint;
 pub mod cli;
 pub mod config;
 pub mod constants;
@@ -49,6 +50,15 @@ pub use budget::{
     BudgetUnavailableDimension, BudgetUnavailableReason, BudgetUsageSnapshot, HostCost,
     HostCostMeter, RunBudgetLimits, RunBudgetLimitsBuilder, UnavailableMetricPolicy,
     MAX_WIRE_INTEGER,
+};
+pub use checkpoint::{
+    canonical_json_bytes, event_payload_digest, model_request_digest, normalize_run_definition,
+    operation_request_digest, redact_run_definition, run_definition_digest, tool_request_digest,
+    validate_extension_namespace, validate_run_definition, AmbiguousModelPolicy,
+    AmbiguousToolPolicy, AppendOnceResult, CheckpointConfig, CheckpointError, CheckpointExtension,
+    CheckpointStatus, ClaimMode, EventCursor, IdempotentRunEventStore, InMemoryRunEventStore,
+    OperationKind, OperationState, ReconciliationDecision, ReconciliationDecisionKind,
+    ReconciliationError, ReconciliationProvider, ResumeObservation, ResumePolicy, ToolIdempotency,
 };
 pub use config::{
     apply_resolved_model_limits, build_vv_llm_from_local_settings, build_vv_llm_settings,
@@ -102,13 +112,24 @@ pub use runtime::background_sessions::{
     background_session_manager, BackgroundSessionAdoptOptions, BackgroundSessionListener,
     BackgroundSessionManager, BackgroundSessionStartOptions, BackgroundSessionSubscription,
 };
+pub use runtime::checkpoint_codec_v2::{
+    checkpoint_v2_from_json, checkpoint_v2_to_json, decode_checkpoint, decode_checkpoint_bytes,
+    encode_checkpoint_v1, migrate_terminal_v1, DecodedCheckpoint,
+};
 pub use runtime::shell::{
     build_shell_invocation, prepare_shell_execution, resolve_shell_invocation,
     PreparedShellCommand, ShellInvocation,
 };
 pub use runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
+pub use runtime::state_v2::{
+    CheckpointStoreV2, CheckpointV2, EventOutboxEntry, ExtensionStateEntry, OperationError,
+    OperationJournalEntry,
+};
+pub use runtime::stores::memory_v2::InMemoryCheckpointStoreV2;
 pub use runtime::stores::redis::RedisStateStore;
+pub use runtime::stores::redis_v2::RedisCheckpointStoreV2;
 pub use runtime::stores::sqlite::SqliteStateStore;
+pub use runtime::stores::sqlite_v2::SqliteCheckpointStoreV2;
 pub use runtime::sub_task_manager::{
     ManagedSubTask, ManagedSubTaskSnapshot, SubTaskManager, SubTaskSessionAttachment,
     SubTaskTurnSnapshot,

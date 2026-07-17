@@ -17,13 +17,16 @@ use crate::workspace::LocalWorkspaceBackend;
 use super::capabilities::{DistributedCapabilityRegistry, ResolvedDistributedCapabilities};
 use super::contract::{now_unix_ms, DistributedRunEnvelope};
 use super::dispatch::CycleDispatchResult;
+use super::worker_v2::{
+    run_distributed_cycle_v2, DistributedDeliveryMetadata, DistributedV2CycleExecutor,
+};
 
-struct LeaseHeartbeatStopGuard {
+pub(super) struct LeaseHeartbeatStopGuard {
     stopped: Arc<(Mutex<bool>, Condvar)>,
 }
 
 impl LeaseHeartbeatStopGuard {
-    fn new(stopped: Arc<(Mutex<bool>, Condvar)>) -> Self {
+    pub(super) fn new(stopped: Arc<(Mutex<bool>, Condvar)>) -> Self {
         Self { stopped }
     }
 }
@@ -46,15 +49,15 @@ pub(super) struct LeaseHeartbeatStatus {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LeaseCommitPhase {
+pub(super) enum LeaseCommitPhase {
     NotStarted,
     InProgress,
     Succeeded,
 }
 
-struct LeaseHeartbeatFailure {
-    renewal: LeaseRenewalFailure,
-    renewal_started_during_commit: bool,
+pub(super) struct LeaseHeartbeatFailure {
+    pub(super) renewal: LeaseRenewalFailure,
+    pub(super) renewal_started_during_commit: bool,
 }
 
 struct LeaseHeartbeatState {
@@ -63,33 +66,33 @@ struct LeaseHeartbeatState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LeaseRenewalFailureKind {
+pub(super) enum LeaseRenewalFailureKind {
     ActiveClaimLost,
     ClaimLeaseExpired,
     Coordination,
 }
 
-struct LeaseRenewalFailure {
-    kind: LeaseRenewalFailureKind,
-    message: String,
+pub(super) struct LeaseRenewalFailure {
+    pub(super) kind: LeaseRenewalFailureKind,
+    pub(super) message: String,
 }
 
 impl LeaseRenewalFailure {
-    fn active_claim_lost() -> Self {
+    pub(super) fn active_claim_lost() -> Self {
         Self {
             kind: LeaseRenewalFailureKind::ActiveClaimLost,
             message: "claim is no longer active".to_string(),
         }
     }
 
-    fn claim_lease_expired() -> Self {
+    pub(super) fn claim_lease_expired() -> Self {
         Self {
             kind: LeaseRenewalFailureKind::ClaimLeaseExpired,
             message: "claim lease expired".to_string(),
         }
     }
 
-    fn coordination(message: String) -> Self {
+    pub(super) fn coordination(message: String) -> Self {
         Self {
             kind: LeaseRenewalFailureKind::Coordination,
             message,
@@ -97,9 +100,9 @@ impl LeaseRenewalFailure {
     }
 }
 
-struct LeaseRenewal {
-    lease_expires_at_ms: u64,
-    effective_lease_ms: u64,
+pub(super) struct LeaseRenewal {
+    pub(super) lease_expires_at_ms: u64,
+    pub(super) effective_lease_ms: u64,
 }
 
 struct LeaseRenewalRequest {
@@ -109,7 +112,7 @@ struct LeaseRenewalRequest {
 }
 
 impl LeaseHeartbeatStatus {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(LeaseHeartbeatState {
                 failure: None,
@@ -120,14 +123,14 @@ impl LeaseHeartbeatStatus {
         }
     }
 
-    fn commit_phase(&self) -> LeaseCommitPhase {
+    pub(super) fn commit_phase(&self) -> LeaseCommitPhase {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .commit_phase
     }
 
-    fn record(&self, renewal: LeaseRenewalFailure, phase_at_start: LeaseCommitPhase) {
+    pub(super) fn record(&self, renewal: LeaseRenewalFailure, phase_at_start: LeaseCommitPhase) {
         let mut state = self
             .state
             .lock()
@@ -182,7 +185,7 @@ impl LeaseHeartbeatStatus {
         Ok(())
     }
 
-    fn take(&self) -> (Option<LeaseHeartbeatFailure>, LeaseCommitPhase) {
+    pub(super) fn take(&self) -> (Option<LeaseHeartbeatFailure>, LeaseCommitPhase) {
         let mut state = self
             .state
             .lock()
@@ -192,8 +195,8 @@ impl LeaseHeartbeatStatus {
 }
 
 pub(super) struct LeaseOperationResult<T> {
-    value: T,
-    claim_committed: bool,
+    pub(super) value: T,
+    pub(super) claim_committed: bool,
 }
 
 impl<T> LeaseOperationResult<T> {
@@ -212,7 +215,8 @@ impl<T> LeaseOperationResult<T> {
 
 #[derive(Clone)]
 pub struct DistributedCycleWorker {
-    capabilities: DistributedCapabilityRegistry,
+    pub(super) capabilities: DistributedCapabilityRegistry,
+    pub(super) checkpoint_executor: Option<Arc<dyn DistributedV2CycleExecutor>>,
 }
 
 impl Default for DistributedCycleWorker {
@@ -223,15 +227,44 @@ impl Default for DistributedCycleWorker {
 
 impl DistributedCycleWorker {
     pub fn new(capabilities: DistributedCapabilityRegistry) -> Self {
-        Self { capabilities }
+        Self {
+            capabilities,
+            checkpoint_executor: None,
+        }
+    }
+
+    pub fn with_checkpoint_executor(
+        mut self,
+        executor: Arc<dyn DistributedV2CycleExecutor>,
+    ) -> Self {
+        self.checkpoint_executor = Some(executor);
+        self
     }
 
     pub fn run_cycle(
         &self,
         envelope: DistributedRunEnvelope,
     ) -> Result<CycleDispatchResult, String> {
+        self.run_cycle_with_delivery(envelope, DistributedDeliveryMetadata::default())
+    }
+
+    pub fn run_cycle_with_delivery(
+        &self,
+        envelope: DistributedRunEnvelope,
+        delivery: DistributedDeliveryMetadata,
+    ) -> Result<CycleDispatchResult, String> {
         envelope.validate()?;
         envelope.ensure_not_expired()?;
+        if envelope.is_checkpoint_v2() {
+            return run_distributed_cycle_v2(self, envelope, delivery);
+        }
+        self.run_cycle_v1(envelope)
+    }
+
+    fn run_cycle_v1(
+        &self,
+        envelope: DistributedRunEnvelope,
+    ) -> Result<CycleDispatchResult, String> {
         let state_store = envelope
             .recipe
             .build_state_store()
@@ -595,7 +628,7 @@ pub(super) fn lease_expiry_at(
         .ok_or_else(|| "checkpoint lease overflow".to_string())
 }
 
-fn build_runtime(
+pub(super) fn build_runtime(
     envelope: &DistributedRunEnvelope,
     resolved: &ResolvedDistributedCapabilities,
 ) -> Result<AgentRuntime<Arc<dyn LlmClient>>, String> {
@@ -690,7 +723,7 @@ fn worker_controls(
     }
 }
 
-fn combined_event_handler(
+pub(super) fn combined_event_handler(
     resolved: &ResolvedDistributedCapabilities,
 ) -> Option<RuntimeEventHandler> {
     let mut handlers = resolved.observers.clone();
@@ -724,6 +757,8 @@ fn failed_result(
         partial_output,
         budget_usage: None,
         budget_exhaustion: None,
+        checkpoint_key: None,
+        resume_observation: None,
         final_answer: None,
         wait_reason: None,
         error: Some(error),

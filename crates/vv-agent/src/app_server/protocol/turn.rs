@@ -17,6 +17,14 @@ pub struct TurnStartParams {
     pub metadata: BTreeMap<String, Value>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TurnResumeParams {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub checkpoint_key: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnInterruptParams {
@@ -47,6 +55,29 @@ pub struct TurnStartResponse {
     pub status: TurnStatus,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TurnResumeResponse {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub run_id: String,
+    pub status: TurnStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial_output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<CheckpointSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interruption: Option<InterruptionSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnInterruptResponse {
@@ -71,6 +102,10 @@ pub type TurnFollowUpResponse = TurnControlResponse;
 pub struct TurnStartedParams {
     pub thread_id: String,
     pub turn_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<TurnStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -97,6 +132,58 @@ pub struct TurnCompletedParams {
     pub budget_usage: Option<BTreeMap<String, Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_exhaustion: Option<BTreeMap<String, Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<CheckpointSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interruption: Option<InterruptionSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CheckpointSummary {
+    pub key: String,
+    pub resume_attempt: u64,
+    pub cycle_index: u64,
+    pub status: CheckpointSummaryStatus,
+    pub terminal_acknowledged: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointSummaryStatus {
+    Pending,
+    Running,
+    WaitUser,
+    Completed,
+    Failed,
+    MaxCycles,
+    ReconciliationRequired,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InterruptionSummary {
+    pub reason: String,
+    pub operation_id: String,
+    pub operation_kind: InterruptionOperationKind,
+    pub cycle_index: u64,
+    pub risk: String,
+    pub idempotency_support: InterruptionIdempotencySupport,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum InterruptionOperationKind {
+    Model,
+    Tool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum InterruptionIdempotencySupport {
+    Supported,
+    Unsupported,
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]

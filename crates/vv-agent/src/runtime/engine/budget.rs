@@ -411,6 +411,8 @@ pub(super) fn budget_failure_result(
         partial_output,
         budget_usage: Some(controller.snapshot()),
         budget_exhaustion: Some(exhaustion),
+        checkpoint_key: None,
+        resume_observation: None,
         final_answer: None,
         wait_reason: None,
         error: Some("Run budget exhausted.".to_string()),

@@ -97,6 +97,7 @@ pub(in crate::types::dict) fn agent_status_value(status: AgentStatus) -> &'stati
         AgentStatus::Completed => "completed",
         AgentStatus::Failed => "failed",
         AgentStatus::MaxCycles => "max_cycles",
+        AgentStatus::ReconciliationRequired => "reconciliation_required",
     }
 }
 
@@ -108,6 +109,7 @@ pub(in crate::types::dict) fn parse_agent_status(value: &str) -> Result<AgentSta
         "completed" => Ok(AgentStatus::Completed),
         "failed" => Ok(AgentStatus::Failed),
         "max_cycles" => Ok(AgentStatus::MaxCycles),
+        "reconciliation_required" => Ok(AgentStatus::ReconciliationRequired),
         other => Err(format!("unknown agent status: {other}")),
     }
 }

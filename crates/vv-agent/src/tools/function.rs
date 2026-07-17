@@ -8,6 +8,7 @@ use std::time::Duration;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use crate::checkpoint::ToolIdempotency;
 use crate::context::{RunContext, ToolCallContext};
 use crate::tools::{
     Tool, ToolApprovalRule, ToolContext, ToolEnablementContext, ToolEnablementRule, ToolExposure,
@@ -28,6 +29,7 @@ pub struct FunctionTool<Args = Value> {
     exposure: ToolExposure,
     timeout: Option<Duration>,
     approval: ToolApprovalRule,
+    idempotency: ToolIdempotency,
     enablement: ToolEnablementRule,
     error_mapper: Option<ToolErrorMapper>,
     metadata: Metadata,
@@ -49,6 +51,7 @@ impl FunctionTool<Value> {
             exposure: ToolExposure::Direct,
             timeout: None,
             approval: ToolApprovalRule::default(),
+            idempotency: ToolIdempotency::Unknown,
             enablement: ToolEnablementRule::default(),
             error_mapper: None,
             metadata: Metadata::new(),
@@ -68,6 +71,7 @@ impl<Args> Clone for FunctionTool<Args> {
             exposure: self.exposure,
             timeout: self.timeout,
             approval: self.approval.clone(),
+            idempotency: self.idempotency,
             enablement: self.enablement.clone(),
             error_mapper: self.error_mapper.clone(),
             metadata: self.metadata.clone(),
@@ -123,6 +127,10 @@ where
         self.approval.clone()
     }
 
+    fn idempotency(&self) -> ToolIdempotency {
+        self.idempotency
+    }
+
     fn is_enabled(&self, context: &ToolEnablementContext) -> bool {
         self.enablement.is_enabled(context)
     }
@@ -158,6 +166,7 @@ where
                         tool_call_id: context.tool_call_id.clone(),
                         tool_name: context.tool_name.clone(),
                         raw_arguments: raw_arguments.clone(),
+                        idempotency_key: context.idempotency_key.clone(),
                         metadata: context.metadata.clone(),
                         app_state: context.app_state.clone(),
                         shared_state: shared_state.clone(),
@@ -199,6 +208,7 @@ where
         spec.exposure = self.exposure;
         spec.timeout = self.timeout;
         spec.approval = self.approval.clone();
+        spec.idempotency = self.idempotency;
         spec.metadata = self.metadata.clone();
         spec
     }
@@ -213,6 +223,7 @@ pub struct FunctionToolBuilder<Args = Value> {
     exposure: ToolExposure,
     timeout: Option<Duration>,
     approval: ToolApprovalRule,
+    idempotency: ToolIdempotency,
     enablement: ToolEnablementRule,
     error_mapper: Option<ToolErrorMapper>,
     metadata: Metadata,
@@ -255,6 +266,11 @@ impl<Args> FunctionToolBuilder<Args> {
         F: Fn(&ToolContext, &ToolArguments) -> bool + Send + Sync + 'static,
     {
         self.approval = ToolApprovalRule::predicate(predicate);
+        self
+    }
+
+    pub fn idempotency(mut self, idempotency: ToolIdempotency) -> Self {
+        self.idempotency = idempotency;
         self
     }
 
@@ -304,6 +320,7 @@ impl<Args> FunctionToolBuilder<Args> {
             exposure: self.exposure,
             timeout: self.timeout,
             approval: self.approval,
+            idempotency: self.idempotency,
             enablement: self.enablement,
             error_mapper: self.error_mapper,
             metadata: self.metadata,
@@ -330,6 +347,7 @@ impl<Args> FunctionToolBuilder<Args> {
             exposure: self.exposure,
             timeout: self.timeout,
             approval: self.approval,
+            idempotency: self.idempotency,
             enablement: self.enablement,
             error_mapper: self.error_mapper,
             metadata: self.metadata,

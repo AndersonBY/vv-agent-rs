@@ -1,4 +1,5 @@
 use crate::budget::{BudgetUsageSnapshot, RunBudgetLimits};
+use crate::runtime::checkpoint_resume::CheckpointController;
 use crate::runtime::CancellationToken;
 use crate::types::{AgentResult, AgentTask, CycleRecord, Message, Metadata};
 
@@ -78,6 +79,7 @@ impl DistributedBackend {
         cycle_count: u32,
         budget_limits: Option<RunBudgetLimits>,
         initial_budget_usage: Option<BudgetUsageSnapshot>,
+        checkpoint_controller: Option<CheckpointController>,
     ) -> AgentResult
     where
         F: FnMut(
@@ -88,7 +90,10 @@ impl DistributedBackend {
             Option<&CancellationToken>,
         ) -> Option<AgentResult>,
     {
-        if self.runtime_recipe.is_some() && (!initial_cycles.is_empty() || cycle_index_start != 1) {
+        if self.runtime_recipe.is_some()
+            && checkpoint_controller.is_none()
+            && (!initial_cycles.is_empty() || cycle_index_start != 1)
+        {
             return failed_backend_result(
                 initial_messages,
                 initial_cycles,
@@ -97,6 +102,16 @@ impl DistributedBackend {
             );
         }
         if self.runtime_recipe.is_some() {
+            if let Some(checkpoint_controller) = checkpoint_controller {
+                return self.execute_distributed_v2(
+                    task,
+                    cycle_index_start,
+                    cycle_count,
+                    budget_limits,
+                    cancellation_token,
+                    checkpoint_controller,
+                );
+            }
             return match (
                 &self.runtime_recipe,
                 &self.state_store,

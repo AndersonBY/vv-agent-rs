@@ -6,6 +6,11 @@ export type ApprovalDecision = "allow" | "allow_session" | "deny" | "timeout";
 export type ThreadStatus = "idle" | "running" | "archived" | "closed";
 export type TurnStatus = "queued" | "running" | "completed" | "failed" | "interrupted";
 export type AppItemStatus = "started" | "inProgress" | "completed" | "failed";
+export type CheckpointStatus =
+  | "pending" | "running" | "wait_user" | "completed" | "failed" | "max_cycles"
+  | "reconciliation_required";
+export type InterruptionOperationKind = "model" | "tool";
+export type InterruptionIdempotencySupport = "supported" | "unsupported" | "unknown";
 
 export interface ClientInfo { name: string; title?: string; version?: string; }
 export interface ClientCapabilities { experimentalApi?: boolean; optOutNotificationMethods?: string[]; }
@@ -24,6 +29,7 @@ export interface ThreadListParams {
 }
 export type InputItem = JsonObject;
 export interface TurnStartParams { threadId: string; input?: InputItem[]; metadata?: JsonObject; }
+export interface TurnResumeParams { threadId: string; turnId: string; checkpointKey: string; }
 export interface TurnSteerParams { threadId: string; expectedTurnId?: string; input?: InputItem[]; }
 export interface TurnFollowUpParams { threadId: string; expectedTurnId?: string; input?: InputItem[]; }
 export interface TurnInterruptParams { threadId: string; expectedTurnId?: string; reason?: string; }
@@ -63,15 +69,29 @@ export interface ThreadListResponse { threads: AppThread[]; }
 export interface ThreadArchiveResponse { threadId: string; archived: boolean; }
 export interface ThreadUnsubscribeResponse { threadId: string; subscribed: boolean; closed: boolean; }
 export interface TurnStartResponse { threadId: string; turnId: string; status: TurnStatus; }
+export interface CheckpointSummary {
+  key: string; resumeAttempt: number; cycleIndex: number; status: CheckpointStatus;
+  terminalAcknowledged: boolean;
+}
+export interface InterruptionSummary {
+  reason: string; operationId: string; operationKind: InterruptionOperationKind;
+  cycleIndex: number; risk: string; idempotencySupport: InterruptionIdempotencySupport;
+}
+export interface TurnResumeResponse {
+  threadId: string; turnId: string; runId: string; status: TurnStatus; finalOutput?: string;
+  completionReason?: string; completionToolName?: string; partialOutput?: string;
+  checkpoint?: CheckpointSummary; interruption?: InterruptionSummary; error?: string;
+}
 export interface TurnQueueResponse { threadId: string; turnId: string; queued: boolean; }
 export interface TurnInterruptResponse { threadId: string; turnId: string; cancelled: boolean; }
 export interface ThreadStatusChangedParams { threadId: string; status: ThreadStatus; }
 export interface ThreadClosedParams { threadId: string; }
-export interface TurnStartedParams { threadId: string; turnId: string; }
+export interface TurnStartedParams { threadId: string; turnId: string; runId?: string; status?: TurnStatus; }
 export interface TurnCompletedParams {
   threadId: string; turnId: string; runId?: string; status: TurnStatus; finalOutput?: JsonValue;
   completionReason?: string; completionToolName?: string; partialOutput?: string;
   tokenUsage?: JsonObject; budgetUsage?: JsonObject; budgetExhaustion?: JsonObject; error?: string;
+  checkpoint?: CheckpointSummary; interruption?: InterruptionSummary;
 }
 export type ApprovalResolveResponse = Record<string, never>;
 export interface SchemaExportResponse { jsonSchema: Record<string, string>; typescript: Record<string, string>; }
@@ -86,6 +106,7 @@ export type ClientRequest =
   | { jsonrpc: "2.0"; id: RequestId; method: "thread/archive" | "thread/unsubscribe"; params: ThreadIdParams }
   | { jsonrpc: "2.0"; id: RequestId; method: "thread/list"; params?: ThreadListParams }
   | { jsonrpc: "2.0"; id: RequestId; method: "turn/start"; params: TurnStartParams }
+  | { jsonrpc: "2.0"; id: RequestId; method: "turn/resume"; params: TurnResumeParams }
   | { jsonrpc: "2.0"; id: RequestId; method: "turn/steer"; params: TurnSteerParams }
   | { jsonrpc: "2.0"; id: RequestId; method: "turn/followUp"; params: TurnFollowUpParams }
   | { jsonrpc: "2.0"; id: RequestId; method: "turn/interrupt"; params: TurnInterruptParams }
@@ -112,7 +133,7 @@ export type ServerRequest = {
 export type ClientResult =
   | InitializeResponse | ModelListResponse | ThreadStartResponse | ThreadReadResponse
   | ThreadResumeResponse | ThreadListResponse | ThreadArchiveResponse | ThreadUnsubscribeResponse
-  | TurnStartResponse | TurnQueueResponse | TurnInterruptResponse | ApprovalResolveResponse
+  | TurnStartResponse | TurnResumeResponse | TurnQueueResponse | TurnInterruptResponse | ApprovalResolveResponse
   | SchemaExportResponse;
 export type JsonRpcSuccess = { jsonrpc: "2.0"; id: RequestId; result: ClientResult | JsonValue };
 export type JsonRpcError = {

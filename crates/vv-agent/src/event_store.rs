@@ -3,11 +3,21 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
+use crate::checkpoint::EventCursor;
 use crate::events::RunEvent;
 
 pub trait RunEventStore: Send + Sync {
     fn append(&self, event: &RunEvent) -> Result<(), EventStoreError>;
     fn replay(&self, query: RunEventReplayQuery) -> Result<RunEventIter, EventStoreError>;
+
+    fn append_once(
+        &self,
+        _event_id: &str,
+        _payload_digest: &str,
+        _event: &RunEvent,
+    ) -> Result<Option<EventCursor>, EventStoreError> {
+        Ok(None)
+    }
 }
 
 pub type RunEventIter = Box<dyn Iterator<Item = Result<RunEvent, EventStoreError>> + Send>;

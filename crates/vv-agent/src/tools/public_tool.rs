@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::time::Duration;
 
+use crate::checkpoint::ToolIdempotency;
 use crate::tools::{
     ToolApprovalRule, ToolEnablementContext, ToolEnablementRule, ToolHandler, ToolSpec,
 };
@@ -27,6 +28,10 @@ pub trait Tool: Send + Sync {
         ToolApprovalRule::default()
     }
 
+    fn idempotency(&self) -> ToolIdempotency {
+        ToolIdempotency::Unknown
+    }
+
     fn is_enabled(&self, _context: &ToolEnablementContext) -> bool {
         true
     }
@@ -41,6 +46,7 @@ pub struct StaticTool {
     parameters_schema: Value,
     handler: ToolHandler,
     enablement: ToolEnablementRule,
+    idempotency: ToolIdempotency,
 }
 
 impl StaticTool {
@@ -56,6 +62,7 @@ impl StaticTool {
             parameters_schema,
             handler,
             enablement: ToolEnablementRule::default(),
+            idempotency: ToolIdempotency::Unknown,
         }
     }
 
@@ -69,6 +76,11 @@ impl StaticTool {
         F: Fn(&ToolEnablementContext) -> bool + Send + Sync + 'static,
     {
         self.enablement = ToolEnablementRule::predicate(predicate);
+        self
+    }
+
+    pub fn with_idempotency(mut self, idempotency: ToolIdempotency) -> Self {
+        self.idempotency = idempotency;
         self
     }
 }
@@ -90,6 +102,10 @@ impl Tool for StaticTool {
         self.enablement.is_enabled(context)
     }
 
+    fn idempotency(&self) -> ToolIdempotency {
+        self.idempotency
+    }
+
     fn as_tool_spec(&self) -> ToolSpec {
         let mut spec = ToolSpec::new(
             self.name.clone(),
@@ -109,6 +125,7 @@ impl Tool for StaticTool {
         spec.exposure = self.exposure();
         spec.timeout = self.timeout();
         spec.approval = self.approval_rule();
+        spec.idempotency = self.idempotency();
         spec
     }
 }

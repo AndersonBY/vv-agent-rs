@@ -53,7 +53,12 @@ pub(crate) fn checkpoint_to_json(checkpoint: &Checkpoint) -> Result<String> {
         );
     }
     if let Some(terminal_result) = &checkpoint.terminal_result {
-        payload.insert("terminal_result".to_string(), terminal_result.to_dict());
+        let mut terminal_payload = terminal_result.to_dict();
+        if let Some(terminal_payload) = terminal_payload.as_object_mut() {
+            terminal_payload.remove("checkpoint_key");
+            terminal_payload.remove("resume_observation");
+        }
+        payload.insert("terminal_result".to_string(), terminal_payload);
     }
     if let Some(budget_usage) = &checkpoint.budget_usage {
         payload.insert(

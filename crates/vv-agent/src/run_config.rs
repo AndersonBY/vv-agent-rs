@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use crate::approval::{ApprovalBroker, ApprovalProvider};
 use crate::budget::{HostCostMeter, RunBudgetLimits};
+use crate::checkpoint::{CheckpointConfig, CheckpointExtension, ReconciliationProvider};
 use crate::context_providers::ContextProvider;
 use crate::event_store::RunEventStore;
 use crate::execution_mode::ExecutionMode;
@@ -76,6 +77,9 @@ pub struct RunConfig {
     pub runtime_stream_callback: Option<LlmStreamCallback>,
     pub budget_limits: Option<RunBudgetLimits>,
     pub host_cost_meter: Option<Arc<dyn HostCostMeter>>,
+    pub checkpoint_config: Option<CheckpointConfig>,
+    pub checkpoint_extensions: Vec<Arc<dyn CheckpointExtension>>,
+    pub reconciliation_provider: Option<Arc<dyn ReconciliationProvider>>,
     pub metadata: Metadata,
 }
 
@@ -101,6 +105,9 @@ impl RunConfig {
         child.runtime_log_handler = None;
         child.runtime_stream_callback = None;
         child.host_cost_meter = None;
+        child.checkpoint_config = None;
+        child.checkpoint_extensions.clear();
+        child.reconciliation_provider = None;
         child.metadata.remove(INITIAL_BUDGET_USAGE_METADATA_KEY);
         child
     }
@@ -366,6 +373,37 @@ impl RunConfigBuilder {
 
     pub fn host_cost_meter_arc(mut self, meter: Arc<dyn HostCostMeter>) -> Self {
         self.config.host_cost_meter = Some(meter);
+        self
+    }
+
+    pub fn checkpoint_config(mut self, checkpoint_config: CheckpointConfig) -> Self {
+        self.config.checkpoint_config = Some(checkpoint_config);
+        self
+    }
+
+    pub fn checkpoint_extension(mut self, extension: impl CheckpointExtension + 'static) -> Self {
+        self.config.checkpoint_extensions.push(Arc::new(extension));
+        self
+    }
+
+    pub fn checkpoint_extension_arc(mut self, extension: Arc<dyn CheckpointExtension>) -> Self {
+        self.config.checkpoint_extensions.push(extension);
+        self
+    }
+
+    pub fn reconciliation_provider(
+        mut self,
+        provider: impl ReconciliationProvider + 'static,
+    ) -> Self {
+        self.config.reconciliation_provider = Some(Arc::new(provider));
+        self
+    }
+
+    pub fn reconciliation_provider_arc(
+        mut self,
+        provider: Arc<dyn ReconciliationProvider>,
+    ) -> Self {
+        self.config.reconciliation_provider = Some(provider);
         self
     }
 

@@ -81,6 +81,8 @@ where
             partial_output: None,
             budget_usage: None,
             budget_exhaustion: None,
+            checkpoint_key: None,
+            resume_observation: None,
             final_answer: None,
             wait_reason: None,
             error: Some(format!("No checkpoint found for task {}", task.task_id)),

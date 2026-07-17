@@ -29,7 +29,7 @@ pub use executor::{
     ToolRunContext, ToolSpecContext, ToolSpecExecutor,
 };
 pub use function::{FunctionTool, ToolErrorMapper};
-pub use orchestrator::{ToolOrchestrator, ToolRunOptions};
+pub use orchestrator::{BeforeToolDispatch, ToolOrchestrator, ToolRunOptions};
 pub use outputs::ToolOutput;
 pub use policy::{ApprovalDecision, ApprovalPolicy, CanUseToolPredicate, ToolPolicy};
 pub use public_tool::{StaticTool, Tool};

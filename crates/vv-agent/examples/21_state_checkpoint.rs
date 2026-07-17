@@ -1,96 +1,69 @@
 mod common;
 
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use common::{
-    build_direct_runtime, env_string, make_task_id, print_agent_result, runtime_log_handler,
-    ExampleConfig,
+    build_facade_agent, build_facade_runner, env_string, print_run_result, ExampleConfig,
 };
-use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
 use vv_agent::{
-    AgentTask, Checkpoint, ExecutionContext, InMemoryStateStore, RuntimeRunControls,
-    SqliteStateStore, StateStore,
+    CheckpointConfig, CheckpointStoreV2, ResumePolicy, RunConfig, SqliteCheckpointStoreV2,
 };
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ExampleConfig::load();
     config.ensure_workspace()?;
-    let db_path = env_string("V_AGENT_EXAMPLE_DB", ":memory:");
-    let (runtime, resolved) = build_direct_runtime(&config, 90.0)?;
-    let system_prompt = build_system_prompt_with_options(
-        "You are a helpful agent.",
-        BuildSystemPromptOptions {
-            language: "zh-CN".to_string(),
-            allow_interruption: true,
-            use_workspace: true,
-            ..BuildSystemPromptOptions::default()
-        },
+    let db_path = PathBuf::from(env_string(
+        "V_AGENT_EXAMPLE_DB",
+        &config
+            .workspace
+            .join(".vv-agent-state/checkpoints-v2.db")
+            .to_string_lossy(),
+    ));
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let checkpoint_key = env_string(
+        "V_AGENT_EXAMPLE_CHECKPOINT_KEY",
+        "example-21-state-checkpoint",
     );
-    let task_id = make_task_id("ckpt_demo");
-    let mut task = AgentTask::new(
-        task_id.clone(),
-        resolved.model_id,
-        system_prompt,
-        "2+3 等于几?",
-    );
-    task.max_cycles = 5;
+    let prompt = config
+        .prompt
+        .clone()
+        .unwrap_or_else(|| "Calculate 2+3, briefly verify the result, and finish.".to_string());
+    let store = Arc::new(SqliteCheckpointStoreV2::new(&db_path)?);
+    let mut checkpoint = CheckpointConfig::new(store.clone());
+    checkpoint.key = Some(checkpoint_key.clone());
+    checkpoint.resume_policy = ResumePolicy::ResumeIfPresent;
 
-    let store = std::sync::Arc::new(SqliteStateStore::new(db_path)?);
-    eprintln!("[demo] 运行任务 {task_id}...");
-    let result = runtime.run_with_controls(
-        task,
-        RuntimeRunControls {
-            workspace: Some(config.workspace),
-            log_handler: runtime_log_handler(config.verbose),
-            execution_context: Some(ExecutionContext::default().with_state_store(store.clone())),
-            ..RuntimeRunControls::default()
-        },
+    let runner = build_facade_runner(&config)?;
+    let agent = build_facade_agent(
+        &config,
+        "checkpoint-demo",
+        "Complete the requested task carefully. Finish only after the answer is ready.",
     )?;
-    print_agent_result(&result)?;
 
-    let checkpoint = Checkpoint {
-        task_id: task_id.clone(),
-        cycle_index: result.cycles.len() as u32,
-        status: result.status,
-        messages: result.messages.clone(),
-        cycles: result.cycles.clone(),
-        shared_state: result.shared_state.clone(),
-        budget_usage: result.budget_usage.clone(),
-        revision: 0,
-        claim_token: None,
-        claimed_cycle: None,
-        lease_expires_at_ms: None,
-        terminal_result: None,
-    };
-    store.save_checkpoint(checkpoint.clone())?;
-    println!("[demo] Checkpoint 已保存, task_id={task_id}");
-    println!(
-        "[demo] 当前 checkpoint 列表: {:?}",
-        store.list_checkpoints()?
-    );
-    if let Some(loaded) = store.load_checkpoint(&task_id)? {
+    println!("[demo] checkpoint={checkpoint_key}");
+    println!("[demo] database={}", db_path.display());
+    let result = runner
+        .run_with_config(
+            &agent,
+            prompt,
+            RunConfig::builder()
+                .max_cycles(5)
+                .checkpoint_config(checkpoint)
+                .build(),
+        )
+        .await?;
+    print_run_result(&result)?;
+
+    if let Some(retained) = store.load_checkpoint_v2(&checkpoint_key)? {
         println!(
-            "[demo] 加载成功: cycle_index={}, status={:?}, messages={}, cycles={}",
-            loaded.cycle_index,
-            loaded.status,
-            loaded.messages.len(),
-            loaded.cycles.len()
+            "[demo] durable_state=cycle:{} resume_attempt:{} terminal_acknowledged:{}",
+            retained.cycle_index, retained.resume_attempt, retained.terminal_acknowledged
         );
     }
-    store.delete_checkpoint(&task_id)?;
-    println!(
-        "[demo] Checkpoint 已删除, 剩余: {:?}",
-        store.list_checkpoints()?
-    );
-
-    let mem_store = InMemoryStateStore::new();
-    mem_store.save_checkpoint(checkpoint)?;
-    println!(
-        "[demo] InMemory save -> list: {:?}",
-        mem_store.list_checkpoints()?
-    );
-    mem_store.delete_checkpoint(&task_id)?;
-    println!(
-        "[demo] InMemory delete -> list: {:?}",
-        mem_store.list_checkpoints()?
-    );
+    println!("[demo] Run the same command again to replay or resume this checkpoint.");
     Ok(())
 }

@@ -58,7 +58,7 @@ fn committed_bundle<const N: usize>(
     Ok(bundle)
 }
 
-const JSON_SCHEMA_FILES: [(&str, &str); 17] = [
+const JSON_SCHEMA_FILES: [(&str, &str); 19] = [
     (
         "AppItem",
         include_str!("../../../schema/app-server/json/AppItem.json"),
@@ -124,12 +124,20 @@ const JSON_SCHEMA_FILES: [(&str, &str); 17] = [
         include_str!("../../../schema/app-server/json/ThreadStartResponse.json"),
     ),
     (
+        "TurnResumeParams",
+        include_str!("../../../schema/app-server/json/TurnResumeParams.json"),
+    ),
+    (
+        "TurnResumeResponse",
+        include_str!("../../../schema/app-server/json/TurnResumeResponse.json"),
+    ),
+    (
         "TurnStartResponse",
         include_str!("../../../schema/app-server/json/TurnStartResponse.json"),
     ),
 ];
 
-const TYPESCRIPT_SCHEMA_FILES: [(&str, &str); 16] = [
+const TYPESCRIPT_SCHEMA_FILES: [(&str, &str); 18] = [
     (
         "AppItem.ts",
         include_str!("../../../schema/app-server/typescript/AppItem.ts"),
@@ -189,6 +197,14 @@ const TYPESCRIPT_SCHEMA_FILES: [(&str, &str); 16] = [
     (
         "ThreadStartResponse.ts",
         include_str!("../../../schema/app-server/typescript/ThreadStartResponse.ts"),
+    ),
+    (
+        "TurnResumeParams.ts",
+        include_str!("../../../schema/app-server/typescript/TurnResumeParams.ts"),
+    ),
+    (
+        "TurnResumeResponse.ts",
+        include_str!("../../../schema/app-server/typescript/TurnResumeResponse.ts"),
     ),
     (
         "TurnStartResponse.ts",

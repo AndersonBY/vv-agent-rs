@@ -1,10 +1,20 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
-use serde_json::Value;
+use serde::{de::Error as _, ser::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::{Number, Value};
 
 use crate::budget::{BudgetEnforcementBoundary, BudgetExhaustion, BudgetUsageSnapshot};
+use crate::checkpoint::{
+    OperationKind, OperationState, ReconciliationDecisionKind, ResumeObservation, ToolIdempotency,
+};
 use crate::types::{AgentStatus, CompletionReason, Metadata};
+
+mod wire;
+
+use wire::{
+    add_default_supplemental_fields, supplemental_wire_fields, validate_budget_wire_fields,
+    validate_checkpoint_wire_fields, validate_completion_wire_fields,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -19,7 +29,6 @@ impl RunEventVersion {
         &self.0
     }
 }
-
 impl Default for RunEventVersion {
     fn default() -> Self {
         Self::v1()
@@ -38,6 +47,14 @@ impl EventId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn stable(value: impl Into<String>) -> Result<Self, String> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err("event id must be non-empty".to_string());
+        }
+        Ok(Self(value))
+    }
 }
 
 impl Default for EventId {
@@ -46,29 +63,90 @@ impl Default for EventId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RunEvent {
     pub version: RunEventVersion,
     pub event_id: EventId,
     pub run_id: String,
     pub trace_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_event_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_run_id: Option<String>,
     pub created_at: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    created_at_wire: CreatedAtWire,
     pub cycle_index: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Metadata::is_empty")]
     pub metadata: Metadata,
-    #[serde(flatten)]
     pub payload: RunEventPayload,
-    #[serde(flatten, skip_serializing_if = "Metadata::is_empty")]
     extra_fields: Metadata,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CreatedAtWire(Option<Number>);
+
+impl PartialEq for CreatedAtWire {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Serialize for RunEvent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut object = serde_json::to_value(&self.payload)
+            .map_err(S::Error::custom)?
+            .as_object()
+            .cloned()
+            .ok_or_else(|| S::Error::custom("run event payload must serialize as an object"))?;
+        object.extend(self.extra_fields.clone());
+        object.insert(
+            "version".to_string(),
+            serde_json::to_value(&self.version).map_err(S::Error::custom)?,
+        );
+        object.insert(
+            "event_id".to_string(),
+            serde_json::to_value(&self.event_id).map_err(S::Error::custom)?,
+        );
+        object.insert("run_id".to_string(), Value::String(self.run_id.clone()));
+        object.insert("trace_id".to_string(), Value::String(self.trace_id.clone()));
+        if let Some(session_id) = &self.session_id {
+            object.insert("session_id".to_string(), Value::String(session_id.clone()));
+        }
+        if let Some(parent_event_id) = &self.parent_event_id {
+            object.insert(
+                "parent_event_id".to_string(),
+                Value::String(parent_event_id.clone()),
+            );
+        }
+        if let Some(parent_run_id) = &self.parent_run_id {
+            object.insert(
+                "parent_run_id".to_string(),
+                Value::String(parent_run_id.clone()),
+            );
+        }
+        let created_at = self
+            .created_at_wire
+            .0
+            .clone()
+            .or_else(|| Number::from_f64(self.created_at))
+            .ok_or_else(|| S::Error::custom("created_at must be finite"))?;
+        object.insert("created_at".to_string(), Value::Number(created_at));
+        if let Some(cycle_index) = self.cycle_index {
+            object.insert("cycle_index".to_string(), Value::from(cycle_index));
+        }
+        if let Some(agent_name) = &self.agent_name {
+            object.insert("agent_name".to_string(), Value::String(agent_name.clone()));
+        }
+        if !self.metadata.is_empty() {
+            object.insert(
+                "metadata".to_string(),
+                Value::Object(self.metadata.clone().into_iter().collect()),
+            );
+        }
+        Value::Object(object).serialize(serializer)
+    }
 }
 
 #[derive(Deserialize)]
@@ -124,6 +202,8 @@ impl<'de> Deserialize<'de> for RunEvent {
         }
         validate_completion_wire_fields(&value).map_err(D::Error::custom)?;
         validate_budget_wire_fields(&value).map_err(D::Error::custom)?;
+        validate_checkpoint_wire_fields(&wire.payload, wire.cycle_index)
+            .map_err(D::Error::custom)?;
         if matches!(
             &wire.payload,
             RunEventPayload::ToolCallStarted { arguments, .. } if !arguments.is_object()
@@ -168,6 +248,8 @@ impl<'de> Deserialize<'de> for RunEvent {
                 ));
             }
         }
+        let created_at_wire =
+            CreatedAtWire(value.get("created_at").and_then(Value::as_number).cloned());
         let created_at = match (wire.created_at, wire.created_at_ms) {
             (Some(seconds), _) => seconds,
             (None, Some(milliseconds)) => milliseconds / 1000.0,
@@ -190,6 +272,7 @@ impl<'de> Deserialize<'de> for RunEvent {
             parent_event_id: wire.parent_event_id,
             parent_run_id: wire.parent_run_id,
             created_at,
+            created_at_wire,
             cycle_index: wire.cycle_index,
             agent_name: wire.agent_name,
             metadata: wire.metadata,
@@ -218,6 +301,7 @@ impl RunEvent {
             parent_event_id: None,
             parent_run_id: None,
             created_at: timestamp_seconds(),
+            created_at_wire: CreatedAtWire::default(),
             cycle_index,
             agent_name: Some(agent_name.into()),
             metadata: Metadata::new(),
@@ -532,6 +616,11 @@ impl RunEvent {
         self
     }
 
+    pub fn with_event_id(mut self, event_id: impl Into<String>) -> Result<Self, String> {
+        self.event_id = EventId::stable(event_id)?;
+        Ok(self)
+    }
+
     pub fn with_parent_event_id(mut self, parent_event_id: impl Into<String>) -> Self {
         self.parent_event_id = Some(parent_event_id.into());
         self
@@ -775,6 +864,46 @@ pub enum RunEventPayload {
         budget_usage: BudgetUsageSnapshot,
         budget_exhaustion: BudgetExhaustion,
     },
+    CheckpointCreated {
+        checkpoint_key: String,
+        resume_attempt: u64,
+    },
+    CheckpointResumed {
+        checkpoint_key: String,
+        resume_attempt: u64,
+    },
+    OperationReplayed {
+        checkpoint_key: String,
+        operation_id: String,
+        operation_kind: OperationKind,
+        receipt_state: OperationState,
+    },
+    OperationAmbiguous {
+        checkpoint_key: String,
+        operation_id: String,
+        operation_kind: OperationKind,
+        risk: String,
+        idempotency_support: Option<ToolIdempotency>,
+    },
+    ReconciliationRequired {
+        checkpoint_key: String,
+        operation_id: String,
+        operation_kind: OperationKind,
+        interruption_reason: String,
+        resume_observation: ResumeObservation,
+    },
+    ModelRetryDuplicateRisk {
+        checkpoint_key: String,
+        operation_id: String,
+        operation_kind: OperationKind,
+        risk: String,
+    },
+    ReconciliationResolved {
+        checkpoint_key: String,
+        operation_id: String,
+        operation_kind: OperationKind,
+        decision: ReconciliationDecisionKind,
+    },
     RunCompleted {
         status: AgentStatus,
     },
@@ -858,122 +987,4 @@ fn timestamp_seconds() -> f64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_micros() as f64 / 1_000_000.0)
         .unwrap_or_default()
-}
-
-fn validate_completion_wire_fields(value: &Value) -> Result<(), String> {
-    if let Some(value) = value.get("completion_reason") {
-        match value {
-            Value::Null => {}
-            Value::String(reason) if CompletionReason::parse(reason).is_some() => {}
-            Value::String(reason) => {
-                return Err(format!(
-                    "unsupported run event completion_reason `{reason}`"
-                ));
-            }
-            _ => return Err("run event completion_reason must be a string or null".to_string()),
-        }
-    }
-    for field in ["completion_tool_name", "partial_output"] {
-        if value
-            .get(field)
-            .is_some_and(|value| !value.is_null() && !value.is_string())
-        {
-            return Err(format!("run event {field} must be a string or null"));
-        }
-    }
-    Ok(())
-}
-
-fn validate_budget_wire_fields(value: &Value) -> Result<(), String> {
-    if let Some(value) = value.get("budget_usage") {
-        match value {
-            Value::Null => {}
-            Value::Object(_) => {
-                serde_json::from_value::<BudgetUsageSnapshot>(value.clone())
-                    .map_err(|error| format!("invalid run event budget_usage: {error}"))?;
-            }
-            _ => return Err("run event budget_usage must be an object or null".to_string()),
-        }
-    }
-    if let Some(value) = value.get("budget_exhaustion") {
-        match value {
-            Value::Null => {}
-            Value::Object(_) => {
-                serde_json::from_value::<BudgetExhaustion>(value.clone())
-                    .map_err(|error| format!("invalid run event budget_exhaustion: {error}"))?;
-            }
-            _ => return Err("run event budget_exhaustion must be an object or null".to_string()),
-        }
-    }
-    Ok(())
-}
-
-fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload) -> Metadata {
-    let Some(object) = value.as_object() else {
-        return Metadata::new();
-    };
-    let keys: &[&str] = match payload {
-        RunEventPayload::ApprovalResolved { .. } => &["action"],
-        RunEventPayload::SubRunStarted { .. } => &["status"],
-        RunEventPayload::SubRunCompleted { .. } => &[
-            "child_session_id",
-            "task_id",
-            "wait_reason",
-            "error",
-            "completion_reason",
-            "completion_tool_name",
-            "partial_output",
-            "token_usage",
-            "budget_usage",
-            "budget_exhaustion",
-        ],
-        RunEventPayload::HandoffStarted { .. } => &["status", "child_session_id"],
-        RunEventPayload::HandoffCompleted { .. } => &["status", "child_session_id", "child_run_id"],
-        RunEventPayload::RunCompleted { .. } => &[
-            "final_output",
-            "completion_reason",
-            "completion_tool_name",
-            "partial_output",
-            "budget_usage",
-            "budget_exhaustion",
-        ],
-        RunEventPayload::RunFailed { .. } | RunEventPayload::RunCancelled { .. } => &[
-            "status",
-            "completion_reason",
-            "completion_tool_name",
-            "partial_output",
-            "budget_usage",
-            "budget_exhaustion",
-        ],
-        _ => &[],
-    };
-    keys.iter()
-        .filter_map(|key| {
-            object
-                .get(*key)
-                .cloned()
-                .map(|value| ((*key).to_string(), value))
-        })
-        .collect()
-}
-
-fn add_default_supplemental_fields(payload: &RunEventPayload, fields: &mut Metadata) {
-    let (key, value) = match payload {
-        RunEventPayload::ApprovalResolved { approved, .. } => (
-            "action",
-            Value::String(
-                ApprovalAction::from_approved(*approved)
-                    .as_str()
-                    .to_string(),
-            ),
-        ),
-        RunEventPayload::SubRunStarted { .. } => ("status", Value::String("running".to_string())),
-        RunEventPayload::HandoffStarted { .. } => ("status", Value::String("started".to_string())),
-        RunEventPayload::HandoffCompleted { .. } => {
-            ("status", Value::String("completed".to_string()))
-        }
-        RunEventPayload::RunCompleted { .. } => ("final_output", Value::Null),
-        _ => return,
-    };
-    fields.entry(key.to_string()).or_insert(value);
 }

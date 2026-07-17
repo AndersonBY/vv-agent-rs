@@ -1,4 +1,8 @@
+mod helpers;
+mod resume;
 mod turns;
+
+use helpers::{load_thread_resume_snapshot, parse_params, parse_params_or_default, store_error};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -6,6 +10,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use crate::app_server::durable_resume::DurableTurnResumeProvider;
 use crate::app_server::host::{AppServerHost, DefaultAppServerHost};
 use crate::app_server::outgoing::{OutgoingEnvelope, OutgoingMessageSender};
 use crate::app_server::protocol::{
@@ -35,7 +40,6 @@ pub struct MessageProcessor {
     thread_state: ThreadStateManager,
     request_queue: RequestSerializationQueue,
 }
-
 #[derive(Debug, Clone, Default)]
 pub struct ConnectionSessionState {
     initialized: bool,
@@ -143,9 +147,60 @@ impl MessageProcessor {
         store: SqliteThreadStore,
         approval_request_timeout: Duration,
     ) -> (Self, tokio::sync::mpsc::Receiver<OutgoingEnvelope>) {
+        Self::with_host_options(
+            outgoing_capacity,
+            runner,
+            host,
+            store,
+            approval_request_timeout,
+            None,
+        )
+    }
+
+    pub fn with_host_and_durable_resume_provider(
+        outgoing_capacity: usize,
+        runner: Runner,
+        host: Arc<dyn AppServerHost>,
+        store: SqliteThreadStore,
+        provider: Arc<dyn DurableTurnResumeProvider>,
+    ) -> (Self, tokio::sync::mpsc::Receiver<OutgoingEnvelope>) {
+        Self::with_host_options(
+            outgoing_capacity,
+            runner,
+            host,
+            store,
+            Duration::from_secs(30),
+            Some(provider),
+        )
+    }
+
+    pub fn with_runtime_and_durable_resume_provider(
+        outgoing_capacity: usize,
+        runner: Runner,
+        agent: Agent,
+        store: SqliteThreadStore,
+        provider: Arc<dyn DurableTurnResumeProvider>,
+    ) -> (Self, tokio::sync::mpsc::Receiver<OutgoingEnvelope>) {
+        Self::with_host_and_durable_resume_provider(
+            outgoing_capacity,
+            runner,
+            Arc::new(DefaultAppServerHost::from_agent(agent)),
+            store,
+            provider,
+        )
+    }
+
+    fn with_host_options(
+        outgoing_capacity: usize,
+        runner: Runner,
+        host: Arc<dyn AppServerHost>,
+        store: SqliteThreadStore,
+        approval_request_timeout: Duration,
+        durable_resume_provider: Option<Arc<dyn DurableTurnResumeProvider>>,
+    ) -> (Self, tokio::sync::mpsc::Receiver<OutgoingEnvelope>) {
         let (outgoing, rx) = OutgoingMessageSender::channel(outgoing_capacity);
         let thread_state = ThreadStateManager::default();
-        let run_adapter = AppServerRunAdapter::with_host(
+        let mut run_adapter = AppServerRunAdapter::with_host(
             runner,
             host.clone(),
             store,
@@ -153,6 +208,9 @@ impl MessageProcessor {
             outgoing.clone(),
         )
         .with_approval_request_timeout(approval_request_timeout);
+        if let Some(provider) = durable_resume_provider {
+            run_adapter = run_adapter.with_durable_resume_provider(provider);
+        }
         (
             Self {
                 outgoing,
@@ -194,6 +252,22 @@ impl MessageProcessor {
             agent,
             store,
             approval_request_timeout,
+        )
+    }
+
+    pub fn new_for_tests_with_runtime_and_durable_resume_provider(
+        outgoing_capacity: usize,
+        runner: Runner,
+        agent: Agent,
+        store: SqliteThreadStore,
+        provider: Arc<dyn DurableTurnResumeProvider>,
+    ) -> (Self, tokio::sync::mpsc::Receiver<OutgoingEnvelope>) {
+        Self::with_runtime_and_durable_resume_provider(
+            outgoing_capacity,
+            runner,
+            agent,
+            store,
+            provider,
         )
     }
 
@@ -292,6 +366,7 @@ impl MessageProcessor {
                     .await
             }
             "turn/start" => self.process_turn_start(connection_id, request).await,
+            "turn/resume" => self.process_turn_resume(connection_id, request).await,
             "turn/interrupt" => self.process_turn_interrupt(connection_id, request).await,
             "turn/steer" => self.process_turn_steer(connection_id, request).await,
             "turn/followUp" => self.process_turn_follow_up(connection_id, request).await,
@@ -453,79 +528,6 @@ impl MessageProcessor {
         let _ = self
             .outgoing
             .send_response(connection_id, request.id, json!({}))
-            .await;
-    }
-
-    async fn process_thread_resume(
-        &mut self,
-        connection_id: ConnectionId,
-        request: JsonRpcRequest,
-    ) {
-        let params = match parse_params::<ThreadResumeParams>(request.params) {
-            Ok(params) => params,
-            Err(error) => {
-                let _ = self
-                    .outgoing
-                    .send_error(connection_id, request.id, error)
-                    .await;
-                return;
-            }
-        };
-        let Some(adapter) = self.run_adapter.clone() else {
-            let _ = self
-                .outgoing
-                .send_error(
-                    connection_id,
-                    request.id,
-                    AppServerError::internal("App Server runtime is not configured"),
-                )
-                .await;
-            return;
-        };
-        let active_turn = self.thread_state.active_turn(&params.thread_id).await;
-        let reopened_status = if active_turn.is_some() {
-            ThreadStatus::Running
-        } else {
-            ThreadStatus::Idle
-        };
-        let active_turn_id = active_turn
-            .as_ref()
-            .map(|active| active.turn.turn_id.as_str());
-        let snapshot = || {
-            let mut snapshot = load_thread_resume_snapshot(adapter.store(), &params.thread_id)?;
-            if snapshot.thread.status == ThreadStatus::Closed {
-                adapter
-                    .store()
-                    .set_active_turn(&params.thread_id, active_turn_id, reopened_status)
-                    .map_err(store_error)?;
-                snapshot.thread.status = reopened_status;
-            }
-            Ok(snapshot)
-        };
-        let snapshot = if params.subscribe {
-            self.thread_state
-                .subscribe_and_snapshot(params.thread_id.clone(), connection_id, snapshot)
-                .await
-        } else {
-            snapshot()
-        };
-        let snapshot = match snapshot {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                let _ = self
-                    .outgoing
-                    .send_error(connection_id, request.id, error)
-                    .await;
-                return;
-            }
-        };
-        if !params.subscribe {
-            self.thread_state.reopen(&params.thread_id).await;
-        }
-        let result = serde_json::to_value(snapshot).expect("thread resume response serializes");
-        let _ = self
-            .outgoing
-            .send_response(connection_id, request.id, result)
             .await;
     }
 
@@ -953,43 +955,4 @@ impl MessageProcessor {
             .send_response(connection_id, request.id, result)
             .await;
     }
-}
-
-fn parse_params<T: serde::de::DeserializeOwned>(
-    params: Option<Value>,
-) -> Result<T, AppServerError> {
-    let params = params.ok_or_else(|| AppServerError::invalid_params("Missing params"))?;
-    serde_json::from_value(params)
-        .map_err(|error| AppServerError::invalid_params(error.to_string()))
-}
-
-fn parse_params_or_default<T: serde::de::DeserializeOwned + Default>(
-    params: Option<Value>,
-) -> Result<T, AppServerError> {
-    match params {
-        Some(params) => serde_json::from_value(params)
-            .map_err(|error| AppServerError::invalid_params(error.to_string())),
-        None => Ok(T::default()),
-    }
-}
-
-fn store_error(error: ThreadStoreError) -> AppServerError {
-    AppServerError::internal(error.to_string())
-}
-
-fn load_thread_resume_snapshot(
-    store: &SqliteThreadStore,
-    thread_id: &str,
-) -> Result<ThreadResumeResponse, AppServerError> {
-    let thread = store
-        .get_thread(thread_id)
-        .map_err(store_error)?
-        .ok_or_else(AppServerError::thread_not_found)?;
-    let items = store.replay_items(thread_id).map_err(store_error)?;
-    let turns = store.list_turns(thread_id).map_err(store_error)?;
-    Ok(ThreadResumeResponse {
-        thread,
-        turns,
-        items,
-    })
 }

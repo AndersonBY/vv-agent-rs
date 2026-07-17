@@ -147,6 +147,17 @@ fn normalize_completion_observation(result: &mut AgentResult) {
             result.final_answer = None;
             result.wait_reason = None;
         }
+        crate::types::AgentStatus::ReconciliationRequired => {
+            result.completion_reason = None;
+            result.completion_tool_name = None;
+            result.partial_output = result
+                .partial_output
+                .clone()
+                .or_else(|| crate::types::last_assistant_output(&result.cycles));
+            result.final_answer = None;
+            result.wait_reason = None;
+            result.error = None;
+        }
         crate::types::AgentStatus::Pending | crate::types::AgentStatus::Running => {
             result.completion_reason = None;
             result.completion_tool_name = None;

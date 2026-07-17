@@ -2,6 +2,7 @@ use super::distributed::DistributedBackend;
 use super::inline::InlineBackend;
 use super::thread::ThreadBackend;
 use crate::budget::{BudgetUsageSnapshot, RunBudgetLimits};
+use crate::runtime::checkpoint_resume::CheckpointController;
 use crate::runtime::CancellationToken;
 use crate::types::{AgentResult, AgentTask, CycleRecord, Message, Metadata};
 
@@ -39,6 +40,10 @@ impl From<DistributedBackend> for RuntimeExecutionBackend {
 
 impl RuntimeExecutionBackend {
     pub(crate) fn manages_run_budget(&self) -> bool {
+        matches!(self, Self::Distributed(backend) if backend.runtime_recipe().is_some())
+    }
+
+    pub(crate) fn manages_checkpoint_cycles(&self) -> bool {
         matches!(self, Self::Distributed(backend) if backend.runtime_recipe().is_some())
     }
 
@@ -101,6 +106,7 @@ impl RuntimeExecutionBackend {
         cycle_count: u32,
         budget_limits: Option<RunBudgetLimits>,
         initial_budget_usage: Option<BudgetUsageSnapshot>,
+        checkpoint_controller: Option<CheckpointController>,
     ) -> AgentResult
     where
         F: FnMut(
@@ -143,6 +149,7 @@ impl RuntimeExecutionBackend {
                 cycle_count,
                 budget_limits,
                 initial_budget_usage,
+                checkpoint_controller,
             ),
         }
     }

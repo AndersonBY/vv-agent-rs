@@ -85,10 +85,33 @@ fn python_and_rust_distributed_fixture_copies_are_byte_identical() {
         format!("{:x}", Sha256::digest(rust_bytes)),
         "c1eb11591c93e8ac880fd4688cf06e0fe60a8b4522f7707ea13e1cccf40208e0"
     );
-    let python_root = std::env::var_os("VV_AGENT_PYTHON_REPO")
-        .map(PathBuf::from)
+    let explicit_python_root = std::env::var_os("VV_AGENT_PYTHON_REPO").map(PathBuf::from);
+    let python_root = explicit_python_root
+        .clone()
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../vv-agent"));
     let python_path = python_root.join("tests/fixtures/parity/distributed_run_envelope_v1.json");
+    if explicit_python_root.is_none() {
+        let rust_lock = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../contract.lock.json");
+        let python_lock = python_root.join("contract.lock.json");
+        let locks_match = [rust_lock, python_lock]
+            .map(std::fs::read_to_string)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .ok()
+            .and_then(|locks| {
+                locks
+                    .into_iter()
+                    .map(|lock| serde_json::from_str::<Value>(&lock).ok())
+                    .collect::<Option<Vec<_>>>()
+            })
+            .is_some_and(|locks| {
+                locks[0]["contract_version"] == locks[1]["contract_version"]
+                    && locks[0]["contract_revision"] == locks[1]["contract_revision"]
+            });
+        if !python_path.exists() || !locks_match {
+            return;
+        }
+    }
     assert_eq!(
         rust_bytes,
         std::fs::read(python_path).expect("Python distributed fixture")

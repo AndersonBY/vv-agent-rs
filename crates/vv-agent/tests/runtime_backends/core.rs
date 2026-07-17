@@ -104,6 +104,29 @@ fn cycle_dispatch_result_matches_worker_payload_shape() {
         CycleDispatchResult::from_dict(&unfinished_payload).expect("unfinished dispatch result");
     assert!(!unfinished.finished);
     assert!(unfinished.result.is_none());
+
+    let candidate = CycleDispatchResult::terminal_candidate(
+        AgentResult::completed(Vec::new(), Vec::new(), "candidate"),
+        9,
+    );
+    let candidate_wire = serde_json::to_value(&candidate).expect("serialize candidate");
+    assert_eq!(candidate_wire["terminal_candidate"], json!(true));
+    assert_eq!(candidate_wire["checkpoint_revision"], json!(9));
+    assert_eq!(
+        serde_json::from_value::<CycleDispatchResult>(candidate_wire)
+            .expect("deserialize candidate"),
+        candidate
+    );
+
+    let committed = CycleDispatchResult::committed(3, 11);
+    assert_eq!(
+        committed.to_dict(),
+        json!({
+            "finished": false,
+            "checkpoint_revision": 11,
+            "committed_cycle": 3
+        })
+    );
 }
 
 #[test]

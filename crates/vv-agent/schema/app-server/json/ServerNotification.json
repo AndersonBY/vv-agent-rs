@@ -791,6 +791,12 @@
         },
         "turnId": {
           "type": "string"
+        },
+        "checkpoint": {
+          "$ref": "#/$defs/CheckpointSummary"
+        },
+        "interruption": {
+          "$ref": "#/$defs/InterruptionSummary"
         }
       },
       "required": [
@@ -929,6 +935,12 @@
         },
         "turnId": {
           "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
         }
       },
       "required": [
@@ -970,6 +982,158 @@
       },
       "required": [
         "message"
+      ],
+      "type": "object"
+    },
+    "CheckpointSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "cycleIndex": {
+          "format": "uint64",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "key": {
+          "type": "string"
+        },
+        "resumeAttempt": {
+          "format": "uint64",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "running",
+            "wait_user",
+            "completed",
+            "failed",
+            "max_cycles",
+            "reconciliation_required"
+          ],
+          "type": "string"
+        },
+        "terminalAcknowledged": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "key",
+        "resumeAttempt",
+        "cycleIndex",
+        "status",
+        "terminalAcknowledged"
+      ],
+      "type": "object"
+    },
+    "InterruptionSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "cycleIndex": {
+          "format": "uint64",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "idempotencySupport": {
+          "enum": [
+            "supported",
+            "unsupported",
+            "unknown"
+          ],
+          "type": "string"
+        },
+        "operationId": {
+          "type": "string"
+        },
+        "operationKind": {
+          "enum": [
+            "model",
+            "tool"
+          ],
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "risk": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "operationId",
+        "operationKind",
+        "cycleIndex",
+        "risk",
+        "idempotencySupport"
+      ],
+      "type": "object"
+    },
+    "TurnResumeParams": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpointKey": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "checkpointKey"
+      ],
+      "type": "object"
+    },
+    "TurnResumeResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint": {
+          "$ref": "#/$defs/CheckpointSummary"
+        },
+        "completionReason": {
+          "type": "string"
+        },
+        "completionToolName": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "finalOutput": {
+          "type": "string"
+        },
+        "interruption": {
+          "$ref": "#/$defs/InterruptionSummary"
+        },
+        "partialOutput": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/TurnStatus"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "runId",
+        "status"
       ],
       "type": "object"
     }

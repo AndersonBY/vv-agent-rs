@@ -357,6 +357,7 @@ pub(crate) fn checkpoint_status_value(status: AgentStatus) -> &'static str {
         AgentStatus::Completed => "completed",
         AgentStatus::Failed => "failed",
         AgentStatus::MaxCycles => "max_cycles",
+        AgentStatus::ReconciliationRequired => "reconciliation_required",
     }
 }
 
@@ -368,6 +369,7 @@ pub(crate) fn checkpoint_status_from_value(value: &str) -> Result<AgentStatus> {
         "completed" => Ok(AgentStatus::Completed),
         "failed" => Ok(AgentStatus::Failed),
         "max_cycles" => Ok(AgentStatus::MaxCycles),
+        "reconciliation_required" => Ok(AgentStatus::ReconciliationRequired),
         other => Err(Error::new(
             ErrorKind::InvalidData,
             format!("unknown checkpoint status: {other}"),

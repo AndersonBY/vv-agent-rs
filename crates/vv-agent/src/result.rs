@@ -9,6 +9,7 @@ use thiserror::Error;
 
 use crate::agent::Agent;
 use crate::budget::{BudgetExhaustion, BudgetUsageSnapshot};
+use crate::checkpoint::ResumeObservation;
 use crate::config::ResolvedModelConfig;
 use crate::events::RunEvent;
 use crate::run_config::RunConfig;
@@ -155,6 +156,14 @@ impl RunResult {
         self.result.budget_exhaustion.as_ref()
     }
 
+    pub fn checkpoint_key(&self) -> Option<&str> {
+        self.result.checkpoint_key.as_deref()
+    }
+
+    pub fn resume_observation(&self) -> Option<&ResumeObservation> {
+        self.result.resume_observation.as_ref()
+    }
+
     pub fn final_output(&self) -> Option<&str> {
         self.result
             .final_answer
@@ -219,6 +228,8 @@ impl RunResult {
             "partial_output": self.result.partial_output,
             "budget_usage": self.result.budget_usage,
             "budget_exhaustion": self.result.budget_exhaustion,
+            "checkpoint_key": self.result.checkpoint_key,
+            "resume_observation": self.result.resume_observation,
             "resolved_model": self.resolved.as_ref().map(resolved_model_public_value),
         })
     }

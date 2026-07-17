@@ -11,7 +11,7 @@ use crate::run_config::RunConfig;
 use super::support::{
     capture_event, effective_event_store, max_handoff_depth, HandoffRequest, SingleRunOutcome,
 };
-use super::{effective_session_id, NormalizedInput, Runner};
+use super::{effective_session_id, CheckpointAdmissionSender, NormalizedInput, Runner};
 
 struct PendingHandoff {
     request: HandoffRequest,
@@ -28,10 +28,20 @@ impl Runner {
         config: RunConfig,
         event_collector: Option<Arc<std::sync::Mutex<Vec<RunEvent>>>>,
         event_sender: Option<broadcast::Sender<RunEvent>>,
+        checkpoint_admission_sender: Option<CheckpointAdmissionSender>,
     ) -> Result<RunResult, String> {
-        self.run_agent_chain_with_initial(agent, input, config, event_collector, event_sender, None)
+        self.run_agent_chain_with_initial(
+            agent,
+            input,
+            config,
+            event_collector,
+            event_sender,
+            checkpoint_admission_sender,
+            None,
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn run_agent_chain_with_initial(
         &self,
         agent: &Agent,
@@ -39,6 +49,7 @@ impl Runner {
         mut config: RunConfig,
         event_collector: Option<Arc<std::sync::Mutex<Vec<RunEvent>>>>,
         event_sender: Option<broadcast::Sender<RunEvent>>,
+        mut checkpoint_admission_sender: Option<CheckpointAdmissionSender>,
         initial_outcome: Option<SingleRunOutcome>,
     ) -> Result<RunResult, String> {
         let (event_store, event_store_fail_closed) =
@@ -59,6 +70,7 @@ impl Runner {
                     config.clone(),
                     event_collector.clone(),
                     event_sender.clone(),
+                    checkpoint_admission_sender.take(),
                 )
             };
             let outcome = match outcome_result {

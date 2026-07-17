@@ -5,16 +5,21 @@ use sha2::{Digest, Sha256};
 
 use crate::approval::{ApprovalBroker, ApprovalProvider};
 use crate::budget::HostCostMeter;
+use crate::checkpoint::{CheckpointExtension, IdempotentRunEventStore, ReconciliationProvider};
 use crate::llm::LlmClient;
 use crate::memory::MemoryProvider;
 use crate::runtime::engine::RuntimeEventHandler;
 use crate::runtime::hooks::RuntimeHook;
+use crate::runtime::state_v2::CheckpointStoreV2;
 use crate::runtime::sub_task_manager::SubTaskManager;
 use crate::runtime::CancellationToken;
 use crate::tools::{ApprovalPolicy, CanUseToolPredicate, ToolPolicy, ToolRegistry};
 use crate::workspace::WorkspaceBackend;
 
-use super::{CapabilityRef, DistributedCapabilities, DistributedToolPolicy, ToolsetRef};
+use super::{
+    CapabilityRef, DistributedCapabilities, DistributedCheckpointExtensionRef,
+    DistributedToolPolicy, ToolsetRef,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DistributedCapabilityError {
@@ -55,6 +60,10 @@ struct CapabilityMaps {
     observers: BTreeMap<CapabilityKey, RuntimeEventHandler>,
     sub_task_managers: BTreeMap<CapabilityKey, SubTaskManager>,
     tool_predicates: BTreeMap<CapabilityKey, CanUseToolPredicate>,
+    checkpoint_stores: BTreeMap<CapabilityKey, Arc<dyn CheckpointStoreV2>>,
+    checkpoint_event_stores: BTreeMap<CapabilityKey, Arc<dyn IdempotentRunEventStore>>,
+    checkpoint_extensions: BTreeMap<CapabilityKey, Arc<dyn CheckpointExtension>>,
+    reconciliation_providers: BTreeMap<CapabilityKey, Arc<dyn ReconciliationProvider>>,
 }
 
 #[derive(Clone)]
@@ -204,6 +213,57 @@ impl DistributedCapabilityRegistry {
             .insert(key(&reference), predicate);
     }
 
+    pub fn register_checkpoint_store(
+        &self,
+        reference: CapabilityRef,
+        store: Arc<dyn CheckpointStoreV2>,
+    ) {
+        self.write_unpoisoned()
+            .checkpoint_stores
+            .insert(key(&reference), store);
+    }
+
+    pub fn register_checkpoint_event_store(
+        &self,
+        reference: CapabilityRef,
+        store: Arc<dyn IdempotentRunEventStore>,
+    ) {
+        self.write_unpoisoned()
+            .checkpoint_event_stores
+            .insert(key(&reference), store);
+    }
+
+    pub fn register_checkpoint_extension(
+        &self,
+        reference: CapabilityRef,
+        extension: Arc<dyn CheckpointExtension>,
+    ) {
+        self.write_unpoisoned()
+            .checkpoint_extensions
+            .insert(key(&reference), extension);
+    }
+
+    pub fn register_reconciliation_provider(
+        &self,
+        reference: CapabilityRef,
+        provider: Arc<dyn ReconciliationProvider>,
+    ) {
+        self.write_unpoisoned()
+            .reconciliation_providers
+            .insert(key(&reference), provider);
+    }
+
+    pub(crate) fn resolve_checkpoint_store_required(
+        &self,
+        reference: &CapabilityRef,
+    ) -> Result<Arc<dyn CheckpointStoreV2>, DistributedCapabilityError> {
+        self.read()?
+            .checkpoint_stores
+            .get(&key(reference))
+            .cloned()
+            .ok_or_else(|| unknown("checkpoint_store", reference))
+    }
+
     pub fn resolve(
         &self,
         capabilities: &DistributedCapabilities,
@@ -262,6 +322,26 @@ impl DistributedCapabilityRegistry {
         )?;
         let hooks = required_many(&maps.hooks, "hook", &capabilities.hook_refs)?;
         let observers = required_many(&maps.observers, "observer", &capabilities.observer_refs)?;
+        let checkpoint_store = optional(
+            &maps.checkpoint_stores,
+            "checkpoint_store",
+            &capabilities.checkpoint_store_ref,
+        )?;
+        let checkpoint_event_store = optional(
+            &maps.checkpoint_event_stores,
+            "checkpoint_event_store",
+            &capabilities.checkpoint_event_store_ref,
+        )?;
+        let checkpoint_extensions = capabilities
+            .checkpoint_extension_refs
+            .iter()
+            .map(|descriptor| resolve_checkpoint_extension(&maps, descriptor))
+            .collect::<Result<Vec<_>, _>>()?;
+        let reconciliation_provider = optional(
+            &maps.reconciliation_providers,
+            "reconciliation_provider",
+            &capabilities.reconciliation_provider_ref,
+        )?;
         Ok(ResolvedDistributedCapabilities {
             tool_registry,
             tool_policy,
@@ -278,6 +358,10 @@ impl DistributedCapabilityRegistry {
             hooks,
             observers,
             sub_task_manager,
+            checkpoint_store,
+            checkpoint_event_store,
+            checkpoint_extensions,
+            reconciliation_provider,
         })
     }
 
@@ -321,6 +405,16 @@ pub struct ResolvedDistributedCapabilities {
     pub hooks: Vec<Arc<dyn RuntimeHook>>,
     pub observers: Vec<RuntimeEventHandler>,
     pub sub_task_manager: Option<SubTaskManager>,
+    pub checkpoint_store: Option<Arc<dyn CheckpointStoreV2>>,
+    pub checkpoint_event_store: Option<Arc<dyn IdempotentRunEventStore>>,
+    pub checkpoint_extensions: Vec<ResolvedDistributedCheckpointExtension>,
+    pub reconciliation_provider: Option<Arc<dyn ReconciliationProvider>>,
+}
+
+#[derive(Clone)]
+pub struct ResolvedDistributedCheckpointExtension {
+    pub descriptor: DistributedCheckpointExtensionRef,
+    pub extension: Arc<dyn CheckpointExtension>,
 }
 
 pub fn toolset_schema_digest(
@@ -379,6 +473,36 @@ fn resolve_tool_policy(
         disallowed_tools: policy.disallowed_tools.clone(),
         approval,
         can_use_tool,
+    })
+}
+
+fn resolve_checkpoint_extension(
+    maps: &CapabilityMaps,
+    descriptor: &DistributedCheckpointExtensionRef,
+) -> Result<ResolvedDistributedCheckpointExtension, DistributedCapabilityError> {
+    let extension = maps
+        .checkpoint_extensions
+        .get(&key(&descriptor.reference))
+        .cloned()
+        .ok_or_else(|| unknown("checkpoint_extension", &descriptor.reference))?;
+    if extension.namespace() != descriptor.namespace {
+        return Err(DistributedCapabilityError::new(format!(
+            "checkpoint extension {}@{} namespace mismatch: expected {}, got {}",
+            descriptor.reference.id,
+            descriptor.reference.version,
+            descriptor.namespace,
+            extension.namespace()
+        )));
+    }
+    if descriptor.required && !extension.required() {
+        return Err(DistributedCapabilityError::new(format!(
+            "required checkpoint extension {} is registered as optional",
+            descriptor.namespace
+        )));
+    }
+    Ok(ResolvedDistributedCheckpointExtension {
+        descriptor: descriptor.clone(),
+        extension,
     })
 }
 

@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::budget::{BudgetUsageSnapshot, HostCostMeter, RunBudgetLimits};
 use crate::model::ModelProvider;
 use crate::runtime::cancellation::CancellationToken;
+use crate::runtime::checkpoint_resume::CheckpointController;
 use crate::runtime::context::{ExecutionContext, StreamCallback};
 use crate::runtime::sub_task_manager::SubTaskManager;
 use crate::types::{CycleRecord, Message};
@@ -19,6 +20,26 @@ pub type RuntimeEventHandler = Arc<dyn Fn(&str, &BTreeMap<String, Value>) + Send
 pub type BeforeCycleMessageProvider =
     Arc<dyn Fn(u32, &[Message], &BTreeMap<String, Value>) -> Vec<Message> + Send + Sync + 'static>;
 pub type InterruptionMessageProvider = Arc<dyn Fn() -> Vec<Message> + Send + Sync + 'static>;
+
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct CheckpointRuntimeControl {
+    controller: CheckpointController,
+}
+
+impl CheckpointRuntimeControl {
+    pub(crate) fn new(controller: CheckpointController) -> Self {
+        Self { controller }
+    }
+
+    pub(crate) fn controller(&self) -> &CheckpointController {
+        &self.controller
+    }
+
+    pub(crate) fn into_controller(self) -> CheckpointController {
+        self.controller
+    }
+}
 
 #[derive(Clone, Default)]
 pub struct RuntimeRunControls {
@@ -51,6 +72,8 @@ pub struct RuntimeRunControls {
     pub initial_budget_usage: Option<BudgetUsageSnapshot>,
     #[doc(hidden)]
     pub defer_terminal_on_max_cycles: bool,
+    #[doc(hidden)]
+    pub checkpoint_controller: Option<CheckpointRuntimeControl>,
 }
 
 impl RuntimeRunControls {
@@ -68,5 +91,11 @@ impl RuntimeRunControls {
         self.execution_context
             .as_ref()
             .and_then(|context| context.stream_callback.clone())
+    }
+
+    pub(crate) fn effective_checkpoint_controller(&self) -> Option<&CheckpointController> {
+        self.checkpoint_controller
+            .as_ref()
+            .map(CheckpointRuntimeControl::controller)
     }
 }
