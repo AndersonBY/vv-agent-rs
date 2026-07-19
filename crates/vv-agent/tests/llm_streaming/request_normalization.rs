@@ -188,6 +188,79 @@ fn vv_llm_client_applies_deepseek_reasoning_profile() {
 }
 
 #[test]
+fn vv_llm_client_applies_kimi_k3_profile_to_the_real_chat_request() {
+    let chat_client = RecordingMessagesChatClient::default();
+    let probe = chat_client.clone();
+    let llm = VvLlmClient::new(
+        "moonshot",
+        "kimi-k3",
+        "kimi-k3",
+        Box::new(chat_client),
+        90.0,
+    );
+    let assistant_with_old_reasoning = {
+        let mut message = Message::assistant("first");
+        message.reasoning_content = Some("old-thought".to_string());
+        message
+    };
+    let assistant_with_latest_reasoning = {
+        let mut message = Message::assistant("second");
+        message.reasoning_content = Some("latest-thought".to_string());
+        message
+    };
+    let mut request = LlmRequest::new(
+        "kimi-k3",
+        vec![
+            Message::user("start"),
+            assistant_with_old_reasoning,
+            Message::user("continue"),
+            assistant_with_latest_reasoning,
+            Message::user("use K3 profile"),
+        ],
+    );
+    request.model_settings = Some(
+        ModelSettings::builder()
+            .temperature(0.3)
+            .top_p(0.7)
+            .max_tokens(4096)
+            .reasoning(json!({"effort": "low", "type": "enabled"}))
+            .extra_body("temperature", json!(0.4))
+            .extra_body("top_p", json!(0.8))
+            .extra_body("thinking", json!({"type": "enabled"}))
+            .extra_body("reasoning_effort", json!("low"))
+            .extra_body("provider_option", json!("kept"))
+            .build(),
+    );
+
+    let _ = llm.complete(request).expect("K3 request");
+
+    let request = probe.last_request().expect("recorded request");
+    assert_eq!(request.options.temperature, None);
+    assert_eq!(request.options.top_p, None);
+    assert_eq!(request.options.max_tokens, None);
+    assert_eq!(request.options.max_completion_tokens, Some(4096));
+    assert_eq!(request.extra_body["reasoning_effort"], json!("max"));
+    assert_eq!(request.extra_body["provider_option"], json!("kept"));
+    assert!(request.extra_body.get("temperature").is_none());
+    assert!(request.extra_body.get("top_p").is_none());
+    assert!(request.extra_body.get("thinking").is_none());
+    let assistant_messages = request
+        .messages
+        .iter()
+        .filter(|message| message.role == vv_llm::MessageRole::Assistant)
+        .collect::<Vec<_>>();
+    assert_eq!(assistant_messages.len(), 2);
+    assert_eq!(
+        assistant_messages[0].reasoning_content.as_deref(),
+        Some("old-thought")
+    );
+    assert_eq!(
+        assistant_messages[1].reasoning_content.as_deref(),
+        Some("latest-thought")
+    );
+}
+
+#[test]
 fn vv_llm_client_projects_model_settings_into_the_real_chat_request() {
     let chat_client = RecordingMessagesChatClient::default();
     let probe = chat_client.clone();

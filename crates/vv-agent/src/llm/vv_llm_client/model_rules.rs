@@ -11,12 +11,25 @@ const QWEN_THINKING_KEEP_SUFFIX_MODELS: &[&str] = &[
     "qwen3-vl-30b-a3b-thinking",
     "qwen3-vl-8b-thinking",
 ];
+const KIMI_K3_OMITTED_EXTRA_BODY_FIELDS: &[&str] = &[
+    "enable_thinking",
+    "frequency_penalty",
+    "max_tokens",
+    "n",
+    "presence_penalty",
+    "reasoning",
+    "reasoning_effort",
+    "temperature",
+    "thinking",
+    "top_p",
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct ResolvedRequestOptions {
     pub(super) model: String,
     pub(super) temperature: Option<f32>,
     pub(super) max_tokens: Option<u32>,
+    pub(super) max_completion_tokens: Option<u32>,
     pub(super) tool_choice: Option<ToolChoice>,
     pub(super) timeout: Option<std::time::Duration>,
     pub(super) extra_body: Value,
@@ -32,6 +45,7 @@ pub(super) fn resolve_request_options(
     let mut normalized_model = resolved_model.to_ascii_lowercase();
     let mut temperature = None;
     let mut max_tokens = None;
+    let mut max_completion_tokens = None;
     let mut tool_choice = None;
     let mut timeout = None;
     let mut extra_body = Value::Null;
@@ -146,10 +160,29 @@ pub(super) fn resolve_request_options(
         body.extend(settings.extra_body.clone());
     }
 
+    if normalized_model == "kimi-k3" {
+        // Apply K3's fixed provider profile after public settings so callers
+        // cannot reintroduce unsupported K2.x thinking or sampling fields.
+        temperature = None;
+        max_completion_tokens = max_tokens.take();
+        let body = ensure_object(&mut extra_body);
+        for field_name in KIMI_K3_OMITTED_EXTRA_BODY_FIELDS {
+            body.remove(*field_name);
+        }
+        if max_completion_tokens.is_some() {
+            body.remove("max_completion_tokens");
+        }
+        body.insert(
+            "reasoning_effort".to_string(),
+            Value::String("max".to_string()),
+        );
+    }
+
     ResolvedRequestOptions {
         model: resolved_model,
         temperature,
         max_tokens,
+        max_completion_tokens,
         tool_choice,
         timeout,
         extra_body,
@@ -264,6 +297,39 @@ mod tests {
             serde_json::json!({
                 "thinking": {"type": "enabled"},
                 "reasoning_effort": "max"
+            })
+        );
+    }
+
+    #[test]
+    fn kimi_k3_enforces_provider_profile_after_public_settings() {
+        let settings = ModelSettings::builder()
+            .temperature(0.3)
+            .top_p(0.7)
+            .max_tokens(4096)
+            .reasoning(serde_json::json!({"effort": "low", "type": "enabled"}))
+            .extra_body("temperature", serde_json::json!(0.4))
+            .extra_body("top_p", serde_json::json!(0.8))
+            .extra_body("n", serde_json::json!(2))
+            .extra_body("presence_penalty", serde_json::json!(1))
+            .extra_body("frequency_penalty", serde_json::json!(1))
+            .extra_body("thinking", serde_json::json!({"type": "enabled"}))
+            .extra_body("reasoning_effort", serde_json::json!("low"))
+            .extra_body("max_tokens", serde_json::json!(1024))
+            .extra_body("max_completion_tokens", serde_json::json!(2048))
+            .extra_body("provider_option", serde_json::json!("kept"))
+            .build();
+
+        let options = resolve_request_options("moonshot", "moonshot", "kimi-k3", Some(&settings));
+
+        assert_eq!(options.temperature, None);
+        assert_eq!(options.max_tokens, None);
+        assert_eq!(options.max_completion_tokens, Some(4096));
+        assert_eq!(
+            options.extra_body,
+            serde_json::json!({
+                "reasoning_effort": "max",
+                "provider_option": "kept"
             })
         );
     }
