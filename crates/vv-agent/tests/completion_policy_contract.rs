@@ -10,6 +10,8 @@ use vv_agent::{
 };
 
 const FIXTURE: &str = include_str!("fixtures/parity/completion_policy_v1.json");
+const REASONING_HISTORY_FIXTURE: &str =
+    include_str!("fixtures/parity/assistant_reasoning_history_v1.json");
 const FIXTURE_SHA256: &str = "84c75dacbb43659a07c0fa1347c83e44a609a411d7896cae5a2276a3b6792135";
 const CONTINUATION_HINT: &str = "Continue. If the task is complete, call task_finish.";
 
@@ -316,6 +318,90 @@ async fn run_case(case: CompletionCase) {
         "{}",
         case.name
     );
+}
+
+#[tokio::test]
+async fn reasoning_only_continue_preserves_history_and_usage_for_next_request() {
+    let contract: Value =
+        serde_json::from_str(REASONING_HISTORY_FIXTURE).expect("reasoning history fixture");
+    let runtime_case = &contract["runtime_case"];
+    let reasoning = runtime_case["first_response"]["reasoning_content"]
+        .as_str()
+        .expect("reasoning content");
+    let no_tool_policy = runtime_case["no_tool_policy"]
+        .as_str()
+        .expect("no-tool policy");
+    let requests = Arc::new(Mutex::new(Vec::<LlmRequest>::new()));
+
+    let mut first_response = LLMResponse::new("");
+    first_response.raw.insert(
+        "reasoning_content".to_string(),
+        Value::String(reasoning.to_string()),
+    );
+    first_response.token_usage.reasoning_tokens = 2048;
+    let first_requests = requests.clone();
+    let second_requests = requests.clone();
+    let steps = vec![
+        ScriptStep::callback(move |request| {
+            first_requests
+                .lock()
+                .expect("first request capture")
+                .push(request.clone());
+            Ok(first_response.clone())
+        }),
+        ScriptStep::callback(move |request| {
+            second_requests
+                .lock()
+                .expect("second request capture")
+                .push(request.clone());
+            Ok(LLMResponse::with_tool_calls(
+                "",
+                vec![ToolCall::from_raw_arguments(
+                    "finish-reasoning",
+                    "task_finish",
+                    serde_json::json!({"message": "done"}),
+                )],
+            ))
+        }),
+    ];
+    let provider = ScriptedModelProvider::from_steps("scripted", "reasoning-history-model", steps);
+    let agent = Agent::builder("reasoning-history-agent")
+        .instructions("Follow the scripted reasoning history fixture.")
+        .model(ModelRef::named("reasoning-history-model"))
+        .build()
+        .expect("agent");
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace("./workspace")
+        .build()
+        .expect("runner");
+
+    let result = runner
+        .run_with_config(
+            &agent,
+            "run reasoning history case",
+            RunConfig::builder()
+                .max_cycles(2)
+                .no_tool_policy(parse_policy(no_tool_policy))
+                .build(),
+        )
+        .await
+        .expect("reasoning history run");
+
+    let captured = requests.lock().expect("captured requests");
+    assert_eq!(captured.len(), 2);
+    let replayed = captured[1]
+        .messages
+        .iter()
+        .find(|message| {
+            message.role == vv_agent::MessageRole::Assistant
+                && message.reasoning_content.as_deref() == Some(reasoning)
+        })
+        .expect("reasoning-only assistant in second request");
+    assert_eq!(replayed.content, "");
+    assert!(runtime_case["expected"]["next_model_request_contains_reasoning_turn"] == true);
+    assert_eq!(result.result().cycles[0].token_usage.reasoning_tokens, 2048);
+    assert_eq!(result.status(), AgentStatus::Completed);
 }
 
 fn parse_policy(value: &str) -> NoToolPolicy {

@@ -4,7 +4,6 @@ use crate::types::{Message, MessageRole, ToolCall};
 
 pub fn sanitize_for_resume(messages: &[Message]) -> Vec<Message> {
     let sanitized = filter_empty_assistant_messages(messages);
-    let sanitized = filter_thinking_only_messages(&sanitized);
     let sanitized = filter_orphan_tool_results(&sanitized);
     filter_unresolved_tool_uses(&sanitized)
 }

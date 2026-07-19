@@ -3,6 +3,13 @@ use std::collections::BTreeMap;
 use vv_agent::memory::sanitize_for_resume;
 use vv_agent::{Message, ToolCall};
 
+fn reasoning_history_contract() -> serde_json::Value {
+    serde_json::from_str(include_str!(
+        "fixtures/parity/assistant_reasoning_history_v1.json"
+    ))
+    .expect("assistant reasoning history fixture")
+}
+
 #[test]
 fn sanitize_for_resume_drops_blank_assistant_messages() {
     let messages = vec![Message::user("hello"), Message::assistant("   ")];
@@ -13,18 +20,34 @@ fn sanitize_for_resume_drops_blank_assistant_messages() {
 }
 
 #[test]
-fn sanitize_for_resume_drops_thinking_only_messages() {
-    let messages = vec![
-        Message {
-            reasoning_content: Some("thinking".to_string()),
-            ..Message::assistant("")
-        },
-        Message::user("continue"),
-    ];
+fn sanitize_for_resume_preserves_reasoning_only_messages() {
+    let contract = reasoning_history_contract();
+    let case = contract["cases"]
+        .as_array()
+        .expect("reasoning cases")
+        .iter()
+        .find(|case| case["name"] == "reasoning_only_assistant_is_preserved")
+        .expect("reasoning-only case");
+    let reasoning = case["message"]["reasoning_content"]
+        .as_str()
+        .expect("reasoning content");
+    let assistant = Message {
+        reasoning_content: Some(reasoning.to_string()),
+        ..Message::assistant("")
+    };
+    let messages = vec![assistant.clone(), Message::user("continue")];
 
     let sanitized = sanitize_for_resume(&messages);
 
-    assert_eq!(sanitized, vec![Message::user("continue")]);
+    assert!(case["expected"]["retain_in_resumable_history"] == true);
+    assert_eq!(
+        sanitized,
+        vec![assistant.clone(), Message::user("continue")]
+    );
+    assert_eq!(
+        assistant.to_openai_message(true),
+        case["expected"]["openai_compatible_projection"]
+    );
 }
 
 #[test]

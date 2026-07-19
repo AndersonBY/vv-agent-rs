@@ -229,13 +229,40 @@ fn sub_task_manager_sanitizes_session_messages_before_continue() {
     let _registry_lock = isolated_sub_agent_registry();
     let manager = SubTaskManager::default();
     let workspace = tempfile::tempdir().expect("workspace");
+    let reasoning_contract: Value = serde_json::from_str(include_str!(
+        "../fixtures/parity/assistant_reasoning_history_v1.json"
+    ))
+    .expect("assistant reasoning history fixture");
+    let cases = reasoning_contract["cases"]
+        .as_array()
+        .expect("assistant reasoning cases");
+    let reasoning_case = cases
+        .iter()
+        .find(|case| case["name"] == "reasoning_only_assistant_is_preserved")
+        .expect("reasoning-only assistant case");
+    let empty_case = cases
+        .iter()
+        .find(|case| case["name"] == "fully_empty_assistant_is_removed")
+        .expect("fully empty assistant case");
+    let mut reasoning_message = Message::assistant(
+        reasoning_case["message"]["content"]
+            .as_str()
+            .expect("reasoning visible content"),
+    );
+    reasoning_message.reasoning_content = Some(
+        reasoning_case["message"]["reasoning_content"]
+            .as_str()
+            .expect("reasoning content")
+            .to_string(),
+    );
     let messages = Arc::new(Mutex::new(vec![
         Message::system("sys"),
-        {
-            let mut message = Message::assistant("");
-            message.reasoning_content = Some("thinking only".to_string());
-            message
-        },
+        reasoning_message.clone(),
+        Message::assistant(
+            empty_case["message"]["content"]
+                .as_str()
+                .expect("empty assistant content"),
+        ),
         {
             let mut message = Message::assistant("");
             message.tool_calls = vec![ToolCall::new(
@@ -286,9 +313,11 @@ fn sub_task_manager_sanitizes_session_messages_before_continue() {
         .expect("continue sub task");
     assert!(manager.wait("sub-sanitize", Some(Duration::from_secs(5))));
 
+    assert!(reasoning_case["expected"]["retain_in_resumable_history"] == true);
+    assert!(empty_case["expected"]["retain_in_resumable_history"] == false);
     assert_eq!(
         snapshot.lock().expect("snapshot").as_slice(),
-        &[Message::system("sys")]
+        &[Message::system("sys"), reasoning_message]
     );
     assert_eq!(
         messages.lock().expect("messages").as_slice(),
