@@ -5,7 +5,7 @@ use vv_agent::{AgentErrorPayload, AgentStatus, RunEvent, RunEventPayload};
 
 const PARITY_FIXTURE: &str = include_str!("fixtures/parity/run_events_v1.jsonl");
 const PARITY_FIXTURE_SHA256: &str =
-    "5e8c747234f210ee326ebb4b5c938e719ab2d5ee817e78d3277a4289ba37ea37";
+    "3c45e094fdc8b2555e0d91664778866c4bc1dfe8c516a19d5cbe99209f6e3e41";
 const BUDGET_FIXTURE: &str = include_str!("fixtures/parity/budget_events_v1.jsonl");
 const BUDGET_FIXTURE_SHA256: &str =
     "3267292737ac6bf63ec4ee691fe0ef07f3e2cadd5a69098e3e267f4f6b692d2e";
@@ -100,6 +100,7 @@ fn run_events_v1_parity_fixture_has_stable_bytes_and_round_trips() {
         "reasoning_delta",
         "model_tool_call_started",
         "model_tool_call_progress",
+        "tool_call_planned",
         "tool_call_started",
         "tool_call_completed",
         "approval_requested",

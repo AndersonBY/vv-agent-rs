@@ -145,12 +145,26 @@ impl CheckpointResumeController {
         &self,
         checkpoint: &CheckpointV2,
     ) -> CheckpointResult<()> {
-        if checkpoint.run_definition_digest != self.run_definition_digest
-            || checkpoint.run_definition != self.run_definition
+        let stored_digest = run_definition_digest(&checkpoint.run_definition)?;
+        if checkpoint.run_definition_digest != stored_digest {
+            return Err(CheckpointError::new(
+                "checkpoint_definition_mismatch",
+                "checkpoint run definition digest does not match its embedded definition",
+            ));
+        }
+        let current_digest = run_definition_digest(&self.run_definition)?;
+        if self.run_definition_digest != current_digest {
+            return Err(CheckpointError::new(
+                "checkpoint_definition_mismatch",
+                "current run definition digest does not match its definition",
+            ));
+        }
+        if run_definition_comparison_copy(&checkpoint.run_definition)
+            != run_definition_comparison_copy(&self.run_definition)
         {
             return Err(CheckpointError::new(
                 "checkpoint_definition_mismatch",
-                "checkpoint run definition does not match this run",
+                "checkpoint embedded run definition does not match this run",
             ));
         }
         Ok(())

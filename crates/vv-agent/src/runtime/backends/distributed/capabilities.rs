@@ -487,12 +487,18 @@ fn resolve_tool_policy(
         "tool_predicate",
         &policy.predicate_ref,
     )?;
-    Ok(ToolPolicy {
+    ToolPolicy {
         allowed_tools: policy.allowed_tools.clone(),
         disallowed_tools: policy.disallowed_tools.clone(),
         approval,
         can_use_tool,
-    })
+        denied_side_effects: policy.denied_side_effects.clone(),
+        denied_capability_tags: policy.denied_capability_tags.clone(),
+        deny_terminal_tools: policy.deny_terminal_tools,
+        denied_cost_dimensions: policy.denied_cost_dimensions.clone(),
+    }
+    .normalized()
+    .map_err(|error| DistributedCapabilityError::new(error.to_string()))
 }
 
 fn resolve_checkpoint_extension(

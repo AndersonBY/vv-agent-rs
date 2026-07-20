@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::checkpoint::ToolIdempotency;
 use crate::context::RunContext;
-use crate::tools::{ToolContext, ToolSpec};
+use crate::tools::{ToolContext, ToolMetadata, ToolSpec};
 use crate::types::{Metadata, ToolArguments, ToolCall, ToolExecutionResult};
 
 pub type ToolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ToolError>> + Send + 'a>>;
@@ -200,6 +200,9 @@ pub trait ToolExecutor: Send + Sync {
     fn idempotency(&self) -> ToolIdempotency {
         ToolIdempotency::Unknown
     }
+    fn tool_metadata(&self) -> Option<&ToolMetadata> {
+        None
+    }
     fn spec(&self, _ctx: &ToolSpecContext) -> Result<ToolSpec, ToolError>;
     fn approval_requirement(
         &self,
@@ -260,6 +263,10 @@ impl ToolExecutor for ToolSpecExecutor {
 
     fn idempotency(&self) -> ToolIdempotency {
         self.spec.idempotency
+    }
+
+    fn tool_metadata(&self) -> Option<&ToolMetadata> {
+        self.spec.tool_metadata.as_ref()
     }
 
     fn spec(&self, _ctx: &ToolSpecContext) -> Result<ToolSpec, ToolError> {

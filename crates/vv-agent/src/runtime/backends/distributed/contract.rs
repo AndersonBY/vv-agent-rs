@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -10,9 +9,16 @@ use crate::checkpoint::{
     AmbiguousToolPolicy, ClaimMode, ResumePolicy, DEFAULT_MAX_EXTENSION_STATE_BYTES,
     RUN_DEFINITION_SCHEMA,
 };
+use crate::runtime::tool_planner::{merge_projected_metadata_denials, projected_metadata_denials};
+use crate::tools::{ToolPolicy, ToolSideEffect};
 use crate::types::AgentTask;
 
 use super::super::RuntimeRecipe;
+pub(crate) use super::contract_helpers::now_unix_ms;
+use super::contract_helpers::{
+    normalize_integral_float, require_non_empty, utf16_cmp, validate_json_pointer,
+    validate_sorted_unique, validate_v2_discriminator_fields,
+};
 
 pub const DISTRIBUTED_RUN_SCHEMA_VERSION_V1: &str = "vv-agent.distributed-run.v1";
 pub const DISTRIBUTED_RUN_SCHEMA_VERSION_V2: &str = "vv-agent.distributed-run.v2";
@@ -127,6 +133,14 @@ pub struct DistributedToolPolicy {
     pub approval: String,
     #[serde(default)]
     pub predicate_ref: Option<CapabilityRef>,
+    #[serde(default)]
+    pub denied_side_effects: Vec<ToolSideEffect>,
+    #[serde(default)]
+    pub denied_capability_tags: Vec<String>,
+    #[serde(default)]
+    pub deny_terminal_tools: bool,
+    #[serde(default)]
+    pub denied_cost_dimensions: Vec<String>,
 }
 
 impl Default for DistributedToolPolicy {
@@ -136,11 +150,34 @@ impl Default for DistributedToolPolicy {
             disallowed_tools: Vec::new(),
             approval: default_approval_policy(),
             predicate_ref: None,
+            denied_side_effects: Vec::new(),
+            denied_capability_tags: Vec::new(),
+            deny_terminal_tools: false,
+            denied_cost_dimensions: Vec::new(),
         }
     }
 }
 
 impl DistributedToolPolicy {
+    pub(crate) fn set_metadata_denials(&mut self, policy: &ToolPolicy) {
+        self.denied_side_effects = policy.denied_side_effects.clone();
+        self.denied_capability_tags = policy.denied_capability_tags.clone();
+        self.deny_terminal_tools = policy.deny_terminal_tools;
+        self.denied_cost_dimensions = policy.denied_cost_dimensions.clone();
+    }
+
+    fn metadata_denials(&self) -> Result<ToolPolicy, String> {
+        ToolPolicy {
+            denied_side_effects: self.denied_side_effects.clone(),
+            denied_capability_tags: self.denied_capability_tags.clone(),
+            deny_terminal_tools: self.deny_terminal_tools,
+            denied_cost_dimensions: self.denied_cost_dimensions.clone(),
+            ..ToolPolicy::default()
+        }
+        .normalized()
+        .map_err(|error| error.to_string())
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if !matches!(
             self.approval.as_str(),
@@ -162,6 +199,7 @@ impl DistributedToolPolicy {
         if let Some(reference) = &self.predicate_ref {
             reference.validate("tool_policy.predicate_ref")?;
         }
+        self.metadata_denials()?;
         Ok(())
     }
 
@@ -171,6 +209,10 @@ impl DistributedToolPolicy {
             "disallowed_tools": self.disallowed_tools,
             "approval": self.approval,
             "predicate_ref": self.predicate_ref,
+            "denied_side_effects": self.denied_side_effects,
+            "denied_capability_tags": self.denied_capability_tags,
+            "deny_terminal_tools": self.deny_terminal_tools,
+            "denied_cost_dimensions": self.denied_cost_dimensions,
         })
     }
 
@@ -468,7 +510,7 @@ impl DistributedRunEnvelope {
             })
             .unwrap_or_else(|| task.task_id.clone());
         let idempotency_key = format!("{run_id}:cycle:{cycle_index}");
-        let envelope = Self {
+        let mut envelope = Self {
             schema_version: DISTRIBUTED_RUN_SCHEMA_VERSION.to_string(),
             job_id: idempotency_key.clone(),
             run_id,
@@ -488,6 +530,7 @@ impl DistributedRunEnvelope {
             resume_attempt: None,
             checkpoint_config: None,
         };
+        envelope.restore_v1_metadata_denials()?;
         envelope.validate()?;
         Ok(envelope)
     }
@@ -637,6 +680,20 @@ impl DistributedRunEnvelope {
         Ok(())
     }
 
+    fn restore_v1_metadata_denials(&mut self) -> Result<(), String> {
+        if self.schema_version != DISTRIBUTED_RUN_SCHEMA_VERSION_V1 {
+            return Ok(());
+        }
+        let mut effective_policy = self.recipe.capabilities.tool_policy.metadata_denials()?;
+        let projected_policy = projected_metadata_denials(&self.task)?;
+        effective_policy.extend_metadata_denials(&projected_policy);
+        self.recipe
+            .capabilities
+            .tool_policy
+            .set_metadata_denials(&effective_policy);
+        Ok(())
+    }
+
     fn validate_v2_fields(&self) -> Result<(), String> {
         for (field_name, value) in [
             ("root_run_id", self.root_run_id.as_deref()),
@@ -716,20 +773,42 @@ impl DistributedRunEnvelope {
     }
 
     pub fn to_dict(&self) -> Value {
+        let is_checkpoint_v2 = self.is_checkpoint_v2();
+        let mut task = self.task.clone();
+        let mut recipe = self.recipe.to_dict();
+        if !is_checkpoint_v2 {
+            if let Ok(policy) = self.recipe.capabilities.tool_policy.metadata_denials() {
+                let _ = merge_projected_metadata_denials(&mut task, &policy);
+            }
+            let tool_policy = recipe
+                .get_mut("capabilities")
+                .and_then(Value::as_object_mut)
+                .and_then(|capabilities| capabilities.get_mut("tool_policy"))
+                .and_then(Value::as_object_mut)
+                .expect("runtime recipe tool policy is always an object");
+            for field in [
+                "denied_side_effects",
+                "denied_capability_tags",
+                "deny_terminal_tools",
+                "denied_cost_dimensions",
+            ] {
+                tool_policy.remove(field);
+            }
+        }
         let mut value = serde_json::json!({
             "schema_version": self.schema_version,
             "job_id": self.job_id,
             "run_id": self.run_id,
-            "task": self.task.to_dict(),
+            "task": task.to_dict(),
             "budget_limits": self.budget_limits,
-            "recipe": self.recipe.to_dict(),
+            "recipe": recipe,
             "cycle_name": self.cycle_name,
             "cycle_index": self.cycle_index,
             "idempotency_key": self.idempotency_key,
             "deadline_unix_ms": self.deadline_unix_ms,
             "lease_duration_ms": self.lease_duration_ms,
         });
-        if self.is_checkpoint_v2() {
+        if is_checkpoint_v2 {
             let object = value
                 .as_object_mut()
                 .expect("distributed envelope is always an object");
@@ -831,8 +910,9 @@ impl DistributedRunEnvelope {
             }
             validate_v2_discriminator_fields(payload)?;
         }
-        let envelope: Self =
+        let mut envelope: Self =
             serde_json::from_value(payload.clone()).map_err(|error| error.to_string())?;
+        envelope.restore_v1_metadata_denials()?;
         envelope.validate()?;
         Ok(envelope)
     }
@@ -843,121 +923,6 @@ impl Serialize for DistributedRunEnvelope {
     where
         S: serde::Serializer,
     {
-        if self.is_checkpoint_v2() {
-            return self.to_dict().serialize(serializer);
-        }
-        #[derive(Serialize)]
-        struct V1Envelope<'a> {
-            schema_version: &'a str,
-            job_id: &'a str,
-            run_id: &'a str,
-            task: &'a AgentTask,
-            budget_limits: &'a Option<RunBudgetLimits>,
-            recipe: &'a RuntimeRecipe,
-            cycle_name: &'a str,
-            cycle_index: u32,
-            idempotency_key: &'a str,
-            deadline_unix_ms: Option<u64>,
-            lease_duration_ms: u64,
-        }
-        V1Envelope {
-            schema_version: &self.schema_version,
-            job_id: &self.job_id,
-            run_id: &self.run_id,
-            task: &self.task,
-            budget_limits: &self.budget_limits,
-            recipe: &self.recipe,
-            cycle_name: &self.cycle_name,
-            cycle_index: self.cycle_index,
-            idempotency_key: &self.idempotency_key,
-            deadline_unix_ms: self.deadline_unix_ms,
-            lease_duration_ms: self.lease_duration_ms,
-        }
-        .serialize(serializer)
+        self.to_dict().serialize(serializer)
     }
-}
-
-fn validate_v2_discriminator_fields(payload: &Value) -> Result<(), String> {
-    if payload.get("run_definition_schema").and_then(Value::as_str) != Some(RUN_DEFINITION_SCHEMA) {
-        return Err("checkpoint_definition_schema_unsupported".to_string());
-    }
-    if payload.get("checkpoint_config").is_none_or(Value::is_null) {
-        return Err("distributed v2 requires checkpoint_config".to_string());
-    }
-    if !matches!(
-        payload.get("claim_mode").and_then(Value::as_str),
-        Some("continue" | "recovery")
-    ) {
-        return Err("checkpoint_claim_mode_invalid".to_string());
-    }
-    Ok(())
-}
-
-fn normalize_integral_float(object: &mut serde_json::Map<String, Value>, field: &str) {
-    let Some(value) = object.get(field).and_then(Value::as_f64) else {
-        return;
-    };
-    if value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value <= MAX_WIRE_INTEGER as f64
-    {
-        object.insert(field.to_string(), Value::from(value as u64));
-    }
-}
-
-pub fn now_unix_ms() -> Result<u64, String> {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_millis()
-        .try_into()
-        .map_err(|_| "system clock milliseconds exceed u64".to_string())
-}
-
-fn require_non_empty(value: &str, field_name: &str) -> Result<(), String> {
-    if value.trim().is_empty() {
-        Err(format!("{field_name} must be a non-empty string"))
-    } else {
-        Ok(())
-    }
-}
-
-fn validate_sorted_unique(
-    values: &[String],
-    field_name: &str,
-    validate: impl Fn(&str) -> Result<(), String>,
-) -> Result<(), String> {
-    for value in values {
-        validate(value)?;
-    }
-    if values.windows(2).any(|window| window[0] >= window[1]) {
-        return Err(format!("{field_name} must be sorted and unique"));
-    }
-    Ok(())
-}
-
-fn validate_json_pointer(pointer: &str) -> Result<(), String> {
-    if pointer.is_empty() {
-        return Ok(());
-    }
-    if !pointer.starts_with('/') {
-        return Err("credential_slots must contain RFC 6901 JSON pointers".to_string());
-    }
-    let bytes = pointer.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'~' {
-            let Some(next) = bytes.get(index + 1) else {
-                return Err("credential_slots must contain RFC 6901 JSON pointers".to_string());
-            };
-            if !matches!(*next, b'0' | b'1') {
-                return Err("credential_slots must contain RFC 6901 JSON pointers".to_string());
-            }
-            index += 1;
-        }
-        index += 1;
-    }
-    Ok(())
-}
-
-fn utf16_cmp(left: &str, right: &str) -> std::cmp::Ordering {
-    left.encode_utf16().cmp(right.encode_utf16())
 }

@@ -4,6 +4,8 @@ use serde::{de::Error as _, ser::Error as _, Deserialize, Deserializer, Serializ
 use serde_json::{Number, Value};
 
 use crate::budget::{BudgetExhaustion, BudgetUsageSnapshot};
+use crate::tools::ToolMetadata;
+use crate::types::ToolDirective;
 use crate::types::{AgentStatus, CompletionReason, Metadata};
 
 mod payload;
@@ -14,6 +16,7 @@ pub use payload::{AgentErrorPayload, ApprovalAction, RunEventPayload, ToolStatus
 use wire::{
     add_default_supplemental_fields, supplemental_wire_fields, validate_budget_wire_fields,
     validate_checkpoint_wire_fields, validate_completion_wire_fields, validate_stream_wire_fields,
+    validate_tool_lifecycle_wire_fields,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,16 +206,9 @@ impl<'de> Deserialize<'de> for RunEvent {
         validate_completion_wire_fields(&value).map_err(D::Error::custom)?;
         validate_budget_wire_fields(&value).map_err(D::Error::custom)?;
         validate_stream_wire_fields(&wire.payload, wire.cycle_index).map_err(D::Error::custom)?;
+        validate_tool_lifecycle_wire_fields(&value, &wire.payload).map_err(D::Error::custom)?;
         validate_checkpoint_wire_fields(&wire.payload, wire.cycle_index)
             .map_err(D::Error::custom)?;
-        if matches!(
-            &wire.payload,
-            RunEventPayload::ToolCallStarted { arguments, .. } if !arguments.is_object()
-        ) {
-            return Err(D::Error::custom(
-                "run event tool arguments must be an object",
-            ));
-        }
         if let RunEventPayload::ApprovalResolved { approved, .. } = &mut wire.payload {
             let action = match value.get("action") {
                 Some(Value::String(action)) => ApprovalAction::parse(action).ok_or_else(|| {
@@ -378,6 +374,28 @@ impl RunEvent {
             agent_name,
             Some(cycle_index),
             RunEventPayload::ToolCallStarted {
+                tool_call_id: tool_call_id.into(),
+                tool_name: tool_name.into(),
+                arguments,
+            },
+        )
+    }
+
+    pub fn tool_call_planned(
+        run_id: impl Into<String>,
+        trace_id: impl Into<String>,
+        agent_name: impl Into<String>,
+        cycle_index: u32,
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        arguments: Value,
+    ) -> Self {
+        Self::new(
+            run_id,
+            trace_id,
+            agent_name,
+            Some(cycle_index),
+            RunEventPayload::ToolCallPlanned {
                 tool_call_id: tool_call_id.into(),
                 tool_name: tool_name.into(),
                 arguments,
@@ -582,6 +600,40 @@ impl RunEvent {
         &self.metadata
     }
 
+    pub fn tool_metadata(&self) -> Option<ToolMetadata> {
+        self.extra_fields
+            .get("tool_metadata")
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+    }
+
+    pub fn has_tool_completion_field(&self, field: &str) -> bool {
+        matches!(
+            field,
+            "directive" | "error_code" | "execution_started" | "duration_ms"
+        ) && matches!(self.payload, RunEventPayload::ToolCallCompleted { .. })
+            && self.extra_fields.contains_key(field)
+    }
+
+    pub fn tool_directive(&self) -> Option<ToolDirective> {
+        self.extra_fields
+            .get("directive")
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+    }
+
+    pub fn tool_error_code(&self) -> Option<&str> {
+        self.extra_fields.get("error_code").and_then(Value::as_str)
+    }
+
+    pub fn tool_execution_started(&self) -> Option<bool> {
+        self.extra_fields
+            .get("execution_started")
+            .and_then(Value::as_bool)
+    }
+
+    pub fn tool_duration_ms(&self) -> Option<u64> {
+        self.extra_fields.get("duration_ms").and_then(Value::as_u64)
+    }
+
     pub fn approval_action(&self) -> Option<ApprovalAction> {
         let RunEventPayload::ApprovalResolved { approved, .. } = &self.payload else {
             return None;
@@ -636,6 +688,69 @@ impl RunEvent {
 
     pub fn with_metadata(mut self, key: impl Into<String>, value: Value) -> Self {
         self.metadata.insert(key.into(), value);
+        self
+    }
+
+    pub fn with_tool_metadata(mut self, tool_metadata: Option<&ToolMetadata>) -> Self {
+        debug_assert!(matches!(
+            self.payload,
+            RunEventPayload::ToolCallPlanned { .. }
+                | RunEventPayload::ToolCallStarted { .. }
+                | RunEventPayload::ToolCallCompleted { .. }
+        ));
+        if let Some(tool_metadata) = tool_metadata {
+            self.extra_fields.insert(
+                "tool_metadata".to_string(),
+                serde_json::to_value(tool_metadata).expect("tool metadata serializes"),
+            );
+        }
+        self
+    }
+
+    pub fn with_tool_completion_observations(
+        mut self,
+        directive: ToolDirective,
+        error_code: Option<&str>,
+        execution_started: bool,
+        duration_ms: Option<u64>,
+    ) -> Self {
+        debug_assert!(matches!(
+            self.payload,
+            RunEventPayload::ToolCallCompleted { .. }
+        ));
+        self.extra_fields.insert(
+            "directive".to_string(),
+            serde_json::to_value(directive).expect("tool directive serializes"),
+        );
+        self.extra_fields.insert(
+            "error_code".to_string(),
+            error_code.map_or(Value::Null, |value| Value::String(value.to_string())),
+        );
+        self.extra_fields.insert(
+            "execution_started".to_string(),
+            Value::Bool(execution_started),
+        );
+        self.extra_fields.insert(
+            "duration_ms".to_string(),
+            duration_ms.map_or(Value::Null, Value::from),
+        );
+        self
+    }
+
+    pub(crate) fn with_tool_completion_wire_field(
+        mut self,
+        field: &'static str,
+        value: Value,
+    ) -> Self {
+        debug_assert!(matches!(
+            self.payload,
+            RunEventPayload::ToolCallCompleted { .. }
+        ));
+        debug_assert!(matches!(
+            field,
+            "directive" | "error_code" | "execution_started" | "duration_ms"
+        ));
+        self.extra_fields.insert(field.to_string(), value);
         self
     }
 

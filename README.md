@@ -226,6 +226,69 @@ modes. `Default` inherits the next configured policy; explicit `OnRequest`
 follows each tool's static or dynamic approval declaration. `Always` forces
 approval and `Never` bypasses it without evaluating a dynamic tool predicate.
 
+### Tool Metadata and Execution Telemetry
+
+Tools may declare optional, host-visible capabilities with `ToolMetadata`.
+Attach the declaration with
+`FunctionTool::builder(...).tool_metadata(...)` (or
+`StaticTool::with_tool_metadata`) and narrow a run with the additive denial
+methods on `ToolPolicy`:
+
+```rust
+use serde_json::Value;
+use vv_agent::{
+    FunctionTool, RunConfig, ToolIdempotency, ToolMetadata, ToolOutput, ToolPolicy,
+    ToolSideEffect,
+};
+
+let inspect = FunctionTool::builder("inspect_source")
+    .description("Inspect a source file.")
+    .tool_metadata(ToolMetadata {
+        side_effect: ToolSideEffect::Read,
+        idempotency: ToolIdempotency::Supported,
+        terminal: false,
+        capability_tags: vec!["source.inspect".to_string()],
+        cost_dimensions: vec!["workspace.bytes_read".to_string()],
+    })
+    .handler(|_context, _arguments: Value| async {
+        Ok(ToolOutput::text("inspection complete"))
+    })
+    .build()?;
+
+let policy = ToolPolicy::default()
+    .deny_side_effect(ToolSideEffect::Write)
+    .deny_capability_tag("secrets.read")?
+    .deny_terminal_tools()
+    .deny_cost_dimension("workflow.credit")?;
+let run_config = RunConfig::builder().tool_policy(policy).build();
+```
+
+`side_effect` is one coarse declaration with no hierarchy. `terminal=true`
+only declares that a tool may return `finish` or `wait_user`; it never ends a
+run by itself. `capability_tags` and `cost_dimensions` are normalized,
+exact-match labels. Cost dimensions are not prices, usage measurements, or run
+budgets. Typed declarations remain separate from generic tool `metadata` and
+are never added to the model-visible function schema.
+
+Metadata denials compose with existing name, argument, approval, planned-name,
+budget, and runtime checks. Agent, Runner-default, and per-run denials form a
+set union (`deny_terminal_tools` uses logical OR); configured sub-agents,
+agent-as-tool runs, handoffs, and distributed workers inherit them and can only
+add denials. A matching denial returns `tool_not_allowed` without starting the
+executor. Omitting typed metadata and leaving the four new policy fields at
+their defaults preserves existing tool eligibility, schemas, completion, and
+approval behavior.
+
+The typed runtime sequence is `ToolCallPlanned`, optional approval events,
+`ToolCallStarted` immediately before effects may begin, and
+`ToolCallCompleted` after a result exists. Completed events expose `directive`,
+`error_code`, `execution_started`, and `duration_ms`; a pre-execution denial has
+no started event, `execution_started=false`, and `duration_ms=null` on the
+wire. See [Architecture](docs/architecture.md),
+[Durable Checkpoint And Resume](docs/checkpoint-resume.md), and the
+[App Server protocol](crates/vv-agent/docs/app_server.md) for lifecycle,
+persistence, and projection details.
+
 ### Run Budgets
 
 `RunConfig::budget_limits` can independently limit total tokens, uncached input

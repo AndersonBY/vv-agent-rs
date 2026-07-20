@@ -17,6 +17,11 @@ pub(super) fn validate_envelope_checkpoint_identity(
     checkpoint: &CheckpointV2,
 ) -> Result<(), String> {
     checkpoint.validate().map_err(|error| error.to_string())?;
+    let stored_digest = crate::checkpoint::run_definition_digest(&checkpoint.run_definition)
+        .map_err(|error| error.to_string())?;
+    if checkpoint.run_definition_digest != stored_digest {
+        return Err("checkpoint_definition_mismatch".to_string());
+    }
     let config = envelope
         .checkpoint_config
         .as_ref()

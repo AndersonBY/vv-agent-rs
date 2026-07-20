@@ -6,20 +6,22 @@ use tokio::sync::mpsc;
 use vv_agent::app_server::outgoing::{OutgoingEnvelope, OutgoingMessageSender};
 use vv_agent::app_server::processor::MessageProcessor;
 use vv_agent::app_server::protocol::{
-    generate_app_server_json_schema_bundle, generate_app_server_typescript_bundle, AppItem,
-    AppServerErrorCode, ApprovalDecision, ApprovalRequestParams, JsonRpcMessage,
-    JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestId, SchemaExportResponse,
-    ServerNotification, ServerRequest, ThreadStartParams, ThreadStartResponse, ThreadStatus,
-    TurnCompletedParams, TurnStartParams, TurnStartResponse, TurnStatus,
+    generate_app_server_json_schema_bundle, generate_app_server_typescript_bundle,
+    map_run_event_to_notifications, AppItem, AppServerErrorCode, ApprovalDecision,
+    ApprovalRequestParams, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
+    RequestId, SchemaExportResponse, ServerNotification, ServerRequest, ThreadStartParams,
+    ThreadStartResponse, ThreadStatus, TurnCompletedParams, TurnStartParams, TurnStartResponse,
+    TurnStatus,
 };
 use vv_agent::app_server::thread_store::SqliteThreadStore;
 use vv_agent::app_server::transport::ConnectionId;
 use vv_agent::{
     Agent, CacheUsage, CacheUsageStatus, LLMResponse, ModelRef, NoToolPolicy, RunBudgetLimits,
-    RunConfig, Runner, ScriptedModelProvider, TokenUsage, ToolCall, UsageSource,
+    RunConfig, RunEvent, Runner, ScriptedModelProvider, TokenUsage, ToolCall, UsageSource,
 };
 
 const CONTRACT_SOURCE: &str = include_str!("fixtures/parity/app_server_observable_v1.json");
+const TOOL_METADATA_CONTRACT_SOURCE: &str = include_str!("fixtures/parity/tool_metadata_v1.json");
 
 fn contract() -> Value {
     serde_json::from_str(CONTRACT_SOURCE).expect("valid App Server parity fixture")
@@ -151,6 +153,135 @@ fn shared_fixture_live_and_replay_payloads_use_epoch_seconds() {
     assert_eq!(
         contract["liveReplay"]["payloadMustMatch"],
         Value::Bool(true)
+    );
+}
+
+#[test]
+fn shared_fixture_tool_lifecycle_uses_additive_app_server_projection() {
+    let contract = contract();
+    let tool_metadata_contract: Value = serde_json::from_str(TOOL_METADATA_CONTRACT_SOURCE)
+        .expect("valid tool metadata contract fixture");
+    let projection_contract = &tool_metadata_contract["app_server_projection"];
+    assert_eq!(projection_contract["tool_call_planned"], "no_notification");
+    assert_eq!(
+        projection_contract["planned_is_never_presented_as_execution_started"],
+        Value::Bool(true)
+    );
+    assert!(projection_contract["tool_call_started"]
+        .as_str()
+        .expect("started projection rule")
+        .contains("toolMetadata"));
+    for field in [
+        "directive",
+        "errorCode",
+        "executionStarted",
+        "durationMs",
+        "toolMetadata",
+    ] {
+        assert!(projection_contract["tool_call_completed"]
+            .as_str()
+            .expect("completed projection rule")
+            .contains(field));
+    }
+    let lifecycle = &contract["toolLifecycle"];
+    let metadata = lifecycle["plannedHasNoNotification"]["event"]["tool_metadata"].clone();
+
+    let planned = run_event_from_fixture(lifecycle["plannedHasNoNotification"]["event"].clone());
+    assert_eq!(
+        mapped_notifications(&planned),
+        expected_notifications(&lifecycle["plannedHasNoNotification"]["notifications"])
+    );
+    assert!(lifecycle["plannedHasNoNotification"]["persistedItem"].is_null());
+    assert_eq!(
+        lifecycle["plannedHasNoNotification"]["presentedAsExecution"],
+        Value::Bool(false)
+    );
+
+    let started_expected = &lifecycle["executed"]["startedNotifications"];
+    let started = run_event_from_fixture(json!({
+        "type": "tool_call_started",
+        "event_id": "evt_tool_started",
+        "created_at": 100.1,
+        "tool_name": "inspect",
+        "tool_call_id": "call_tool",
+        "arguments": {"path": "README.md"},
+        "tool_metadata": metadata,
+    }));
+    let started_actual = mapped_notifications(&started);
+    assert_eq!(started_actual, expected_notifications(started_expected));
+    assert!(started_actual[0]["params"]["payload"]
+        .get("toolMetadata")
+        .is_some());
+
+    let completed_expected = &lifecycle["executed"]["completedNotifications"];
+    let completed = run_event_from_fixture(json!({
+        "type": "tool_call_completed",
+        "event_id": "evt_tool_completed",
+        "created_at": 100.2,
+        "tool_name": "inspect",
+        "tool_call_id": "call_tool",
+        "status": "success",
+        "directive": "continue",
+        "error_code": null,
+        "execution_started": true,
+        "duration_ms": 7,
+        "tool_metadata": metadata,
+    }));
+    let completed_actual = mapped_notifications(&completed);
+    assert_eq!(completed_actual, expected_notifications(completed_expected));
+    for field in [
+        "directive",
+        "errorCode",
+        "executionStarted",
+        "durationMs",
+        "toolMetadata",
+    ] {
+        assert!(
+            completed_actual[0]["params"]["payload"]
+                .get(field)
+                .is_some(),
+            "missing additive completed field {field}"
+        );
+    }
+
+    assert_eq!(lifecycle["policyDenial"]["startedNotifications"], json!([]));
+    let denied_expected = &lifecycle["policyDenial"]["completedNotifications"];
+    let denied = run_event_from_fixture(json!({
+        "type": "tool_call_completed",
+        "event_id": "evt_tool_denied",
+        "created_at": 100.3,
+        "tool_name": "write_record",
+        "tool_call_id": "call_denied",
+        "status": "error",
+        "directive": "continue",
+        "error_code": "tool_not_allowed",
+        "execution_started": false,
+        "duration_ms": null,
+        "tool_metadata": {
+            "side_effect": "write",
+            "idempotency": "unsupported",
+            "terminal": false,
+            "capability_tags": ["record.write"],
+            "cost_dimensions": [],
+        },
+    }));
+    assert_eq!(
+        mapped_notifications(&denied),
+        expected_notifications(denied_expected)
+    );
+
+    let legacy_expected = &lifecycle["legacyCompleted"]["notification"];
+    let legacy = run_event_from_fixture(json!({
+        "type": "tool_call_completed",
+        "event_id": "evt_tool_legacy",
+        "created_at": 99,
+        "tool_name": "lookup",
+        "tool_call_id": "call_legacy",
+        "status": "success",
+    }));
+    assert_eq!(
+        mapped_notifications(&legacy),
+        expected_notifications(&Value::Array(vec![legacy_expected.clone()]))
     );
 }
 
@@ -577,6 +708,50 @@ fn assert_fixture_fields(actual: &Value, expected: &Value) {
     for (field, expected_value) in expected.as_object().expect("fixture fields") {
         assert_eq!(actual.get(field), Some(expected_value), "field: {field}");
     }
+}
+
+fn run_event_from_fixture(mut event: Value) -> RunEvent {
+    let object = event.as_object_mut().expect("tool lifecycle event object");
+    object
+        .entry("version".to_string())
+        .or_insert_with(|| json!("v1"));
+    object
+        .entry("run_id".to_string())
+        .or_insert_with(|| json!("run_tool"));
+    object
+        .entry("trace_id".to_string())
+        .or_insert_with(|| json!("trace_tool"));
+    serde_json::from_value(event).expect("valid fixture-backed run event")
+}
+
+fn mapped_notifications(event: &RunEvent) -> Value {
+    Value::Array(
+        map_run_event_to_notifications("thread-tool", "turn-tool", event)
+            .into_iter()
+            .map(|notification| {
+                let mut value =
+                    serde_json::to_value(notification).expect("server notification serializes");
+                value
+                    .as_object_mut()
+                    .expect("server notification object")
+                    .insert("jsonrpc".to_string(), json!("2.0"));
+                value
+            })
+            .collect(),
+    )
+}
+
+fn expected_notifications(notifications: &Value) -> Value {
+    let mut expected = notifications.clone();
+    for notification in expected.as_array_mut().expect("notification array") {
+        for field in ["createdAt", "updatedAt"] {
+            let timestamp = &mut notification["params"][field];
+            if let Some(value) = timestamp.as_f64() {
+                *timestamp = json!(value);
+            }
+        }
+    }
+    expected
 }
 
 fn approval_request() -> ServerRequest {

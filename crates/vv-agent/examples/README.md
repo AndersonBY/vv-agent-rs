@@ -79,6 +79,54 @@ cargo run -p vv-agent --example 03_sdk_client
 | `28_facade_approval_background_trace` | Live approval provider, background agent task, and JSONL trace exporter. |
 | `29_typed_final_output` | Deserialize a JSON final output into a Rust type. |
 
+### Add Metadata to the Custom Tool Builder
+
+`08_custom_tool` is the existing `FunctionTool` builder example. A host can
+extend the same builder with typed capability metadata and pass cumulative
+denials through `RunConfig`:
+
+```rust
+use serde::Deserialize;
+use serde_json::json;
+use vv_agent::{
+    FunctionTool, RunConfig, ToolIdempotency, ToolMetadata, ToolOutput, ToolPolicy,
+    ToolSideEffect,
+};
+
+#[derive(Deserialize)]
+struct EchoArgs {
+    text: String,
+}
+
+let echo = FunctionTool::builder("echo_uppercase")
+    .description("Return the provided text uppercased.")
+    .tool_metadata(ToolMetadata {
+        side_effect: ToolSideEffect::None,
+        idempotency: ToolIdempotency::Supported,
+        terminal: false,
+        capability_tags: vec!["text.transform".to_string()],
+        cost_dimensions: Vec::new(),
+    })
+    .json_schema(json!({
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"]
+    }))
+    .handler(|_context, args: EchoArgs| async move {
+        Ok(ToolOutput::text(args.text.to_uppercase()))
+    })
+    .build()?;
+
+let config = RunConfig::builder()
+    .tool_policy(ToolPolicy::default().deny_terminal_tools())
+    .build();
+```
+
+The public Rust field is `cost_dimensions` (plural). A policy match reports the
+singular source `metadata.cost_dimension`. Neither typed metadata nor the
+policy changes the model-visible schema, and omitting both preserves the
+existing custom-tool behavior.
+
 Advanced integration: the App Server protocol is documented in
 `crates/vv-agent/docs/app_server.md`. It is the supported path for product
 shells that need JSON-RPC thread, turn, item, approval, and replay control.

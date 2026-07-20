@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use crate::checkpoint::ToolIdempotency;
 use crate::tools::{
-    ToolApprovalRule, ToolEnablementContext, ToolEnablementRule, ToolHandler, ToolSpec,
+    ToolApprovalRule, ToolEnablementContext, ToolEnablementRule, ToolHandler, ToolMetadata,
+    ToolSpec,
 };
 use crate::types::ToolExecutionResult;
 
@@ -32,6 +33,10 @@ pub trait Tool: Send + Sync {
         ToolIdempotency::Unknown
     }
 
+    fn tool_metadata(&self) -> Option<&ToolMetadata> {
+        None
+    }
+
     fn is_enabled(&self, _context: &ToolEnablementContext) -> bool {
         true
     }
@@ -47,6 +52,7 @@ pub struct StaticTool {
     handler: ToolHandler,
     enablement: ToolEnablementRule,
     idempotency: ToolIdempotency,
+    tool_metadata: Option<ToolMetadata>,
 }
 
 impl StaticTool {
@@ -63,6 +69,7 @@ impl StaticTool {
             handler,
             enablement: ToolEnablementRule::default(),
             idempotency: ToolIdempotency::Unknown,
+            tool_metadata: None,
         }
     }
 
@@ -81,6 +88,11 @@ impl StaticTool {
 
     pub fn with_idempotency(mut self, idempotency: ToolIdempotency) -> Self {
         self.idempotency = idempotency;
+        self
+    }
+
+    pub fn with_tool_metadata(mut self, tool_metadata: ToolMetadata) -> Self {
+        self.tool_metadata = Some(tool_metadata);
         self
     }
 }
@@ -106,6 +118,10 @@ impl Tool for StaticTool {
         self.idempotency
     }
 
+    fn tool_metadata(&self) -> Option<&ToolMetadata> {
+        self.tool_metadata.as_ref()
+    }
+
     fn as_tool_spec(&self) -> ToolSpec {
         let mut spec = ToolSpec::new(
             self.name.clone(),
@@ -126,6 +142,7 @@ impl Tool for StaticTool {
         spec.timeout = self.timeout();
         spec.approval = self.approval_rule();
         spec.idempotency = self.idempotency();
+        spec.tool_metadata = self.tool_metadata().cloned();
         spec
     }
 }

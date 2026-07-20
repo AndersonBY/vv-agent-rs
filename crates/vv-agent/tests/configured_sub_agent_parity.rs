@@ -52,7 +52,7 @@ mod stream_events;
 const CONFIGURED_SUB_AGENT_FIXTURE: &str =
     include_str!("fixtures/parity/configured_sub_agent_v1.json");
 const CONFIGURED_SUB_AGENT_FIXTURE_SHA256: &str =
-    "deb4f20c995c51f76f71590f91756ec6ab35f99128889bfa774cd2635d07106d";
+    "6b69dacc298d056d5d57ee6071c2cd8333d63467c64933d6dfd8266e29094cd0";
 const CONFIGURED_SUB_AGENT_EVENTS_FIXTURE: &str =
     include_str!("fixtures/parity/configured_sub_agent_events_v1.jsonl");
 const CONFIGURED_SUB_AGENT_EVENTS_FIXTURE_SHA256: &str =

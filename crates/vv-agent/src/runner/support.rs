@@ -410,6 +410,8 @@ pub(super) fn merged_tool_policy(
         .into_iter()
         .find(|approval| !matches!(approval, ApprovalPolicy::Default))
         .unwrap_or(ApprovalPolicy::Default);
+    merged.extend_metadata_denials(runner);
+    merged.extend_metadata_denials(run);
     merged
 }
 
@@ -572,5 +574,36 @@ mod tests {
             .into_iter()
             .collect()
         ));
+    }
+
+    #[test]
+    fn merge_unions_metadata_denials_without_allowing_later_layers_to_remove_them() {
+        use crate::tools::ToolSideEffect;
+
+        let agent = ToolPolicy::default()
+            .deny_side_effect(ToolSideEffect::Execute)
+            .deny_capability_tag("filesystem.delete")
+            .expect("agent policy");
+        let runner = ToolPolicy::default()
+            .deny_side_effect(ToolSideEffect::Network)
+            .deny_cost_dimension("gpu.second")
+            .expect("runner policy");
+        let run = ToolPolicy::default()
+            .deny_terminal_tools()
+            .deny_capability_tag("network.unrestricted")
+            .expect("run policy");
+
+        let merged = merged_tool_policy(&agent, &runner, &run);
+
+        assert_eq!(
+            merged.denied_side_effects,
+            [ToolSideEffect::Execute, ToolSideEffect::Network]
+        );
+        assert_eq!(
+            merged.denied_capability_tags,
+            ["filesystem.delete", "network.unrestricted"]
+        );
+        assert!(merged.deny_terminal_tools);
+        assert_eq!(merged.denied_cost_dimensions, ["gpu.second"]);
     }
 }

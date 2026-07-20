@@ -30,6 +30,11 @@ impl ToolRegistry {
         if let Some(schema) = super::schemas::schema_for(&spec.name) {
             spec.schema = schema;
         }
+        let (idempotency, tool_metadata) =
+            super::metadata::merge_tool_idempotency(spec.idempotency, spec.tool_metadata.as_ref())
+                .map_err(|error| error.to_string())?;
+        spec.idempotency = idempotency;
+        spec.tool_metadata = tool_metadata;
         self.schemas
             .entry(spec.name.clone())
             .or_insert_with(|| spec.schema.clone());
@@ -111,6 +116,14 @@ impl ToolRegistry {
 
     pub fn planned_openai_schemas(&self, task: &AgentTask) -> Vec<Value> {
         crate::runtime::tool_planner::plan_tool_schemas(self, task, None)
+    }
+
+    pub(crate) fn planned_openai_schemas_with_policy(
+        &self,
+        task: &AgentTask,
+        policy: Option<&crate::tools::ToolPolicy>,
+    ) -> Vec<Value> {
+        crate::runtime::tool_planner::plan_tool_schemas_with_policy(self, task, None, policy)
     }
 
     pub fn register_tool(

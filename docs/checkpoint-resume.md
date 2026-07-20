@@ -20,6 +20,46 @@ reference are both needed, keep the concrete store in `CheckpointConfig` and
 record the stable worker reference in `capability_refs["checkpoint_store"]`.
 The distributed recipe must select that same reference.
 
+## Tool Metadata And Compatibility
+
+New checkpoint v2 run-definition writers freeze the effective
+`tool_metadata` object for every tool, writing `null` when no typed declaration
+exists. They retain the legacy `idempotency` field and also freeze
+`denied_side_effects`, `denied_capability_tags`, `deny_terminal_tools`, and
+`denied_cost_dimensions` in the effective tool policy. Distributed envelopes
+carry that already-merged policy; a worker does not create a new permission
+layer. Metadata or policy drift fails with `checkpoint_definition_mismatch`
+before claim, model calls, or tool effects.
+
+Definitions written by contract 0.7.1 do not contain the additive fields.
+Resume first verifies the digest against the exact stored definition, then
+adds `tool_metadata=null`, empty denial lists, and
+`deny_terminal_tools=false` only to an in-memory comparison copy. It never
+rewrites the stored definition or digest. This preserves exact 0.7.1 bytes and
+allows an old definition to resume only when the current declaration and
+policy are still at those defaults. Non-default current values fail closed.
+Generic tool metadata is never promoted during comparison.
+
+Execution telemetry is not a durable receipt. A `tool_call_started` event may
+exist without `tool_call_completed` after cancellation, process loss, or an
+exception. The checkpoint v2 operation journal remains authoritative for
+whether an operation is planned, started, committed, replayable, or ambiguous;
+neither `duration_ms` nor a lifecycle observer provides exactly-once effects.
+
+The typed `RunEvent` envelope remains wire version `v1`. Contract 0.8 writers
+add `tool_call_planned` and always include `directive`, `error_code`,
+`execution_started`, and `duration_ms` on newly written completed tool events.
+The reader still accepts legacy completed v1 events without those additive
+fields and preserves their absence instead of fabricating execution or timing
+facts. Legacy distributed v1 envelopes and checkpoint-v1 namespaces remain
+unchanged; additive tool-policy fields on durable v2 transports default to
+empty lists and `false` when absent.
+
+With typed metadata omitted and all new denials disabled, model-visible tool
+schemas, eligibility, approval, completion, budgets, and external side effects
+follow the previous behavior. The new telemetry is observational and does not
+change those decisions.
+
 ## Ownership And Terminal Ordering
 
 Only one component owns a claim at a time:
@@ -91,6 +131,9 @@ checkpoint-v2 work instead of entering a polling deadlock.
 Focused producer tests:
 
 ```bash
+cargo test -p vv-agent --test run_events_v1
+cargo test -p vv-agent --test run_events_v1_invalid
+cargo test -p vv-agent --test runner_producer_parity
 cargo test -p vv-agent --test runner_checkpoint_v2
 cargo test -p vv-agent --test distributed_checkpoint_v2
 cargo test -p vv-agent --features apalis --test apalis_backend
@@ -106,4 +149,3 @@ cargo test -p vv-agent --all-features
 cargo check --examples
 cargo clippy --all-targets --all-features -- -D warnings
 ```
-

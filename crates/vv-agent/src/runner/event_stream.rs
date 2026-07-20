@@ -2,7 +2,7 @@ mod budget_events;
 mod payload;
 mod stream_projection;
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::thread::ThreadId;
 
@@ -12,6 +12,7 @@ use tokio::sync::broadcast;
 use crate::events::{AgentErrorPayload, ApprovalAction, RunEvent, RunEventPayload, ToolStatus};
 use crate::result::RunResult;
 use crate::run_handle::{active_sub_run_ids, SharedRunResult};
+use crate::tools::ToolMetadata;
 
 use payload::{agent_status, completion_reason_from_payload};
 pub(super) use stream_projection::map_stream_event;
@@ -43,6 +44,7 @@ pub struct RuntimeEventContext {
     session_id: Option<String>,
     input: String,
     trusted_stream_receipts: Arc<Mutex<TrustedStreamReceipts>>,
+    observed_tool_completions: Arc<Mutex<HashSet<String>>>,
 }
 
 impl RuntimeEventContext {
@@ -60,6 +62,7 @@ impl RuntimeEventContext {
             session_id,
             input: input.into(),
             trusted_stream_receipts: Arc::new(Mutex::new(TrustedStreamReceipts::default())),
+            observed_tool_completions: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -325,28 +328,15 @@ pub fn map_runtime_event(
         // typed payload has no cycle-response variant, so keep it out of the
         // assistant_delta channel instead of duplicating the full answer.
         "cycle_llm_response" => None,
-        "tool_call_started" => Some(RunEvent::tool_call_started(
-            &context.run_id,
-            &context.trace_id,
-            &context.agent_name,
-            payload
-                .get("cycle")
-                .and_then(Value::as_u64)
-                .unwrap_or_default() as u32,
-            payload
-                .get("tool_call_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            payload
-                .get("tool_name")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-            payload
-                .get("arguments")
-                .or_else(|| payload.get("tool_arguments"))
-                .cloned()
-                .unwrap_or(Value::Null),
-        )),
+        "tool_call_planned" => map_runtime_tool_call(payload, context, true),
+        "tool_call_started" => map_runtime_tool_call(payload, context, false),
+        "tool_call_completed" => {
+            let event = map_runtime_tool_completion(payload, context)?;
+            if let Ok(mut observed) = context.observed_tool_completions.lock() {
+                observed.insert(tool_completion_key(payload));
+            }
+            Some(event)
+        }
         "approval_requested" => {
             let tool_name = payload_string(payload, "tool_name");
             Some(with_selected_payload_metadata(
@@ -518,6 +508,13 @@ pub fn map_runtime_event(
             Some(with_nested_payload_metadata(event, payload))
         }
         "tool_result" => {
+            if payload
+                .get("lifecycle_suppressed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                return None;
+            }
             let metadata = payload.get("metadata").and_then(Value::as_object);
             if let Some(interruption_id) = metadata
                 .and_then(|metadata| metadata.get("approval_interruption_id"))
@@ -580,35 +577,14 @@ pub fn map_runtime_event(
                 }
                 Some(event)
             } else {
-                let status = match payload
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_ascii_lowercase()
-                    .as_str()
-                {
-                    "error" => ToolStatus::Error,
-                    "wait_response" => ToolStatus::WaitResponse,
-                    _ => ToolStatus::Success,
-                };
-                Some(RunEvent::tool_call_completed(
-                    &context.run_id,
-                    &context.trace_id,
-                    &context.agent_name,
-                    payload
-                        .get("cycle")
-                        .and_then(Value::as_u64)
-                        .map(|cycle| cycle as u32),
-                    payload
-                        .get("tool_call_id")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
-                    payload
-                        .get("tool_name")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
-                    status,
-                ))
+                let already_observed = context
+                    .observed_tool_completions
+                    .lock()
+                    .map(|observed| observed.contains(&tool_completion_key(payload)))
+                    .unwrap_or(false);
+                (!already_observed)
+                    .then(|| map_runtime_tool_completion(payload, context))
+                    .flatten()
             }
         }
         "run_completed" => Some(
@@ -761,6 +737,151 @@ pub fn map_runtime_event(
         };
         context.attach(event)
     })
+}
+
+fn map_runtime_tool_call(
+    payload: &BTreeMap<String, Value>,
+    context: &RuntimeEventContext,
+    planned: bool,
+) -> Option<RunEvent> {
+    let tool_call_id = payload_string_non_empty(payload, "tool_call_id")?;
+    let tool_name = payload_string_non_empty(payload, "tool_name")?;
+    let arguments = payload
+        .get("arguments")
+        .or_else(|| payload.get("tool_arguments"))?
+        .clone();
+    if !arguments.is_object() {
+        return None;
+    }
+    let tool_metadata = runtime_tool_metadata(payload)?;
+    let cycle_index = payload
+        .get("cycle")
+        .and_then(Value::as_u64)
+        .unwrap_or_default() as u32;
+    let event = if planned {
+        RunEvent::tool_call_planned(
+            &context.run_id,
+            &context.trace_id,
+            &context.agent_name,
+            cycle_index,
+            tool_call_id,
+            tool_name,
+            arguments,
+        )
+    } else {
+        RunEvent::tool_call_started(
+            &context.run_id,
+            &context.trace_id,
+            &context.agent_name,
+            cycle_index,
+            tool_call_id,
+            tool_name,
+            arguments,
+        )
+    };
+    Some(event.with_tool_metadata(tool_metadata.as_ref()))
+}
+
+fn map_runtime_tool_completion(
+    payload: &BTreeMap<String, Value>,
+    context: &RuntimeEventContext,
+) -> Option<RunEvent> {
+    const JSON_SAFE_INTEGER_MAX: u64 = (1_u64 << 53) - 1;
+
+    let status = runtime_tool_status(payload.get("status")?.as_str()?)?;
+    let tool_call_id = payload_string_non_empty(payload, "tool_call_id")?;
+    let tool_name = payload_string_non_empty(payload, "tool_name")?;
+    let tool_metadata = runtime_tool_metadata(payload)?;
+    let mut event = RunEvent::tool_call_completed(
+        &context.run_id,
+        &context.trace_id,
+        &context.agent_name,
+        payload
+            .get("cycle")
+            .and_then(Value::as_u64)
+            .map(|cycle| cycle as u32),
+        tool_call_id,
+        tool_name,
+        status,
+    )
+    .with_tool_metadata(tool_metadata.as_ref());
+
+    if let Some(value) = payload.get("directive") {
+        serde_json::from_value::<crate::types::ToolDirective>(value.clone()).ok()?;
+        event = event.with_tool_completion_wire_field("directive", value.clone());
+    }
+    if let Some(value) = payload.get("error_code") {
+        if !value.is_null() && !value.is_string() {
+            return None;
+        }
+        event = event.with_tool_completion_wire_field("error_code", value.clone());
+    }
+    let execution_started = match payload.get("execution_started") {
+        Some(Value::Bool(value)) => {
+            event = event.with_tool_completion_wire_field("execution_started", Value::Bool(*value));
+            Some(*value)
+        }
+        Some(_) => return None,
+        None => None,
+    };
+    if let Some(value) = payload.get("duration_ms") {
+        let duration = match value {
+            Value::Null => None,
+            value => Some(
+                value
+                    .as_u64()
+                    .filter(|value| *value <= JSON_SAFE_INTEGER_MAX)?,
+            ),
+        };
+        if execution_started == Some(false) && duration.is_some() {
+            return None;
+        }
+        event = event.with_tool_completion_wire_field("duration_ms", value.clone());
+    }
+    Some(event)
+}
+
+fn runtime_tool_status(status: &str) -> Option<ToolStatus> {
+    match status.to_ascii_lowercase().as_str() {
+        "success" => Some(ToolStatus::Success),
+        "error" => Some(ToolStatus::Error),
+        "wait_response" => Some(ToolStatus::WaitResponse),
+        "running" => Some(ToolStatus::Running),
+        "pending_compress" => Some(ToolStatus::PendingCompress),
+        _ => None,
+    }
+}
+
+fn runtime_tool_metadata(payload: &BTreeMap<String, Value>) -> Option<Option<ToolMetadata>> {
+    payload
+        .get("tool_metadata")
+        .map(|value| serde_json::from_value(value.clone()).ok().map(Some))
+        .unwrap_or(Some(None))
+}
+
+fn payload_string_non_empty<'a>(
+    payload: &'a BTreeMap<String, Value>,
+    field: &str,
+) -> Option<&'a str> {
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn tool_completion_key(payload: &BTreeMap<String, Value>) -> String {
+    format!(
+        "{}\0{}",
+        payload
+            .get("cycle")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+        payload
+            .get("tool_call_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    )
 }
 
 fn child_run_id(payload: &std::collections::BTreeMap<String, Value>) -> Option<&str> {

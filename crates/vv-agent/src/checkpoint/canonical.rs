@@ -1,5 +1,10 @@
 use super::*;
 
+mod json_pointer;
+
+pub(super) use json_pointer::validate_pointer;
+pub use json_pointer::{resolve_json_pointer, set_json_pointer};
+
 pub fn event_payload_digest(event: &Value) -> CheckpointResult<String> {
     if !event.is_object() {
         return Err(CheckpointError::new(
@@ -130,6 +135,36 @@ pub fn run_definition_digest(definition: &Value) -> CheckpointResult<String> {
     sha256_canonical(definition, "run_definition")
 }
 
+pub fn run_definition_comparison_copy(definition: &Value) -> Value {
+    let mut comparison = definition.clone();
+    if let Some(tools) = comparison.get_mut("tools").and_then(Value::as_array_mut) {
+        for tool in tools {
+            if let Some(tool) = tool.as_object_mut() {
+                tool.entry("tool_metadata".to_string())
+                    .or_insert(Value::Null);
+            }
+        }
+    }
+    if let Some(policy) = comparison
+        .get_mut("tool_policy")
+        .and_then(Value::as_object_mut)
+    {
+        policy
+            .entry("denied_side_effects".to_string())
+            .or_insert_with(|| Value::Array(Vec::new()));
+        policy
+            .entry("denied_capability_tags".to_string())
+            .or_insert_with(|| Value::Array(Vec::new()));
+        policy
+            .entry("deny_terminal_tools".to_string())
+            .or_insert(Value::Bool(false));
+        policy
+            .entry("denied_cost_dimensions".to_string())
+            .or_insert_with(|| Value::Array(Vec::new()));
+    }
+    comparison
+}
+
 pub fn canonical_run_definition_bytes(definition: &Value) -> CheckpointResult<Vec<u8>> {
     validate_run_definition(definition)?;
     canonical_json_bytes(definition, "run_definition")
@@ -229,6 +264,7 @@ pub fn validate_run_definition(definition: &Value) -> CheckpointResult<()> {
         "run_definition.capability_refs",
     )?;
     validate_extensions(object.get("extensions"), "run_definition.extensions")?;
+    validate_tool_definitions(object.get("tools"))?;
     validate_tool_policy(object.get("tool_policy"))?;
     validate_checkpoint_policy(object.get("checkpoint_policy"))?;
     validate_header_names(object.get("model"))?;
@@ -255,6 +291,7 @@ pub fn normalize_run_definition(
         .collect::<Vec<_>>();
     object.insert("credential_slots".to_string(), Value::Array(slots));
     normalize_headers(object.get_mut("model"))?;
+    normalize_tool_definitions(object.get_mut("tools"))?;
     normalize_tool_policy(object.get_mut("tool_policy"))?;
     normalize_extensions(object.get_mut("extensions"))?;
     let normalized = redact_run_definition(&Value::Object(object.clone()), credential_slots)?;
@@ -286,119 +323,6 @@ pub fn redact_run_definition(
         previous = Some(slot);
     }
     Ok(redacted)
-}
-
-pub fn resolve_json_pointer<'a>(value: &'a Value, pointer: &str) -> CheckpointResult<&'a Value> {
-    let tokens = pointer_tokens(pointer)?;
-    let mut current = value;
-    for token in tokens {
-        current = match current {
-            Value::Object(object) => object.get(&token).ok_or_else(|| {
-                CheckpointError::new(
-                    "checkpoint_credential_slot_unresolved",
-                    format!("JSON pointer {pointer} does not resolve"),
-                )
-            })?,
-            Value::Array(array) => {
-                let index = token.parse::<usize>().map_err(|_| {
-                    CheckpointError::new(
-                        "checkpoint_credential_slot_unresolved",
-                        format!("JSON pointer {pointer} has an invalid array index"),
-                    )
-                })?;
-                array.get(index).ok_or_else(|| {
-                    CheckpointError::new(
-                        "checkpoint_credential_slot_unresolved",
-                        format!("JSON pointer {pointer} does not resolve"),
-                    )
-                })?
-            }
-            _ => {
-                return Err(CheckpointError::new(
-                    "checkpoint_credential_slot_unresolved",
-                    format!("JSON pointer {pointer} does not resolve"),
-                ));
-            }
-        };
-    }
-    Ok(current)
-}
-
-pub fn set_json_pointer(
-    value: &mut Value,
-    pointer: &str,
-    replacement: Value,
-) -> CheckpointResult<()> {
-    let tokens = pointer_tokens(pointer)?;
-    if tokens.is_empty() {
-        *value = replacement;
-        return Ok(());
-    }
-    let mut current = value;
-    for token in &tokens[..tokens.len() - 1] {
-        current = match current {
-            Value::Object(object) => object.get_mut(token).ok_or_else(|| {
-                CheckpointError::new(
-                    "checkpoint_credential_slot_unresolved",
-                    format!("JSON pointer {pointer} does not resolve"),
-                )
-            })?,
-            Value::Array(array) => {
-                let index = token.parse::<usize>().map_err(|_| {
-                    CheckpointError::new(
-                        "checkpoint_credential_slot_unresolved",
-                        format!("JSON pointer {pointer} has an invalid array index"),
-                    )
-                })?;
-                array.get_mut(index).ok_or_else(|| {
-                    CheckpointError::new(
-                        "checkpoint_credential_slot_unresolved",
-                        format!("JSON pointer {pointer} does not resolve"),
-                    )
-                })?
-            }
-            _ => {
-                return Err(CheckpointError::new(
-                    "checkpoint_credential_slot_unresolved",
-                    format!("JSON pointer {pointer} does not resolve"),
-                ));
-            }
-        };
-    }
-    let last = tokens.last().expect("non-empty pointer tokens");
-    match current {
-        Value::Object(object) => {
-            if !object.contains_key(last) {
-                return Err(CheckpointError::new(
-                    "checkpoint_credential_slot_unresolved",
-                    format!("JSON pointer {pointer} does not resolve"),
-                ));
-            }
-            object.insert(last.clone(), replacement);
-        }
-        Value::Array(array) => {
-            let index = last.parse::<usize>().map_err(|_| {
-                CheckpointError::new(
-                    "checkpoint_credential_slot_unresolved",
-                    format!("JSON pointer {pointer} has an invalid array index"),
-                )
-            })?;
-            let Some(item) = array.get_mut(index) else {
-                return Err(CheckpointError::new(
-                    "checkpoint_credential_slot_unresolved",
-                    format!("JSON pointer {pointer} does not resolve"),
-                ));
-            };
-            *item = replacement;
-        }
-        _ => {
-            return Err(CheckpointError::new(
-                "checkpoint_credential_slot_unresolved",
-                format!("JSON pointer {pointer} does not resolve"),
-            ));
-        }
-    }
-    Ok(())
 }
 
 pub fn validate_extension_namespace(namespace: &str) -> CheckpointResult<()> {
@@ -583,6 +507,60 @@ fn validate_extensions(value: Option<&Value>, field_name: &str) -> CheckpointRes
     Ok(())
 }
 
+fn validate_tool_definitions(value: Option<&Value>) -> CheckpointResult<()> {
+    let tools = require_array(value, "run_definition.tools")?;
+    for tool in tools {
+        let object = require_object(Some(tool), "run_definition tool")?;
+        let idempotency = object.get("idempotency").ok_or_else(|| {
+            CheckpointError::new(
+                "checkpoint_definition_invalid",
+                "run_definition tool idempotency is required",
+            )
+        })?;
+        let legacy =
+            serde_json::from_value::<ToolIdempotency>(idempotency.clone()).map_err(|_| {
+                CheckpointError::new(
+                    "checkpoint_definition_invalid",
+                    "run_definition tool idempotency is invalid",
+                )
+            })?;
+        let Some(metadata) = object.get("tool_metadata") else {
+            continue;
+        };
+        let typed = if metadata.is_null() {
+            None
+        } else {
+            Some(
+                serde_json::from_value::<crate::tools::ToolMetadata>(metadata.clone()).map_err(
+                    |error| {
+                        CheckpointError::new(
+                            "checkpoint_definition_invalid",
+                            format!("run_definition tool metadata is invalid: {error}"),
+                        )
+                    },
+                )?,
+            )
+        };
+        let (effective, normalized) =
+            crate::tools::metadata::merge_tool_idempotency(legacy, typed.as_ref()).map_err(
+                |error| CheckpointError::new("checkpoint_definition_invalid", error.to_string()),
+            )?;
+        if effective != legacy
+            || normalized
+                .as_ref()
+                .map(|value| serde_json::to_value(value).expect("tool metadata serializes"))
+                .unwrap_or(Value::Null)
+                != *metadata
+        {
+            return Err(CheckpointError::new(
+                "checkpoint_definition_invalid",
+                "run_definition tool metadata is not normalized",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_tool_policy(value: Option<&Value>) -> CheckpointResult<()> {
     let object = require_object(value, "run_definition.tool_policy")?;
     if let Some(allowed) = object.get("allowed_tools") {
@@ -598,6 +576,14 @@ fn validate_tool_policy(value: Option<&Value>) -> CheckpointResult<()> {
         if !predicate.is_null() {
             validate_ref_value(predicate, "tool_policy.predicate_ref")?;
         }
+    }
+    let mut normalized = Value::Object(object.clone());
+    normalize_tool_policy(Some(&mut normalized))?;
+    if normalized != Value::Object(object.clone()) {
+        return Err(CheckpointError::new(
+            "checkpoint_definition_invalid",
+            "run_definition tool metadata policy is not normalized",
+        ));
     }
     Ok(())
 }
@@ -712,57 +698,6 @@ fn validate_ref_value(value: &Value, field_name: &str) -> CheckpointResult<()> {
     Ok(())
 }
 
-pub(super) fn validate_pointer(pointer: &str) -> CheckpointResult<()> {
-    pointer_tokens(pointer).map(|_| ())
-}
-
-fn pointer_tokens(pointer: &str) -> CheckpointResult<Vec<String>> {
-    if pointer.is_empty() {
-        return Ok(Vec::new());
-    }
-    if !pointer.starts_with('/') {
-        return Err(CheckpointError::new(
-            "checkpoint_credential_slots_invalid",
-            "JSON pointer must be empty or start with '/'",
-        ));
-    }
-    pointer
-        .split('/')
-        .skip(1)
-        .map(|raw| {
-            let mut token = String::with_capacity(raw.len());
-            let bytes = raw.as_bytes();
-            let mut index = 0;
-            while index < bytes.len() {
-                if bytes[index] != b'~' {
-                    let character = raw[index..].chars().next().expect("valid UTF-8");
-                    token.push(character);
-                    index += character.len_utf8();
-                    continue;
-                }
-                if index + 1 >= bytes.len() {
-                    return Err(CheckpointError::new(
-                        "checkpoint_credential_slots_invalid",
-                        "JSON pointer contains an invalid escape",
-                    ));
-                }
-                match bytes[index + 1] {
-                    b'0' => token.push('~'),
-                    b'1' => token.push('/'),
-                    _ => {
-                        return Err(CheckpointError::new(
-                            "checkpoint_credential_slots_invalid",
-                            "JSON pointer contains an invalid escape",
-                        ));
-                    }
-                }
-                index += 2;
-            }
-            Ok(token)
-        })
-        .collect()
-}
-
 fn normalize_headers(model: Option<&mut Value>) -> CheckpointResult<()> {
     let Some(model) = model.and_then(Value::as_object_mut) else {
         return Ok(());
@@ -790,6 +725,69 @@ fn normalize_headers(model: Option<&mut Value>) -> CheckpointResult<()> {
     Ok(())
 }
 
+fn normalize_tool_definitions(tools: Option<&mut Value>) -> CheckpointResult<()> {
+    let Some(tools) = tools.and_then(Value::as_array_mut) else {
+        return Ok(());
+    };
+    for tool in tools {
+        let object = tool.as_object_mut().ok_or_else(|| {
+            CheckpointError::new(
+                "checkpoint_definition_invalid",
+                "run_definition tools must contain objects",
+            )
+        })?;
+        let legacy = object
+            .get("idempotency")
+            .cloned()
+            .ok_or_else(|| {
+                CheckpointError::new(
+                    "checkpoint_definition_invalid",
+                    "run_definition tool idempotency is required",
+                )
+            })
+            .and_then(|value| {
+                serde_json::from_value::<ToolIdempotency>(value).map_err(|_| {
+                    CheckpointError::new(
+                        "checkpoint_definition_invalid",
+                        "run_definition tool idempotency is invalid",
+                    )
+                })
+            })?;
+        let Some(metadata_value) = object.get("tool_metadata").cloned() else {
+            continue;
+        };
+        let typed = if metadata_value.is_null() {
+            None
+        } else {
+            Some(
+                serde_json::from_value::<crate::tools::ToolMetadata>(metadata_value).map_err(
+                    |error| {
+                        CheckpointError::new(
+                            "checkpoint_definition_invalid",
+                            format!("run_definition tool metadata is invalid: {error}"),
+                        )
+                    },
+                )?,
+            )
+        };
+        let (effective, normalized) =
+            crate::tools::metadata::merge_tool_idempotency(legacy, typed.as_ref()).map_err(
+                |error| CheckpointError::new("checkpoint_definition_invalid", error.to_string()),
+            )?;
+        object.insert(
+            "idempotency".to_string(),
+            serde_json::to_value(effective).expect("tool idempotency serializes"),
+        );
+        object.insert(
+            "tool_metadata".to_string(),
+            normalized
+                .map(|value| serde_json::to_value(value).expect("tool metadata serializes"))
+                .unwrap_or(Value::Null),
+        );
+    }
+    Ok(())
+}
+
 fn normalize_tool_policy(policy: Option<&mut Value>) -> CheckpointResult<()> {
     let Some(policy) = policy.and_then(Value::as_object_mut) else {
         return Ok(());
@@ -812,6 +810,95 @@ fn normalize_tool_policy(policy: Option<&mut Value>) -> CheckpointResult<()> {
         strings.sort_by(|left, right| utf16_cmp(left, right));
         strings.dedup();
         *values = strings.into_iter().map(Value::String).collect();
+    }
+    let metadata_fields_present = [
+        "denied_side_effects",
+        "denied_capability_tags",
+        "deny_terminal_tools",
+        "denied_cost_dimensions",
+    ]
+    .map(|field| policy.contains_key(field));
+    if metadata_fields_present.iter().any(|present| *present) {
+        let denied_side_effects = policy
+            .get("denied_side_effects")
+            .cloned()
+            .map(|value| serde_json::from_value(value).map_err(|_| ()))
+            .transpose()
+            .map_err(|()| {
+                CheckpointError::new(
+                    "checkpoint_definition_invalid",
+                    "tool policy denied_side_effects is invalid",
+                )
+            })?
+            .unwrap_or_default();
+        let denied_capability_tags = policy
+            .get("denied_capability_tags")
+            .cloned()
+            .map(|value| serde_json::from_value(value).map_err(|_| ()))
+            .transpose()
+            .map_err(|()| {
+                CheckpointError::new(
+                    "checkpoint_definition_invalid",
+                    "tool policy denied_capability_tags is invalid",
+                )
+            })?
+            .unwrap_or_default();
+        let deny_terminal_tools = match policy.get("deny_terminal_tools") {
+            Some(Value::Bool(value)) => *value,
+            Some(_) => {
+                return Err(CheckpointError::new(
+                    "checkpoint_definition_invalid",
+                    "tool policy deny_terminal_tools must be boolean",
+                ))
+            }
+            None => false,
+        };
+        let denied_cost_dimensions = policy
+            .get("denied_cost_dimensions")
+            .cloned()
+            .map(|value| serde_json::from_value(value).map_err(|_| ()))
+            .transpose()
+            .map_err(|()| {
+                CheckpointError::new(
+                    "checkpoint_definition_invalid",
+                    "tool policy denied_cost_dimensions is invalid",
+                )
+            })?
+            .unwrap_or_default();
+        let normalized = crate::tools::ToolPolicy {
+            denied_side_effects,
+            denied_capability_tags,
+            deny_terminal_tools,
+            denied_cost_dimensions,
+            ..crate::tools::ToolPolicy::default()
+        }
+        .normalized()
+        .map_err(|error| {
+            CheckpointError::new("checkpoint_definition_invalid", error.to_string())
+        })?;
+        let normalized_values = [
+            serde_json::to_value(normalized.denied_side_effects)
+                .expect("tool side effects serialize"),
+            serde_json::to_value(normalized.denied_capability_tags)
+                .expect("tool capability tags serialize"),
+            Value::Bool(normalized.deny_terminal_tools),
+            serde_json::to_value(normalized.denied_cost_dimensions)
+                .expect("tool cost dimensions serialize"),
+        ];
+        for ((field, present), value) in [
+            "denied_side_effects",
+            "denied_capability_tags",
+            "deny_terminal_tools",
+            "denied_cost_dimensions",
+        ]
+        .into_iter()
+        .zip(metadata_fields_present)
+        .zip(normalized_values)
+        {
+            if present {
+                policy.insert(field.to_string(), value);
+            }
+        }
     }
     Ok(())
 }

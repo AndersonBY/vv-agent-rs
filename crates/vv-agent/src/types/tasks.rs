@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::model_settings::ModelSettings;
 use crate::tools::common::trim_portable_whitespace;
+use crate::tools::{ToolPolicy, ToolSideEffect};
 
 use super::{
     json_value_from_serializable, AgentStatus, CompletionReason, Message, Metadata, NoToolPolicy,
@@ -53,6 +54,10 @@ pub struct SubAgentConfig {
     pub max_cycles: u32,
     pub exclude_tools: Vec<String>,
     pub metadata: Metadata,
+    pub denied_side_effects: Vec<ToolSideEffect>,
+    pub denied_capability_tags: Vec<String>,
+    pub deny_terminal_tools: bool,
+    pub denied_cost_dimensions: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -70,6 +75,14 @@ struct SubAgentConfigWire {
     exclude_tools: Vec<String>,
     #[serde(default)]
     metadata: Metadata,
+    #[serde(default)]
+    denied_side_effects: Vec<ToolSideEffect>,
+    #[serde(default)]
+    denied_capability_tags: Vec<String>,
+    #[serde(default)]
+    deny_terminal_tools: bool,
+    #[serde(default)]
+    denied_cost_dimensions: Vec<String>,
 }
 
 const fn default_sub_agent_max_cycles() -> u32 {
@@ -86,7 +99,7 @@ impl<'de> Deserialize<'de> for SubAgentConfig {
             return Err(D::Error::custom("SubAgentConfig payload must be an object"));
         }
         let wire = serde_json::from_value::<SubAgentConfigWire>(value).map_err(D::Error::custom)?;
-        let config = Self {
+        let mut config = Self {
             model: trim_portable_whitespace(&wire.model).to_string(),
             description: wire.description,
             backend: wire.backend,
@@ -94,7 +107,14 @@ impl<'de> Deserialize<'de> for SubAgentConfig {
             max_cycles: wire.max_cycles,
             exclude_tools: wire.exclude_tools,
             metadata: wire.metadata,
+            denied_side_effects: wire.denied_side_effects,
+            denied_capability_tags: wire.denied_capability_tags,
+            deny_terminal_tools: wire.deny_terminal_tools,
+            denied_cost_dimensions: wire.denied_cost_dimensions,
         };
+        config
+            .normalize_policy_denials()
+            .map_err(D::Error::custom)?;
         config.validate().map_err(D::Error::custom)?;
         Ok(config)
     }
@@ -111,6 +131,10 @@ impl SubAgentConfig {
             max_cycles: 8,
             exclude_tools: Vec::new(),
             metadata: Metadata::new(),
+            denied_side_effects: Vec::new(),
+            denied_capability_tags: Vec::new(),
+            deny_terminal_tools: false,
+            denied_cost_dimensions: Vec::new(),
         }
     }
 
@@ -131,6 +155,31 @@ impl SubAgentConfig {
                 INVALID_SUB_AGENT_SYSTEM_PROMPT_MESSAGE,
             ));
         }
+        self.declared_tool_policy().normalized().map_err(|_| {
+            SubAgentConfigValidationError::new(
+                "invalid_sub_agent_tool_policy",
+                "sub-agent tool policy is invalid",
+            )
+        })?;
+        Ok(())
+    }
+
+    pub fn declared_tool_policy(&self) -> ToolPolicy {
+        ToolPolicy {
+            denied_side_effects: self.denied_side_effects.clone(),
+            denied_capability_tags: self.denied_capability_tags.clone(),
+            deny_terminal_tools: self.deny_terminal_tools,
+            denied_cost_dimensions: self.denied_cost_dimensions.clone(),
+            ..ToolPolicy::default()
+        }
+    }
+
+    fn normalize_policy_denials(&mut self) -> Result<(), crate::tools::ToolMetadataError> {
+        let policy = self.declared_tool_policy().normalized()?;
+        self.denied_side_effects = policy.denied_side_effects;
+        self.denied_capability_tags = policy.denied_capability_tags;
+        self.deny_terminal_tools = policy.deny_terminal_tools;
+        self.denied_cost_dimensions = policy.denied_cost_dimensions;
         Ok(())
     }
 }

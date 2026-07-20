@@ -23,6 +23,9 @@ pub(super) fn run_attached_sub_agent_session(
 ) -> Result<SubTaskOutcome, String> {
     let initial_prompt = sub_task.user_prompt.clone();
     let mut tool_policy = context.tool_policy.clone().unwrap_or_default();
+    if let Some(config) = context.parent_task.sub_agents.get(&request.agent_name) {
+        tool_policy.extend_metadata_denials(&config.declared_tool_policy());
+    }
     for exclusion in &sub_task.exclude_tools {
         if !tool_policy
             .disallowed_tools

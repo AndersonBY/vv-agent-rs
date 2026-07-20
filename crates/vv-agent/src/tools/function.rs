@@ -12,7 +12,7 @@ use crate::checkpoint::ToolIdempotency;
 use crate::context::{RunContext, ToolCallContext};
 use crate::tools::{
     Tool, ToolApprovalRule, ToolContext, ToolEnablementContext, ToolEnablementRule, ToolExposure,
-    ToolOutput, ToolSpec, ToolSpecExecutor,
+    ToolMetadata, ToolOutput, ToolSpec, ToolSpecExecutor,
 };
 use crate::types::{Metadata, ToolArguments};
 
@@ -30,6 +30,7 @@ pub struct FunctionTool<Args = Value> {
     timeout: Option<Duration>,
     approval: ToolApprovalRule,
     idempotency: ToolIdempotency,
+    tool_metadata: Option<ToolMetadata>,
     enablement: ToolEnablementRule,
     error_mapper: Option<ToolErrorMapper>,
     metadata: Metadata,
@@ -52,6 +53,7 @@ impl FunctionTool<Value> {
             timeout: None,
             approval: ToolApprovalRule::default(),
             idempotency: ToolIdempotency::Unknown,
+            tool_metadata: None,
             enablement: ToolEnablementRule::default(),
             error_mapper: None,
             metadata: Metadata::new(),
@@ -72,6 +74,7 @@ impl<Args> Clone for FunctionTool<Args> {
             timeout: self.timeout,
             approval: self.approval.clone(),
             idempotency: self.idempotency,
+            tool_metadata: self.tool_metadata.clone(),
             enablement: self.enablement.clone(),
             error_mapper: self.error_mapper.clone(),
             metadata: self.metadata.clone(),
@@ -129,6 +132,10 @@ where
 
     fn idempotency(&self) -> ToolIdempotency {
         self.idempotency
+    }
+
+    fn tool_metadata(&self) -> Option<&ToolMetadata> {
+        self.tool_metadata.as_ref()
     }
 
     fn is_enabled(&self, context: &ToolEnablementContext) -> bool {
@@ -209,6 +216,7 @@ where
         spec.timeout = self.timeout;
         spec.approval = self.approval.clone();
         spec.idempotency = self.idempotency;
+        spec.tool_metadata = self.tool_metadata.clone();
         spec.metadata = self.metadata.clone();
         spec
     }
@@ -224,6 +232,7 @@ pub struct FunctionToolBuilder<Args = Value> {
     timeout: Option<Duration>,
     approval: ToolApprovalRule,
     idempotency: ToolIdempotency,
+    tool_metadata: Option<ToolMetadata>,
     enablement: ToolEnablementRule,
     error_mapper: Option<ToolErrorMapper>,
     metadata: Metadata,
@@ -274,6 +283,11 @@ impl<Args> FunctionToolBuilder<Args> {
         self
     }
 
+    pub fn tool_metadata(mut self, tool_metadata: ToolMetadata) -> Self {
+        self.tool_metadata = Some(tool_metadata);
+        self
+    }
+
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enablement = ToolEnablementRule::Static(enabled);
         self
@@ -321,6 +335,7 @@ impl<Args> FunctionToolBuilder<Args> {
             timeout: self.timeout,
             approval: self.approval,
             idempotency: self.idempotency,
+            tool_metadata: self.tool_metadata,
             enablement: self.enablement,
             error_mapper: self.error_mapper,
             metadata: self.metadata,
@@ -338,6 +353,11 @@ impl<Args> FunctionToolBuilder<Args> {
         let Some(handler) = self.handler else {
             return Err("tool handler is required".to_string());
         };
+        let (idempotency, tool_metadata) = crate::tools::metadata::merge_tool_idempotency(
+            self.idempotency,
+            self.tool_metadata.as_ref(),
+        )
+        .map_err(|error| error.to_string())?;
         Ok(FunctionTool {
             name: self.name,
             description: self.description,
@@ -347,7 +367,8 @@ impl<Args> FunctionToolBuilder<Args> {
             exposure: self.exposure,
             timeout: self.timeout,
             approval: self.approval,
-            idempotency: self.idempotency,
+            idempotency,
+            tool_metadata,
             enablement: self.enablement,
             error_mapper: self.error_mapper,
             metadata: self.metadata,

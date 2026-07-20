@@ -409,6 +409,30 @@ async fn approved_error_continue_is_returned_to_the_llm() {
     );
     assert_eq!(terminal_count(resumed.events(), &interrupted_run_id), 0);
     assert_eq!(terminal_count(resumed.events(), resumed.run_id()), 1);
+    let resumed_tool_lifecycle = resumed
+        .events()
+        .iter()
+        .filter(|event| event.run_id() == resumed.run_id())
+        .filter_map(|event| match event.payload() {
+            RunEventPayload::ToolCallPlanned { tool_call_id, .. }
+                if tool_call_id == "guarded_error" =>
+            {
+                Some("planned")
+            }
+            RunEventPayload::ToolCallStarted { tool_call_id, .. }
+                if tool_call_id == "guarded_error" =>
+            {
+                Some("started")
+            }
+            RunEventPayload::ToolCallCompleted { tool_call_id, .. }
+                if tool_call_id == "guarded_error" =>
+            {
+                Some("completed")
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(resumed_tool_lifecycle, ["planned", "started", "completed"]);
     let stored = store.0.lock().expect("stored events");
     assert_eq!(terminal_count(&stored, &interrupted_run_id), 1);
     assert_eq!(terminal_count(&stored, resumed.run_id()), 1);

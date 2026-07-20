@@ -102,6 +102,13 @@ impl DistributedBackend {
         cancellation_token: Option<&CancellationToken>,
         checkpoint_controller: &CheckpointController,
     ) -> Result<CycleDispatchResult, CheckpointError> {
+        let mut effective_recipe = recipe.clone();
+        let metadata_denials = crate::runtime::tool_planner::projected_metadata_denials(task)
+            .map_err(|error| checkpoint_error("checkpoint_dispatch_failed", error))?;
+        effective_recipe
+            .capabilities
+            .tool_policy
+            .set_metadata_denials(&metadata_denials);
         let timeout_ms = u64::try_from(self.dispatch_timeout.as_millis()).map_err(|_| {
             checkpoint_error(
                 "checkpoint_dispatch_failed",
@@ -184,11 +191,11 @@ impl DistributedBackend {
 
             validate_checkpoint_store_ref(
                 checkpoint_controller,
-                recipe.capabilities.checkpoint_store_ref.as_ref(),
+                effective_recipe.capabilities.checkpoint_store_ref.as_ref(),
             )?;
             let envelope = DistributedRunEnvelope::for_checkpoint_cycle(
                 task.clone(),
-                recipe.clone(),
+                effective_recipe.clone(),
                 cycle_index,
                 self.cycle_name.clone(),
                 Some(checkpoint.root_run_id.clone()),

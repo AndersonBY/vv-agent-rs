@@ -10,7 +10,7 @@ use vv_agent::{
 };
 
 const CONTRACT: &str = include_str!("fixtures/parity/handoff_contract_v1.json");
-const CONTRACT_SHA256: &str = "92bef394c02c4657ab558e9ae0589a249578abb7c1fa875bb7d1aff91580c8c4";
+const CONTRACT_SHA256: &str = "c35c2335bd4a79626afca8459eb2966722f0539e1a0efc8014bd14b132100a74";
 
 fn contract() -> Value {
     assert_eq!(

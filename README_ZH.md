@@ -211,6 +211,61 @@ let result = handle.result().await?;
 `Default` 继续继承下一层配置；显式 `OnRequest` 按每个工具的静态或动态审批声明决定。
 `Always` 强制审批，`Never` 跳过审批，二者都不会执行动态工具审批 predicate。
 
+### 工具能力元数据与执行遥测
+
+工具可以用 `ToolMetadata` 声明可选的、仅宿主可见的能力信息。通过
+`FunctionTool::builder(...).tool_metadata(...)`（或
+`StaticTool::with_tool_metadata`）附加声明，再用 `ToolPolicy` 的累加拒绝方法收紧一次运行：
+
+```rust
+use serde_json::Value;
+use vv_agent::{
+    FunctionTool, RunConfig, ToolIdempotency, ToolMetadata, ToolOutput, ToolPolicy,
+    ToolSideEffect,
+};
+
+let inspect = FunctionTool::builder("inspect_source")
+    .description("Inspect a source file.")
+    .tool_metadata(ToolMetadata {
+        side_effect: ToolSideEffect::Read,
+        idempotency: ToolIdempotency::Supported,
+        terminal: false,
+        capability_tags: vec!["source.inspect".to_string()],
+        cost_dimensions: vec!["workspace.bytes_read".to_string()],
+    })
+    .handler(|_context, _arguments: Value| async {
+        Ok(ToolOutput::text("inspection complete"))
+    })
+    .build()?;
+
+let policy = ToolPolicy::default()
+    .deny_side_effect(ToolSideEffect::Write)
+    .deny_capability_tag("secrets.read")?
+    .deny_terminal_tools()
+    .deny_cost_dimension("workflow.credit")?;
+let run_config = RunConfig::builder().tool_policy(policy).build();
+```
+
+`side_effect` 只是一个没有层级关系的粗粒度声明。`terminal=true` 只表示工具可能返回
+`finish` 或 `wait_user`，不会自行结束运行。`capability_tags` 和
+`cost_dimensions` 会规范化并按完整字符串精确匹配；cost dimension 不是价格、用量观测
+或运行预算。类型化声明与工具的通用 `metadata` 相互独立，也不会进入模型可见的 function
+schema。
+
+元数据拒绝会与已有的工具名、参数、审批、planned-name、预算和 runtime 检查共同生效。
+Agent、Runner 默认值和单次运行的拒绝集合取并集（`deny_terminal_tools` 使用逻辑 OR）；
+configured sub-agent、agent-as-tool、handoff 和分布式 worker 只能继承并增加拒绝项。
+命中后返回 `tool_not_allowed`，且不会启动 executor。未声明 typed metadata、四个新策略字段
+保持空列表 / `false` 时，原有工具可用性、schema、completion 和 approval 行为不变。
+
+类型化运行时顺序是 `ToolCallPlanned`、可选 approval 事件、在副作用可能开始前立即产生的
+`ToolCallStarted`，以及结果生成后的 `ToolCallCompleted`。completed 事件提供
+`directive`、`error_code`、`execution_started` 和 `duration_ms`；执行前被拒绝时没有
+started 事件，wire 上是 `execution_started=false`、`duration_ms=null`。生命周期、
+持久化与投影细节见[架构](docs/architecture.md)、
+[Durable Checkpoint And Resume](docs/checkpoint-resume.md)和
+[App Server 协议](crates/vv-agent/docs/app_server.md)。
+
 ### 运行预算
 
 `RunConfig::budget_limits` 可以分别限制总 token、未缓存输入 token、工具总调用数、

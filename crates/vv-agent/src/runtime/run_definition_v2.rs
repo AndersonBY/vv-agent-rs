@@ -5,8 +5,9 @@ use serde_json::{json, Map, Value};
 
 use crate::agent::{Agent, ToolUseBehavior};
 use crate::checkpoint::{
-    normalize_run_definition, run_definition_digest, validate_extension_namespace, CheckpointError,
-    CheckpointResult, ToolIdempotency, RUN_DEFINITION_SCHEMA,
+    normalize_run_definition, run_definition_comparison_copy, run_definition_digest,
+    validate_extension_namespace, CheckpointError, CheckpointResult, ToolIdempotency,
+    RUN_DEFINITION_SCHEMA,
 };
 use crate::config::ResolvedModelConfig;
 use crate::constants::{CREATE_SUB_TASK_TOOL_NAME, SUB_TASK_STATUS_TOOL_NAME, WORKSPACE_TOOLS};
@@ -91,6 +92,13 @@ pub(crate) fn build_run_definition(
 
     let (settings, transport_timeout_seconds) = model_settings_definition(request.model_settings)?;
     let tools = tool_definitions(request.registry, request.task, &mut refs)?;
+    let tool_policy = request
+        .run_config
+        .tool_policy
+        .normalized()
+        .map_err(|error| {
+            CheckpointError::new("checkpoint_definition_invalid", error.to_string())
+        })?;
     let extensions = extension_definitions(request.run_config)?;
     let output_schema = output_schema(request.agent, request.model_settings);
 
@@ -130,12 +138,16 @@ pub(crate) fn build_run_definition(
         },
         "tools": tools,
         "tool_policy": {
-            "allowed_tools": normalized_name_set(request.run_config.tool_policy.allowed_tools.as_deref()),
-            "disallowed_tools": normalized_name_set(Some(&request.run_config.tool_policy.disallowed_tools))
+            "allowed_tools": normalized_name_set(tool_policy.allowed_tools.as_deref()),
+            "disallowed_tools": normalized_name_set(Some(&tool_policy.disallowed_tools))
                 .unwrap_or_default(),
-            "approval": approval_policy_name(request.run_config.tool_policy.approval),
+            "approval": approval_policy_name(tool_policy.approval),
             "predicate_ref": predicate_ref,
             "approval_timeout_seconds": request.run_config.approval_timeout.map(|timeout| timeout.as_secs_f64()),
+            "denied_side_effects": tool_policy.denied_side_effects,
+            "denied_capability_tags": tool_policy.denied_capability_tags,
+            "deny_terminal_tools": tool_policy.deny_terminal_tools,
+            "denied_cost_dimensions": tool_policy.denied_cost_dimensions,
         },
         "checkpoint_policy": {
             "ambiguous_model_policy": config.ambiguous_model_policy,
@@ -354,7 +366,8 @@ pub(crate) fn validate_distributed_run_definition(
     checkpoint: &CheckpointV2,
     resolved: Option<&ResolvedDistributedCapabilities>,
 ) -> CheckpointResult<()> {
-    let definition = checkpoint.run_definition.as_object().ok_or_else(|| {
+    let comparison_definition = run_definition_comparison_copy(&checkpoint.run_definition);
+    let definition = comparison_definition.as_object().ok_or_else(|| {
         CheckpointError::new(
             "checkpoint_definition_invalid",
             "checkpoint run definition must be an object",
@@ -520,6 +533,10 @@ pub(crate) fn validate_distributed_run_definition(
         "approval": envelope.recipe.capabilities.tool_policy.approval,
         "predicate_ref": envelope.recipe.capabilities.tool_policy.predicate_ref,
         "approval_timeout_seconds": envelope.recipe.capabilities.approval_timeout_seconds,
+        "denied_side_effects": envelope.recipe.capabilities.tool_policy.denied_side_effects,
+        "denied_capability_tags": envelope.recipe.capabilities.tool_policy.denied_capability_tags,
+        "deny_terminal_tools": envelope.recipe.capabilities.tool_policy.deny_terminal_tools,
+        "denied_cost_dimensions": envelope.recipe.capabilities.tool_policy.denied_cost_dimensions,
     });
     if expected_policy != &actual_policy {
         return Err(definition_mismatch(
@@ -788,6 +805,7 @@ fn tool_definitions(
         definitions.push(json!({
             "schema": schema,
             "idempotency": spec.idempotency,
+            "tool_metadata": spec.tool_metadata.as_ref(),
             "timeout_seconds": spec.timeout.map(|timeout| timeout.as_secs_f64()),
             "approval": approval,
         }));

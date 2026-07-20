@@ -109,6 +109,84 @@ pub(super) fn validate_stream_wire_fields(
     }
 }
 
+pub(super) fn validate_tool_lifecycle_wire_fields(
+    value: &Value,
+    payload: &RunEventPayload,
+) -> Result<(), String> {
+    let (tool_call_id, tool_name) = match payload {
+        RunEventPayload::ToolCallPlanned {
+            tool_call_id,
+            tool_name,
+            arguments,
+        }
+        | RunEventPayload::ToolCallStarted {
+            tool_call_id,
+            tool_name,
+            arguments,
+        } => {
+            if !arguments.is_object() {
+                return Err("run event tool arguments must be an object".to_string());
+            }
+            (tool_call_id, tool_name)
+        }
+        RunEventPayload::ToolCallCompleted {
+            tool_call_id,
+            tool_name,
+            status,
+        } => {
+            if matches!(status, ToolStatus::Started) {
+                return Err("unsupported completed tool status `started`".to_string());
+            }
+            validate_tool_completion_additions(value)?;
+            (tool_call_id, tool_name)
+        }
+        _ => return Ok(()),
+    };
+    require_stream_text(tool_call_id, "tool_call_id")?;
+    require_stream_text(tool_name, "tool_name")?;
+    if let Some(metadata) = value.get("tool_metadata") {
+        serde_json::from_value::<crate::tools::ToolMetadata>(metadata.clone())
+            .map_err(|error| format!("invalid run event tool_metadata: {error}"))?;
+    }
+    Ok(())
+}
+
+fn validate_tool_completion_additions(value: &Value) -> Result<(), String> {
+    if let Some(directive) = value.get("directive") {
+        serde_json::from_value::<crate::types::ToolDirective>(directive.clone())
+            .map_err(|_| "run event directive is invalid".to_string())?;
+    }
+    if value
+        .get("error_code")
+        .is_some_and(|value| !value.is_null() && !value.is_string())
+    {
+        return Err("run event error_code must be a string or null".to_string());
+    }
+    let execution_started = match value.get("execution_started") {
+        Some(Value::Bool(value)) => Some(*value),
+        Some(_) => return Err("run event execution_started must be a boolean".to_string()),
+        None => None,
+    };
+    let duration_ms = match value.get("duration_ms") {
+        Some(Value::Null) | None => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .filter(|value| *value <= JSON_SAFE_INTEGER_MAX)
+                .ok_or_else(|| {
+                    "run event duration_ms must be a non-negative JSON-safe integer or null"
+                        .to_string()
+                })?,
+        ),
+    };
+    if execution_started == Some(false) && duration_ms.is_some() {
+        return Err(
+            "run event duration_ms must be null when execution_started is false".to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn validate_stream_counters(fields: &[(&str, Option<u64>)]) -> Result<(), String> {
     for (field, value) in fields {
         if value.is_some_and(|value| value > JSON_SAFE_INTEGER_MAX) {
@@ -254,6 +332,16 @@ pub(super) fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload)
         return Metadata::new();
     };
     let keys: &[&str] = match payload {
+        RunEventPayload::ToolCallPlanned { .. } | RunEventPayload::ToolCallStarted { .. } => {
+            &["tool_metadata"]
+        }
+        RunEventPayload::ToolCallCompleted { .. } => &[
+            "directive",
+            "error_code",
+            "execution_started",
+            "duration_ms",
+            "tool_metadata",
+        ],
         RunEventPayload::ApprovalResolved { .. } => &["action"],
         RunEventPayload::SubRunStarted { .. } => &["status"],
         RunEventPayload::SubRunCompleted { .. } => &[
@@ -288,14 +376,23 @@ pub(super) fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload)
         ],
         _ => &[],
     };
-    keys.iter()
+    let mut fields = keys
+        .iter()
         .filter_map(|key| {
             object
                 .get(*key)
                 .cloned()
                 .map(|value| ((*key).to_string(), value))
         })
-        .collect()
+        .collect::<Metadata>();
+    if let Some(metadata) = fields.get_mut("tool_metadata") {
+        if let Ok(normalized) =
+            serde_json::from_value::<crate::tools::ToolMetadata>(metadata.clone())
+        {
+            *metadata = serde_json::to_value(normalized).expect("tool metadata serializes");
+        }
+    }
+    fields
 }
 
 pub(super) fn add_default_supplemental_fields(payload: &RunEventPayload, fields: &mut Metadata) {

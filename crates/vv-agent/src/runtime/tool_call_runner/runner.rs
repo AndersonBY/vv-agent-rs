@@ -47,25 +47,31 @@ impl ToolCallRunner {
                 call.clone(),
                 request.context,
             );
-            let mut result = match short_circuit_result {
+            let options = ToolRunOptions::default();
+            let mut execution = match short_circuit_result {
                 Some(mut result) => {
                     if needs_tool_call_id(&result.tool_call_id) {
                         result.tool_call_id = call.id.clone();
                     }
-                    result
+                    orchestrator.observe_result_without_execution(
+                        patched_call.clone(),
+                        result,
+                        &options,
+                    )
                 }
                 None => {
-                    let mut result = block_on_tool_run(orchestrator.run_one(
+                    block_on_tool_run(orchestrator.run_one_with_approval_and_metadata_deferred(
                         patched_call.clone(),
                         request.context,
-                        ToolRunOptions::default(),
-                    ))?;
-                    if needs_tool_call_id(&result.tool_call_id) {
-                        result.tool_call_id = patched_call.id.clone();
-                    }
-                    result
+                        options,
+                        |_call, _requirement, _context, _metadata| None,
+                    ))?
                 }
             };
+            let mut result = execution.result().clone();
+            if needs_tool_call_id(&result.tool_call_id) {
+                result.tool_call_id = patched_call.id.clone();
+            }
             result = self.hook_manager.apply_after_tool_call(
                 request.task,
                 request.context.cycle_index,
@@ -77,6 +83,8 @@ impl ToolCallRunner {
                 result.tool_call_id = patched_call.id.clone();
             }
             let behavior_reason = apply_tool_use_behavior(request.task, &patched_call, &mut result);
+            execution.replace_result(result);
+            let result = execution.complete();
 
             request.messages.push(result.to_message());
             if let Some(image_notification) =
@@ -150,9 +158,9 @@ impl ToolCallRunner {
     }
 }
 
-fn block_on_tool_run<'a>(
-    future: impl std::future::Future<Output = Result<crate::types::ToolExecutionResult, ToolError>> + 'a,
-) -> Result<crate::types::ToolExecutionResult, String> {
+fn block_on_tool_run<'a, T>(
+    future: impl std::future::Future<Output = Result<T, ToolError>> + 'a,
+) -> Result<T, String> {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
             tokio::task::block_in_place(|| handle.block_on(future))

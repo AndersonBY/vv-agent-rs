@@ -3,6 +3,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use super::*;
 
 impl Runner {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn run_single_agent(
         &self,
         agent: &Agent,
@@ -11,6 +12,7 @@ impl Runner {
         event_collector: Option<Arc<std::sync::Mutex<Vec<RunEvent>>>>,
         event_sender: Option<broadcast::Sender<RunEvent>>,
         mut checkpoint_admission_sender: Option<CheckpointAdmissionSender>,
+        run_id_override: Option<String>,
     ) -> Result<SingleRunOutcome, String> {
         let checkpoint_config = config
             .checkpoint_config
@@ -105,6 +107,7 @@ impl Runner {
             .as_ref()
             .filter(|_| checkpoint_resume)
             .map(|checkpoint| checkpoint.root_run_id.clone())
+            .or(run_id_override)
             .unwrap_or_else(|| format!("run_{}", uuid::Uuid::new_v4().simple()));
         let mut run_metadata = if checkpoint_resume {
             preloaded_checkpoint

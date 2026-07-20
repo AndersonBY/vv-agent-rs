@@ -156,9 +156,10 @@ pub use tools::{
     ApprovalPolicy, ApprovalPredicate, ApprovalRequirement, BackgroundAgentTask,
     BackgroundAgentTaskBuilder, BackgroundAgentTaskHandle, BackgroundAgentTaskSnapshot,
     FunctionTool, StaticTool, Tool, ToolApprovalRule, ToolContext, ToolError, ToolExecutor,
-    ToolExposure, ToolFuture, ToolHandler, ToolNotFoundError, ToolOrchestrator, ToolOutput,
-    ToolPolicy, ToolRegistry, ToolRunContext, ToolRunOptions, ToolSpec, ToolSpecContext,
-    ToolSpecExecutor, ToolSpecKind,
+    ToolExposure, ToolFuture, ToolHandler, ToolLifecycleCallback, ToolLifecycleEvent, ToolMetadata,
+    ToolMetadataError, ToolNotFoundError, ToolOrchestrator, ToolOutput, ToolPolicy, ToolRegistry,
+    ToolRunContext, ToolRunOptions, ToolSideEffect, ToolSpec, ToolSpecContext, ToolSpecExecutor,
+    ToolSpecKind,
 };
 pub use tracing::{JsonlTraceExporter, Span, TraceSink};
 pub use types::{
