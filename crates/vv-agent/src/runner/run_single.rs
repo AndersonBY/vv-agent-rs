@@ -1,5 +1,6 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
+use super::support::output_type_validation_error;
 use super::*;
 
 impl Runner {
@@ -785,22 +786,22 @@ impl Runner {
             result = apply_output_guardrails(agent, &run_context, result);
             result = apply_cancellation_precedence(result, cancellation_token.as_ref());
         }
-        let output_validation_error = if !reconciliation_required
-            && !operator_abort
-            && result.status == AgentStatus::Completed
-        {
-            result.final_answer.as_deref().and_then(|output| {
-                agent.validate_output(output).err().map(|error| {
-                    format!(
-                        "failed to validate final output for agent `{}` as `{}`: {error}",
-                        agent.name(),
-                        agent.output_type_name().unwrap_or("configured output type")
-                    )
-                })
-            })
+        let output_type_validation_error = if !reconciliation_required && !operator_abort {
+            output_type_validation_error(agent, &result)
         } else {
             None
         };
+        let (validated_result, output_validation_error) = if terminal_replayed {
+            (result, output_type_validation_error)
+        } else {
+            apply_optional_output_validation(
+                agent,
+                &run_context,
+                result,
+                output_type_validation_error,
+            )
+        };
+        result = validated_result;
         let handoff = extract_handoff(&result);
         let new_items = if terminal_replayed || reconciliation_required || operator_abort {
             Vec::new()

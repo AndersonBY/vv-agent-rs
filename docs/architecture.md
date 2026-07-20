@@ -65,6 +65,7 @@ fields remain available but do not prove cache-accounting availability.
 | `crates/vv-agent/src/event_store.rs` | Append-only run event storage and replay query contract, including JSONL storage. |
 | `crates/vv-agent/src/model.rs` | Public `ModelRef`, `ModelProvider`, `VvLlmModelProvider`, and scripted provider contracts. |
 | `crates/vv-agent/src/model_settings.rs` | Public model-call settings aligned with common `vv-llm` request options. |
+| `crates/vv-agent/src/output_validation.rs` | Typed host output-validation result, context, and tools-free repair request contracts. |
 | `crates/vv-agent/src/sessions.rs` | Public `Session` storage contract and in-memory implementation. |
 | `crates/vv-agent/src/events.rs` | v1 run event envelope and typed serializable payloads for SDK consumers. |
 | `crates/vv-agent/src/types/` | Public protocol types, dictionaries, messages, tasks, statuses, records, and token usage. |

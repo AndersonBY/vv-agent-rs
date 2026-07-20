@@ -103,6 +103,7 @@ pub(super) fn handle_no_tool_response<C: LlmClient>(
                 final_answer: None,
                 wait_reason: Some(wait_reason),
                 error: None,
+                error_code: None,
                 shared_state: shared_state.clone(),
                 token_usage: summarize_task_token_usage(cycles),
             })
@@ -221,6 +222,7 @@ pub(super) fn handle_directive_result<C: LlmClient>(
                 final_answer: None,
                 wait_reason: Some(wait_reason),
                 error: None,
+                error_code: None,
                 shared_state: shared_state.clone(),
                 token_usage: summarize_task_token_usage(cycles),
             })

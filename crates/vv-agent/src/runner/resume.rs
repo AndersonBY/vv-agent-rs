@@ -14,8 +14,9 @@ use crate::types::{
 use super::helpers::terminal_event;
 use super::session_blocking::block_on_session;
 use super::support::{
-    apply_cancellation_precedence, apply_output_guardrails, capture_event, effective_event_store,
-    extract_handoff, SingleRunOutcome,
+    apply_cancellation_precedence, apply_optional_output_validation, apply_output_guardrails,
+    capture_event, effective_event_store, extract_handoff, output_type_validation_error,
+    SingleRunOutcome,
 };
 use super::{effective_session_id, NormalizedInput, Runner};
 
@@ -401,26 +402,15 @@ impl Runner {
         agent_result =
             apply_output_guardrails(&resume_context.agent, &guardrail_context, agent_result);
         agent_result = apply_cancellation_precedence(agent_result, cancellation_token);
-        let output_validation_error = agent_result
-            .final_answer
-            .as_deref()
-            .filter(|_| agent_result.status == AgentStatus::Completed)
-            .and_then(|output| {
-                resume_context
-                    .agent
-                    .validate_output(output)
-                    .err()
-                    .map(|error| {
-                        format!(
-                            "failed to validate final output for agent `{}` as `{}`: {error}",
-                            resume_context.agent.name(),
-                            resume_context
-                                .agent
-                                .output_type_name()
-                                .unwrap_or("configured output type")
-                        )
-                    })
-            });
+        let output_type_validation_error =
+            output_type_validation_error(&resume_context.agent, &agent_result);
+        let (validated_result, output_validation_error) = apply_optional_output_validation(
+            &resume_context.agent,
+            &guardrail_context,
+            agent_result,
+            output_type_validation_error,
+        );
+        agent_result = validated_result;
         let mut resumed = match self.finalize_approval_terminal(
             source,
             resume_context,

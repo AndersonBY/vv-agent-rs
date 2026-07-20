@@ -428,6 +428,7 @@ impl DistributedBackend {
                     ),
                     wait_reason: None,
                     error: None,
+                    error_code: None,
                     shared_state,
                     token_usage,
                 })

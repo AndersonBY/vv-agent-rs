@@ -209,6 +209,7 @@ fn reconciliation_result(checkpoint: &CheckpointV2, observation: ResumeObservati
         final_answer: None,
         wait_reason: None,
         error: None,
+        error_code: None,
         shared_state: checkpoint.shared_state.clone(),
         token_usage: summarize_task_token_usage(&checkpoint.cycles),
     }

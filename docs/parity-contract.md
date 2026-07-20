@@ -68,6 +68,7 @@ Never repair a contract failure by editing a file under
 | Typed tool declaration and public propagation | `crates/vv-agent/src/tools/metadata.rs`, `crates/vv-agent/src/tools/function.rs`, `crates/vv-agent/src/tools/public_tool.rs`, `crates/vv-agent/src/tools/base/spec.rs`, `crates/vv-agent/src/tools/executor.rs`, `crates/vv-agent/src/tools/registry/mod.rs`; `crates/vv-agent/tests/tool_metadata_contract.rs`, `crates/vv-agent/tests/parity_evidence_manifests.rs`, `crates/vv-agent/tests/tool_orchestrator.rs`, `crates/vv-agent/tests/tool_schema_contract.rs` |
 | Metadata denial policy and delegation | `crates/vv-agent/src/tools/policy.rs`, `crates/vv-agent/src/runner/support.rs`, `crates/vv-agent/src/runtime/tool_planner.rs`, `crates/vv-agent/src/runtime/sub_agents/`, `crates/vv-agent/src/runner/handoff.rs`, `crates/vv-agent/src/runtime/backends/distributed/`; `crates/vv-agent/tests/runner_tool_policy.rs`, `crates/vv-agent/tests/configured_sub_agent_parity.rs`, `crates/vv-agent/tests/agent_tool_contract.rs`, `crates/vv-agent/tests/handoff_contract.rs`, `crates/vv-agent/tests/distributed_checkpoint_v2.rs` |
 | Agent, Runner, result, live control | `crates/vv-agent/src/agent.rs`, `crates/vv-agent/src/runner/`, `crates/vv-agent/src/run_handle.rs` |
+| Optional output validation and repair | `crates/vv-agent/src/output_validation.rs`, `crates/vv-agent/src/agent.rs`, `crates/vv-agent/src/runner/`, `crates/vv-agent/tests/output_validation_contract.rs` |
 | Delegation and background tasks | `crates/vv-agent/src/tools/background_agent_task.rs`, `crates/vv-agent/src/handoffs.rs`, `crates/vv-agent/src/runtime/sub_agents/` |
 | Sessions and stores | `crates/vv-agent/src/sessions.rs`, `crates/vv-agent/src/runtime/stores/`, `crates/vv-agent/tests/session_store_parity.rs` |
 | Events and tracing | `crates/vv-agent/src/events.rs`, `crates/vv-agent/src/event_store.rs`, `crates/vv-agent/src/tracing.rs` |
@@ -87,6 +88,30 @@ A fixture parser or private helper test cannot replace a real public producer
 test. A field that is declared but ignored by a planner, executor, provider, or
 store remains a contract failure.
 
+## Output Validation Mapping
+
+Rust registers a `host_output_validator` and optional `output_repair` callback
+on `AgentBuilder`; `output_validation_enabled` remains false unless the host
+opts in. The validator receives the Rust public final-output string and an
+`OutputValidationContext` containing run identity, agent identity, and the
+existing output type name. This maps to Python receiving its own public,
+possibly coerced final-output value.
+
+The existing Rust typed deserialization check runs before host validation. A
+typed-output failure may enter the one permitted repair, and a replacement
+must pass both deserialization and the same host validator. The canonical empty
+repair-tool collection maps to an empty `Vec<Value>`; it does not create a
+second registry or another model cycle.
+
+Validation and repair run before session persistence, checkpoint finalization,
+and terminal-event emission. Rejection sets
+`RunResult::error_code() == Some("output_validation_failed")` and commits one
+failed terminal. Successful repair commits one completed terminal with the
+replacement. Terminal checkpoint replay reuses the validated result without
+calling either host callback. Producer coverage lives in
+`tests/output_validation_contract.rs`, `tests/runner_checkpoint_v2.rs`, and
+`tests/approval_resume_completion.rs`.
+
 ## Rust Adaptations
 
 The following are API-shape adaptations, not behavioral differences:
@@ -96,6 +121,10 @@ The following are API-shape adaptations, not behavioral differences:
 - async methods and blocking wrappers may coexist where Python exposes
   synchronous convenience APIs;
 - typed deserialization maps to Python `output_type` coercion;
+- Rust validates its string final-output representation and exposes the output
+  type name in the callback context; Python validates its public, possibly
+  coerced value and exposes the output type object. Both preserve the same
+  typed-output gate, at-most-once repair, terminal, and replay behavior.
 - Apalis adapters map to Python Celery adapters through the same distributed
   envelope, checkpoint, lease, and terminal-state contract;
 - Rust `ModelProvider` controls map to Python settings-file and provider

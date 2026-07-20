@@ -172,6 +172,10 @@ impl RunResult {
             .or(self.result.error.as_deref())
     }
 
+    pub fn error_code(&self) -> Option<&str> {
+        self.result.error_code.as_deref()
+    }
+
     pub fn deserialize<T>(&self) -> Result<T, FinalOutputError>
     where
         T: DeserializeOwned,
@@ -212,7 +216,7 @@ impl RunResult {
             .get("token_usage")
             .cloned()
             .unwrap_or_else(|| json!({}));
-        json!({
+        let mut payload = json!({
             "input": self.input,
             "new_items": self.new_items.iter().map(Message::to_dict).collect::<Vec<_>>(),
             "final_output": self.final_output(),
@@ -231,7 +235,11 @@ impl RunResult {
             "checkpoint_key": self.result.checkpoint_key,
             "resume_observation": self.result.resume_observation,
             "resolved_model": self.resolved.as_ref().map(resolved_model_public_value),
-        })
+        });
+        if let Some(error_code) = self.error_code() {
+            payload["error_code"] = Value::String(error_code.to_string());
+        }
+        payload
     }
 
     pub fn to_dict(&self) -> Value {

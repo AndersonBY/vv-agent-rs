@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 use serde_json::{json, Value};
@@ -10,6 +11,9 @@ use crate::context::RunContext;
 use crate::context_providers::ContextBundle;
 use crate::events::RunEvent;
 use crate::guardrails::GuardrailOutcome;
+use crate::output_validation::{
+    OutputRepairRequest, OutputValidationContext, OutputValidationResult, OUTPUT_VALIDATION_FAILED,
+};
 use crate::result::RunResult;
 use crate::run_config::{RunConfig, INITIAL_BUDGET_USAGE_METADATA_KEY};
 use crate::runtime::{BeforeLlmEvent, BeforeLlmPatch, RuntimeHook};
@@ -95,6 +99,7 @@ pub(super) fn apply_output_guardrails(
                 failed.completion_tool_name = None;
                 failed.partial_output = candidate_output;
                 failed.error = Some(message);
+                failed.error_code = None;
                 failed.final_answer = None;
                 failed.wait_reason = None;
                 return failed;
@@ -104,11 +109,165 @@ pub(super) fn apply_output_guardrails(
     current
 }
 
+pub(super) fn apply_optional_output_validation(
+    agent: &Agent,
+    context: &RunContext,
+    mut result: AgentResult,
+    output_type_error: Option<String>,
+) -> (AgentResult, Option<String>) {
+    let Some(validator) = agent
+        .host_output_validator()
+        .filter(|_| agent.output_validation_enabled())
+    else {
+        return (result, output_type_error);
+    };
+    if result.status != crate::types::AgentStatus::Completed {
+        return (result, output_type_error);
+    }
+
+    let validation_context = OutputValidationContext {
+        run_id: context.run_id.clone(),
+        agent_name: context.agent_name.clone(),
+        output_type_name: agent.output_type_name(),
+    };
+    let original_output = result.final_answer.clone().unwrap_or_default();
+    let (mut validation, repairable) = validate_output_candidate(
+        validator,
+        &validation_context,
+        &original_output,
+        output_type_error.as_deref(),
+    );
+    if validation.valid {
+        return (result, None);
+    }
+
+    if repairable && agent.output_validation_max_repairs() == 1 {
+        if let Some(repair) = agent.output_repair() {
+            let request = OutputRepairRequest {
+                invalid_output: original_output.clone(),
+                validation_code: validation
+                    .code
+                    .clone()
+                    .unwrap_or_else(|| "output_validation_failed".to_string()),
+                validation_message: validation.message.clone(),
+                model: agent.output_repair_model().cloned(),
+                model_settings: agent.output_repair_model_settings().cloned(),
+                tools: Vec::new(),
+            };
+            match catch_unwind(AssertUnwindSafe(|| repair(&request))) {
+                Ok(Ok(repaired_output)) => {
+                    let repaired_type_error = agent.validate_output(&repaired_output).err();
+                    let (repaired_validation, _) = validate_output_candidate(
+                        validator,
+                        &validation_context,
+                        &repaired_output,
+                        repaired_type_error.as_deref(),
+                    );
+                    validation = repaired_validation;
+                    if validation.valid {
+                        result.final_answer = Some(repaired_output);
+                        result.error_code = None;
+                        return (result, None);
+                    }
+                }
+                Ok(Err(error)) => {
+                    validation =
+                        OutputValidationResult::reject("repair_provider_error", Some(error));
+                }
+                Err(_) => {
+                    validation = OutputValidationResult::reject(
+                        "repair_provider_error",
+                        Some("output repair callback panicked"),
+                    );
+                }
+            }
+        }
+    }
+
+    let error = output_validation_error(&validation);
+    result.status = crate::types::AgentStatus::Failed;
+    result.completion_reason = Some(crate::types::CompletionReason::Failed);
+    result.completion_tool_name = None;
+    result.partial_output = if original_output.is_empty() {
+        crate::types::last_assistant_output(&result.cycles)
+    } else {
+        Some(original_output)
+    };
+    result.final_answer = None;
+    result.wait_reason = None;
+    result.error = Some(error);
+    result.error_code = Some(OUTPUT_VALIDATION_FAILED.to_string());
+    (result, None)
+}
+
+pub(super) fn output_type_validation_error(agent: &Agent, result: &AgentResult) -> Option<String> {
+    result
+        .final_answer
+        .as_deref()
+        .filter(|_| result.status == crate::types::AgentStatus::Completed)
+        .and_then(|output| {
+            agent.validate_output(output).err().map(|error| {
+                format!(
+                    "failed to validate final output for agent `{}` as `{}`: {error}",
+                    agent.name(),
+                    agent.output_type_name().unwrap_or("configured output type")
+                )
+            })
+        })
+}
+
+fn validate_output_candidate(
+    validator: &crate::output_validation::HostOutputValidator,
+    context: &OutputValidationContext,
+    candidate: &str,
+    output_type_error: Option<&str>,
+) -> (OutputValidationResult, bool) {
+    if let Some(error) = output_type_error {
+        return (
+            OutputValidationResult::reject("output_type_invalid", Some(error)),
+            true,
+        );
+    }
+    match catch_unwind(AssertUnwindSafe(|| validator(candidate, context))) {
+        Ok(result) => {
+            let normalized = result.normalized();
+            let repairable =
+                normalized.code.as_deref() != Some("output_validator_contract_invalid");
+            (normalized, repairable)
+        }
+        Err(_) => (
+            OutputValidationResult::reject(
+                "output_validator_error",
+                Some("output validator callback panicked"),
+            ),
+            false,
+        ),
+    }
+}
+
+fn output_validation_error(result: &OutputValidationResult) -> String {
+    let mut detail = result
+        .code
+        .as_deref()
+        .unwrap_or("output_validation_failed")
+        .to_string();
+    if let Some(message) = result
+        .message
+        .as_deref()
+        .filter(|message| !message.is_empty())
+    {
+        detail.push_str(": ");
+        detail.push_str(message);
+    }
+    format!("{OUTPUT_VALIDATION_FAILED}: {detail}")
+}
+
 fn normalize_completion_observation(result: &mut AgentResult) {
     match result.status {
         crate::types::AgentStatus::Completed => {
             result.partial_output = None;
             result.error = None;
+            result.error_code = None;
             result.wait_reason = None;
         }
         crate::types::AgentStatus::WaitUser => {
@@ -179,6 +338,7 @@ pub(super) fn apply_cancellation_precedence(
             .partial_output
             .or_else(|| crate::types::last_assistant_output(&result.cycles));
         result.error = cancellation_token.and_then(crate::runtime::CancellationToken::reason);
+        result.error_code = None;
         result.budget_exhaustion = None;
         result.final_answer = None;
         result.wait_reason = None;

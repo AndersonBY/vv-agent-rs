@@ -63,9 +63,10 @@ use helpers::{
 pub(crate) use producer::CheckpointStartOutcome;
 use session_blocking::block_on_session;
 use support::{
-    apply_cancellation_precedence, apply_input_guardrails, apply_output_guardrails, capture_event,
-    effective_event_store, effective_session_id, extract_handoff, initial_budget_usage,
-    insert_context_metadata, merged_tool_policy, ApprovalHook, SingleRunOutcome,
+    apply_cancellation_precedence, apply_input_guardrails, apply_optional_output_validation,
+    apply_output_guardrails, capture_event, effective_event_store, effective_session_id,
+    extract_handoff, initial_budget_usage, insert_context_metadata, merged_tool_policy,
+    ApprovalHook, SingleRunOutcome,
 };
 use trace_lifecycle::RunTrace;
 

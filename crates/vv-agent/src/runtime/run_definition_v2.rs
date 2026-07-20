@@ -941,7 +941,17 @@ fn validate_behavior_capability_refs(
             "tool_registry_factory",
         ),
         (run_config.sub_task_manager.is_some(), "sub_task_manager"),
-        (agent.output_type_name().is_some(), "output_validator"),
+        (
+            agent.output_type_name().is_some()
+                || (agent.output_validation_enabled() && agent.host_output_validator().is_some()),
+            "output_validator",
+        ),
+        (
+            agent.output_validation_enabled()
+                && agent.output_repair().is_some()
+                && agent.output_validation_max_repairs() == 1,
+            "output_repair",
+        ),
     ] {
         if present {
             required.push(slot.to_string());

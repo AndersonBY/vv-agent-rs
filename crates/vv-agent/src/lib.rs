@@ -24,6 +24,7 @@ pub mod llm;
 pub mod memory;
 pub mod model;
 pub mod model_settings;
+pub mod output_validation;
 pub mod prompt;
 pub mod result;
 pub mod run_config;
@@ -97,6 +98,10 @@ pub use memory::{
 };
 pub use model::{ModelError, ModelProvider, ModelRef, ScriptedModelProvider, VvLlmModelProvider};
 pub use model_settings::{ModelSettings, ResponseFormat, RetryPolicy, RetrySettings, ToolChoice};
+pub use output_validation::{
+    HostOutputValidator, OutputRepair, OutputRepairRequest, OutputValidationContext,
+    OutputValidationResult, OUTPUT_VALIDATION_FAILED,
+};
 pub use result::{ApprovalSnapshot, FinalOutputError, RunResult, RunState};
 pub use run_config::{RunConfig, ToolRegistryFactory};
 pub use run_handle::{RunHandle, RunHandleState, RunHandleStatus};

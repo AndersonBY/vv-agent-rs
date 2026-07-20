@@ -86,6 +86,7 @@ where
             final_answer: None,
             wait_reason: None,
             error: Some(format!("No checkpoint found for task {}", task.task_id)),
+            error_code: None,
             shared_state: Metadata::new(),
             token_usage: Default::default(),
         }));
