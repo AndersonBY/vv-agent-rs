@@ -97,16 +97,24 @@ default is explicit.
 contract and are forwarded to runtime request metadata while the runtime
 continues to use `vv-llm` for provider transport.
 
-## Streaming Usage Accounting
+## Cache Usage Accounting
 
 OpenAI-compatible request serialization remains owned by `vv-llm`. This
-repository requires `vv-llm` 0.4.3 or newer so streaming calls request the
-provider's final usage chunk by default and reasoning-only assistant history
-keeps an explicit empty OpenAI-compatible `content` field. Explicit provider
-cache details are then projected into `TokenUsage` as `provider_reported`; if
-the provider omits them, the runtime keeps cache accounting unavailable instead
-of manufacturing a zero. Keep request-body regressions in `vv-llm`; the Agent
-runtime tests only the provider-neutral message and usage projection.
+repository requires `vv-llm` 0.4.4 or newer so streaming calls request the
+provider's final usage chunk by default, reasoning-only assistant history keeps
+an explicit empty OpenAI-compatible `content` field, and typed cache readings
+reach the Agent bridge.
+
+Generic OpenAI-compatible providers still leave an omitted cache reading
+unknown, while an explicit zero is an observed zero. Moonshot is the one
+provider-specific exception: when every recognized cache-read field is absent,
+`vv-llm` reports `Some(0)` from Moonshot's documented response contract.
+Explicit `null` or malformed fields remain unknown. The Agent bridge uses a
+temporary normalization copy so OpenAI uncached input is
+`prompt_tokens - cached_tokens`, Anthropic keeps its native `input_tokens` as
+the uncached portion, and `TokenUsage.raw` remains the unchanged provider
+object. Keep request-body regressions in `vv-llm`; the Agent runtime tests the
+provider-neutral message and usage projection.
 
 ## Exact Model Resolution
 

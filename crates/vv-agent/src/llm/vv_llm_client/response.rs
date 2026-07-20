@@ -89,8 +89,13 @@ pub(super) fn from_vv_llm_usage(usage: vv_llm::ChatUsage) -> TokenUsage {
         .raw_usage
         .clone()
         .unwrap_or_else(|| serde_json::to_value(&usage).unwrap_or_else(|_| serde_json::json!({})));
-    let mut normalized =
-        normalize_token_usage_with_hints(&raw, Some(UsageSource::ProviderReported), None);
+    let mut normalization_input = raw.clone();
+    overlay_typed_cache_usage(&mut normalization_input, &usage);
+    let mut normalized = normalize_token_usage_with_hints(
+        &normalization_input,
+        Some(UsageSource::ProviderReported),
+        None,
+    );
     normalized.prompt_tokens = usage
         .prompt_tokens
         .map(u64::from)
@@ -115,6 +120,50 @@ pub(super) fn from_vv_llm_usage(usage: vv_llm::ChatUsage) -> TokenUsage {
         .unwrap_or(normalized.output_tokens);
     normalized.raw = raw;
     normalized
+}
+
+fn overlay_typed_cache_usage(raw: &mut Value, usage: &vv_llm::ChatUsage) {
+    let Some(raw) = raw.as_object_mut() else {
+        return;
+    };
+    // Anthropic also fills legacy prompt fields; only native raw keys identify input semantics.
+    let openai_usage = raw.contains_key("prompt_tokens")
+        || raw.contains_key("completion_tokens")
+        || raw.contains_key("prompt_tokens_details");
+
+    if let Some(cache_read) = usage.cache_read_input_tokens {
+        if openai_usage {
+            insert_token_detail(raw, "cached_tokens", cache_read);
+        } else {
+            raw.insert(
+                "cache_read_input_tokens".to_string(),
+                Value::from(cache_read),
+            );
+        }
+    }
+    if let Some(cache_creation) = usage.cache_creation_input_tokens {
+        if openai_usage {
+            insert_token_detail(raw, "cache_creation_tokens", cache_creation);
+        } else {
+            raw.insert(
+                "cache_creation_input_tokens".to_string(),
+                Value::from(cache_creation),
+            );
+        }
+    }
+}
+
+fn insert_token_detail(raw: &mut serde_json::Map<String, Value>, key: &str, value: u32) {
+    let details = raw
+        .entry("prompt_tokens_details".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    if !details.is_object() {
+        *details = Value::Object(serde_json::Map::new());
+    }
+    details
+        .as_object_mut()
+        .expect("token details were normalized to an object")
+        .insert(key.to_string(), Value::from(value));
 }
 
 pub(super) fn estimate_missing_usage(
@@ -160,4 +209,110 @@ pub(super) fn completion_payload_for_usage(
         payload.push_str(&tool_payload);
     }
     payload
+}
+
+#[cfg(test)]
+mod tests {
+    use super::from_vv_llm_usage;
+    use crate::types::{CacheUsageStatus, UsageSource};
+
+    #[test]
+    fn typed_openai_cache_zero_is_accounted_without_rewriting_raw_usage() {
+        let raw = serde_json::json!({
+            "prompt_tokens": 11,
+            "completion_tokens": 7,
+            "total_tokens": 18
+        });
+        let normalized = from_vv_llm_usage(vv_llm::ChatUsage {
+            prompt_tokens: Some(11),
+            completion_tokens: Some(7),
+            total_tokens: Some(18),
+            input_tokens: Some(11),
+            output_tokens: Some(7),
+            cache_read_input_tokens: Some(0),
+            cache_creation_input_tokens: None,
+            raw_usage: Some(raw.clone()),
+        });
+
+        assert_eq!(normalized.usage_source, UsageSource::ProviderReported);
+        assert_eq!(
+            normalized.cache_usage.status,
+            CacheUsageStatus::ProviderReported
+        );
+        assert_eq!(normalized.cache_usage.read_tokens, Some(0));
+        assert_eq!(normalized.cache_usage.uncached_input_tokens, Some(11));
+        assert_eq!(normalized.raw, raw);
+    }
+
+    #[test]
+    fn typed_anthropic_cache_keeps_input_tokens_as_uncached_input() {
+        let raw = serde_json::json!({
+            "input_tokens": 11,
+            "output_tokens": 7
+        });
+        let normalized = from_vv_llm_usage(vv_llm::ChatUsage {
+            prompt_tokens: Some(11),
+            completion_tokens: Some(7),
+            total_tokens: Some(18),
+            input_tokens: Some(11),
+            output_tokens: Some(7),
+            cache_read_input_tokens: Some(5),
+            cache_creation_input_tokens: Some(3),
+            raw_usage: Some(raw.clone()),
+        });
+
+        assert_eq!(normalized.cache_usage.read_tokens, Some(5));
+        assert_eq!(normalized.cache_usage.write_tokens, Some(3));
+        assert_eq!(normalized.cache_usage.uncached_input_tokens, Some(11));
+        assert_eq!(normalized.raw, raw);
+    }
+
+    #[test]
+    fn typed_anthropic_cache_precedes_invalid_raw_without_mutating_it() {
+        let raw = serde_json::json!({
+            "input_tokens": 11,
+            "output_tokens": 7,
+            "cache_read_input_tokens": "invalid",
+            "cache_creation_input_tokens": null
+        });
+        let normalized = from_vv_llm_usage(vv_llm::ChatUsage {
+            prompt_tokens: Some(11),
+            completion_tokens: Some(7),
+            total_tokens: Some(18),
+            input_tokens: Some(11),
+            output_tokens: Some(7),
+            cache_read_input_tokens: Some(5),
+            cache_creation_input_tokens: Some(3),
+            raw_usage: Some(raw.clone()),
+        });
+
+        assert_eq!(normalized.cache_usage.read_tokens, Some(5));
+        assert_eq!(normalized.cache_usage.write_tokens, Some(3));
+        assert_eq!(normalized.cache_usage.uncached_input_tokens, Some(11));
+        assert_eq!(normalized.raw, raw);
+    }
+
+    #[test]
+    fn typed_cache_value_precedes_invalid_raw_detail_without_mutating_it() {
+        let raw = serde_json::json!({
+            "prompt_tokens": 11,
+            "completion_tokens": 7,
+            "total_tokens": 18,
+            "prompt_tokens_details": {"cached_tokens": "invalid"}
+        });
+        let normalized = from_vv_llm_usage(vv_llm::ChatUsage {
+            prompt_tokens: Some(11),
+            completion_tokens: Some(7),
+            total_tokens: Some(18),
+            input_tokens: Some(11),
+            output_tokens: Some(7),
+            cache_read_input_tokens: Some(5),
+            cache_creation_input_tokens: None,
+            raw_usage: Some(raw.clone()),
+        });
+
+        assert_eq!(normalized.cache_usage.read_tokens, Some(5));
+        assert_eq!(normalized.cache_usage.uncached_input_tokens, Some(6));
+        assert_eq!(normalized.raw, raw);
+    }
 }

@@ -67,7 +67,7 @@ fn settings_builder_returns_vv_llm_backed_client() {
 }
 
 #[test]
-fn openai_compatible_stream_requests_and_reports_provider_cache_usage() {
+fn moonshot_stream_normalizes_omitted_cache_usage_as_observed_zero() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind completion server");
     let api_base = format!("http://{}", listener.local_addr().expect("server address"));
     let server = thread::spawn(move || {
@@ -118,8 +118,7 @@ fn openai_compatible_stream_requests_and_reports_provider_cache_usage() {
             "usage": {
                 "prompt_tokens": 11,
                 "completion_tokens": 7,
-                "total_tokens": 18,
-                "prompt_tokens_details": {"cached_tokens": 6}
+                "total_tokens": 18
             }
         });
         let body = format!(
@@ -185,8 +184,17 @@ fn openai_compatible_stream_requests_and_reports_provider_cache_usage() {
     assert_eq!(response.token_usage.prompt_tokens, 11);
     assert_eq!(response.token_usage.completion_tokens, 7);
     assert_eq!(response.token_usage.total_tokens, 18);
-    assert_eq!(response.token_usage.cached_tokens, 6);
-    assert_eq!(response.token_usage.cache_usage.read_tokens, Some(6));
+    assert_eq!(response.token_usage.cached_tokens, 0);
+    assert_eq!(response.token_usage.cache_usage.read_tokens, Some(0));
+    assert_eq!(
+        response.token_usage.cache_usage.uncached_input_tokens,
+        Some(11)
+    );
+    assert!(response
+        .token_usage
+        .raw
+        .get("prompt_tokens_details")
+        .is_none());
 }
 
 #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "vv-agent"
-version = "0.7.1"
+version = "0.7.2"
 edition = "2021"
 license = "MIT"
 description = "VectorVein agent runtime, SDK, CLI, tools, and workspace backends"
@@ -39,7 +39,7 @@ toml = "0.9"
 thiserror = "2"
 unicode-normalization = "0.1"
 uuid = { version = "1", features = ["v4"] }
-vv-llm = "0.4.3"
+vv-llm = "0.4.4"
 schemars = "1"
 ts-rs = { version = "11", features = ["serde-json-impl"] }
 
