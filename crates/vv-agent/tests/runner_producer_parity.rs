@@ -6,13 +6,16 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use vv_agent::{
     Agent, FunctionTool, LLMResponse, LlmClient, LlmError, LlmRequest, LlmStreamCallback,
-    MemorySession, ModelError, ModelProvider, ModelRef, ResolvedModelConfig, RunConfig, RunEvent,
-    RunEventPayload, Runner, ToolCall, ToolOutput,
+    MemorySession, ModelError, ModelProvider, ModelRef, NoToolPolicy, ResolvedModelConfig,
+    RunConfig, RunEvent, RunEventPayload, Runner, ToolCall, ToolOutput,
 };
 
 const RUNNER_EVENTS_FIXTURE: &str = include_str!("fixtures/parity/runner_events_v1.jsonl");
 const RUNNER_EVENTS_FIXTURE_SHA256: &str =
     "3000b4d1647b39a5b938465a2e9aad2bff49eeb75d4ba31a8a326bf456f80965";
+const STREAM_PROJECTION_FIXTURE: &str = include_str!("fixtures/parity/stream_projection_v1.json");
+const STREAM_PROJECTION_FIXTURE_SHA256: &str =
+    "95a3b7d527efad68492d810038ff7be0eecefcd278f8ddad690359c497d79b0a";
 const PYTHON_RUNNER_TRACE_FIXTURE: &str = include_str!("fixtures/parity/runner_trace_v1.jsonl");
 const PYTHON_RUNNER_TRACE_FIXTURE_SHA256: &str =
     "1396aab48578f9f7f0a6f8202efeeef38c36093b0645c11010f7aed7d93cb62b";
@@ -85,6 +88,336 @@ impl ModelProvider for StreamingGoldenProvider {
     }
 }
 
+#[derive(Clone)]
+struct ContractStreamClient {
+    calls: Arc<AtomicUsize>,
+    raw_events: Arc<Vec<BTreeMap<String, Value>>>,
+}
+
+impl Default for ContractStreamClient {
+    fn default() -> Self {
+        let fixture: Value =
+            serde_json::from_str(STREAM_PROJECTION_FIXTURE).expect("stream projection fixture");
+        let raw_events = fixture["synthetic_top_level"]["raw_events"]
+            .as_array()
+            .expect("synthetic raw events")
+            .iter()
+            .map(raw_event_map)
+            .collect();
+        Self {
+            calls: Arc::new(AtomicUsize::new(0)),
+            raw_events: Arc::new(raw_events),
+        }
+    }
+}
+
+impl ContractStreamClient {
+    fn with_raw_events(raw_events: Vec<BTreeMap<String, Value>>) -> Self {
+        Self {
+            calls: Arc::new(AtomicUsize::new(0)),
+            raw_events: Arc::new(raw_events),
+        }
+    }
+}
+
+impl LlmClient for ContractStreamClient {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        self.complete_with_stream(request, None)
+    }
+
+    fn complete_with_stream(
+        &self,
+        _request: LlmRequest,
+        stream_callback: Option<LlmStreamCallback>,
+    ) -> Result<LLMResponse, LlmError> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if call < 3 {
+            return Ok(LLMResponse::new(format!("draft {call}")));
+        }
+
+        let callback = stream_callback.expect("contract stream callback");
+        for raw_event in self.raw_events.iter() {
+            callback(raw_event);
+        }
+        Ok(LLMResponse::with_tool_calls(
+            "done",
+            vec![ToolCall::new(
+                "call_stream",
+                "task_finish",
+                BTreeMap::from([("message".to_string(), json!("done"))]),
+            )],
+        ))
+    }
+}
+
+#[derive(Clone, Default)]
+struct ContractStreamProvider {
+    client: ContractStreamClient,
+}
+
+impl ModelProvider for ContractStreamProvider {
+    fn resolve(&self, model: &ModelRef) -> Result<ResolvedModelConfig, ModelError> {
+        Ok(ResolvedModelConfig::new(
+            "stream",
+            model.model(),
+            model.model(),
+            model.model(),
+            Vec::new(),
+        ))
+    }
+
+    fn client(&self, _resolved: &ResolvedModelConfig) -> Result<Arc<dyn LlmClient>, ModelError> {
+        Ok(Arc::new(self.client.clone()))
+    }
+}
+
+#[tokio::test]
+async fn real_runner_projects_contract_stream_fixture_with_framework_identity() {
+    assert_eq!(
+        format!("{:x}", Sha256::digest(STREAM_PROJECTION_FIXTURE.as_bytes())),
+        STREAM_PROJECTION_FIXTURE_SHA256
+    );
+    let fixture: Value =
+        serde_json::from_str(STREAM_PROJECTION_FIXTURE).expect("stream projection fixture");
+    let synthetic = &fixture["synthetic_top_level"];
+    let raw_observed = Arc::new(std::sync::Mutex::new(Vec::<BTreeMap<String, Value>>::new()));
+    let raw_observed_for_callback = raw_observed.clone();
+    let provider = ContractStreamProvider::default();
+    let calls = provider.client.calls.clone();
+    let workspace = tempfile::tempdir().expect("workspace");
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(workspace.path())
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("stream-agent")
+        .instructions("Finish on the third cycle.")
+        .model(ModelRef::named("stream-model"))
+        .build()
+        .expect("agent");
+    let config = RunConfig::builder()
+        .session(MemorySession::new("session_stream_parity"))
+        .max_cycles(3)
+        .no_tool_policy(NoToolPolicy::Continue)
+        .metadata("trace_id", json!("trace_stream_parity"))
+        .runtime_stream_callback(move |payload| {
+            raw_observed_for_callback
+                .lock()
+                .expect("raw stream observations")
+                .push(payload.clone());
+        })
+        .build();
+
+    let result = runner
+        .run_with_config(&agent, "stream input", config)
+        .await
+        .expect("contract stream run");
+    let typed_events = result
+        .events()
+        .iter()
+        .filter(|event| is_typed_stream_event(event.payload()))
+        .collect::<Vec<_>>();
+    let actual = typed_events
+        .iter()
+        .map(|event| normalize_event(event))
+        .collect::<Vec<_>>();
+    let expected = synthetic["expected_wire_events"]
+        .as_array()
+        .expect("expected stream events");
+
+    assert_eq!(actual, *expected);
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    let raw_observed = raw_observed.lock().expect("raw stream observations");
+    assert_eq!(raw_observed.len(), synthetic["raw_observer_count"]);
+    assert_eq!(typed_events.len(), synthetic["typed_event_count"]);
+    assert_eq!(raw_observed[0]["cycle"], 3);
+    assert_eq!(raw_observed[0]["run_id"], "run_spoofed");
+    assert!(typed_events.iter().all(|event| {
+        event.run_id() == result.run_id()
+            && event.trace_id() == "trace_stream_parity"
+            && event.session_id() == Some("session_stream_parity")
+            && event.agent_name() == Some("stream-agent")
+            && event.cycle_index() == Some(3)
+    }));
+    assert!(matches!(
+        typed_events[0].payload(),
+        RunEventPayload::AssistantDelta {
+            delta,
+            content_chars: Some(4),
+            estimated_tokens: Some(1),
+        } if delta == "done"
+    ));
+    assert!(matches!(
+        typed_events[1].payload(),
+        RunEventPayload::ReasoningDelta {
+            delta,
+            reasoning_chars: Some(4),
+            estimated_tokens: Some(1),
+        } if delta == "plan"
+    ));
+    assert!(matches!(
+        typed_events[2].payload(),
+        RunEventPayload::ModelToolCallStarted { tool_call_id, .. }
+            if tool_call_id == "call_stream"
+    ));
+    assert!(matches!(
+        typed_events[3].payload(),
+        RunEventPayload::ModelToolCallProgress { tool_call_id, .. }
+            if tool_call_id == "call_stream"
+    ));
+
+    let execution_index = result
+        .events()
+        .iter()
+        .position(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::ToolCallStarted { tool_call_id, .. }
+                    if tool_call_id == "call_stream"
+            )
+        })
+        .expect("executor tool-call start");
+    let progress_index = result
+        .events()
+        .iter()
+        .position(|event| std::ptr::eq(event, typed_events[3]))
+        .expect("model tool-call progress");
+    assert!(execution_index > progress_index);
+    assert_eq!(result.final_output(), Some("done"));
+    assert_eq!(
+        result
+            .events()
+            .iter()
+            .filter(|event| matches!(event.payload(), RunEventPayload::RunCompleted { .. }))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn raw_stream_observer_panic_cannot_suppress_typed_journal_or_terminal() {
+    let callback_calls = Arc::new(AtomicUsize::new(0));
+    let callback_calls_for_config = callback_calls.clone();
+    let provider = ContractStreamProvider::default();
+    let workspace = tempfile::tempdir().expect("workspace");
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(workspace.path())
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("stream-agent")
+        .instructions("Finish on the third cycle.")
+        .model(ModelRef::named("stream-model"))
+        .build()
+        .expect("agent");
+    let config = RunConfig::builder()
+        .max_cycles(3)
+        .no_tool_policy(NoToolPolicy::Continue)
+        .runtime_stream_callback(move |_| {
+            callback_calls_for_config.fetch_add(1, Ordering::SeqCst);
+            panic!("raw observer panic");
+        })
+        .build();
+
+    let result = runner
+        .run_with_config(&agent, "stream input", config)
+        .await
+        .expect("observer panic is isolated");
+
+    assert_eq!(callback_calls.load(Ordering::SeqCst), 5);
+    assert_eq!(
+        result
+            .events()
+            .iter()
+            .filter(|event| is_typed_stream_event(event.payload()))
+            .count(),
+        4
+    );
+    assert_eq!(result.final_output(), Some("done"));
+}
+
+#[tokio::test]
+async fn malformed_known_stream_events_remain_raw_only() {
+    let cases = [
+        BTreeMap::from([
+            ("event".to_string(), json!("assistant_delta")),
+            ("content_delta".to_string(), json!(7)),
+        ]),
+        BTreeMap::from([
+            ("event".to_string(), json!("reasoning_delta")),
+            ("reasoning_delta".to_string(), Value::Null),
+        ]),
+        BTreeMap::from([
+            ("event".to_string(), json!("tool_call_started")),
+            ("tool_call_id".to_string(), json!("")),
+            ("function_name".to_string(), json!("task_finish")),
+        ]),
+        BTreeMap::from([
+            ("event".to_string(), json!("tool_call_progress")),
+            ("tool_call_id".to_string(), json!("call_stream")),
+            ("function_name".to_string(), json!("task_finish")),
+            ("arguments_chars".to_string(), json!(-1)),
+        ]),
+    ];
+
+    for malformed_event in cases {
+        let raw_observer_calls = Arc::new(AtomicUsize::new(0));
+        let raw_observer_calls_for_config = raw_observer_calls.clone();
+        let provider = ContractStreamProvider {
+            client: ContractStreamClient::with_raw_events(vec![malformed_event]),
+        };
+        let workspace = tempfile::tempdir().expect("workspace");
+        let runner = Runner::builder()
+            .model_provider(provider)
+            .workspace(workspace.path())
+            .build()
+            .expect("runner");
+        let agent = Agent::builder("stream-agent")
+            .instructions("Finish on the third cycle.")
+            .model(ModelRef::named("stream-model"))
+            .build()
+            .expect("agent");
+        let config = RunConfig::builder()
+            .max_cycles(3)
+            .no_tool_policy(NoToolPolicy::Continue)
+            .runtime_stream_callback(move |_| {
+                raw_observer_calls_for_config.fetch_add(1, Ordering::SeqCst);
+            })
+            .build();
+
+        let result = runner
+            .run_with_config(&agent, "stream input", config)
+            .await
+            .expect("malformed stream cannot fail the run");
+
+        assert_eq!(raw_observer_calls.load(Ordering::SeqCst), 1);
+        assert!(!result
+            .events()
+            .iter()
+            .any(|event| is_typed_stream_event(event.payload())));
+        assert_eq!(result.final_output(), Some("done"));
+    }
+}
+
+fn raw_event_map(value: &Value) -> BTreeMap<String, Value> {
+    value
+        .as_object()
+        .expect("raw stream event object")
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+fn is_typed_stream_event(payload: &RunEventPayload) -> bool {
+    matches!(
+        payload,
+        RunEventPayload::AssistantDelta { .. }
+            | RunEventPayload::ReasoningDelta { .. }
+            | RunEventPayload::ModelToolCallStarted { .. }
+            | RunEventPayload::ModelToolCallProgress { .. }
+    )
+}
+
 #[tokio::test]
 async fn real_runner_live_events_match_python_producer_golden() {
     assert_eq!(
@@ -143,7 +476,7 @@ async fn real_runner_live_events_match_python_producer_golden() {
     let deltas = events
         .iter()
         .filter_map(|event| match event.payload() {
-            RunEventPayload::AssistantDelta { delta } => Some(delta.as_str()),
+            RunEventPayload::AssistantDelta { delta, .. } => Some(delta.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>();

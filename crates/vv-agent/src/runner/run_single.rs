@@ -1,3 +1,5 @@
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
 use super::*;
 
 impl Runner {
@@ -559,7 +561,7 @@ impl Runner {
                         }
                     }
                     if let Some(callback) = configured_runtime_stream_callback.as_ref() {
-                        callback(payload);
+                        let _ = catch_unwind(AssertUnwindSafe(|| callback(payload)));
                     }
                 }) as crate::llm::LlmStreamCallback,
             )

@@ -5,7 +5,7 @@ use vv_agent::{AgentErrorPayload, AgentStatus, RunEvent, RunEventPayload};
 
 const PARITY_FIXTURE: &str = include_str!("fixtures/parity/run_events_v1.jsonl");
 const PARITY_FIXTURE_SHA256: &str =
-    "3e09ca1c3987a50b95805f029ddf8e9fecf82541cdbea8a50f637000a01c90da";
+    "5e8c747234f210ee326ebb4b5c938e719ab2d5ee817e78d3277a4289ba37ea37";
 const BUDGET_FIXTURE: &str = include_str!("fixtures/parity/budget_events_v1.jsonl");
 const BUDGET_FIXTURE_SHA256: &str =
     "3267292737ac6bf63ec4ee691fe0ef07f3e2cadd5a69098e3e267f4f6b692d2e";
@@ -69,6 +69,22 @@ fn run_completed_payload_round_trips_status() {
 }
 
 #[test]
+fn typed_stream_wire_requires_positive_cycle_index() {
+    let error = serde_json::from_value::<RunEvent>(json!({
+        "version": "v1",
+        "type": "assistant_delta",
+        "event_id": "evt_stream",
+        "run_id": "run_stream",
+        "trace_id": "trace_stream",
+        "created_at": 1,
+        "delta": "hello"
+    }))
+    .expect_err("typed stream event without a cycle must fail");
+
+    assert!(error.to_string().contains("positive cycle_index"));
+}
+
+#[test]
 fn run_events_v1_parity_fixture_has_stable_bytes_and_round_trips() {
     assert_eq!(
         format!("{:x}", Sha256::digest(PARITY_FIXTURE.as_bytes())),
@@ -81,6 +97,9 @@ fn run_events_v1_parity_fixture_has_stable_bytes_and_round_trips() {
         "cycle_started",
         "llm_started",
         "assistant_delta",
+        "reasoning_delta",
+        "model_tool_call_started",
+        "model_tool_call_progress",
         "tool_call_started",
         "tool_call_completed",
         "approval_requested",

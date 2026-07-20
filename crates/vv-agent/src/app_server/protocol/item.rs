@@ -97,7 +97,7 @@ pub fn map_run_event_to_notifications(
                 item,
             })]
         }
-        RunEventPayload::AssistantDelta { delta } => {
+        RunEventPayload::AssistantDelta { delta, .. } => {
             let item = item(
                 thread_id,
                 turn_id,
@@ -112,6 +112,34 @@ pub fn map_run_event_to_notifications(
                     delta: delta.clone(),
                 },
             )]
+        }
+        RunEventPayload::ModelToolCallProgress {
+            tool_call_id,
+            tool_call_index,
+            tool_name,
+            arguments_chars,
+            ..
+        } => {
+            let item = item(
+                thread_id,
+                turn_id,
+                event,
+                AppItemKind::ToolCall,
+                AppItemStatus::InProgress,
+                serde_json::json!({
+                    "toolCallId": tool_call_id,
+                    "toolName": tool_name,
+                }),
+            );
+            vec![ServerNotification::ToolCallDelta(ToolCallDeltaParams {
+                item,
+                delta: serde_json::json!({
+                    "toolCallId": tool_call_id,
+                    "toolCallIndex": tool_call_index,
+                    "toolName": tool_name,
+                    "argumentsChars": arguments_chars,
+                }),
+            })]
         }
         RunEventPayload::ToolCallStarted {
             tool_call_id,

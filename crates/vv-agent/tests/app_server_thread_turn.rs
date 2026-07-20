@@ -48,6 +48,54 @@ fn item_mapping_assistant_delta_becomes_agent_message_delta() {
 }
 
 #[test]
+fn item_mapping_reasoning_delta_stays_private() {
+    let event = RunEvent::new(
+        "run_1",
+        "trace_1",
+        "assistant",
+        Some(1),
+        RunEventPayload::ReasoningDelta {
+            delta: "private plan".to_string(),
+            reasoning_chars: Some(12),
+            estimated_tokens: Some(3),
+        },
+    );
+
+    let notifications = map_run_event_to_notifications("thread_1", "turn_1", &event);
+
+    assert!(notifications.is_empty());
+}
+
+#[test]
+fn item_mapping_model_tool_progress_becomes_tool_delta_without_execution_start() {
+    let event = RunEvent::new(
+        "run_1",
+        "trace_1",
+        "assistant",
+        Some(1),
+        RunEventPayload::ModelToolCallProgress {
+            tool_call_id: "call_1".to_string(),
+            tool_call_index: Some(0),
+            tool_name: "bash".to_string(),
+            arguments_chars: Some(12),
+            estimated_tokens: Some(3),
+        },
+    );
+
+    let notifications = map_run_event_to_notifications("thread_1", "turn_1", &event);
+
+    let [ServerNotification::ToolCallDelta(delta)] = notifications.as_slice() else {
+        panic!("expected only model tool-call progress");
+    };
+    assert_eq!(delta.item.kind, AppItemKind::ToolCall);
+    assert_eq!(delta.item.status, AppItemStatus::InProgress);
+    assert_eq!(delta.delta["toolCallId"], "call_1");
+    assert_eq!(delta.delta["toolCallIndex"], 0);
+    assert_eq!(delta.delta["toolName"], "bash");
+    assert_eq!(delta.delta["argumentsChars"], 12);
+}
+
+#[test]
 fn item_mapping_tool_call_started_becomes_started_tool_item() {
     let event = RunEvent::tool_call_started(
         "run_1",

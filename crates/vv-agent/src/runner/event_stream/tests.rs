@@ -84,7 +84,7 @@ fn maps_only_real_stream_delta_and_does_not_relabel_full_cycle_message() {
     let event = map_stream_event(&stream_payload, &context).expect("stream delta");
     assert!(matches!(
         event.payload(),
-        RunEventPayload::AssistantDelta { delta } if delta == "token"
+        RunEventPayload::AssistantDelta { delta, .. } if delta == "token"
     ));
     assert!(event.metadata().is_empty());
 

@@ -344,6 +344,9 @@ fn configured_child_stream_is_allowlisted_and_keeps_canonical_typed_identity() {
         .iter()
         .filter_map(Value::as_str)
         .collect::<std::collections::BTreeSet<_>>();
+    let cycle_field = stream_contract["canonical_cycle_field"]
+        .as_str()
+        .expect("canonical cycle field");
     let canonical_child_run_id = child_streams[0]["run_id"].clone();
     let canonical_child_session_id = child_streams[0]["session_id"].clone();
     let canonical_child_task_id = child_streams[0]["task_id"].clone();
@@ -370,6 +373,7 @@ fn configured_child_stream_is_allowlisted_and_keeps_canonical_typed_identity() {
         let allowed_fields = producer_fields
             .union(&identity_fields)
             .copied()
+            .chain(std::iter::once(cycle_field))
             .collect::<std::collections::BTreeSet<_>>();
         let actual_fields = payload
             .keys()
@@ -379,7 +383,9 @@ fn configured_child_stream_is_allowlisted_and_keeps_canonical_typed_identity() {
         assert!(identity_fields.is_subset(&actual_fields));
         assert!(actual_fields
             .difference(&identity_fields)
+            .filter(|field| **field != cycle_field)
             .all(|field| !reserved_fields.contains(field)));
+        assert_eq!(payload[cycle_field], 1);
         for (field, expected) in &expected_identity {
             assert_eq!(
                 &payload[*field], expected,
@@ -448,6 +454,7 @@ fn configured_child_stream_is_allowlisted_and_keeps_canonical_typed_identity() {
         assert_eq!(event.agent_name(), Some("researcher"));
         assert_eq!(event.session_id(), started.session_id());
         assert_eq!(event.parent_run_id(), Some("parent-stream-run"));
+        assert_eq!(event.cycle_index(), Some(1));
         let source = event.metadata["event"]
             .as_str()
             .expect("typed child stream source");
@@ -466,7 +473,11 @@ fn configured_child_stream_is_allowlisted_and_keeps_canonical_typed_identity() {
         .expect("typed assistant delta");
     assert!(matches!(
         typed_delta.payload(),
-        RunEventPayload::AssistantDelta { delta } if delta == "child delta"
+        RunEventPayload::AssistantDelta {
+            delta,
+            content_chars: Some(11),
+            estimated_tokens: Some(2),
+        } if delta == "child delta"
     ));
     assert_eq!(typed_delta.run_id(), started.run_id());
     assert_eq!(typed_delta.trace_id(), "trace-stream-contract");
@@ -483,28 +494,46 @@ fn configured_child_stream_is_allowlisted_and_keeps_canonical_typed_identity() {
         .expect("typed reasoning delta");
     assert!(matches!(
         typed_reasoning.payload(),
-        RunEventPayload::AssistantDelta { delta } if delta == "child thought"
+        RunEventPayload::ReasoningDelta {
+            delta,
+            reasoning_chars: Some(13),
+            estimated_tokens: Some(3),
+        } if delta == "child thought"
     ));
-    for source in ["tool_call_started", "tool_call_progress"] {
-        let typed_tool = typed_child_streams
-            .iter()
-            .find(|event| event.metadata["event"] == source)
-            .expect("typed tool stream");
-        assert!(matches!(
-            typed_tool.payload(),
-            RunEventPayload::ToolCallStarted {
-                tool_call_id,
-                tool_name,
-                ..
-            } if tool_call_id == "child-tool" && tool_name == "read_file"
-        ));
-    }
+    let typed_tool_started = typed_child_streams
+        .iter()
+        .find(|event| event.metadata["event"] == "tool_call_started")
+        .expect("typed tool start stream");
+    assert!(matches!(
+        typed_tool_started.payload(),
+        RunEventPayload::ModelToolCallStarted {
+            tool_call_id,
+            tool_call_index: Some(0),
+            tool_name,
+            arguments_chars: Some(0),
+            estimated_tokens: Some(0),
+        } if tool_call_id == "child-tool" && tool_name == "read_file"
+    ));
+    let typed_tool_progress = typed_child_streams
+        .iter()
+        .find(|event| event.metadata["event"] == "tool_call_progress")
+        .expect("typed tool progress stream");
+    assert!(matches!(
+        typed_tool_progress.payload(),
+        RunEventPayload::ModelToolCallProgress {
+            tool_call_id,
+            tool_call_index: Some(0),
+            tool_name,
+            arguments_chars: Some(48),
+            estimated_tokens: Some(12),
+        } if tool_call_id == "child-tool" && tool_name == "read_file"
+    ));
     let forged_typed = typed_events
         .iter()
         .find(|event| {
             matches!(
                 event.payload(),
-                RunEventPayload::AssistantDelta { delta }
+                RunEventPayload::AssistantDelta { delta, .. }
                     if delta == "forged canonical parent delta"
             )
         })

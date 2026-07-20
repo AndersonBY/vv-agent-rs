@@ -1,4 +1,7 @@
 use super::*;
+use crate::checkpoint::{OperationKind, OperationState};
+
+const JSON_SAFE_INTEGER_MAX: u64 = (1_u64 << 53) - 1;
 
 pub(super) fn validate_completion_wire_fields(value: &Value) -> Result<(), String> {
     if let Some(value) = value.get("completion_reason") {
@@ -44,6 +47,82 @@ pub(super) fn validate_budget_wire_fields(value: &Value) -> Result<(), String> {
             }
             _ => return Err("run event budget_exhaustion must be an object or null".to_string()),
         }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_stream_wire_fields(
+    payload: &RunEventPayload,
+    cycle_index: Option<u32>,
+) -> Result<(), String> {
+    let require_positive_cycle = || match cycle_index {
+        Some(cycle) if cycle > 0 => Ok(()),
+        _ => Err("stream event requires a positive cycle_index".to_string()),
+    };
+    match payload {
+        RunEventPayload::AssistantDelta {
+            content_chars,
+            estimated_tokens,
+            ..
+        } => {
+            require_positive_cycle()?;
+            validate_stream_counters(&[
+                ("content_chars", *content_chars),
+                ("estimated_tokens", *estimated_tokens),
+            ])
+        }
+        RunEventPayload::ReasoningDelta {
+            reasoning_chars,
+            estimated_tokens,
+            ..
+        } => {
+            require_positive_cycle()?;
+            validate_stream_counters(&[
+                ("reasoning_chars", *reasoning_chars),
+                ("estimated_tokens", *estimated_tokens),
+            ])
+        }
+        RunEventPayload::ModelToolCallStarted {
+            tool_call_id,
+            tool_call_index,
+            tool_name,
+            arguments_chars,
+            estimated_tokens,
+        }
+        | RunEventPayload::ModelToolCallProgress {
+            tool_call_id,
+            tool_call_index,
+            tool_name,
+            arguments_chars,
+            estimated_tokens,
+        } => {
+            require_positive_cycle()?;
+            require_stream_text(tool_call_id, "tool_call_id")?;
+            require_stream_text(tool_name, "tool_name")?;
+            validate_stream_counters(&[
+                ("tool_call_index", *tool_call_index),
+                ("arguments_chars", *arguments_chars),
+                ("estimated_tokens", *estimated_tokens),
+            ])
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_stream_counters(fields: &[(&str, Option<u64>)]) -> Result<(), String> {
+    for (field, value) in fields {
+        if value.is_some_and(|value| value > JSON_SAFE_INTEGER_MAX) {
+            return Err(format!(
+                "run event {field} must be a non-negative JSON-safe integer or null"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn require_stream_text(value: &str, field: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("run event {field} must be a non-empty string"));
     }
     Ok(())
 }

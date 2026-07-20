@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(event) = stream.next().await {
         let event = event?;
         match event.payload() {
-            RunEventPayload::AssistantDelta { delta } => {
+            RunEventPayload::AssistantDelta { delta, .. } => {
                 print!("{delta}");
                 std::io::stdout().flush()?;
                 fragments += 1;

@@ -129,6 +129,14 @@ pub(super) fn canonicalize_sub_agent_stream_event(
             Value::String(lifecycle.trace_id.clone()),
         ),
     ]));
+    if let Some(cycle_index) = payload
+        .get("cycle")
+        .and_then(Value::as_u64)
+        .and_then(|cycle| u32::try_from(cycle).ok())
+        .filter(|cycle| *cycle > 0)
+    {
+        canonical.insert("cycle_index".to_string(), Value::from(cycle_index));
+    }
     Some(canonical)
 }
 
