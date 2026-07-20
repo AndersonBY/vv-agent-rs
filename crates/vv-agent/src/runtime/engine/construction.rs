@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use crate::llm::LlmClient;
 use crate::runtime::backends::RuntimeExecutionBackend;
 use crate::runtime::hooks::RuntimeHook;
+use crate::runtime::lifecycle::AfterCycleHook;
 use crate::tools::{build_default_registry, ToolRegistry};
 use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
@@ -19,6 +20,7 @@ impl<C: LlmClient> AgentRuntime<C> {
             log_preview_chars: None,
             workspace_backend: Arc::new(LocalWorkspaceBackend::new(PathBuf::from("./workspace"))),
             hooks: Vec::new(),
+            after_cycle_hooks: Vec::new(),
             execution_backend: RuntimeExecutionBackend::default(),
             settings_file: None,
             default_backend: None,
@@ -45,6 +47,11 @@ impl<C: LlmClient> AgentRuntime<C> {
 
     pub fn with_hooks(mut self, hooks: Vec<Arc<dyn RuntimeHook>>) -> Self {
         self.hooks = hooks;
+        self
+    }
+
+    pub fn with_after_cycle_hooks(mut self, hooks: Vec<Arc<dyn AfterCycleHook>>) -> Self {
+        self.after_cycle_hooks = hooks;
         self
     }
 

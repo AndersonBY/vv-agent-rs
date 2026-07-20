@@ -462,6 +462,13 @@ impl Runner {
             .hooks
             .extend(self.default_run_config.hooks.iter().cloned());
         runtime.hooks.extend(config.hooks.iter().cloned());
+        runtime.after_cycle_hooks.extend(
+            self.default_run_config
+                .after_cycle_hooks
+                .iter()
+                .chain(config.after_cycle_hooks.iter())
+                .cloned(),
+        );
         runtime
             .hooks
             .push(Arc::new(ApprovalHook::new(tool_policy.clone())));
@@ -582,6 +589,13 @@ impl Runner {
             .hooks
             .iter()
             .chain(config.hooks.iter())
+            .cloned()
+            .collect();
+        background_parent_run_config.after_cycle_hooks = self
+            .default_run_config
+            .after_cycle_hooks
+            .iter()
+            .chain(config.after_cycle_hooks.iter())
             .cloned()
             .collect();
         background_parent_run_config.trace_sink = trace_sink;

@@ -92,7 +92,7 @@ Common environment variables:
 | Settings and model resolution | `tests/vv_llm_integration.rs` |
 | CLI | `tests/cli.rs` |
 | Runtime loop and terminal states | `tests/runtime_cycle.rs`, `tests/cycle_runner.rs` |
-| Runtime hooks | `tests/runtime_cycle/hooks.rs` |
+| LLM/tool hooks and after-cycle lifecycle hooks | `tests/runtime_cycle/hooks.rs`, `tests/runtime_cycle/after_cycle.rs`, `tests/distributed_checkpoint_v2.rs` |
 | Execution backends and state stores | `tests/runtime_backends.rs`, `tests/state_store.rs` |
 | Tools and schemas | `tests/tools_dispatcher.rs`, `tests/tool_schema_contract.rs`, `tests/tool_planner.rs` |
 | Workspace tools/backends | `tests/workspace_tools.rs`, `tests/search_tools.rs`, `tests/live_edit_file.rs` |

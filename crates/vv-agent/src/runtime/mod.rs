@@ -8,6 +8,7 @@ pub mod context;
 pub mod cycle_runner;
 pub mod engine;
 pub mod hooks;
+pub mod lifecycle;
 pub mod processes;
 mod results;
 pub(crate) mod run_definition_v2;
@@ -41,6 +42,10 @@ pub use engine::{
 pub use hooks::{
     AfterLlmEvent, AfterToolCallEvent, BeforeLlmEvent, BeforeLlmPatch, BeforeMemoryCompactEvent,
     BeforeToolCallEvent, BeforeToolCallPatch, RuntimeHook, RuntimeHookManager,
+};
+pub use lifecycle::{
+    AfterCycleAction, AfterCycleDecision, AfterCycleHook, AfterCycleSnapshot, NativeCycleOutcome,
+    NativeCycleOutcomeKind,
 };
 pub use processes::{
     kill_process_tree, read_captured_output, remove_captured_output, start_captured_process,

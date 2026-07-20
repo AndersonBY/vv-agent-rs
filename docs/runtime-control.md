@@ -34,7 +34,8 @@ or change which tools are available.
 - execution backend, cancellation, approval provider/broker/timeout;
 - optional run-budget limits and a host-scoped cumulative cost meter; see
   `run-budgets.md`;
-- runtime hooks, event store policy, trace sink, trace identity/workflow name,
+- runtime hooks, after-cycle lifecycle hooks, event store policy, trace sink,
+  trace identity/workflow name,
   context providers, memory providers, and application state;
 - before-cycle and interruption message providers plus a specific
   `SubTaskManager`;

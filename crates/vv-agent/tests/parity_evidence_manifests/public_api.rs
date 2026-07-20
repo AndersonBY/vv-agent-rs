@@ -1,4 +1,7 @@
 fn public_export_path(id: &str) -> &'static str {
+    if let Some(path) = after_cycle_exports::public_export_path(id) {
+        return path;
+    }
     match id {
         "agent.definition" => export_type!(vv_agent::Agent, "vv_agent::Agent"),
         "agent.run_context" => export_type!(vv_agent::RunContext, "vv_agent::RunContext"),
@@ -523,6 +526,7 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 execution_backend,
                 cancellation_token,
                 hooks,
+                after_cycle_hooks,
                 event_store,
                 event_store_fail_closed,
                 approval_provider,
@@ -923,7 +927,7 @@ fn public_api_manifest_compiles_real_rust_exports() {
             );
         }
     }
-    assert_eq!(capability_ids.len(), 141);
+    assert_eq!(capability_ids.len(), 147);
 
     let surfaces = fixture["surfaces"].as_array().expect("public API surfaces");
     let surface_map = surfaces

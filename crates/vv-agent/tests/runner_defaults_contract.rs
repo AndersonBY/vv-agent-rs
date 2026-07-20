@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use vv_agent::{
-    Agent, AgentStatus, FunctionTool, LLMResponse, LlmClient, LlmRequest, ModelError,
-    ModelProvider, ModelRef, ModelSettings, ResolvedModelConfig, RunConfig, Runner, ScriptStep,
-    ScriptedModelProvider, ToolCall, ToolOutput,
+    AfterCycleDecision, AfterCycleSnapshot, Agent, AgentStatus, FunctionTool, LLMResponse,
+    LlmClient, LlmRequest, ModelError, ModelProvider, ModelRef, ModelSettings, ResolvedModelConfig,
+    RunConfig, Runner, ScriptStep, ScriptedModelProvider, ToolCall, ToolOutput,
 };
 
 const MAX_CYCLES_RANGE_ERROR: &str = "max_cycles must be between 1 and 4294967295";
@@ -13,6 +13,52 @@ const MAX_CYCLES_RANGE_ERROR: &str = "max_cycles must be between 1 and 429496729
 #[derive(Clone)]
 struct ClientCountingProvider {
     client_calls: Arc<AtomicUsize>,
+}
+
+#[tokio::test]
+async fn runner_default_after_cycle_hooks_run_before_per_run_hooks() {
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let default_order = order.clone();
+    let default_hook = Arc::new(move |_snapshot: &AfterCycleSnapshot| {
+        default_order.lock().expect("order").push("default");
+        Ok(Some(AfterCycleDecision::continue_run()))
+    });
+    let run_order = order.clone();
+    let run_hook = Arc::new(move |_snapshot: &AfterCycleSnapshot| {
+        run_order.lock().expect("order").push("run");
+        Ok(Some(AfterCycleDecision::continue_run()))
+    });
+    let runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "demo-model",
+            vec![finish_response("done")],
+        ))
+        .workspace(".")
+        .default_run_config(
+            RunConfig::builder()
+                .after_cycle_hook_arc(default_hook)
+                .build(),
+        )
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("after-cycle-order")
+        .instructions("Finish.")
+        .model(ModelRef::named("demo-model"))
+        .build()
+        .expect("agent");
+
+    let result = runner
+        .run_with_config(
+            &agent,
+            "go",
+            RunConfig::builder().after_cycle_hook_arc(run_hook).build(),
+        )
+        .await
+        .expect("run");
+
+    assert_eq!(result.final_output(), Some("done"));
+    assert_eq!(*order.lock().expect("order"), ["default", "run"]);
 }
 
 impl ModelProvider for ClientCountingProvider {

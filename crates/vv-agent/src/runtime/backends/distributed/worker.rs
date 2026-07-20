@@ -657,7 +657,8 @@ pub(super) fn build_runtime(
         .with_workspace_backend(workspace_backend)
         .with_settings_file(&envelope.recipe.settings_file)
         .with_default_backend(&envelope.recipe.backend)
-        .with_hooks(resolved.hooks.clone());
+        .with_hooks(resolved.hooks.clone())
+        .with_after_cycle_hooks(resolved.after_cycle_hooks.clone());
     if let Some(log_preview_chars) = envelope.recipe.log_preview_chars {
         runtime = runtime.with_log_preview_chars(log_preview_chars);
     }

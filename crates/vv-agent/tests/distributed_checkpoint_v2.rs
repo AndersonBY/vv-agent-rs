@@ -13,10 +13,11 @@ use vv_agent::runtime::backends::distributed::{
 };
 use vv_agent::runtime::checkpoint_codec_v2::checkpoint_v2_from_value;
 use vv_agent::{
-    AgentResult, AgentTask, AmbiguousModelPolicy, AmbiguousToolPolicy, CheckpointStatus,
-    CheckpointStoreV2, ClaimMode, EventOutboxEntry, InMemoryCheckpointStoreV2,
-    InMemoryRunEventStore, ModelSettings, OperationJournalEntry, OperationState, ResumePolicy,
-    RunBudgetLimits, RuntimeRecipe, ToolIdempotency,
+    AfterCycleDecision, AfterCycleHook, AfterCycleSnapshot, AgentResult, AgentTask,
+    AmbiguousModelPolicy, AmbiguousToolPolicy, CheckpointExtension, CheckpointStatus,
+    CheckpointStoreV2, ClaimMode, EventOutboxEntry, ExtensionStateEntry, InMemoryCheckpointStoreV2,
+    InMemoryRunEventStore, LLMResponse, ModelSettings, OperationJournalEntry, OperationState,
+    ResumePolicy, RunBudgetLimits, RuntimeRecipe, ScriptedLlmClient, ToolIdempotency,
 };
 
 const V1_FIXTURE: &str = include_str!("fixtures/parity/distributed_run_envelope_v1.json");
@@ -33,6 +34,66 @@ type ExecutorFn = dyn FnMut(
 
 struct TestExecutor {
     handler: Mutex<Box<ExecutorFn>>,
+}
+
+#[derive(Default)]
+struct StatefulAfterCycleHook {
+    observed_cycles: AtomicUsize,
+    restored_values: Mutex<Vec<usize>>,
+}
+
+impl AfterCycleHook for StatefulAfterCycleHook {
+    fn after_cycle(
+        &self,
+        _snapshot: &AfterCycleSnapshot,
+    ) -> Result<Option<AfterCycleDecision>, String> {
+        self.observed_cycles.fetch_add(1, Ordering::SeqCst);
+        Ok(Some(AfterCycleDecision::continue_run()))
+    }
+}
+
+impl CheckpointExtension for StatefulAfterCycleHook {
+    fn namespace(&self) -> &str {
+        "com.example.lifecycle"
+    }
+
+    fn version(&self) -> &str {
+        "1"
+    }
+
+    fn required(&self) -> bool {
+        true
+    }
+
+    fn snapshot(&self) -> vv_agent::checkpoint::CheckpointResult<Value> {
+        Ok(json!({
+            "observed_cycles": self.observed_cycles.load(Ordering::SeqCst),
+        }))
+    }
+
+    fn restore(&self, state: &Value) -> vv_agent::checkpoint::CheckpointResult<()> {
+        let value = state
+            .get("observed_cycles")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                vv_agent::CheckpointError::new(
+                    "checkpoint_extension_state_invalid",
+                    "observed_cycles is missing",
+                )
+            })?;
+        let value = usize::try_from(value).map_err(|_| {
+            vv_agent::CheckpointError::new(
+                "checkpoint_extension_state_invalid",
+                "observed_cycles exceeds usize",
+            )
+        })?;
+        self.observed_cycles.store(value, Ordering::SeqCst);
+        self.restored_values
+            .lock()
+            .expect("restored values")
+            .push(value);
+        Ok(())
+    }
 }
 
 impl TestExecutor {
@@ -203,7 +264,11 @@ fn distributed_discriminator_round_trips_v2_and_preserves_v1_wire() {
     for case in v2["invalid_cases"].as_array().unwrap() {
         if matches!(
             case["name"].as_str(),
-            Some("definition_digest_mismatch" | "resume_attempt_mismatch")
+            Some(
+                "definition_digest_mismatch"
+                    | "resume_attempt_mismatch"
+                    | "missing_after_cycle_hook_ref"
+            )
         ) {
             continue;
         }
@@ -220,6 +285,121 @@ fn distributed_discriminator_round_trips_v2_and_preserves_v1_wire() {
             case["name"]
         );
     }
+}
+
+#[test]
+fn v2_missing_after_cycle_hook_fails_before_claim() {
+    let store = Arc::new(InMemoryCheckpointStoreV2::new());
+    let checkpoint = minimal_checkpoint(
+        "missing-lifecycle",
+        "task-lifecycle",
+        "run-lifecycle",
+        "trace-lifecycle",
+    );
+    store.create_checkpoint_v2(checkpoint.clone()).unwrap();
+    let registry = registry_with_store(store.clone(), None);
+    let mut envelope = envelope(&checkpoint, 1, ClaimMode::Continue, 1_000, false);
+    envelope
+        .recipe
+        .capabilities
+        .after_cycle_hook_refs
+        .push(CapabilityRef::new("lifecycle.missing", "1").unwrap());
+
+    let error = DistributedCycleWorker::new(registry)
+        .run_cycle(envelope)
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        "unknown distributed capability after_cycle_hook lifecycle.missing@1"
+    );
+    let persisted = store
+        .load_checkpoint_v2("missing-lifecycle")
+        .unwrap()
+        .unwrap();
+    assert_eq!(persisted.revision, 0);
+    assert!(persisted.claim_token.is_none());
+}
+
+#[test]
+fn v2_worker_restores_stateful_after_cycle_hook_before_next_cycle() {
+    let store = Arc::new(InMemoryCheckpointStoreV2::new());
+    let mut checkpoint = minimal_checkpoint(
+        "stateful-lifecycle",
+        "task-stateful-lifecycle",
+        "run-stateful-lifecycle",
+        "trace-stateful-lifecycle",
+    );
+    checkpoint.cycle_index = 1;
+    checkpoint.run_definition["extensions"] = json!([{
+        "namespace": "com.example.lifecycle",
+        "version": "1",
+        "required": true,
+    }]);
+    checkpoint.run_definition["capability_refs"]["after_cycle_hook:0"] =
+        json!({"id": "lifecycle.policy", "version": "1"});
+    checkpoint.extension_state.insert(
+        "com.example.lifecycle".to_string(),
+        ExtensionStateEntry {
+            version: "1".to_string(),
+            required: true,
+            state: json!({"observed_cycles": 1}),
+        },
+    );
+    checkpoint.run_definition_digest =
+        vv_agent::run_definition_digest(&checkpoint.run_definition).unwrap();
+    store.create_checkpoint_v2(checkpoint.clone()).unwrap();
+
+    let hook_ref = CapabilityRef::new("lifecycle.policy", "1").unwrap();
+    let extension_ref = CapabilityRef::new("lifecycle.policy-state", "1").unwrap();
+    let llm_ref = CapabilityRef::new("llm.scripted", "1").unwrap();
+    let hook = Arc::new(StatefulAfterCycleHook::default());
+    let registry = registry_with_store(store.clone(), None);
+    registry.register_after_cycle_hook(hook_ref.clone(), hook.clone());
+    registry.register_checkpoint_extension(extension_ref.clone(), hook.clone());
+    registry.register_llm_client(
+        llm_ref.clone(),
+        Arc::new(ScriptedLlmClient::new(vec![LLMResponse::new("cycle two")])),
+    );
+
+    let mut envelope = envelope(&checkpoint, 2, ClaimMode::Continue, 60_000, false);
+    envelope.recipe.capabilities.llm_client_ref = Some(llm_ref);
+    envelope.recipe.capabilities.after_cycle_hook_refs = vec![hook_ref];
+    envelope.recipe.capabilities.checkpoint_extension_refs.push(
+        DistributedCheckpointExtensionRef {
+            namespace: "com.example.lifecycle".to_string(),
+            reference: extension_ref,
+            required: true,
+        },
+    );
+    envelope
+        .checkpoint_config
+        .as_mut()
+        .expect("checkpoint config")
+        .required_extension_namespaces = vec!["com.example.lifecycle".to_string()];
+
+    let dispatch = DistributedCycleWorker::new(registry)
+        .run_cycle(envelope)
+        .expect("distributed cycle");
+
+    assert!(!dispatch.finished);
+    assert_eq!(
+        hook.restored_values
+            .lock()
+            .expect("restored values")
+            .as_slice(),
+        [1]
+    );
+    assert_eq!(hook.observed_cycles.load(Ordering::SeqCst), 2);
+    let persisted = store
+        .load_checkpoint_v2("stateful-lifecycle")
+        .unwrap()
+        .unwrap();
+    assert_eq!(persisted.cycle_index, 2);
+    assert_eq!(
+        persisted.extension_state["com.example.lifecycle"].state,
+        json!({"observed_cycles": 2})
+    );
 }
 
 #[test]

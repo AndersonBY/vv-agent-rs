@@ -607,6 +607,14 @@ pub(crate) fn validate_distributed_run_definition(
             "runtime_hook",
             envelope.recipe.capabilities.hook_refs.as_slice(),
         ),
+        (
+            "after_cycle_hook",
+            envelope
+                .recipe
+                .capabilities
+                .after_cycle_hook_refs
+                .as_slice(),
+        ),
     ] {
         for (index, reference) in actual.iter().enumerate() {
             let slot = format!("{prefix}:{index}");
@@ -867,6 +875,13 @@ fn validate_behavior_capability_refs(
             .chain(run_config.hooks.iter())
             .enumerate()
             .map(|(index, _)| format!("runtime_hook:{index}")),
+    );
+    required.extend(
+        run_config
+            .after_cycle_hooks
+            .iter()
+            .enumerate()
+            .map(|(index, _)| format!("after_cycle_hook:{index}")),
     );
     required.extend(
         run_config

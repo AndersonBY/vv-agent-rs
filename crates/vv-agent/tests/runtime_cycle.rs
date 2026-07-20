@@ -36,6 +36,8 @@ fn preview_text_for_test(text: &str, log_preview_chars: Option<usize>) -> String
     )
 }
 
+#[path = "runtime_cycle/after_cycle.rs"]
+mod after_cycle;
 #[path = "runtime_cycle/cancellation.rs"]
 mod cancellation;
 #[path = "runtime_cycle/compaction.rs"]

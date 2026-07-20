@@ -272,6 +272,8 @@ pub struct DistributedCapabilities {
     pub memory_provider_refs: Vec<CapabilityRef>,
     #[serde(default)]
     pub hook_refs: Vec<CapabilityRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after_cycle_hook_refs: Vec<CapabilityRef>,
     #[serde(default)]
     pub observer_refs: Vec<CapabilityRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -329,6 +331,10 @@ impl DistributedCapabilities {
         for (field_name, references) in [
             ("memory_provider_refs", self.memory_provider_refs.as_slice()),
             ("hook_refs", self.hook_refs.as_slice()),
+            (
+                "after_cycle_hook_refs",
+                self.after_cycle_hook_refs.as_slice(),
+            ),
             ("observer_refs", self.observer_refs.as_slice()),
         ] {
             for (index, reference) in references.iter().enumerate() {
@@ -389,6 +395,13 @@ impl DistributedCapabilities {
                 "checkpoint_extension_refs".to_string(),
                 serde_json::to_value(&self.checkpoint_extension_refs)
                     .expect("validated checkpoint extension references always serialize"),
+            );
+        }
+        if !self.after_cycle_hook_refs.is_empty() {
+            object.insert(
+                "after_cycle_hook_refs".to_string(),
+                serde_json::to_value(&self.after_cycle_hook_refs)
+                    .expect("validated after-cycle hook references always serialize"),
             );
         }
         value
@@ -612,6 +625,7 @@ impl DistributedRunEnvelope {
                 .capabilities
                 .checkpoint_extension_refs
                 .is_empty()
+            || !self.recipe.capabilities.after_cycle_hook_refs.is_empty()
             || self
                 .recipe
                 .capabilities

@@ -20,7 +20,6 @@ pub(super) struct NoToolResponseRequest<'a, C: LlmClient> {
     pub response: &'a LLMResponse,
     pub messages: &'a mut Vec<Message>,
     pub cycles: &'a mut Vec<CycleRecord>,
-    pub cycle: CycleRecord,
     pub shared_state: &'a BTreeMap<String, Value>,
 }
 
@@ -35,10 +34,8 @@ pub(super) fn handle_no_tool_response<C: LlmClient>(
         response,
         messages,
         cycles,
-        cycle,
         shared_state,
     } = request;
-    cycles.push(cycle);
     match task.no_tool_policy {
         NoToolPolicy::Finish => {
             runtime.emit_log(

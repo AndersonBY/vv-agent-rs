@@ -137,9 +137,9 @@ Core responsibilities:
   live entrypoints.
 - `RunConfig`: per-call model, model settings, workspace, bounds, session,
   tool registry/policy, runtime message injection and observers, diagnostics,
-  hooks, cancellation, optional run budgets, public `ExecutionMode`, providers,
-  event store, and metadata override. See `runtime-control.md` for the complete
-  surface.
+  hooks, after-cycle lifecycle hooks, cancellation, optional run budgets,
+  public `ExecutionMode`, providers, event store, and metadata override. See
+  `runtime-control.md` for the complete surface.
 - `RunHandle`: live event stream, cancellation, state, approval decisions, and
   final result synchronization.
 - `InteractiveAgentClient` / `InteractiveSession`: embedded stateful control over
@@ -181,6 +181,10 @@ The runtime contract separates product concerns from framework concerns:
 - Applications can implement `ApprovalProvider`, `ContextProvider`,
   `MemoryProvider`, `RunEventStore`, `TraceSink`, and `ToolExecutor` without
   depending on internal runtime payloads.
+- Applications can implement `AfterCycleHook` for an optional task-neutral
+  control point after a complete cycle. It can steer the next cycle, add
+  cumulative tool denials, or stop with failure; it cannot expand permissions
+  or manufacture completed/waiting results.
 - Product code should consume `RunEventPayload` for primary UI state instead of
   parsing raw runtime log strings.
 

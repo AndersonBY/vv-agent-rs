@@ -27,6 +27,7 @@ pub(super) struct ToolBatchSetup<'a> {
     pub(super) stream_callback: &'a Option<LlmStreamCallback>,
     pub(super) child_budget_limits: &'a Option<RunBudgetLimits>,
     pub(super) request_tool_schemas: &'a [Value],
+    pub(super) after_cycle_disallowed_tools: &'a [String],
 }
 
 pub(super) struct PreparedToolBatch {
@@ -49,6 +50,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             stream_callback,
             child_budget_limits,
             request_tool_schemas,
+            after_cycle_disallowed_tools,
         } = setup;
         let sub_task_runner = self.build_sub_task_runner(
             task,
@@ -179,12 +181,15 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             .iter()
             .filter_map(|schema| schema["function"]["name"].as_str().map(str::to_string))
             .collect::<Vec<_>>();
-        let options = self
+        let mut options = self
             .tool_policy
             .as_ref()
             .map(ToolRunOptions::from_policy)
             .unwrap_or_default()
             .planned_names(planned_tool_names);
+        for tool_name in after_cycle_disallowed_tools {
+            options = options.disallow(tool_name.clone());
+        }
         PreparedToolBatch {
             context,
             orchestrator,

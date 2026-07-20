@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use crate::llm::LlmClient;
 use crate::runtime::backends::RuntimeExecutionBackend;
 use crate::runtime::hooks::RuntimeHook;
+use crate::runtime::lifecycle::AfterCycleHook;
 use crate::tools::{ToolPolicy, ToolRegistry};
 use crate::workspace::WorkspaceBackend;
 
@@ -17,6 +18,7 @@ pub struct AgentRuntime<C: LlmClient> {
     pub log_preview_chars: Option<usize>,
     pub workspace_backend: Arc<dyn WorkspaceBackend>,
     pub hooks: Vec<Arc<dyn RuntimeHook>>,
+    pub after_cycle_hooks: Vec<Arc<dyn AfterCycleHook>>,
     pub execution_backend: RuntimeExecutionBackend,
     pub settings_file: Option<PathBuf>,
     pub default_backend: Option<String>,

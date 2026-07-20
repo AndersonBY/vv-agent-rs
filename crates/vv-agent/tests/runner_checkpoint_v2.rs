@@ -6,13 +6,13 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use vv_agent::{
-    tool_request_digest, Agent, AgentStatus, CapabilityRef, CheckpointConfig, CheckpointStatus,
-    CheckpointStoreV2, ClaimMode, CycleDispatchResult, CycleDispatcher, DistributedBackend,
-    DistributedCapabilities, DistributedCapabilityRegistry, DistributedCycleWorker, FunctionTool,
-    InMemoryCheckpointStoreV2, InMemoryStateStore, LLMResponse, MemorySession, ModelRef,
-    NoToolPolicy, OperationJournalEntry, OperationState, ResumePolicy, RunConfig, RunEventPayload,
-    Runner, RuntimeRecipe, ScriptStep, ScriptedLlmClient, ScriptedModelProvider, Session, ToolCall,
-    ToolIdempotency, ToolOutput,
+    tool_request_digest, AfterCycleDecision, AfterCycleSnapshot, Agent, AgentStatus, CapabilityRef,
+    CheckpointConfig, CheckpointStatus, CheckpointStoreV2, ClaimMode, CycleDispatchResult,
+    CycleDispatcher, DistributedBackend, DistributedCapabilities, DistributedCapabilityRegistry,
+    DistributedCycleWorker, FunctionTool, InMemoryCheckpointStoreV2, InMemoryStateStore,
+    LLMResponse, MemorySession, ModelRef, NoToolPolicy, OperationJournalEntry, OperationState,
+    ResumePolicy, RunConfig, RunEventPayload, Runner, RuntimeRecipe, ScriptStep, ScriptedLlmClient,
+    ScriptedModelProvider, Session, ToolCall, ToolIdempotency, ToolOutput,
 };
 
 #[derive(Clone)]
@@ -133,6 +133,54 @@ fn checkpoint_config(store: InMemoryCheckpointStoreV2, key: &str) -> CheckpointC
         CapabilityRef::new("session.runner-checkpoint", "1").expect("capability ref"),
     );
     config
+}
+
+#[tokio::test]
+async fn run_definition_pins_after_cycle_hook_capability_slot() {
+    let store = InMemoryCheckpointStoreV2::new();
+    let mut checkpoint = CheckpointConfig::with_store(store.clone());
+    checkpoint.key = Some("after-cycle-definition".to_string());
+    checkpoint.capability_refs.insert(
+        "after_cycle_hook:0".to_string(),
+        CapabilityRef::new("lifecycle.policy", "1").expect("capability ref"),
+    );
+    let hook =
+        Arc::new(|_snapshot: &AfterCycleSnapshot| Ok(Some(AfterCycleDecision::continue_run())));
+    let runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "after-cycle-model",
+            vec![LLMResponse::new("done")],
+        ))
+        .workspace(".")
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("after-cycle-definition-agent")
+        .instructions("Answer.")
+        .model(ModelRef::named("after-cycle-model"))
+        .build()
+        .expect("agent");
+    let config = RunConfig::builder()
+        .max_cycles(1)
+        .no_tool_policy(NoToolPolicy::Finish)
+        .after_cycle_hook_arc(hook)
+        .checkpoint_config(checkpoint)
+        .build();
+
+    let result = runner
+        .run_with_config(&agent, "answer", config)
+        .await
+        .expect("run");
+
+    assert_eq!(result.final_output(), Some("done"));
+    let stored = store
+        .load_checkpoint_v2("after-cycle-definition")
+        .expect("load")
+        .expect("checkpoint");
+    assert_eq!(
+        stored.run_definition["capability_refs"]["after_cycle_hook:0"],
+        json!({"id": "lifecycle.policy", "version": "1"})
+    );
 }
 
 #[derive(Debug, Deserialize)]

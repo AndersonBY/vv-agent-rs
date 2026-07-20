@@ -114,6 +114,9 @@ macro_rules! export_type {
     }};
 }
 
+#[path = "parity_evidence_manifests/after_cycle_exports.rs"]
+mod after_cycle_exports;
+
 include!("parity_evidence_manifests/public_api.rs");
 include!("parity_evidence_manifests/prompt_tools.rs");
 include!("parity_evidence_manifests/fixtures.rs");

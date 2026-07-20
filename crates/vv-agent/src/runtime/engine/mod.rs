@@ -6,6 +6,7 @@ mod construction;
 mod controls;
 mod cycle_inputs;
 mod helpers;
+mod lifecycle;
 mod logging;
 mod memory;
 mod model_request;
@@ -36,13 +37,13 @@ use self::budget::{
     observe_tool_batch_completion, preflight_tool_batch, PreparedRunBudget,
 };
 use self::checkpoint::{CheckpointCoordinator, CheckpointModelCompletion, CheckpointToolPlan};
-use self::completion::{
-    handle_directive_result, handle_no_tool_response, DirectiveResultRequest, NoToolResponseRequest,
-};
 use self::helpers::{
     cancelled_agent_result, collect_interruption_messages, controls_cancelled,
     drain_steering_queue, failed_agent_result, finalize_terminal_projection,
     image_notification_from_tool_result, previous_cycle_memory_usage, project_cycle_cancellation,
+};
+use self::lifecycle::{
+    finalize_no_tool_cycle, finalize_tool_cycle, NoToolCycleFinalization, ToolCycleFinalization,
 };
 use self::memory::{
     memory_compact_completed_event, memory_compact_event_payload, memory_compact_started_event,
@@ -160,6 +161,16 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 ) {
                     return Some(result);
                 }
+                let active_after_cycle_denials = match self.read_after_cycle_denials(
+                    &controls,
+                    cycle_index,
+                    messages,
+                    cycles,
+                    shared_state,
+                ) {
+                    Ok(denials) => denials,
+                    Err(result) => return Some(*result),
+                };
                 self.apply_cycle_inputs(&controls, cycle_index, messages, shared_state);
                 if let Some(result) = project_cycle_cancellation(
                     self,
@@ -258,7 +269,10 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     );
                 }
                 *messages = compacted_messages.clone();
-                let tool_schemas = self.planned_tool_schemas(&task);
+                let tool_schemas = self.planned_tool_schemas_with_after_cycle_denials(
+                    &task,
+                    &active_after_cycle_denials,
+                );
                 let llm_messages = memory_manager.apply_session_memory_context(&compacted_messages);
                 let (request_messages, request_tool_schemas) = hook_manager.apply_before_llm(
                     &task,
@@ -378,7 +392,11 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 "memory_compact_completed",
                                 memory_compact_event_payload(&completed),
                             );
-                            let retry_tool_schemas = self.planned_tool_schemas(&task);
+                            let retry_tool_schemas = self
+                                .planned_tool_schemas_with_after_cycle_denials(
+                                    &task,
+                                    &active_after_cycle_denials,
+                                );
                             let llm_messages =
                                 memory_manager.apply_session_memory_context(&compacted_messages);
                             (request_messages, request_tool_schemas) = hook_manager
@@ -447,31 +465,20 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 }
 
                 if response.tool_calls.is_empty() {
-                    if let Some(result) = handle_no_tool_response(NoToolResponseRequest {
+                    return finalize_no_tool_cycle(NoToolCycleFinalization {
                         runtime: self,
                         controls: &controls,
                         task: &task,
                         cycle_index,
                         response: &response,
+                        cycle,
                         messages,
                         cycles,
-                        cycle,
                         shared_state,
-                    }) {
-                        return Some(result);
-                    }
-                    if cycle_index < task.max_cycles {
-                        if let Some(result) = checkpoint.commit_cycle(
-                            cycle_index,
-                            messages,
-                            cycles,
-                            shared_state,
-                            || budget_controller.as_ref().map(|value| value.snapshot()),
-                        ) {
-                            return Some(result);
-                        }
-                    }
-                    return None;
+                        checkpoint: &checkpoint,
+                        budget_controller: &budget_controller,
+                        persisted_denials: &active_after_cycle_denials,
+                    });
                 }
 
                 if let Some(result) = preflight_tool_batch(
@@ -503,6 +510,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     stream_callback: &effective_stream_callback,
                     child_budget_limits: &child_budget_limits,
                     request_tool_schemas: &request_tool_schemas,
+                    after_cycle_disallowed_tools: &active_after_cycle_denials,
                 });
 
                 let mut directive_result = None;
@@ -931,35 +939,21 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 if let Some(result) = tool_boundary_result {
                     return Some(result);
                 }
-                if let Some(directive_result) = directive_result.as_ref() {
-                    if let Some(result) = handle_directive_result(DirectiveResultRequest {
-                        runtime: self,
-                        controls: &controls,
-                        task: &task,
-                        cycle_index,
-                        result: directive_result,
-                        completion_reason: directive_completion_reason
-                            .expect("terminal tool directive has a completion reason"),
-                        completion_tool_name: directive_completion_tool_name
-                            .as_deref()
-                            .expect("terminal tool directive has a tool name"),
-                        messages,
-                        cycles,
-                        shared_state,
-                    }) {
-                        return Some(result);
-                    }
-                }
-                if cycle_index < task.max_cycles {
-                    if let Some(result) =
-                        checkpoint.commit_cycle(cycle_index, messages, cycles, shared_state, || {
-                            budget_controller.as_ref().map(|value| value.snapshot())
-                        })
-                    {
-                        return Some(result);
-                    }
-                }
-                None
+                finalize_tool_cycle(ToolCycleFinalization {
+                    runtime: self,
+                    controls: &controls,
+                    task: &task,
+                    cycle_index,
+                    directive_result: directive_result.as_ref(),
+                    completion_reason: directive_completion_reason,
+                    completion_tool_name: directive_completion_tool_name.as_deref(),
+                    messages,
+                    cycles,
+                    shared_state,
+                    checkpoint: &checkpoint,
+                    budget_controller: &budget_controller,
+                    persisted_denials: &active_after_cycle_denials,
+                })
             },
             effective_cancellation_token.as_ref(),
             cycle_index_start,

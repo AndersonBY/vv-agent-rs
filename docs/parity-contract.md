@@ -72,6 +72,7 @@ Never repair a contract failure by editing a file under
 | Token and cache usage | `crates/vv-agent/src/types/token_usage.rs`, `crates/vv-agent/src/runtime/token_usage.rs`, `crates/vv-agent/src/llm/vv_llm_client/`, `crates/vv-agent/tests/token_usage.rs` |
 | Assistant reasoning history | `crates/vv-agent/src/memory/message_sanitizer.rs`, `crates/vv-agent/src/llm/vv_llm_client/`, `crates/vv-agent/tests/message_sanitizer.rs`, `crates/vv-agent/tests/completion_policy_contract.rs` |
 | Run budgets | `crates/vv-agent/src/budget.rs`, `crates/vv-agent/src/runtime/engine/budget.rs`, `crates/vv-agent/tests/run_budget.rs` |
+| After-cycle lifecycle hooks | `crates/vv-agent/src/runtime/lifecycle.rs`, `crates/vv-agent/src/runtime/engine/lifecycle.rs`, `crates/vv-agent/src/runtime/run_definition_v2.rs`, `crates/vv-agent/src/runtime/backends/distributed/`, `crates/vv-agent/tests/runtime_cycle/after_cycle.rs`, `crates/vv-agent/tests/distributed_checkpoint_v2.rs` |
 | Completion policy and terminal observations | `crates/vv-agent/src/runner/`, `crates/vv-agent/src/runtime/engine/`, `crates/vv-agent/tests/completion_policy_contract.rs`, `crates/vv-agent/tests/approval_resume_completion.rs`, `crates/vv-agent/tests/runner_terminal_contract.rs` |
 | Distributed runtime | `crates/vv-agent/src/runtime/backends/distributed/`, `crates/vv-agent/src/runtime/checkpoint_codec.rs` |
 | App Server | `crates/vv-agent/src/app_server/`, `crates/vv-agent/tests/app_server_contract_parity.rs` |
@@ -94,6 +95,10 @@ The following are API-shape adaptations, not behavioral differences:
   envelope, checkpoint, lease, and terminal-state contract;
 - Rust `ModelProvider` controls map to Python settings-file and provider
   capabilities.
+- Rust exposes immutable snapshot structs and a trait object; Python uses
+  copied frozen dataclasses and a protocol callback. Both compose
+  runner-default hooks before per-run hooks, persist only cumulative denials,
+  and resolve distributed `after_cycle_hook_refs` before checkpoint claim.
 
 Add a new adaptation only when both implementations preserve input, output,
 safety, persistence, cancellation, and lifecycle semantics.

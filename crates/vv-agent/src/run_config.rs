@@ -16,7 +16,7 @@ use crate::model::{ModelProvider, ModelRef};
 use crate::model_settings::ModelSettings;
 use crate::runtime::backends::RuntimeExecutionBackend;
 use crate::runtime::{
-    BeforeCycleMessageProvider, CancellationToken, InterruptionMessageProvider,
+    AfterCycleHook, BeforeCycleMessageProvider, CancellationToken, InterruptionMessageProvider,
     RuntimeEventHandler, RuntimeHook, SubTaskManager,
 };
 use crate::sessions::Session;
@@ -54,6 +54,7 @@ pub struct RunConfig {
     pub execution_backend: Option<RuntimeExecutionBackend>,
     pub cancellation_token: Option<CancellationToken>,
     pub hooks: Vec<Arc<dyn RuntimeHook>>,
+    pub after_cycle_hooks: Vec<Arc<dyn AfterCycleHook>>,
     pub trace_sink: Option<Arc<dyn TraceSink>>,
     pub trace_id: Option<String>,
     pub workflow_name: Option<String>,
@@ -201,6 +202,16 @@ impl RunConfigBuilder {
 
     pub fn hook(mut self, hook: Arc<dyn RuntimeHook>) -> Self {
         self.config.hooks.push(hook);
+        self
+    }
+
+    pub fn after_cycle_hook(mut self, hook: impl AfterCycleHook + 'static) -> Self {
+        self.config.after_cycle_hooks.push(Arc::new(hook));
+        self
+    }
+
+    pub fn after_cycle_hook_arc(mut self, hook: Arc<dyn AfterCycleHook>) -> Self {
+        self.config.after_cycle_hooks.push(hook);
         self
     }
 

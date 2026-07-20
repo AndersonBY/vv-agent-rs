@@ -10,6 +10,7 @@ use crate::llm::LlmClient;
 use crate::memory::MemoryProvider;
 use crate::runtime::engine::RuntimeEventHandler;
 use crate::runtime::hooks::RuntimeHook;
+use crate::runtime::lifecycle::AfterCycleHook;
 use crate::runtime::state_v2::CheckpointStoreV2;
 use crate::runtime::sub_task_manager::SubTaskManager;
 use crate::runtime::CancellationToken;
@@ -57,6 +58,7 @@ struct CapabilityMaps {
     app_states: BTreeMap<CapabilityKey, Arc<dyn std::any::Any + Send + Sync>>,
     memory_providers: BTreeMap<CapabilityKey, Arc<dyn MemoryProvider>>,
     hooks: BTreeMap<CapabilityKey, Arc<dyn RuntimeHook>>,
+    after_cycle_hooks: BTreeMap<CapabilityKey, Arc<dyn AfterCycleHook>>,
     observers: BTreeMap<CapabilityKey, RuntimeEventHandler>,
     sub_task_managers: BTreeMap<CapabilityKey, SubTaskManager>,
     tool_predicates: BTreeMap<CapabilityKey, CanUseToolPredicate>,
@@ -191,6 +193,16 @@ impl DistributedCapabilityRegistry {
         self.write_unpoisoned().hooks.insert(key(&reference), hook);
     }
 
+    pub fn register_after_cycle_hook(
+        &self,
+        reference: CapabilityRef,
+        hook: Arc<dyn AfterCycleHook>,
+    ) {
+        self.write_unpoisoned()
+            .after_cycle_hooks
+            .insert(key(&reference), hook);
+    }
+
     pub fn register_observer(&self, reference: CapabilityRef, observer: RuntimeEventHandler) {
         self.write_unpoisoned()
             .observers
@@ -321,6 +333,11 @@ impl DistributedCapabilityRegistry {
             &capabilities.memory_provider_refs,
         )?;
         let hooks = required_many(&maps.hooks, "hook", &capabilities.hook_refs)?;
+        let after_cycle_hooks = required_many(
+            &maps.after_cycle_hooks,
+            "after_cycle_hook",
+            &capabilities.after_cycle_hook_refs,
+        )?;
         let observers = required_many(&maps.observers, "observer", &capabilities.observer_refs)?;
         let checkpoint_store = optional(
             &maps.checkpoint_stores,
@@ -356,6 +373,7 @@ impl DistributedCapabilityRegistry {
             app_state,
             memory_providers,
             hooks,
+            after_cycle_hooks,
             observers,
             sub_task_manager,
             checkpoint_store,
@@ -403,6 +421,7 @@ pub struct ResolvedDistributedCapabilities {
     pub app_state: Option<Arc<dyn std::any::Any + Send + Sync>>,
     pub memory_providers: Vec<Arc<dyn MemoryProvider>>,
     pub hooks: Vec<Arc<dyn RuntimeHook>>,
+    pub after_cycle_hooks: Vec<Arc<dyn AfterCycleHook>>,
     pub observers: Vec<RuntimeEventHandler>,
     pub sub_task_manager: Option<SubTaskManager>,
     pub checkpoint_store: Option<Arc<dyn CheckpointStoreV2>>,
