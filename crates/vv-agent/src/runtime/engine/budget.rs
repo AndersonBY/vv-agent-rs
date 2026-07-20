@@ -416,6 +416,7 @@ pub(super) fn budget_failure_result(
         final_answer: None,
         wait_reason: None,
         error: Some("Run budget exhausted.".to_string()),
+        error_code: None,
         shared_state,
         token_usage,
     }

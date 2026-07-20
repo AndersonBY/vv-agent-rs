@@ -8,6 +8,10 @@ use crate::guardrails::{InputGuardrail, OutputGuardrail};
 use crate::handoffs::Handoff;
 use crate::model::ModelRef;
 use crate::model_settings::ModelSettings;
+use crate::output_validation::{
+    HostOutputValidator, OutputRepair, OutputRepairRequest, OutputValidationContext,
+    OutputValidationResult,
+};
 use crate::runtime::RuntimeHook;
 use crate::tools::common::trim_portable_whitespace;
 use crate::tools::{AgentToolBuilder, BackgroundAgentTaskBuilder};
@@ -31,6 +35,12 @@ pub struct Agent {
     output_guardrails: Vec<Arc<dyn OutputGuardrail>>,
     output_type_name: Option<&'static str>,
     output_validator: Option<OutputValidator>,
+    output_validation_enabled: bool,
+    host_output_validator: Option<HostOutputValidator>,
+    output_repair: Option<OutputRepair>,
+    output_validation_max_repairs: u8,
+    output_repair_model: Option<ModelRef>,
+    output_repair_model_settings: Option<ModelSettings>,
     hooks: Vec<Arc<dyn RuntimeHook>>,
     max_cycles: Option<u32>,
     no_tool_policy: Option<NoToolPolicy>,
@@ -55,6 +65,12 @@ impl Agent {
                 output_guardrails: Vec::new(),
                 output_type_name: None,
                 output_validator: None,
+                output_validation_enabled: false,
+                host_output_validator: None,
+                output_repair: None,
+                output_validation_max_repairs: 1,
+                output_repair_model: None,
+                output_repair_model_settings: None,
                 hooks: Vec::new(),
                 max_cycles: None,
                 no_tool_policy: None,
@@ -64,6 +80,7 @@ impl Agent {
                 metadata: Metadata::new(),
             },
             sub_agent_error: None,
+            output_validation_error: None,
         }
     }
 
@@ -121,6 +138,30 @@ impl Agent {
         }
     }
 
+    pub fn output_validation_enabled(&self) -> bool {
+        self.output_validation_enabled
+    }
+
+    pub fn host_output_validator(&self) -> Option<&HostOutputValidator> {
+        self.host_output_validator.as_ref()
+    }
+
+    pub fn output_repair(&self) -> Option<&OutputRepair> {
+        self.output_repair.as_ref()
+    }
+
+    pub fn output_validation_max_repairs(&self) -> u8 {
+        self.output_validation_max_repairs
+    }
+
+    pub fn output_repair_model(&self) -> Option<&ModelRef> {
+        self.output_repair_model.as_ref()
+    }
+
+    pub fn output_repair_model_settings(&self) -> Option<&ModelSettings> {
+        self.output_repair_model_settings.as_ref()
+    }
+
     pub fn hooks(&self) -> &[Arc<dyn RuntimeHook>] {
         &self.hooks
     }
@@ -161,6 +202,7 @@ impl Agent {
 pub struct AgentBuilder {
     agent: Agent,
     sub_agent_error: Option<String>,
+    output_validation_error: Option<String>,
 }
 
 impl AgentBuilder {
@@ -237,6 +279,50 @@ impl AgentBuilder {
         self
     }
 
+    pub fn output_validation_enabled(mut self, enabled: bool) -> Self {
+        self.agent.output_validation_enabled = enabled;
+        self
+    }
+
+    pub fn host_output_validator(
+        mut self,
+        validator: impl Fn(&str, &OutputValidationContext) -> OutputValidationResult
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        self.agent.host_output_validator = Some(Arc::new(validator));
+        self
+    }
+
+    pub fn output_repair(
+        mut self,
+        repair: impl Fn(&OutputRepairRequest) -> Result<String, String> + Send + Sync + 'static,
+    ) -> Self {
+        self.agent.output_repair = Some(Arc::new(repair));
+        self
+    }
+
+    pub fn output_validation_max_repairs(mut self, max_repairs: u8) -> Self {
+        if max_repairs > 1 {
+            self.output_validation_error =
+                Some("output_validation_max_repairs must be 0 or 1".to_string());
+        } else {
+            self.agent.output_validation_max_repairs = max_repairs;
+        }
+        self
+    }
+
+    pub fn output_repair_model(mut self, model: ModelRef) -> Self {
+        self.agent.output_repair_model = Some(model);
+        self
+    }
+
+    pub fn output_repair_model_settings(mut self, settings: ModelSettings) -> Self {
+        self.agent.output_repair_model_settings = Some(settings);
+        self
+    }
+
     pub fn hook(mut self, hook: Arc<dyn RuntimeHook>) -> Self {
         self.agent.hooks.push(hook);
         self
@@ -293,6 +379,15 @@ impl AgentBuilder {
         }
         if let Some(error) = self.sub_agent_error {
             return Err(error);
+        }
+        if let Some(error) = self.output_validation_error {
+            return Err(error);
+        }
+        if self.agent.output_validation_enabled && self.agent.host_output_validator.is_none() {
+            return Err("enabled output validation requires a host_output_validator".to_string());
+        }
+        if self.agent.output_repair.is_some() && self.agent.host_output_validator.is_none() {
+            return Err("output_repair requires a host_output_validator".to_string());
         }
         Ok(self.agent)
     }

@@ -767,6 +767,7 @@ fn failed_result(
         final_answer: None,
         wait_reason: None,
         error: Some(error),
+        error_code: None,
         shared_state,
         token_usage,
     }

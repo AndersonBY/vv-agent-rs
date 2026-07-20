@@ -49,6 +49,7 @@ fn result(status: AgentStatus, error: Option<&str>) -> AgentResult {
         final_answer: (status == AgentStatus::Completed).then(|| "done".to_string()),
         wait_reason: None,
         error: error.map(str::to_string),
+        error_code: None,
         messages: vec![],
         cycles: vec![],
         shared_state: Default::default(),

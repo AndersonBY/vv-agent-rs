@@ -100,6 +100,9 @@ impl AgentResult {
                     .expect("validated budget exhaustion always serializes"),
             );
         }
+        if let Some(error_code) = &self.error_code {
+            payload.insert("error_code".to_string(), Value::String(error_code.clone()));
+        }
         Value::Object(payload)
     }
 
@@ -157,6 +160,7 @@ impl AgentResult {
             final_answer: read_optional_string(object, "final_answer"),
             wait_reason: read_optional_string(object, "wait_reason"),
             error: read_optional_string(object, "error"),
+            error_code: strict_optional_string(object, "error_code")?,
             shared_state: read_metadata(object, "shared_state")?,
             token_usage: object
                 .get("token_usage")

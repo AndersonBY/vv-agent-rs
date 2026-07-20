@@ -140,6 +140,7 @@ pub(super) fn cancelled_agent_result(
         final_answer: None,
         wait_reason: None,
         error: Some("Operation was cancelled".to_string()),
+        error_code: None,
         shared_state,
         token_usage,
     }
@@ -167,6 +168,7 @@ pub(super) fn failed_agent_result(
         final_answer: None,
         wait_reason: None,
         error: Some(error),
+        error_code: None,
         shared_state,
         token_usage,
     }

@@ -45,6 +45,7 @@ cargo test -p vv-agent --test run_handle
 cargo test -p vv-agent --test approval_provider
 cargo test -p vv-agent --test tool_orchestrator
 cargo test -p vv-agent --test tool_metadata_contract
+cargo test -p vv-agent --test output_validation_contract
 cargo test -p vv-agent --test checkpoint_v2_core
 cargo test -p vv-agent --test app_server_contract_parity
 cargo test -p vv-agent --test context_providers
@@ -93,6 +94,7 @@ Common environment variables:
 | --- | --- |
 | Shared contract and canonical producers | `tests/tool_metadata_contract.rs`, `tests/parity_evidence_manifests.rs`, `tests/tool_schema_contract.rs`, `tests/app_server_contract_parity.rs`, `tests/runner_producer_parity.rs` |
 | Tool metadata, legacy comparison defaults, and App Server lifecycle projection | `tests/tool_metadata_contract.rs`, `tests/checkpoint_v2_core.rs`, `tests/app_server_contract_parity.rs` |
+| Optional output validation and tools-free repair | `tests/output_validation_contract.rs`, `tests/runner_checkpoint_v2.rs`, `tests/approval_resume_completion.rs` |
 | Settings and model resolution | `tests/vv_llm_integration.rs` |
 | CLI | `tests/cli.rs` |
 | Runtime loop and terminal states | `tests/runtime_cycle.rs`, `tests/cycle_runner.rs` |

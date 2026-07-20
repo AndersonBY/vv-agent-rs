@@ -141,6 +141,7 @@ fn cli_result_payload_matches_shape() {
         final_answer: Some("done".to_string()),
         wait_reason: None,
         error: None,
+        error_code: None,
         messages: vec![],
         cycles: vec![],
         shared_state: Default::default(),

@@ -15,6 +15,7 @@ duplicating the details.
 | `model-settings.md` | `LLM_SETTINGS`, key-file handling, exact model resolution, defaults, and `vv-llm` boundaries. |
 | `runtime-control.md` | Per-run controls, language adaptations, resume, approvals, sessions, cancellation, and event producers. |
 | `run-budgets.md` | Token, tool, wall-time, and host-cost limits; observations, resume, and distributed behavior. |
+| `output-validation.md` | Default-off host output validation, one-shot tools-free repair, failure, and replay semantics. |
 | `checkpoint-resume.md` | Checkpoint v2 ownership, exact resume, worker reconstruction, terminal ordering, and Apalis result transport. |
 | `app_server.md` | JSONL protocol, lifecycle, approval, schema generation, CLI startup, and host boundary. |
 

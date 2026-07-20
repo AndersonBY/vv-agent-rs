@@ -58,6 +58,8 @@ pub struct AgentResult {
     pub final_answer: Option<String>,
     pub wait_reason: Option<String>,
     pub error: Option<String>,
+    #[serde(default)]
+    pub error_code: Option<String>,
     pub shared_state: Metadata,
     pub token_usage: TaskTokenUsage,
 }
@@ -78,6 +80,7 @@ impl Default for AgentResult {
             final_answer: None,
             wait_reason: None,
             error: None,
+            error_code: None,
             shared_state: Metadata::new(),
             token_usage: TaskTokenUsage::default(),
         }
@@ -117,6 +120,7 @@ impl AgentResult {
             final_answer: Some(final_answer.into()),
             wait_reason: None,
             error: None,
+            error_code: None,
             shared_state,
             token_usage,
         }
@@ -137,6 +141,7 @@ impl AgentResult {
             final_answer: None,
             wait_reason: None,
             error: Some(error.into()),
+            error_code: None,
             shared_state: Metadata::new(),
             token_usage: TaskTokenUsage::default(),
         }

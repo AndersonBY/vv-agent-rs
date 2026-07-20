@@ -83,6 +83,7 @@ where
         final_answer: Some("Reached max cycles without finish signal.".to_string()),
         wait_reason: None,
         error: None,
+        error_code: None,
         shared_state,
         token_usage,
     }
@@ -109,6 +110,7 @@ pub(crate) fn cancelled_backend_result(
         final_answer: None,
         wait_reason: None,
         error: Some("Operation was cancelled".to_string()),
+        error_code: None,
         shared_state,
         token_usage,
     }
@@ -136,6 +138,7 @@ pub(crate) fn failed_backend_result(
         final_answer: None,
         wait_reason: None,
         error: Some(error),
+        error_code: None,
         shared_state,
         token_usage,
     }
