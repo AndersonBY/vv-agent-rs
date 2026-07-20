@@ -173,7 +173,7 @@ Example notifications:
 ```
 
 ```json
-{"method":"item/completed","params":{"itemId":"evt_2","threadId":"thread_1","turnId":"turn_1","type":"toolCall","status":"completed","payload":{"toolCallId":"finish","toolName":"task_finish","status":"success"},"createdAt":1780410000200,"updatedAt":1780410000200}}
+{"method":"item/completed","params":{"itemId":"evt_2","threadId":"thread_1","turnId":"turn_1","type":"toolCall","status":"completed","payload":{"toolCallId":"finish","toolName":"task_finish","status":"success","directive":"finish","errorCode":null,"executionStarted":true,"durationMs":3},"createdAt":1780410000200,"updatedAt":1780410000200}}
 ```
 
 ```json
@@ -192,6 +192,48 @@ new turn after it completes. Both take `threadId`, `expectedTurnId`, and
 `input`, and return `{"threadId":"thread_1","turnId":"turn_1","queued":true}`.
 `turn/interrupt` uses the same `expectedTurnId` guard. Missing active turns
 return `-32030`; stale turn ids return `-32031`.
+
+### Tool Lifecycle Projection
+
+The runtime and App Server intentionally expose different views of planning:
+
+| Runtime `RunEvent` | App Server projection |
+| --- | --- |
+| `tool_call_planned` | No notification and no persisted `AppItem`. The adapter may retain normalized arguments internally for a later approval request, but planning is never presented as execution. |
+| `tool_call_started` | Existing `item/started` and `item/toolCall/delta` notifications. The item payload adds `toolMetadata` when the tool declared typed metadata. |
+| `tool_call_completed` | Existing `item/completed` notification. The payload includes `directive`, `errorCode`, `executionStarted`, and `durationMs` when those fields exist on the source event, plus optional `toolMetadata`. |
+
+App Server uses camelCase inside `AppItem.payload`. A typed declaration is:
+
+```json
+{
+  "toolMetadata": {
+    "sideEffect": "read",
+    "idempotency": "supported",
+    "terminal": false,
+    "capabilityTags": ["source.inspect"],
+    "costDimensions": ["workspace.bytes_read"]
+  }
+}
+```
+
+`terminal` is a capability declaration only; App Server derives turn state
+from the existing runtime result and directive, not from this flag. Capability
+tags and cost dimensions remain opaque exact-match host labels.
+
+A policy or approval denial that never crosses the started boundary produces
+only a failed `item/completed` tool item with `executionStarted=false`,
+`durationMs=null`, and the runtime error code such as `tool_not_allowed`. It
+does not produce `item/started`. Conversely, process loss after a started event
+may leave no completed notification; clients must not infer exactly-once tool
+execution from the item stream.
+
+The App Server protocol stays at `v1`, and all fields above are additive.
+Older clients may ignore them. When replay maps a legacy completed `RunEvent`
+that did not contain the additive outcome fields, it keeps the legacy payload
+instead of fabricating `directive`, `errorCode`, `executionStarted`, or
+`durationMs`. Omitting typed metadata also omits `toolMetadata`; generic tool
+metadata is never promoted into this field.
 
 ### Approval Request And Response
 

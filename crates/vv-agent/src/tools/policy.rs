@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use crate::tools::metadata::{normalize_tool_metadata_labels, utf16_cmp};
+use crate::tools::{ToolMetadata, ToolMetadataError, ToolSideEffect};
 use crate::types::{Metadata, ToolArguments};
 
 pub type CanUseToolPredicate = Arc<dyn Fn(&str, &ToolArguments) -> bool + Send + Sync + 'static>;
@@ -10,6 +12,10 @@ pub struct ToolPolicy {
     pub disallowed_tools: Vec<String>,
     pub approval: ApprovalPolicy,
     pub can_use_tool: Option<CanUseToolPredicate>,
+    pub denied_side_effects: Vec<ToolSideEffect>,
+    pub denied_capability_tags: Vec<String>,
+    pub deny_terminal_tools: bool,
+    pub denied_cost_dimensions: Vec<String>,
 }
 
 impl ToolPolicy {
@@ -31,10 +37,94 @@ impl ToolPolicy {
         self
     }
 
+    pub fn deny_side_effect(mut self, side_effect: ToolSideEffect) -> Self {
+        self.denied_side_effects.push(side_effect);
+        self.normalize_metadata_denials_in_place()
+            .expect("a side-effect enum is always a valid denial");
+        self
+    }
+
+    pub fn deny_capability_tag(
+        mut self,
+        tag: impl Into<String>,
+    ) -> Result<Self, ToolMetadataError> {
+        self.denied_capability_tags.push(tag.into());
+        self.normalize_metadata_denials_in_place()?;
+        Ok(self)
+    }
+
+    pub fn deny_terminal_tools(mut self) -> Self {
+        self.deny_terminal_tools = true;
+        self
+    }
+
+    pub fn deny_cost_dimension(
+        mut self,
+        dimension: impl Into<String>,
+    ) -> Result<Self, ToolMetadataError> {
+        self.denied_cost_dimensions.push(dimension.into());
+        self.normalize_metadata_denials_in_place()?;
+        Ok(self)
+    }
+
     pub fn allows_arguments(&self, tool_name: &str, arguments: &ToolArguments) -> bool {
         self.can_use_tool
             .as_ref()
             .is_none_or(|predicate| predicate(tool_name, arguments))
+    }
+
+    pub fn normalized(&self) -> Result<Self, ToolMetadataError> {
+        let mut normalized = self.clone();
+        normalized.normalize_metadata_denials_in_place()?;
+        Ok(normalized)
+    }
+
+    pub fn metadata_denial_source(&self, metadata: Option<&ToolMetadata>) -> Option<&'static str> {
+        let metadata = metadata?;
+        if self.denied_side_effects.contains(&metadata.side_effect) {
+            return Some("metadata.side_effect");
+        }
+        if self.deny_terminal_tools && metadata.terminal {
+            return Some("metadata.terminal");
+        }
+        if metadata
+            .capability_tags
+            .iter()
+            .any(|tag| self.denied_capability_tags.contains(tag))
+        {
+            return Some("metadata.capability_tag");
+        }
+        if metadata
+            .cost_dimensions
+            .iter()
+            .any(|dimension| self.denied_cost_dimensions.contains(dimension))
+        {
+            return Some("metadata.cost_dimension");
+        }
+        None
+    }
+
+    pub(crate) fn extend_metadata_denials(&mut self, other: &Self) {
+        self.denied_side_effects
+            .extend(other.denied_side_effects.iter().copied());
+        self.denied_capability_tags
+            .extend(other.denied_capability_tags.iter().cloned());
+        self.deny_terminal_tools |= other.deny_terminal_tools;
+        self.denied_cost_dimensions
+            .extend(other.denied_cost_dimensions.iter().cloned());
+        self.normalize_metadata_denials_in_place()
+            .expect("normalized policies remain valid when unioned");
+    }
+
+    pub(crate) fn normalize_metadata_denials_in_place(&mut self) -> Result<(), ToolMetadataError> {
+        self.denied_side_effects
+            .sort_by(|left, right| utf16_cmp(left.as_str(), right.as_str()));
+        self.denied_side_effects.dedup();
+        self.denied_capability_tags =
+            normalize_tool_metadata_labels(&self.denied_capability_tags, "denied_capability_tags")?;
+        self.denied_cost_dimensions =
+            normalize_tool_metadata_labels(&self.denied_cost_dimensions, "denied_cost_dimensions")?;
+        Ok(())
     }
 }
 

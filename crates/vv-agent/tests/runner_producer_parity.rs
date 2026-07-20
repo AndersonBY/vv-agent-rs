@@ -12,13 +12,13 @@ use vv_agent::{
 
 const RUNNER_EVENTS_FIXTURE: &str = include_str!("fixtures/parity/runner_events_v1.jsonl");
 const RUNNER_EVENTS_FIXTURE_SHA256: &str =
-    "3000b4d1647b39a5b938465a2e9aad2bff49eeb75d4ba31a8a326bf456f80965";
+    "76903d30f5f55697a7364f2b0c3caa66bb0205b14012a7e10c3c2dcf07d81b32";
 const STREAM_PROJECTION_FIXTURE: &str = include_str!("fixtures/parity/stream_projection_v1.json");
 const STREAM_PROJECTION_FIXTURE_SHA256: &str =
     "95a3b7d527efad68492d810038ff7be0eecefcd278f8ddad690359c497d79b0a";
 const PYTHON_RUNNER_TRACE_FIXTURE: &str = include_str!("fixtures/parity/runner_trace_v1.jsonl");
 const PYTHON_RUNNER_TRACE_FIXTURE_SHA256: &str =
-    "1396aab48578f9f7f0a6f8202efeeef38c36093b0645c11010f7aed7d93cb62b";
+    "998fb1341dbecc29d1a3ddef95bc9b38a180510485f52c57ad4afcef2d576834";
 const TRACE_FIELDS: &[&str] = &[
     "type",
     "cycle_index",
@@ -29,6 +29,10 @@ const TRACE_FIELDS: &[&str] = &[
     "tool_call_id",
     "arguments",
     "status",
+    "directive",
+    "error_code",
+    "execution_started",
+    "duration_ms",
     "final_output",
 ];
 
@@ -652,22 +656,25 @@ async fn real_runner_projection_matches_python_fixture_bytes() {
         .expect("start");
     let mut stream = handle.events();
     let mut actual = Vec::new();
-    let mut saw_lossless_tool_metadata = false;
+    let mut saw_typed_tool_completion = false;
     while let Some(event) = stream.next().await {
         let event = event.expect("event");
         if matches!(
             event.payload(),
             RunEventPayload::ToolCallCompleted { tool_name, .. } if tool_name == "lookup"
         ) {
+            assert!(event.has_tool_completion_field("directive"));
+            assert!(event.has_tool_completion_field("error_code"));
+            assert!(event.has_tool_completion_field("execution_started"));
+            assert!(event.has_tool_completion_field("duration_ms"));
             assert_eq!(
-                event.metadata()["metadata"]["producer_marker"],
-                json!({"nested": true})
+                event.tool_directive(),
+                Some(vv_agent::ToolDirective::Continue)
             );
-            assert_eq!(
-                event.metadata()["tool_arguments"],
-                json!({"query": "parity"})
-            );
-            saw_lossless_tool_metadata = true;
+            assert_eq!(event.tool_error_code(), None);
+            assert_eq!(event.tool_execution_started(), Some(true));
+            assert!(event.tool_duration_ms().is_some());
+            saw_typed_tool_completion = true;
         }
         let event_type = serde_json::to_value(&event).expect("event JSON")["type"]
             .as_str()
@@ -677,8 +684,12 @@ async fn real_runner_projection_matches_python_fixture_bytes() {
             actual.push(trace_projection(&event));
         }
     }
-    handle.result().await.expect("result");
-    assert!(saw_lossless_tool_metadata);
+    let result = handle.result().await.expect("result");
+    assert!(saw_typed_tool_completion);
+    assert_eq!(
+        result.result().cycles[0].tool_results[0].metadata["producer_marker"],
+        json!({"nested": true})
+    );
     let expected = PYTHON_RUNNER_TRACE_FIXTURE
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).expect("Python trace fixture"))

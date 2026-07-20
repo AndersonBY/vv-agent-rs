@@ -37,5 +37,7 @@ jobs:
           cargo test -p vv-agent \
             --test parity_evidence_manifests \
             --test tool_schema_contract \
+            --test tool_metadata_contract \
+            --test checkpoint_v2_core \
             --test app_server_contract_parity \
             --test runner_producer_parity

@@ -76,9 +76,12 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
 
     pub fn run_with_controls(
         &self,
-        task: AgentTask,
+        mut task: AgentTask,
         mut controls: RuntimeRunControls,
     ) -> Result<AgentResult, LlmError> {
+        if let Some(policy) = self.tool_policy.as_ref() {
+            crate::runtime::tool_planner::project_tool_policy(&mut task, policy);
+        }
         if let Some(context) = controls.execution_context.as_mut() {
             if context.approval_provider.is_some() && context.approval_broker.is_none() {
                 context.approval_broker = Some(crate::approval::ApprovalBroker::default());
@@ -569,81 +572,21 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         CheckpointToolPlan::Continue(plan) => plan,
                         CheckpointToolPlan::Stop(result) => return Some(*result),
                     };
-                    self.emit_log(
-                        &controls,
-                        "tool_call_started",
-                        BTreeMap::from([
-                            ("task_id".to_string(), Value::String(task.task_id.clone())),
-                            (
-                                "agent_name".to_string(),
-                                Value::String(
-                                    task.metadata
-                                        .get("agent_name")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or(&task.task_id)
-                                        .to_string(),
-                                ),
-                            ),
-                            ("cycle".to_string(), Value::from(cycle_index)),
-                            (
-                                "tool_name".to_string(),
-                                Value::String(patched_call.name.clone()),
-                            ),
-                            (
-                                "tool_arguments".to_string(),
-                                Value::Object(patched_call.arguments.clone().into_iter().collect()),
-                            ),
-                            (
-                                "tool_call_id".to_string(),
-                                Value::String(patched_call.id.clone()),
-                            ),
-                        ]),
-                    );
                     let tool_kind = self
                         .tool_registry
                         .get(&patched_call.name)
                         .map(|spec| spec.kind)
                         .ok();
-                    if matches!(
-                        tool_kind,
-                        Some(ToolSpecKind::Agent | ToolSpecKind::BackgroundAgent)
-                    ) {
-                        self.emit_log(
-                            &controls,
-                            "sub_run_started",
-                            BTreeMap::from([
-                                ("task_id".to_string(), Value::String(task.task_id.clone())),
-                                (
-                                    "agent_name".to_string(),
-                                    Value::String(
-                                        task.metadata
-                                            .get("agent_name")
-                                            .and_then(Value::as_str)
-                                            .unwrap_or(&task.task_id)
-                                            .to_string(),
-                                    ),
-                                ),
-                                ("cycle".to_string(), Value::from(cycle_index)),
-                                (
-                                    "parent_run_id".to_string(),
-                                    Value::String(task.task_id.clone()),
-                                ),
-                                (
-                                    "parent_tool_call_id".to_string(),
-                                    Value::String(patched_call.id.clone()),
-                                ),
-                                (
-                                    "task_id_hint".to_string(),
-                                    Value::String(format!("sub_run:{}", patched_call.id)),
-                                ),
-                            ]),
-                        );
-                    }
-                    let mut result = if let Some(mut result) = short_circuit_result {
+                    let mut approval_failure = None;
+                    let mut execution = if let Some(mut result) = short_circuit_result {
                         if needs_tool_call_id(&result.tool_call_id) {
                             result.tool_call_id = call.id.clone();
                         }
-                        result
+                        tool_orchestrator.observe_result_without_execution(
+                            patched_call.clone(),
+                            result,
+                            &tool_run_options,
+                        )
                     } else if let Some(result) = checkpoint_plan
                         .as_ref()
                         .and_then(|plan| plan.replay_result.clone())
@@ -651,9 +594,12 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         context.idempotency_key = checkpoint_plan
                             .as_ref()
                             .map(|plan| plan.idempotency_key.clone());
-                        result
+                        tool_orchestrator.observe_result_without_execution(
+                            patched_call.clone(),
+                            result,
+                            &tool_run_options,
+                        )
                     } else {
-                        let mut approval_failure = None;
                         let effective_tool_run_options = checkpoint.before_tool_dispatch(
                             tool_run_options.clone().idempotency_key(
                                 checkpoint_plan
@@ -662,8 +608,8 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             ),
                             cycle_index,
                         );
-                        let mut result = match block_on_engine_tool_run(
-                            tool_orchestrator.run_one_with_approval_and_metadata(
+                        let execution = match block_on_engine_tool_run(
+                            tool_orchestrator.run_one_with_approval_and_metadata_deferred(
                                 patched_call.clone(),
                                 &mut context,
                                 effective_tool_run_options.clone(),
@@ -710,11 +656,13 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 },
                             ),
                         ) {
-                            Ok(result) => result,
-                            Err(error) => approval_error_result(
-                                &patched_call,
-                                "tool_orchestrator_error",
-                                error.to_string(),
+                            Ok(execution) => execution,
+                            Err(error) => crate::tools::orchestrator::DeferredToolExecution::without_lifecycle(
+                                approval_error_result(
+                                    &patched_call,
+                                    "tool_orchestrator_error",
+                                    error.to_string(),
+                                ),
                             ),
                         };
                         if let Some(result) =
@@ -722,32 +670,13 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         {
                             return Some(result);
                         }
-                        if let Some(error) = approval_failure {
-                            *shared_state = context.shared_state.clone();
-                            if let Some(controller) = &mut budget_controller {
-                                controller.tool_batch_complete(&controls, cycle_index, true, false);
-                            }
-                            cycles.push(cycle);
-                            self.emit_log(
-                                &controls,
-                                "cycle_failed",
-                                BTreeMap::from([
-                                    ("cycle".to_string(), Value::from(cycle_index)),
-                                    ("error".to_string(), Value::String(error.to_string())),
-                                ]),
-                            );
-                            return Some(failed_agent_result(
-                                messages.clone(),
-                                cycles.clone(),
-                                shared_state.clone(),
-                                error.to_string(),
-                            ));
-                        }
-                        if needs_tool_call_id(&result.tool_call_id) {
-                            result.tool_call_id = patched_call.id.clone();
-                        }
-                        result
+                        execution
                     };
+                    let execution_started = execution.execution_started();
+                    let mut result = execution.result().clone();
+                    if needs_tool_call_id(&result.tool_call_id) {
+                        result.tool_call_id = patched_call.id.clone();
+                    }
                     result = hook_manager.apply_after_tool_call(
                         &task,
                         cycle_index,
@@ -758,6 +687,31 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     if needs_tool_call_id(&result.tool_call_id) {
                         result.tool_call_id = patched_call.id.clone();
                     }
+                    let behavior_reason =
+                        apply_tool_use_behavior(&task, &patched_call, &mut result);
+                    execution.replace_result(result);
+                    let result = execution.complete();
+                    if let Some(error) = approval_failure {
+                        *shared_state = context.shared_state.clone();
+                        if let Some(controller) = &mut budget_controller {
+                            controller.tool_batch_complete(&controls, cycle_index, true, false);
+                        }
+                        cycles.push(cycle);
+                        self.emit_log(
+                            &controls,
+                            "cycle_failed",
+                            BTreeMap::from([
+                                ("cycle".to_string(), Value::from(cycle_index)),
+                                ("error".to_string(), Value::String(error.to_string())),
+                            ]),
+                        );
+                        return Some(failed_agent_result(
+                            messages.clone(),
+                            cycles.clone(),
+                            shared_state.clone(),
+                            error.to_string(),
+                        ));
+                    }
                     if let Some(result) = checkpoint.finish_tool(
                         cycle_index,
                         &patched_call,
@@ -767,12 +721,11 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     ) {
                         return Some(result);
                     }
-                    let behavior_reason =
-                        apply_tool_use_behavior(&task, &patched_call, &mut result);
                     if matches!(
                         tool_kind,
                         Some(ToolSpecKind::Agent | ToolSpecKind::BackgroundAgent)
-                    ) {
+                    ) && execution_started
+                    {
                         self.emit_log(
                             &controls,
                             "sub_run_completed",
@@ -855,7 +808,12 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 "skipped_due_to_steering",
                                 "Tool skipped due to queued steering message.",
                             );
-                            self.emit_tool_result(&controls, cycle_index, skipped_call, &skipped);
+                            self.emit_skipped_tool_result(
+                                &controls,
+                                cycle_index,
+                                skipped_call,
+                                &skipped,
+                            );
                             messages.push(skipped.to_message());
                             cycle.tool_results.push(skipped);
                         }
@@ -908,7 +866,12 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         };
                         for skipped_call in response.tool_calls.iter().skip(call_index + 1) {
                             let skipped = skipped_tool_result(skipped_call, error_code, message);
-                            self.emit_tool_result(&controls, cycle_index, skipped_call, &skipped);
+                            self.emit_skipped_tool_result(
+                                &controls,
+                                cycle_index,
+                                skipped_call,
+                                &skipped,
+                            );
                             messages.push(skipped.to_message());
                             cycle.tool_results.push(skipped);
                         }

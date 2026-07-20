@@ -335,6 +335,7 @@ impl RuntimeSubAgentSession {
         match snapshot {
             Some(snapshot) => {
                 let mut tool_policy = snapshot.tool_policy.clone();
+                tool_policy.extend_metadata_denials(&self.tool_policy);
                 add_fixed_child_exclusions(&mut tool_policy, &self.task_template.exclude_tools);
                 EffectiveTurnControls {
                     parent_cancellation_token: snapshot.cancellation_token.clone(),

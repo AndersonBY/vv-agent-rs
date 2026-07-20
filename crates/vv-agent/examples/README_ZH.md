@@ -77,6 +77,52 @@ cargo run -p vv-agent --example 03_sdk_client
 | `28_facade_approval_background_trace` | live approval provider、后台 Agent task 和 JSONL trace exporter。 |
 | `29_typed_final_output` | 将 JSON final output 反序列化为 Rust 类型。 |
 
+### 给现有 Custom Tool Builder 增加元数据
+
+`08_custom_tool` 是现有的 `FunctionTool` builder 示例。宿主可以在同一个 builder 上附加
+类型化能力元数据，并通过 `RunConfig` 传入累加拒绝策略：
+
+```rust
+use serde::Deserialize;
+use serde_json::json;
+use vv_agent::{
+    FunctionTool, RunConfig, ToolIdempotency, ToolMetadata, ToolOutput, ToolPolicy,
+    ToolSideEffect,
+};
+
+#[derive(Deserialize)]
+struct EchoArgs {
+    text: String,
+}
+
+let echo = FunctionTool::builder("echo_uppercase")
+    .description("Return the provided text uppercased.")
+    .tool_metadata(ToolMetadata {
+        side_effect: ToolSideEffect::None,
+        idempotency: ToolIdempotency::Supported,
+        terminal: false,
+        capability_tags: vec!["text.transform".to_string()],
+        cost_dimensions: Vec::new(),
+    })
+    .json_schema(json!({
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"]
+    }))
+    .handler(|_context, args: EchoArgs| async move {
+        Ok(ToolOutput::text(args.text.to_uppercase()))
+    })
+    .build()?;
+
+let config = RunConfig::builder()
+    .tool_policy(ToolPolicy::default().deny_terminal_tools())
+    .build();
+```
+
+Rust 公共字段名是复数 `cost_dimensions`；策略命中后报告的来源是单数
+`metadata.cost_dimension`。typed metadata 和策略都不会改动模型可见 schema；两者均省略时，
+现有 custom-tool 行为保持不变。
+
 高级集成：App Server 协议见 `crates/vv-agent/docs/app_server.md`。产品宿主如果需要通过
 JSON-RPC 控制 thread、turn、item、approval 和 replay，应优先使用这一路径。
 

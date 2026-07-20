@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::ToolContext;
 use crate::checkpoint::ToolIdempotency;
-use crate::tools::ToolApprovalRule;
+use crate::tools::{ToolApprovalRule, ToolMetadata};
 use crate::types::{Metadata, ToolArguments, ToolExecutionResult};
 
 pub type ToolHandler =
@@ -26,6 +26,7 @@ pub struct ToolSpec {
     pub timeout: Option<Duration>,
     pub approval: ToolApprovalRule,
     pub idempotency: ToolIdempotency,
+    pub tool_metadata: Option<ToolMetadata>,
     pub metadata: Metadata,
 }
 
@@ -70,6 +71,7 @@ impl ToolSpec {
             timeout: None,
             approval: ToolApprovalRule::default(),
             idempotency: ToolIdempotency::Unknown,
+            tool_metadata: None,
             metadata: Metadata::new(),
         }
     }

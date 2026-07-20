@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use base64::Engine as _;
 use serde_json::{json, Value};
 use tempfile::tempdir;
+use vv_agent::checkpoint::{canonical_run_definition_bytes, run_definition_comparison_copy};
 use vv_agent::runtime::checkpoint_codec_v2::{checkpoint_v2_from_value, checkpoint_v2_to_value};
 use vv_agent::runtime::state_v2::validate_extension_state_size;
 use vv_agent::{
@@ -17,8 +18,11 @@ use vv_agent::{
 const CODEC_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec_v2.json");
 const V1_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec_v1.json");
 const DEFINITION_FIXTURE: &str = include_str!("fixtures/parity/run_definition_v1.json");
+const LEGACY_DEFINITION_FIXTURE: &str =
+    include_str!("fixtures/parity/run_definition_legacy_v1.json");
 const JOURNAL_FIXTURE: &str = include_str!("fixtures/parity/operation_journal_v1.json");
 const STORE_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_store_v2.json");
+const TOOL_METADATA_FIXTURE: &str = include_str!("fixtures/parity/tool_metadata_v1.json");
 
 fn fixture(raw: &str) -> Value {
     serde_json::from_str(raw).expect("valid parity fixture")
@@ -123,6 +127,127 @@ fn rfc8785_definition_operation_and_event_vectors_match() {
         event_payload_digest(&event["event"]).unwrap(),
         event["sha256"]
     );
+}
+
+#[test]
+fn legacy_run_definitions_preserve_original_bytes_and_digest_when_defaulted_for_comparison() {
+    let legacy_fixture = fixture(LEGACY_DEFINITION_FIXTURE);
+    let current_fixture = fixture(DEFINITION_FIXTURE);
+    let tool_metadata_fixture = fixture(TOOL_METADATA_FIXTURE);
+    let additive_defaults = &legacy_fixture["additive_defaults"];
+    let checkpoint_contract = &tool_metadata_fixture["checkpoint_v2"];
+    assert_eq!(
+        checkpoint_contract["run_definition_tool_field"],
+        "tool_metadata"
+    );
+    assert_eq!(checkpoint_contract["missing_value"], Value::Null);
+    assert_eq!(
+        checkpoint_contract["policy_fields_are_frozen"],
+        Value::Bool(true)
+    );
+    assert_eq!(
+        checkpoint_contract["generic_metadata_is_not_promoted"],
+        Value::Bool(true)
+    );
+    assert_eq!(
+        checkpoint_contract["resume_must_match_original_declaration"],
+        Value::Bool(true)
+    );
+
+    for case in legacy_fixture["cases"].as_array().expect("legacy cases") {
+        let name = case["name"].as_str().expect("legacy case name");
+        let definition = &case["definition"];
+        let original_definition = definition.clone();
+        let expected_bytes = base64::engine::general_purpose::STANDARD
+            .decode(
+                case["canonical_json_base64"]
+                    .as_str()
+                    .expect("legacy canonical bytes"),
+            )
+            .expect("valid legacy canonical base64");
+
+        let canonical_bytes = canonical_run_definition_bytes(definition).unwrap_or_else(|error| {
+            panic!("{name}: legacy definition must remain readable: {error}")
+        });
+        assert_eq!(canonical_bytes, expected_bytes, "{name}");
+        assert_eq!(
+            canonical_bytes.len(),
+            case["canonical_json_utf8_bytes"]
+                .as_u64()
+                .expect("canonical byte length") as usize,
+            "{name}"
+        );
+        assert_eq!(
+            run_definition_digest(definition)
+                .unwrap_or_else(|error| panic!("{name}: legacy digest: {error}")),
+            case["sha256"],
+            "{name}"
+        );
+
+        let comparison = run_definition_comparison_copy(definition);
+        assert_eq!(definition, &original_definition, "{name}");
+        assert_eq!(
+            canonical_run_definition_bytes(definition).expect("stored definition remains valid"),
+            expected_bytes,
+            "{name}"
+        );
+        assert_eq!(
+            run_definition_digest(definition).expect("stored digest remains valid"),
+            case["sha256"],
+            "{name}"
+        );
+
+        for (index, tool) in definition["tools"]
+            .as_array()
+            .expect("legacy tools")
+            .iter()
+            .enumerate()
+        {
+            let metadata_field = checkpoint_contract["run_definition_tool_field"]
+                .as_str()
+                .expect("metadata field");
+            assert!(tool.get(metadata_field).is_none(), "{name}: tool {index}");
+            assert_eq!(
+                comparison["tools"][index][metadata_field],
+                additive_defaults["each_tool"]["tool_metadata"],
+                "{name}: comparison tool {index}"
+            );
+        }
+        for (field, expected) in additive_defaults["tool_policy"]
+            .as_object()
+            .expect("tool policy defaults")
+        {
+            assert!(
+                definition["tool_policy"].get(field).is_none(),
+                "{name}: stored policy field {field}"
+            );
+            assert_eq!(
+                comparison["tool_policy"].get(field),
+                Some(expected),
+                "{name}: comparison policy field {field}"
+            );
+        }
+
+        let current_case_name = match name {
+            "minimal" => "minimal",
+            "full_unicode_float_and_capabilities" => "full_legacy_shape_with_additive_defaults",
+            other => panic!("unexpected legacy run-definition case {other}"),
+        };
+        let current_definition = &current_fixture["golden_cases"]
+            .as_array()
+            .expect("current golden cases")
+            .iter()
+            .find(|current| current["name"] == current_case_name)
+            .unwrap_or_else(|| panic!("missing current run-definition case {current_case_name}"))
+            ["definition"];
+        assert_eq!(
+            canonical_run_definition_bytes(&comparison)
+                .expect("comparison definition canonicalizes"),
+            canonical_run_definition_bytes(current_definition)
+                .expect("current definition canonicalizes"),
+            "{name}"
+        );
+    }
 }
 
 #[test]

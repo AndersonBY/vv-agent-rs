@@ -7,6 +7,7 @@ pub mod dispatcher;
 pub mod executor;
 pub mod function;
 pub mod handlers;
+pub mod metadata;
 pub mod orchestrator;
 pub mod outputs;
 pub mod policy;
@@ -29,7 +30,10 @@ pub use executor::{
     ToolRunContext, ToolSpecContext, ToolSpecExecutor,
 };
 pub use function::{FunctionTool, ToolErrorMapper};
-pub use orchestrator::{BeforeToolDispatch, ToolOrchestrator, ToolRunOptions};
+pub use metadata::{ToolMetadata, ToolMetadataError, ToolSideEffect};
+pub use orchestrator::{
+    BeforeToolDispatch, ToolLifecycleCallback, ToolLifecycleEvent, ToolOrchestrator, ToolRunOptions,
+};
 pub use outputs::ToolOutput;
 pub use policy::{ApprovalDecision, ApprovalPolicy, CanUseToolPredicate, ToolPolicy};
 pub use public_tool::{StaticTool, Tool};

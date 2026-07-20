@@ -55,6 +55,11 @@ pub enum RunEventPayload {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         estimated_tokens: Option<u64>,
     },
+    ToolCallPlanned {
+        tool_call_id: String,
+        tool_name: String,
+        arguments: Value,
+    },
     ToolCallStarted {
         tool_call_id: String,
         tool_name: String,
@@ -229,6 +234,8 @@ pub enum ToolStatus {
     Success,
     Error,
     WaitResponse,
+    Running,
+    PendingCompress,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -5,6 +5,7 @@ mod capabilities;
 mod checkpoint;
 mod checkpointed_cycle;
 mod contract;
+mod contract_helpers;
 mod dispatch;
 mod execution;
 mod r#loop;

@@ -141,21 +141,26 @@ pub fn map_run_event_to_notifications(
                 }),
             })]
         }
+        RunEventPayload::ToolCallPlanned { .. } => Vec::new(),
         RunEventPayload::ToolCallStarted {
             tool_call_id,
             tool_name,
             arguments,
         } => {
+            let mut payload = serde_json::json!({
+                "toolCallId": tool_call_id,
+                "toolName": tool_name,
+            });
+            if let Some(tool_metadata) = event.tool_metadata() {
+                payload["toolMetadata"] = tool_metadata_payload(&tool_metadata);
+            }
             let item = item(
                 thread_id,
                 turn_id,
                 event,
                 AppItemKind::ToolCall,
                 AppItemStatus::Started,
-                serde_json::json!({
-                    "toolCallId": tool_call_id,
-                    "toolName": tool_name,
-                }),
+                payload,
             );
             vec![
                 ServerNotification::ItemStarted(ItemStartedParams { item: item.clone() }),
@@ -170,17 +175,40 @@ pub fn map_run_event_to_notifications(
             tool_name,
             status,
         } => {
+            let mut payload = serde_json::json!({
+                "toolCallId": tool_call_id,
+                "toolName": tool_name,
+                "status": status,
+            });
+            if event.has_tool_completion_field("directive") {
+                payload["directive"] = event
+                    .tool_directive()
+                    .map(|value| serde_json::to_value(value).expect("directive serializes"))
+                    .unwrap_or(Value::Null);
+            }
+            if event.has_tool_completion_field("error_code") {
+                payload["errorCode"] = event
+                    .tool_error_code()
+                    .map_or(Value::Null, |value| Value::String(value.to_string()));
+            }
+            if event.has_tool_completion_field("execution_started") {
+                payload["executionStarted"] = event
+                    .tool_execution_started()
+                    .map_or(Value::Null, Value::Bool);
+            }
+            if event.has_tool_completion_field("duration_ms") {
+                payload["durationMs"] = event.tool_duration_ms().map_or(Value::Null, Value::from);
+            }
+            if let Some(tool_metadata) = event.tool_metadata() {
+                payload["toolMetadata"] = tool_metadata_payload(&tool_metadata);
+            }
             let item = item(
                 thread_id,
                 turn_id,
                 event,
                 AppItemKind::ToolCall,
                 tool_status_to_item_status(*status),
-                serde_json::json!({
-                    "toolCallId": tool_call_id,
-                    "toolName": tool_name,
-                    "status": status,
-                }),
+                payload,
             );
             vec![ServerNotification::ItemCompleted(ItemCompletedParams {
                 item,
@@ -352,6 +380,18 @@ fn tool_status_to_item_status(status: ToolStatus) -> AppItemStatus {
         ToolStatus::Started => AppItemStatus::Started,
         ToolStatus::Success => AppItemStatus::Completed,
         ToolStatus::Error => AppItemStatus::Failed,
-        ToolStatus::WaitResponse => AppItemStatus::InProgress,
+        ToolStatus::WaitResponse | ToolStatus::Running | ToolStatus::PendingCompress => {
+            AppItemStatus::InProgress
+        }
     }
+}
+
+fn tool_metadata_payload(metadata: &crate::tools::ToolMetadata) -> Value {
+    serde_json::json!({
+        "sideEffect": metadata.side_effect,
+        "idempotency": metadata.idempotency,
+        "terminal": metadata.terminal,
+        "capabilityTags": metadata.capability_tags,
+        "costDimensions": metadata.cost_dimensions,
+    })
 }

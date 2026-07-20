@@ -10,7 +10,7 @@ use crate::runtime::backends::InlineBackend;
 use crate::runtime::context::ExecutionContext;
 use crate::runtime::engine::{AgentRuntime, RuntimeEventHandler, RuntimeRunControls};
 use crate::runtime::state::{Checkpoint, LeaseOperationClock, StateStore};
-use crate::runtime::tool_planner::project_tool_policy;
+use crate::runtime::tool_planner::{project_tool_policy, projected_metadata_denials};
 use crate::types::{AgentResult, AgentStatus, Metadata};
 use crate::workspace::LocalWorkspaceBackend;
 
@@ -282,10 +282,14 @@ impl DistributedCycleWorker {
         }
 
         // Resolve the complete capability graph before claiming work or calling the model.
-        let resolved = self
+        let mut resolved = self
             .capabilities
             .resolve(&envelope.recipe.capabilities)
             .map_err(|error| error.to_string())?;
+        let projected_policy = projected_metadata_denials(&envelope.task)?;
+        resolved
+            .tool_policy
+            .extend_metadata_denials(&projected_policy);
         let runtime = build_runtime(&envelope, &resolved)?;
         let heartbeat_state_store = envelope
             .recipe

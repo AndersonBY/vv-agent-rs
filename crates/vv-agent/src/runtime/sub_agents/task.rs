@@ -106,9 +106,9 @@ pub(super) fn build_sub_agent_task(
             .entry("reserved_output_tokens".to_string())
             .or_insert_with(|| Value::from(max_output_tokens));
     }
-    if let Some(policy) = context.tool_policy.as_ref() {
-        project_tool_policy(&mut sub_task, policy);
-    }
+    let mut effective_policy = context.tool_policy.clone().unwrap_or_default();
+    effective_policy.extend_metadata_denials(&sub_agent.declared_tool_policy());
+    project_tool_policy(&mut sub_task, &effective_policy);
     sub_task
 }
 

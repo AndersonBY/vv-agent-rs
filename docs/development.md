@@ -44,6 +44,9 @@ cargo test -p vv-agent --test event_store
 cargo test -p vv-agent --test run_handle
 cargo test -p vv-agent --test approval_provider
 cargo test -p vv-agent --test tool_orchestrator
+cargo test -p vv-agent --test tool_metadata_contract
+cargo test -p vv-agent --test checkpoint_v2_core
+cargo test -p vv-agent --test app_server_contract_parity
 cargo test -p vv-agent --test context_providers
 cargo test -p vv-agent --test memory_provider
 cargo test -p vv-agent --test session_graph_events
@@ -88,13 +91,14 @@ Common environment variables:
 
 | Change area | Primary tests |
 | --- | --- |
-| Shared contract and canonical producers | `tests/parity_evidence_manifests.rs`, `tests/tool_schema_contract.rs`, `tests/app_server_contract_parity.rs`, `tests/runner_producer_parity.rs` |
+| Shared contract and canonical producers | `tests/tool_metadata_contract.rs`, `tests/parity_evidence_manifests.rs`, `tests/tool_schema_contract.rs`, `tests/app_server_contract_parity.rs`, `tests/runner_producer_parity.rs` |
+| Tool metadata, legacy comparison defaults, and App Server lifecycle projection | `tests/tool_metadata_contract.rs`, `tests/checkpoint_v2_core.rs`, `tests/app_server_contract_parity.rs` |
 | Settings and model resolution | `tests/vv_llm_integration.rs` |
 | CLI | `tests/cli.rs` |
 | Runtime loop and terminal states | `tests/runtime_cycle.rs`, `tests/cycle_runner.rs` |
 | LLM/tool hooks and after-cycle lifecycle hooks | `tests/runtime_cycle/hooks.rs`, `tests/runtime_cycle/after_cycle.rs`, `tests/distributed_checkpoint_v2.rs` |
 | Execution backends and state stores | `tests/runtime_backends.rs`, `tests/state_store.rs` |
-| Tools and schemas | `tests/tools_dispatcher.rs`, `tests/tool_schema_contract.rs`, `tests/tool_planner.rs` |
+| Tools and schemas | `tests/tool_metadata_contract.rs`, `tests/tools_dispatcher.rs`, `tests/tool_schema_contract.rs`, `tests/tool_planner.rs` |
 | Workspace tools/backends | `tests/workspace_tools.rs`, `tests/search_tools.rs`, `tests/live_edit_file.rs` |
 | Memory and compaction | `tests/memory_tools.rs`, `tests/microcompact.rs`, `tests/post_compact_restore.rs` |
 | External memory provider contract | `tests/memory_provider.rs` |

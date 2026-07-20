@@ -14,6 +14,7 @@ use vv_agent::runtime::state::{Checkpoint, StateStore};
 use vv_agent::{
     build_default_registry, AgentStatus, AgentTask, LLMResponse, Message, NoToolPolicy,
     RuntimeRecipe, ScriptStep, ScriptedLlmClient, ToolCall, ToolDirective, ToolExecutionResult,
+    ToolMetadata, ToolResultStatus, ToolSideEffect, ToolSpec,
 };
 
 const FIXTURE: &str = include_str!("fixtures/parity/distributed_run_envelope_v1.json");
@@ -316,6 +317,7 @@ fn distributed_worker_reconstructs_custom_tool_policy_and_app_state() {
             disallowed_tools: Vec::new(),
             approval: "never".to_string(),
             predicate_ref: Some(predicate_ref),
+            ..DistributedToolPolicy::default()
         },
         llm_client_ref: Some(llm_ref),
         app_state_ref: Some(app_state_ref),
@@ -357,6 +359,150 @@ fn distributed_worker_reconstructs_custom_tool_policy_and_app_state() {
         .expect("terminal checkpoint");
     assert!(terminal.terminal_result.is_some());
     assert_eq!(dispatch.checkpoint_revision, Some(terminal.revision));
+}
+
+#[test]
+fn distributed_v1_preserves_metadata_denials_and_blocks_execute_tool() {
+    let temp = tempfile::tempdir().expect("distributed metadata denial tempdir");
+    let store = vv_agent::SqliteStateStore::new(temp.path().join("metadata-denial.sqlite3"))
+        .expect("state store");
+    let mut task = AgentTask::new("worker-metadata-denial", "model-x", "system", "prompt");
+    task.max_cycles = 1;
+    task.extra_tool_names.push("execute_probe".to_string());
+    task.metadata.insert(
+        "_vv_agent_denied_side_effects".to_string(),
+        serde_json::json!(["execute"]),
+    );
+    task.metadata.insert(
+        "_vv_agent_denied_capability_tags".to_string(),
+        serde_json::json!(["process.spawn"]),
+    );
+    task.metadata.insert(
+        "_vv_agent_deny_terminal_tools".to_string(),
+        Value::Bool(true),
+    );
+    task.metadata.insert(
+        "_vv_agent_denied_cost_dimensions".to_string(),
+        serde_json::json!(["cpu.second"]),
+    );
+    store
+        .create_checkpoint(Checkpoint {
+            task_id: task.task_id.clone(),
+            cycle_index: 0,
+            status: AgentStatus::Running,
+            messages: vec![Message::system("system"), Message::user("prompt")],
+            cycles: Vec::new(),
+            shared_state: Default::default(),
+            revision: 0,
+            claim_token: None,
+            claimed_cycle: None,
+            lease_expires_at_ms: None,
+            terminal_result: None,
+            budget_usage: None,
+        })
+        .expect("initial checkpoint");
+
+    let executor_called = Arc::new(AtomicBool::new(false));
+    let executor_called_for_handler = Arc::clone(&executor_called);
+    let mut execute_probe = ToolSpec::new(
+        "execute_probe",
+        "Execute a process.",
+        Arc::new(move |_context, _arguments| {
+            executor_called_for_handler.store(true, Ordering::SeqCst);
+            ToolExecutionResult::success("", "must not run")
+        }),
+    );
+    execute_probe.tool_metadata = Some(ToolMetadata {
+        side_effect: ToolSideEffect::Execute,
+        terminal: true,
+        capability_tags: vec!["process.spawn".to_string()],
+        cost_dimensions: vec!["cpu.second".to_string()],
+        ..ToolMetadata::default()
+    });
+    let mut tools = build_default_registry();
+    tools
+        .register(execute_probe)
+        .expect("register execute tool");
+    let custom_toolset = ToolsetRef {
+        id: "toolset.metadata-denial".to_string(),
+        version: "1".to_string(),
+        schema_digest: toolset_schema_digest(&tools).expect("custom digest"),
+    };
+    let llm_ref = CapabilityRef::new("llm.metadata-denial", "1").expect("LLM ref");
+    let registry = DistributedCapabilityRegistry::new();
+    registry
+        .register_toolset(custom_toolset.clone(), tools)
+        .expect("custom toolset");
+    registry.register_llm_client(
+        llm_ref.clone(),
+        Arc::new(ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+            "run probe",
+            vec![ToolCall::new(
+                "execute-1",
+                "execute_probe",
+                Default::default(),
+            )],
+        )])),
+    );
+
+    let mut recipe = RuntimeRecipe::new(
+        temp.path().join("unused.json").display().to_string(),
+        "backend-x",
+        "model-x",
+        temp.path().join("workspace").display().to_string(),
+    );
+    recipe.state_store = store.state_store_spec();
+    recipe.capabilities = DistributedCapabilities {
+        toolset_ref: custom_toolset,
+        llm_client_ref: Some(llm_ref),
+        ..DistributedCapabilities::default()
+    };
+    let payload = DistributedRunEnvelope::for_cycle(
+        task,
+        recipe,
+        1,
+        DEFAULT_CYCLE_NAME,
+        Some("run-worker-metadata-denial".to_string()),
+        Some(2_000_000_000_000),
+        DEFAULT_LEASE_DURATION_MS,
+        None,
+    )
+    .expect("worker envelope")
+    .to_dict();
+
+    assert_eq!(
+        payload["recipe"]["capabilities"]["tool_policy"],
+        serde_json::json!({
+            "allowed_tools": null,
+            "disallowed_tools": [],
+            "approval": "default",
+            "predicate_ref": null,
+        })
+    );
+    let restored = DistributedRunEnvelope::from_dict(&payload).expect("restored v1 envelope");
+    let restored_policy = &restored.recipe.capabilities.tool_policy;
+    assert_eq!(
+        restored_policy.denied_side_effects,
+        [ToolSideEffect::Execute]
+    );
+    assert_eq!(restored_policy.denied_capability_tags, ["process.spawn"]);
+    assert!(restored_policy.deny_terminal_tools);
+    assert_eq!(restored_policy.denied_cost_dimensions, ["cpu.second"]);
+
+    let dispatch = DistributedCycleWorker::new(registry)
+        .run_cycle(restored)
+        .expect("distributed worker cycle");
+
+    assert!(!dispatch.finished);
+    assert!(!executor_called.load(Ordering::SeqCst));
+    let checkpoint = store
+        .load_checkpoint("worker-metadata-denial")
+        .expect("load checkpoint")
+        .expect("checkpoint");
+    let denied = &checkpoint.cycles[0].tool_results[0];
+    assert_eq!(denied.status, ToolResultStatus::Error);
+    assert_eq!(denied.error_code.as_deref(), Some("tool_not_allowed"));
+    assert_eq!(denied.metadata["policy_source"], "planned_name");
 }
 
 #[test]

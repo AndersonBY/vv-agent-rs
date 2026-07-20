@@ -9,7 +9,9 @@ use crate::llm::{LlmClient, LlmStreamCallback};
 use crate::runtime::cancellation::CancellationToken;
 use crate::runtime::sub_agents::SubTaskRunControls;
 use crate::runtime::sub_task_manager::{SubTaskManager, SubTaskTurnSnapshot};
-use crate::tools::{ToolContext, ToolOrchestrator, ToolRunOptions};
+use crate::tools::{
+    ToolContext, ToolLifecycleEvent, ToolOrchestrator, ToolRunOptions, ToolSpecKind,
+};
 use crate::types::AgentTask;
 use crate::workspace::WorkspaceBackend;
 
@@ -190,10 +192,154 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         for tool_name in after_cycle_disallowed_tools {
             options = options.disallow(tool_name.clone());
         }
+        let runtime_handler = self.log_handler.clone();
+        let event_handler = controls.log_handler.clone();
+        let execution_context = controls.execution_context.clone();
+        let task_id = task.task_id.clone();
+        let agent_name = task
+            .metadata
+            .get("agent_name")
+            .and_then(Value::as_str)
+            .unwrap_or(&task.task_id)
+            .to_string();
+        let sub_run_tool_names = request_tool_schemas
+            .iter()
+            .filter_map(|schema| schema["function"]["name"].as_str())
+            .filter(|name| {
+                self.tool_registry.get(name).is_ok_and(|spec| {
+                    matches!(
+                        spec.kind,
+                        ToolSpecKind::Agent | ToolSpecKind::BackgroundAgent
+                    )
+                })
+            })
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>();
+        options = options.lifecycle_callback(Arc::new(move |event| {
+            let sub_run_call_id = match &event {
+                ToolLifecycleEvent::Started { call, .. }
+                    if sub_run_tool_names.contains(&call.name) =>
+                {
+                    Some(call.id.clone())
+                }
+                _ => None,
+            };
+            let (event_name, mut payload) = lifecycle_log_payload(event, cycle_index);
+            payload.insert("task_id".to_string(), Value::String(task_id.clone()));
+            payload.insert("agent_name".to_string(), Value::String(agent_name.clone()));
+            super::logging::emit_runtime_log(
+                runtime_handler.as_ref(),
+                event_handler.as_ref(),
+                execution_context.as_ref(),
+                event_name,
+                payload,
+            );
+            if let Some(tool_call_id) = sub_run_call_id {
+                super::logging::emit_runtime_log(
+                    runtime_handler.as_ref(),
+                    event_handler.as_ref(),
+                    execution_context.as_ref(),
+                    "sub_run_started",
+                    BTreeMap::from([
+                        ("task_id".to_string(), Value::String(task_id.clone())),
+                        ("agent_name".to_string(), Value::String(agent_name.clone())),
+                        ("cycle".to_string(), Value::from(cycle_index)),
+                        ("parent_run_id".to_string(), Value::String(task_id.clone())),
+                        (
+                            "parent_tool_call_id".to_string(),
+                            Value::String(tool_call_id.clone()),
+                        ),
+                        (
+                            "task_id_hint".to_string(),
+                            Value::String(format!("sub_run:{tool_call_id}")),
+                        ),
+                    ]),
+                );
+            }
+        }));
         PreparedToolBatch {
             context,
             orchestrator,
             options,
+        }
+    }
+}
+
+fn lifecycle_log_payload(
+    event: ToolLifecycleEvent,
+    cycle_index: u32,
+) -> (&'static str, BTreeMap<String, Value>) {
+    let mut payload = BTreeMap::from([("cycle".to_string(), Value::from(cycle_index))]);
+    let planned = matches!(&event, ToolLifecycleEvent::Planned { .. });
+    match event {
+        ToolLifecycleEvent::Planned {
+            call,
+            tool_metadata,
+        }
+        | ToolLifecycleEvent::Started {
+            call,
+            tool_metadata,
+        } => {
+            let event_name = if planned {
+                "tool_call_planned"
+            } else {
+                "tool_call_started"
+            };
+            payload.insert("tool_name".to_string(), Value::String(call.name));
+            payload.insert("tool_call_id".to_string(), Value::String(call.id));
+            payload.insert(
+                "arguments".to_string(),
+                Value::Object(call.arguments.into_iter().collect()),
+            );
+            if let Some(tool_metadata) = tool_metadata {
+                payload.insert(
+                    "tool_metadata".to_string(),
+                    serde_json::to_value(tool_metadata)
+                        .expect("normalized tool metadata must serialize"),
+                );
+            }
+            (event_name, payload)
+        }
+        ToolLifecycleEvent::Completed {
+            call,
+            result,
+            execution_started,
+            duration_ms,
+            tool_metadata,
+        } => {
+            payload.insert("tool_name".to_string(), Value::String(call.name));
+            payload.insert(
+                "tool_call_id".to_string(),
+                Value::String(result.tool_call_id),
+            );
+            payload.insert(
+                "status".to_string(),
+                super::logging::tool_result_status_value(result.status),
+            );
+            payload.insert(
+                "directive".to_string(),
+                serde_json::to_value(result.directive).expect("tool directive must serialize"),
+            );
+            payload.insert(
+                "error_code".to_string(),
+                result.error_code.map(Value::String).unwrap_or(Value::Null),
+            );
+            payload.insert(
+                "execution_started".to_string(),
+                Value::Bool(execution_started),
+            );
+            payload.insert(
+                "duration_ms".to_string(),
+                duration_ms.map(Value::from).unwrap_or(Value::Null),
+            );
+            if let Some(tool_metadata) = tool_metadata {
+                payload.insert(
+                    "tool_metadata".to_string(),
+                    serde_json::to_value(tool_metadata)
+                        .expect("normalized tool metadata must serialize"),
+                );
+            }
+            ("tool_call_completed", payload)
         }
     }
 }

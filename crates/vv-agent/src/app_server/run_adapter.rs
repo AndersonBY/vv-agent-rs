@@ -271,13 +271,20 @@ impl AppServerRunAdapter {
             while let Some(event) = events.next().await {
                 match event {
                     Ok(event) => {
-                        if let RunEventPayload::ToolCallStarted {
-                            tool_call_id,
-                            arguments,
-                            ..
-                        } = event.payload()
-                        {
-                            tool_arguments.insert(tool_call_id.clone(), arguments.clone());
+                        match event.payload() {
+                            RunEventPayload::ToolCallPlanned {
+                                tool_call_id,
+                                arguments,
+                                ..
+                            }
+                            | RunEventPayload::ToolCallStarted {
+                                tool_call_id,
+                                arguments,
+                                ..
+                            } => {
+                                tool_arguments.insert(tool_call_id.clone(), arguments.clone());
+                            }
+                            _ => {}
                         }
                         let mut notifications =
                             map_run_event_to_notifications(&thread_id, &turn_id, &event);

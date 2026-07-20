@@ -25,7 +25,7 @@ pub fn dispatch_tool_call(
     }
 }
 
-fn argument_error_result(call: &ToolCall) -> Option<ToolExecutionResult> {
+pub(crate) fn argument_error_result(call: &ToolCall) -> Option<ToolExecutionResult> {
     let extra = call.extra_content.as_ref()?.as_object()?;
     let error_code = extra
         .get("argument_error_code")

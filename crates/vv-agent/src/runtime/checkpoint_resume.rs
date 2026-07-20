@@ -11,11 +11,12 @@ use sha2::{Digest, Sha256};
 
 use crate::budget::BudgetUsageSnapshot;
 use crate::checkpoint::{
-    event_payload_digest, operation_request_digest, AmbiguousModelPolicy, AmbiguousToolPolicy,
-    CheckpointConfig, CheckpointError, CheckpointExtension, CheckpointResult, CheckpointStatus,
-    ClaimMode, EventCursor, OperationKind, OperationState, ReconciliationDecision,
-    ReconciliationDecisionKind, ReconciliationProvider, ResumeObservation, ResumePolicy,
-    ToolIdempotency, OPERATION_REQUEST_SCHEMA,
+    event_payload_digest, operation_request_digest, run_definition_comparison_copy,
+    run_definition_digest, AmbiguousModelPolicy, AmbiguousToolPolicy, CheckpointConfig,
+    CheckpointError, CheckpointExtension, CheckpointResult, CheckpointStatus, ClaimMode,
+    EventCursor, OperationKind, OperationState, ReconciliationDecision, ReconciliationDecisionKind,
+    ReconciliationProvider, ResumeObservation, ResumePolicy, ToolIdempotency,
+    OPERATION_REQUEST_SCHEMA,
 };
 use crate::event_store::RunEventStore;
 use crate::events::{RunEvent, RunEventPayload};

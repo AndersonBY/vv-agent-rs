@@ -5,13 +5,13 @@ use crate::llm::LlmClient;
 use crate::runtime::hooks::RuntimeHookManager;
 use crate::tools::ToolError;
 use crate::types::AgentTask;
-use crate::types::ToolExecutionResult;
 
 use super::AgentRuntime;
 
 impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
     pub(super) fn planned_tool_schemas(&self, task: &AgentTask) -> Vec<Value> {
-        self.tool_registry.planned_openai_schemas(task)
+        self.tool_registry
+            .planned_openai_schemas_with_policy(task, self.tool_policy.as_ref())
     }
 
     pub(super) fn hook_manager(&self) -> RuntimeHookManager {
@@ -19,9 +19,9 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
     }
 }
 
-pub(super) fn block_on_engine_tool_run<'a>(
-    future: impl std::future::Future<Output = Result<ToolExecutionResult, ToolError>> + 'a,
-) -> Result<ToolExecutionResult, ToolError> {
+pub(super) fn block_on_engine_tool_run<'a, T>(
+    future: impl std::future::Future<Output = Result<T, ToolError>> + 'a,
+) -> Result<T, ToolError> {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
             tokio::task::block_in_place(|| handle.block_on(future))

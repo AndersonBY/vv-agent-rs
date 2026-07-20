@@ -142,6 +142,31 @@ impl Runner {
             .map_err(|error| format!("runner task failed: {error}"))?
     }
 
+    async fn run_with_config_and_run_id(
+        &self,
+        agent: &Agent,
+        input: NormalizedInput,
+        config: RunConfig,
+        run_id: String,
+    ) -> Result<RunResult, String> {
+        let runner = self.clone();
+        let agent = agent.clone();
+        tokio::task::spawn_blocking(move || {
+            runner.run_agent_chain_with_initial(
+                &agent,
+                input,
+                config,
+                Some(Arc::new(Mutex::new(Vec::new()))),
+                None,
+                None,
+                None,
+                Some(run_id),
+            )
+        })
+        .await
+        .map_err(|error| format!("runner task failed: {error}"))?
+    }
+
     pub fn run_blocking(
         &self,
         agent: &Agent,

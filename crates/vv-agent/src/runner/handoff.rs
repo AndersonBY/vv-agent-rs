@@ -9,7 +9,8 @@ use crate::result::RunResult;
 use crate::run_config::RunConfig;
 
 use super::support::{
-    capture_event, effective_event_store, max_handoff_depth, HandoffRequest, SingleRunOutcome,
+    capture_event, effective_event_store, max_handoff_depth, merged_tool_policy, HandoffRequest,
+    SingleRunOutcome,
 };
 use super::{effective_session_id, CheckpointAdmissionSender, NormalizedInput, Runner};
 
@@ -38,6 +39,7 @@ impl Runner {
             event_sender,
             checkpoint_admission_sender,
             None,
+            None,
         )
     }
 
@@ -51,6 +53,7 @@ impl Runner {
         event_sender: Option<broadcast::Sender<RunEvent>>,
         mut checkpoint_admission_sender: Option<CheckpointAdmissionSender>,
         initial_outcome: Option<SingleRunOutcome>,
+        initial_run_id: Option<String>,
     ) -> Result<RunResult, String> {
         let (event_store, event_store_fail_closed) =
             effective_event_store(&self.default_run_config, &config);
@@ -60,7 +63,13 @@ impl Runner {
         let mut handoff_count = 0;
         let mut pending: Option<PendingHandoff> = None;
         let mut next_outcome = initial_outcome;
+        let mut next_run_id = initial_run_id;
         loop {
+            let source_effective_policy = merged_tool_policy(
+                current_agent.tool_policy(),
+                &self.default_run_config.tool_policy,
+                &config.tool_policy,
+            );
             let outcome_result = if let Some(outcome) = next_outcome.take() {
                 Ok(outcome)
             } else {
@@ -71,6 +80,7 @@ impl Runner {
                     event_collector.clone(),
                     event_sender.clone(),
                     checkpoint_admission_sender.take(),
+                    next_run_id.take(),
                 )
             };
             let outcome = match outcome_result {
@@ -206,6 +216,9 @@ impl Runner {
                 started,
             )?;
             config.initial_shared_state = outcome.result.result().shared_state.clone();
+            config
+                .tool_policy
+                .extend_metadata_denials(&source_effective_policy);
             pending = Some(PendingHandoff {
                 request: handoff,
                 source_run_id,

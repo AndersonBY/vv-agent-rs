@@ -171,7 +171,8 @@ Core responsibilities:
   built-in `VvLlmModelProvider` uses repository settings through `vv-llm`, and
   `ScriptedModelProvider` is for unit tests.
 - `FunctionTool`: typed argument parsing with structured `ToolOutput`, adapted
-  into the registry-backed executor path.
+  into the registry-backed executor path; optional `ToolMetadata` stays on the
+  host-visible spec/executor path and out of the model schema.
 - `AgentTool`: public agent-as-tool wrapper that maps tool arguments into the
   existing `SubTaskRequest` runtime path.
 - `Session`: history-only storage for `RunConfig`; background-task handles and
@@ -210,6 +211,94 @@ Tool behavior is split so schemas and handlers can be tested independently:
 - `constants/tool_names.rs` and `constants/workspace.rs`: stable public names
   and model-visible schema constants.
 
+### Typed Tool Declarations
+
+`ToolMetadata` is an optional closed declaration carried separately from a
+tool's generic `metadata` map:
+
+| Rust field | Meaning |
+| --- | --- |
+| `side_effect: ToolSideEffect` | One of `Unknown`, `None`, `Read`, `Write`, `Execute`, `Network`, or `External`. Values have no hierarchy and are never inferred from names or arguments. |
+| `idempotency: ToolIdempotency` | `Unknown`, `Supported`, or `Unsupported`; this participates in checkpoint recovery but does not make an external effect exactly once. |
+| `terminal: bool` | The tool may return `finish` or `wait_user`; the declaration alone never changes run state. |
+| `capability_tags: Vec<String>` | Opaque host labels matched as exact strings. |
+| `cost_dimensions: Vec<String>` | Opaque resource names, not prices, measurements, units, or budget usage. |
+
+An absent declaration stays `None`. For a present declaration,
+`ToolMetadata::default()` is `Unknown` side effect, `Unknown` idempotency,
+`terminal=false`, and two empty collections; wire input fills omitted fields
+with the same defaults and rejects fields outside the closed set.
+
+`FunctionTool::builder(...).tool_metadata(...)`,
+`StaticTool::with_tool_metadata`, and the defaultable `Tool::tool_metadata` /
+`ToolExecutor::tool_metadata` accessors are the public Rust propagation path.
+`ToolSpec::tool_metadata` carries the same normalized declaration through the
+registry. Generic keys named `side_effect`, `terminal`, or `capability_tags`
+never become typed metadata.
+
+The two label collections trim only tab, LF, CR, and ASCII space, reject blank
+or longer-than-128-code-point labels, deduplicate exact matches, sort by UTF-16
+code units, and reject more than 32 normalized entries. The existing
+`FunctionTool::builder(...).idempotency(...)` input remains a compatibility
+alias. A typed `Unknown` inherits a non-unknown legacy value; conflicting
+non-unknown values fail construction with `tool_metadata_invalid`.
+
+Typed metadata is host-visible only. `ToolRegistry::list_openai_schemas` still
+projects `ToolSpec::schema`, so declarations do not alter function names,
+descriptions, parameters, strictness, system prompts, or any other
+model-visible bytes. When no declaration is present, the runtime does not
+fabricate one from generic metadata.
+
+### Denial-Only Tool Policy
+
+`ToolPolicy` adds `denied_side_effects`, `denied_capability_tags`,
+`deny_terminal_tools`, and `denied_cost_dimensions`, with public convenience
+methods `deny_side_effect`, `deny_capability_tag`, `deny_terminal_tools`, and
+`deny_cost_dimension`. Lists form a normalized set union across Agent,
+Runner-default, and per-run policy; the boolean uses logical OR. Configured
+sub-agents, agent-as-tool runs, handoffs, and distributed workers inherit the
+effective parent denials and may only add more.
+
+These checks are logically ANDed with existing allowed names, denied names,
+argument predicates, planned names, approval, budgets, and runtime checks.
+They cannot expose a tool or bypass another denial. The deterministic metadata
+precedence is side effect, terminal, capability tag, then cost dimension; a
+match returns `tool_not_allowed` with `policy_source` respectively set to
+`metadata.side_effect`, `metadata.terminal`, `metadata.capability_tag`, or
+`metadata.cost_dimension`. An absent typed declaration matches none of these
+denials. A declared `ToolSideEffect::Unknown` can be denied explicitly.
+
+### Executor Lifecycle
+
+After serialized arguments normalize, one tool call has this typed lifecycle:
+
+1. `tool_call_planned` before policy, approval, or dispatch;
+2. zero or more approval events;
+3. `tool_call_started` immediately before the executor may cause effects;
+4. `tool_call_completed` after a `ToolExecutionResult` exists.
+
+Invalid serialized arguments fail before planning. Unknown tools, policy
+denials, and approval short-circuits produce planned plus completed without a
+started event. Their completed event records `execution_started=false` and
+`duration_ms=null`. Executed calls measure `duration_ms` from the started
+boundary with a monotonic clock and also report lower-case `status`,
+`directive`, and nullable `error_code`. Status is one of `success`, `error`,
+`wait_response`, `running`, or `pending_compress`; directive is `continue`,
+`finish`, or `wait_user`. Planned and started events contain normalized
+arguments and optional typed metadata. Completed events contain the outcome
+fields and optional typed metadata. Cancellation, process loss, or a panic
+after started may leave no completed observation; checkpoint v2's operation
+journal, not telemetry, is authoritative for recovery ambiguity.
+
+`ToolLifecycleCallback` and `ToolLifecycleEvent` are exported Rust extension
+APIs used by the low-level `ToolOrchestrator` and runtime adapters to observe
+`Planned`, `Started`, and `Completed`. They are a language-side observation
+adapter for the central lifecycle, not an additional
+`vv-agent-contract` semantic. Callback panic is isolated and observation never
+changes policy, approval, the tool result, completion, or event-store failure
+mode. Product integrations should normally consume `RunEventPayload` and a
+`RunEventStore`; the callback is not a durable event stream.
+
 Tool schema wording is part of the agent contract. Changes belong with tests in
 `tests/tool_schema_contract.rs`, `tests/tool_planner.rs`, and the closest tool
 behavior test.
@@ -228,6 +317,10 @@ outside-workspace access are boundary concerns, not handler-specific shortcuts.
 - Provider HTTP and request serialization stay in `vv-llm`.
 - Terminal agent states come from explicit tool directives, declared no-tool
   policy, cancellation, failure, or resource bounds.
+- `ToolMetadata::terminal` declares capability only and cannot create a
+  terminal state.
+- Omitting typed tool metadata and the four metadata-denial fields preserves
+  model-visible schemas and existing tool, approval, and completion behavior.
 - Runtime hooks, cancellation, streaming, memory compaction, and execution
   backends must compose without changing public result shapes.
 - Large tool outputs keep model-facing text and structured metadata separated.

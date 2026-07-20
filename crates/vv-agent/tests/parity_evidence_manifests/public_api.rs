@@ -1,455 +1,3 @@
-fn public_export_path(id: &str) -> &'static str {
-    if let Some(path) = after_cycle_exports::public_export_path(id) {
-        return path;
-    }
-    match id {
-        "agent.definition" => export_type!(vv_agent::Agent, "vv_agent::Agent"),
-        "agent.run_context" => export_type!(vv_agent::RunContext, "vv_agent::RunContext"),
-        "agent.tool_use_behavior" => export_type!(
-            vv_agent::agent::ToolUseBehavior,
-            "vv_agent::agent::ToolUseBehavior"
-        ),
-        "agent.no_tool_policy" | "run_config.no_tool_policy" => {
-            export_type!(vv_agent::NoToolPolicy, "vv_agent::NoToolPolicy")
-        }
-        "agent.handoff" => export_type!(vv_agent::Handoff, "vv_agent::Handoff"),
-        "agent.background_task" => export_type!(
-            vv_agent::BackgroundAgentTask,
-            "vv_agent::BackgroundAgentTask"
-        ),
-        "agent.guardrail_outcome" => {
-            export_type!(
-                vv_agent::GuardrailOutcome<String>,
-                "vv_agent::GuardrailOutcome"
-            )
-        }
-        "runner.facade" => export_type!(vv_agent::Runner, "vv_agent::Runner"),
-        "runner.configured" => export_type!(
-            vv_agent::runner::RunnerBuilder,
-            "vv_agent::runner::RunnerBuilder"
-        ),
-        "run_config.options" => export_type!(vv_agent::RunConfig, "vv_agent::RunConfig"),
-        "run_config.tool_policy" => export_type!(vv_agent::ToolPolicy, "vv_agent::ToolPolicy"),
-        "run_config.approval_policy" => {
-            export_type!(vv_agent::ApprovalPolicy, "vv_agent::ApprovalPolicy")
-        }
-        "run_config.cancellation" => {
-            export_type!(vv_agent::CancellationToken, "vv_agent::CancellationToken")
-        }
-        "run_config.approval_broker" => {
-            export_type!(vv_agent::ApprovalBroker, "vv_agent::ApprovalBroker")
-        }
-        "run_config.context_provider" => {
-            export_type!(dyn vv_agent::ContextProvider, "vv_agent::ContextProvider")
-        }
-        "run_config.run_budget_limits" => {
-            export_type!(vv_agent::RunBudgetLimits, "vv_agent::RunBudgetLimits")
-        }
-        "run_config.host_cost_meter" => {
-            export_type!(dyn vv_agent::HostCostMeter, "vv_agent::HostCostMeter")
-        }
-        "run_config.unavailable_metric_policy" => export_type!(
-            vv_agent::UnavailableMetricPolicy,
-            "vv_agent::UnavailableMetricPolicy"
-        ),
-        "run_config.checkpoint_config" => {
-            export_type!(vv_agent::CheckpointConfig, "vv_agent::CheckpointConfig")
-        }
-        "checkpoint_config.capability_refs" => {
-            let accessor = |value: &vv_agent::CheckpointConfig| {
-                let _ = &value.capability_refs;
-            };
-            let _ = accessor;
-            "vv_agent::CheckpointConfig::capability_refs"
-        }
-        "checkpoint_config.credential_slots" => {
-            let accessor = |value: &vv_agent::CheckpointConfig| {
-                let _ = &value.credential_slots;
-            };
-            let _ = accessor;
-            "vv_agent::CheckpointConfig::credential_slots"
-        }
-        "run_config.checkpoint_extension" => export_type!(
-            dyn vv_agent::CheckpointExtension,
-            "vv_agent::CheckpointExtension"
-        ),
-        "run_config.reconciliation_provider" => export_type!(
-            dyn vv_agent::ReconciliationProvider,
-            "vv_agent::ReconciliationProvider"
-        ),
-        "result.public" => export_type!(vv_agent::RunResult, "vv_agent::RunResult"),
-        "result.resume_state" => export_type!(vv_agent::RunState, "vv_agent::RunState"),
-        "result.approval_snapshot" => {
-            export_type!(vv_agent::ApprovalSnapshot, "vv_agent::ApprovalSnapshot")
-        }
-        "result.runtime_result" => export_type!(vv_agent::AgentResult, "vv_agent::AgentResult"),
-        "result.status" => export_type!(vv_agent::AgentStatus, "vv_agent::AgentStatus"),
-        "result.completion_reason" => {
-            export_type!(vv_agent::CompletionReason, "vv_agent::CompletionReason")
-        }
-        "result.usage_source" => export_type!(vv_agent::UsageSource, "vv_agent::UsageSource"),
-        "result.cache_usage_status" => export_type!(
-            vv_agent::CacheUsageStatus,
-            "vv_agent::CacheUsageStatus"
-        ),
-        "result.cache_usage" => export_type!(vv_agent::CacheUsage, "vv_agent::CacheUsage"),
-        "result.token_usage" => export_type!(vv_agent::TokenUsage, "vv_agent::TokenUsage"),
-        "result.task_token_usage" => {
-            export_type!(vv_agent::TaskTokenUsage, "vv_agent::TaskTokenUsage")
-        }
-        "result.host_cost" => export_type!(vv_agent::HostCost, "vv_agent::HostCost"),
-        "result.budget_dimension" => {
-            export_type!(vv_agent::BudgetDimension, "vv_agent::BudgetDimension")
-        }
-        "result.budget_enforcement_boundary" => export_type!(
-            vv_agent::BudgetEnforcementBoundary,
-            "vv_agent::BudgetEnforcementBoundary"
-        ),
-        "result.budget_exhaustion_reason" => export_type!(
-            vv_agent::BudgetExhaustionReason,
-            "vv_agent::BudgetExhaustionReason"
-        ),
-        "result.budget_unavailable_reason" => export_type!(
-            vv_agent::BudgetUnavailableReason,
-            "vv_agent::BudgetUnavailableReason"
-        ),
-        "result.budget_unavailable_dimension" => export_type!(
-            vv_agent::BudgetUnavailableDimension,
-            "vv_agent::BudgetUnavailableDimension"
-        ),
-        "result.budget_usage_snapshot" => export_type!(
-            vv_agent::BudgetUsageSnapshot,
-            "vv_agent::BudgetUsageSnapshot"
-        ),
-        "result.budget_exhaustion" => {
-            export_type!(vv_agent::BudgetExhaustion, "vv_agent::BudgetExhaustion")
-        }
-        "result.resume_observation" => {
-            export_type!(vv_agent::ResumeObservation, "vv_agent::ResumeObservation")
-        }
-        "run_handle.live" => export_type!(vv_agent::RunHandle, "vv_agent::RunHandle"),
-        "run_handle.snapshot" => {
-            export_type!(vv_agent::RunHandleState, "vv_agent::RunHandleState")
-        }
-        "run_handle.status" => {
-            export_type!(vv_agent::RunHandleStatus, "vv_agent::RunHandleStatus")
-        }
-        "interactive.session" => {
-            export_type!(vv_agent::InteractiveSession, "vv_agent::InteractiveSession")
-        }
-        "interactive.options" => export_type!(
-            vv_agent::InteractiveSessionOptions,
-            "vv_agent::InteractiveSessionOptions"
-        ),
-        "interactive.state" => export_type!(
-            vv_agent::InteractiveSessionState,
-            "vv_agent::InteractiveSessionState"
-        ),
-        "interactive.client" => export_type!(
-            vv_agent::InteractiveAgentClient,
-            "vv_agent::InteractiveAgentClient"
-        ),
-        "interactive.event" => export_type!(
-            vv_agent::InteractiveSessionEvent,
-            "vv_agent::InteractiveSessionEvent"
-        ),
-        "interactive.error" => export_type!(
-            vv_agent::InteractiveSessionError,
-            "vv_agent::InteractiveSessionError"
-        ),
-        "app_server.server" => export_type!(
-            vv_agent::app_server::AppServer<
-                vv_agent::app_server::transport::stdio::StdioJsonlTransport,
-            >,
-            "vv_agent::app_server::AppServer"
-        ),
-        "app_server.host" => {
-            export_type!(dyn vv_agent::AppServerHost, "vv_agent::AppServerHost")
-        }
-        "app_server.default_host" => export_type!(
-            vv_agent::DefaultAppServerHost,
-            "vv_agent::DefaultAppServerHost"
-        ),
-        "app_server.client" => export_type!(
-            vv_agent::app_server::client::AppServerClient,
-            "vv_agent::app_server::client::AppServerClient"
-        ),
-        "app_server.client_error" => export_type!(
-            vv_agent::app_server::client::AppServerClientError,
-            "vv_agent::app_server::client::AppServerClientError"
-        ),
-        "app_server.processor" => export_type!(
-            vv_agent::app_server::processor::MessageProcessor,
-            "vv_agent::app_server::processor::MessageProcessor"
-        ),
-        "app_server.outgoing_router" => export_type!(
-            vv_agent::app_server::outgoing::OutgoingMessageSender,
-            "vv_agent::app_server::outgoing::OutgoingMessageSender"
-        ),
-        "app_server.transport" => export_type!(
-            dyn vv_agent::app_server::transport::AppServerTransport,
-            "vv_agent::app_server::transport::AppServerTransport"
-        ),
-        "app_server.channel_transport" => export_type!(
-            vv_agent::app_server::transport::channel::ChannelTransport,
-            "vv_agent::app_server::transport::channel::ChannelTransport"
-        ),
-        "app_server.stdio_transport" => export_type!(
-            vv_agent::app_server::transport::stdio::StdioJsonlTransport,
-            "vv_agent::app_server::transport::stdio::StdioJsonlTransport"
-        ),
-        "app_server.jsonrpc_message" => export_type!(
-            vv_agent::app_server::protocol::JsonRpcMessage,
-            "vv_agent::app_server::protocol::JsonRpcMessage"
-        ),
-        "app_server.turn_resume_params" => export_type!(
-            vv_agent::app_server::protocol::TurnResumeParams,
-            "vv_agent::app_server::protocol::TurnResumeParams"
-        ),
-        "app_server.turn_resume_response" => export_type!(
-            vv_agent::app_server::protocol::TurnResumeResponse,
-            "vv_agent::app_server::protocol::TurnResumeResponse"
-        ),
-        "tools.public_tool" => export_type!(dyn vv_agent::Tool, "vv_agent::Tool"),
-        "tools.function_tool" => {
-            export_type!(vv_agent::FunctionTool, "vv_agent::FunctionTool")
-        }
-        "tools.registry" => export_type!(vv_agent::ToolRegistry, "vv_agent::ToolRegistry"),
-        "tools.executor" => export_type!(dyn vv_agent::ToolExecutor, "vv_agent::ToolExecutor"),
-        "tools.spec" => export_type!(vv_agent::ToolSpec, "vv_agent::ToolSpec"),
-        "tools.context" => export_type!(vv_agent::ToolContext, "vv_agent::ToolContext"),
-        "tools.call_context" => {
-            export_type!(vv_agent::ToolCallContext, "vv_agent::ToolCallContext")
-        }
-        "tools.orchestrator" => {
-            export_type!(vv_agent::ToolOrchestrator, "vv_agent::ToolOrchestrator")
-        }
-        "tools.exposure" => export_type!(vv_agent::ToolExposure, "vv_agent::ToolExposure"),
-        "tools.output" => export_type!(vv_agent::ToolOutput, "vv_agent::ToolOutput"),
-        "tools.spec_executor" => {
-            export_type!(vv_agent::ToolSpecExecutor, "vv_agent::ToolSpecExecutor")
-        }
-        "tools.not_found_error" => {
-            export_type!(vv_agent::ToolNotFoundError, "vv_agent::ToolNotFoundError")
-        }
-        "tools.idempotency" => {
-            export_type!(vv_agent::ToolIdempotency, "vv_agent::ToolIdempotency")
-        }
-        "workspace.backend" => {
-            export_type!(dyn vv_agent::WorkspaceBackend, "vv_agent::WorkspaceBackend")
-        }
-        "workspace.local" => export_type!(
-            vv_agent::LocalWorkspaceBackend,
-            "vv_agent::LocalWorkspaceBackend"
-        ),
-        "workspace.memory" => export_type!(
-            vv_agent::MemoryWorkspaceBackend,
-            "vv_agent::MemoryWorkspaceBackend"
-        ),
-        "workspace.s3" => {
-            export_type!(vv_agent::S3WorkspaceBackend, "vv_agent::S3WorkspaceBackend")
-        }
-        "workspace.file_info" => export_type!(vv_agent::FileInfo, "vv_agent::FileInfo"),
-        "workspace.discovery_filter" => export_type!(
-            vv_agent::DiscoveryFilteredWorkspaceBackend,
-            "vv_agent::DiscoveryFilteredWorkspaceBackend"
-        ),
-        "workspace.portable_regex_error" => {
-            export_type!(vv_agent::PortableRegexError, "vv_agent::PortableRegexError")
-        }
-        "memory.manager" => export_type!(vv_agent::MemoryManager, "vv_agent::MemoryManager"),
-        "memory.provider" => {
-            export_type!(dyn vv_agent::MemoryProvider, "vv_agent::MemoryProvider")
-        }
-        "memory.provider_result" => export_type!(
-            vv_agent::MemoryProviderResult,
-            "vv_agent::MemoryProviderResult"
-        ),
-        "memory.session" => export_type!(vv_agent::SessionMemory, "vv_agent::SessionMemory"),
-        "memory.session_config" => export_type!(
-            vv_agent::SessionMemoryConfig,
-            "vv_agent::SessionMemoryConfig"
-        ),
-        "memory.session_entry" => {
-            export_type!(vv_agent::SessionMemoryEntry, "vv_agent::SessionMemoryEntry")
-        }
-        "memory.session_state" => {
-            export_type!(vv_agent::SessionMemoryState, "vv_agent::SessionMemoryState")
-        }
-        "memory.search_request" => export_type!(
-            vv_agent::MemorySearchRequest,
-            "vv_agent::MemorySearchRequest"
-        ),
-        "memory.search_result" => {
-            export_type!(vv_agent::MemorySearchResult, "vv_agent::MemorySearchResult")
-        }
-        "memory.save_request" => {
-            export_type!(vv_agent::MemorySaveRequest, "vv_agent::MemorySaveRequest")
-        }
-        "memory.save_result" => {
-            export_type!(vv_agent::MemorySaveResult, "vv_agent::MemorySaveResult")
-        }
-        "memory.compaction_exhausted" => export_type!(
-            vv_agent::CompactionExhaustedError,
-            "vv_agent::CompactionExhaustedError"
-        ),
-        "skills.properties" => export_type!(
-            vv_agent::skills::SkillProperties,
-            "vv_agent::skills::SkillProperties"
-        ),
-        "skills.loaded" => export_type!(
-            vv_agent::skills::LoadedSkill,
-            "vv_agent::skills::LoadedSkill"
-        ),
-        "skills.entry" => {
-            export_type!(vv_agent::skills::SkillEntry, "vv_agent::skills::SkillEntry")
-        }
-        "skills.error" => {
-            export_type!(vv_agent::skills::SkillError, "vv_agent::skills::SkillError")
-        }
-        "skills.parse_error" => export_type!(
-            vv_agent::skills::SkillParseError,
-            "vv_agent::skills::SkillParseError"
-        ),
-        "skills.validation_error" => export_type!(
-            vv_agent::skills::SkillValidationError,
-            "vv_agent::skills::SkillValidationError"
-        ),
-        "skills.validation_diagnostics" => export_type!(
-            vv_agent::skills::ValidationDiagnostics,
-            "vv_agent::skills::ValidationDiagnostics"
-        ),
-        "skills.validation_mode" => export_type!(
-            vv_agent::skills::ValidationMode,
-            "vv_agent::skills::ValidationMode"
-        ),
-        "tracing.span" => export_type!(vv_agent::Span, "vv_agent::Span"),
-        "tracing.sink" => export_type!(dyn vv_agent::TraceSink, "vv_agent::TraceSink"),
-        "tracing.jsonl_exporter" => {
-            export_type!(vv_agent::JsonlTraceExporter, "vv_agent::JsonlTraceExporter")
-        }
-        "llm_bridge.client" => export_type!(dyn vv_agent::LlmClient, "vv_agent::LlmClient"),
-        "llm_bridge.request" => export_type!(vv_agent::LlmRequest, "vv_agent::LlmRequest"),
-        "llm_bridge.error" => export_type!(vv_agent::LlmError, "vv_agent::LlmError"),
-        "llm_bridge.endpoint" => {
-            export_type!(vv_agent::EndpointTarget, "vv_agent::EndpointTarget")
-        }
-        "llm_bridge.scripted" => {
-            export_type!(vv_agent::ScriptedLlmClient, "vv_agent::ScriptedLlmClient")
-        }
-        "llm_bridge.vv_llm_client" => {
-            export_type!(vv_agent::VvLlmClient, "vv_agent::VvLlmClient")
-        }
-        "llm_bridge.model_provider" => {
-            export_type!(dyn vv_agent::ModelProvider, "vv_agent::ModelProvider")
-        }
-        "llm_bridge.model_ref" => export_type!(vv_agent::ModelRef, "vv_agent::ModelRef"),
-        "llm_bridge.model_settings" => {
-            export_type!(vv_agent::ModelSettings, "vv_agent::ModelSettings")
-        }
-        "llm_bridge.response_format" => {
-            export_type!(vv_agent::ResponseFormat, "vv_agent::ResponseFormat")
-        }
-        "llm_bridge.retry_settings" => {
-            export_type!(vv_agent::RetrySettings, "vv_agent::RetrySettings")
-        }
-        "llm_bridge.tool_choice" => export_type!(vv_agent::ToolChoice, "vv_agent::ToolChoice"),
-        "runtime_backend.execution" => export_type!(
-            vv_agent::RuntimeExecutionBackend,
-            "vv_agent::RuntimeExecutionBackend"
-        ),
-        "runtime_backend.inline" => {
-            export_type!(vv_agent::InlineBackend, "vv_agent::InlineBackend")
-        }
-        "runtime_backend.thread" => {
-            export_type!(vv_agent::ThreadBackend, "vv_agent::ThreadBackend")
-        }
-        "runtime_backend.distributed" => {
-            export_type!(vv_agent::DistributedBackend, "vv_agent::DistributedBackend")
-        }
-        "runtime_backend.envelope" => export_type!(
-            vv_agent::DistributedRunEnvelope,
-            "vv_agent::DistributedRunEnvelope"
-        ),
-        "runtime_backend.capability_registry" => export_type!(
-            vv_agent::DistributedCapabilityRegistry,
-            "vv_agent::DistributedCapabilityRegistry"
-        ),
-        "runtime_backend.capability_ref" => {
-            export_type!(vv_agent::CapabilityRef, "vv_agent::CapabilityRef")
-        }
-        "runtime_backend.recipe" => {
-            export_type!(vv_agent::RuntimeRecipe, "vv_agent::RuntimeRecipe")
-        }
-        "runtime_backend.state_store" => {
-            export_type!(dyn vv_agent::StateStore, "vv_agent::StateStore")
-        }
-        "runtime_backend.in_memory_state_store" => {
-            export_type!(vv_agent::InMemoryStateStore, "vv_agent::InMemoryStateStore")
-        }
-        "runtime_backend.sqlite_state_store" => {
-            export_type!(vv_agent::SqliteStateStore, "vv_agent::SqliteStateStore")
-        }
-        "runtime_backend.redis_state_store" => {
-            export_type!(vv_agent::RedisStateStore, "vv_agent::RedisStateStore")
-        }
-        "runtime_backend.checkpoint" => {
-            export_type!(vv_agent::Checkpoint, "vv_agent::Checkpoint")
-        }
-        "runtime_backend.checkpoint_v2" => {
-            export_type!(vv_agent::CheckpointV2, "vv_agent::CheckpointV2")
-        }
-        "runtime_backend.checkpoint_store_v2" => {
-            export_type!(dyn vv_agent::CheckpointStoreV2, "vv_agent::CheckpointStoreV2")
-        }
-        "runtime_backend.idempotent_event_store" => export_type!(
-            dyn vv_agent::IdempotentRunEventStore,
-            "vv_agent::IdempotentRunEventStore"
-        ),
-        "runtime_backend.operation_journal" => export_type!(
-            vv_agent::OperationJournalEntry,
-            "vv_agent::OperationJournalEntry"
-        ),
-        "runtime_backend.agent_runtime" => {
-            export_type!(
-                vv_agent::AgentRuntime<vv_agent::ScriptedLlmClient>,
-                "vv_agent::AgentRuntime"
-            )
-        }
-        "runtime_backend.cycle_runner" => {
-            export_type!(
-                vv_agent::CycleRunner<vv_agent::ScriptedLlmClient>,
-                "vv_agent::CycleRunner"
-            )
-        }
-        "runtime_backend.tool_call_runner" => {
-            export_type!(vv_agent::ToolCallRunner, "vv_agent::ToolCallRunner")
-        }
-        other => panic!("public API capability is not compiled by Rust test: {other}"),
-    }
-}
-
-macro_rules! compile_methods {
-    ($name:expr, $type:ty, [$($method:ident),+ $(,)?]) => {
-        match $name {
-            $(stringify!($method) => { let _ = <$type>::$method; })+
-            other => panic!("uncompiled Rust method `{other}` on `{}`", stringify!($type)),
-        }
-    };
-}
-
-macro_rules! compile_fields {
-    ($name:expr, $type:ty, [$($field:ident),+ $(,)?]) => {
-        match $name {
-            $(stringify!($field) => {
-                let accessor = |value: &$type| { let _ = &value.$field; };
-                let _ = accessor;
-            })+
-            other => panic!("uncompiled Rust field `{other}` on `{}`", stringify!($type)),
-        }
-    };
-}
-
 fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
     match (surface, target, kind) {
         ("agent", "vv_agent::Agent", "method") => compile_methods!(
@@ -482,6 +30,23 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 [input_guardrail, output_guardrail]
             )
         }
+        ("sub_agent_config", "vv_agent::SubAgentConfig", "field") => compile_fields!(
+            name,
+            vv_agent::SubAgentConfig,
+            [
+                model,
+                description,
+                backend,
+                system_prompt,
+                max_cycles,
+                exclude_tools,
+                metadata,
+                denied_side_effects,
+                denied_capability_tags,
+                deny_terminal_tools,
+                denied_cost_dimensions,
+            ]
+        ),
         ("runner", "vv_agent::Runner", "method") => match name {
             "run" => {
                 let reference =
@@ -732,6 +297,7 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 timeout,
                 approval_rule,
                 idempotency,
+                tool_metadata,
                 is_enabled,
                 as_tool_spec,
             ]
@@ -739,6 +305,31 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
         ("tool", "vv_agent::ToolExecutor", "method") => {
             compile_methods!(name, dyn vv_agent::ToolExecutor, [metadata, run])
         }
+        ("tool_metadata", "vv_agent::ToolMetadata", "field") => compile_fields!(
+            name,
+            vv_agent::ToolMetadata,
+            [
+                side_effect,
+                idempotency,
+                terminal,
+                capability_tags,
+                cost_dimensions,
+            ]
+        ),
+        ("tool_policy", "vv_agent::ToolPolicy", "field") => compile_fields!(
+            name,
+            vv_agent::ToolPolicy,
+            [
+                allowed_tools,
+                disallowed_tools,
+                approval,
+                can_use_tool,
+                denied_side_effects,
+                denied_capability_tags,
+                deny_terminal_tools,
+                denied_cost_dimensions,
+            ]
+        ),
         ("tool_registry", "vv_agent::ToolRegistry", "method") => match name {
             "register_schema" => {
                 let reference =
@@ -927,7 +518,7 @@ fn public_api_manifest_compiles_real_rust_exports() {
             );
         }
     }
-    assert_eq!(capability_ids.len(), 147);
+    assert_eq!(capability_ids.len(), 151);
 
     let surfaces = fixture["surfaces"].as_array().expect("public API surfaces");
     let surface_map = surfaces

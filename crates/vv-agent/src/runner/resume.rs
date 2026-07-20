@@ -3,9 +3,10 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::budget::{BudgetEnforcementBoundary, BudgetEvaluator};
-use crate::events::{RunEvent, RunEventPayload};
+use crate::events::{RunEvent, RunEventPayload, ToolStatus};
 use crate::result::{PendingToolApproval, RunResult, RunResumeContext, RunState};
 use crate::run_config::INITIAL_BUDGET_USAGE_METADATA_KEY;
+use crate::tools::ToolLifecycleEvent;
 use crate::types::{
     last_assistant_output, AgentResult, AgentStatus, CompletionReason, ToolDirective,
 };
@@ -157,20 +158,42 @@ impl Runner {
         let mut context = approval.context.clone();
         context.shared_state = source.result().shared_state.clone();
         let call = approval.call.clone();
-        let tool_result = approval
+        let lifecycle_observations = Arc::new(Mutex::new(Vec::<ToolLifecycleEvent>::new()));
+        let lifecycle_observations_for_callback = lifecycle_observations.clone();
+        let options = approval
+            .options
+            .clone()
+            .lifecycle_callback(Arc::new(move |event| {
+                lifecycle_observations_for_callback
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(event);
+            }));
+        let execution = approval
             .orchestrator
-            .run_one_with_approval(
+            .run_one_with_approval_and_metadata_deferred(
                 call.clone(),
                 &mut context,
-                approval.options.clone(),
-                |_call, _requirement, _context| None,
+                options,
+                |_call, _requirement, _context, _metadata| None,
             )
             .await
             .map_err(|error| error.to_string());
-        let tool_result = match tool_result {
-            Ok(result) => result,
-            Err(error) => return Some(Err(error)),
+        let mut execution = match execution {
+            Ok(execution) => execution,
+            Err(error) => {
+                let persistence = persist_approval_lifecycle_events(
+                    self,
+                    source,
+                    resume_context,
+                    &resumed_run_id,
+                    approval.cycle_index,
+                    &lifecycle_observations,
+                );
+                return Some(persistence.and(Err(error)));
+            }
         };
+        let tool_result = execution.result().clone();
         let mut tool_result = approval.hook_manager.apply_after_tool_call(
             &approval.task,
             approval.cycle_index,
@@ -183,6 +206,19 @@ impl Runner {
             &call,
             &mut tool_result,
         );
+        execution.replace_result(tool_result);
+        let tool_result = execution.complete();
+        let resume_tool_events = match persist_approval_lifecycle_events(
+            self,
+            source,
+            resume_context,
+            &resumed_run_id,
+            approval.cycle_index,
+            &lifecycle_observations,
+        ) {
+            Ok(events) => events,
+            Err(error) => return Some(Err(error)),
+        };
         let mut agent_result = source.result().clone();
         agent_result.shared_state = context.shared_state.clone();
         if let Some(cycle) = agent_result
@@ -301,10 +337,16 @@ impl Runner {
             let mut prior_events = Vec::new();
             if !resume_budget_events.is_empty() {
                 prior_events.extend_from_slice(source.events());
-                prior_events.extend(resume_budget_events);
             }
+            prior_events.extend(resume_tool_events);
+            prior_events.extend(resume_budget_events);
             let result = self
-                .run_with_config(&resume_context.agent, source.input().to_string(), config)
+                .run_with_config_and_run_id(
+                    &resume_context.agent,
+                    NormalizedInput::from(source.input().to_string()),
+                    config,
+                    resumed_run_id,
+                )
                 .await
                 .map(move |result| {
                     let mut events = prior_events;
@@ -387,7 +429,10 @@ impl Runner {
             new_items,
             cancellation_token,
             Some(resumed_run_id),
-            resume_budget_events,
+            resume_tool_events
+                .into_iter()
+                .chain(resume_budget_events)
+                .collect(),
         ) {
             Ok(resumed) => resumed,
             Err(error) => return Some(Err(error)),
@@ -452,6 +497,7 @@ impl Runner {
                     None,
                     None,
                     Some(initial_outcome),
+                    None,
                 )
             })
             .await
@@ -522,6 +568,123 @@ impl Runner {
             .unwrap_or_default();
         resumed = resumed.with_events(events);
         Ok(resumed)
+    }
+}
+
+fn persist_approval_lifecycle_events(
+    runner: &Runner,
+    source: &RunResult,
+    resume_context: &RunResumeContext,
+    resumed_run_id: &str,
+    cycle_index: u32,
+    observations: &Arc<Mutex<Vec<ToolLifecycleEvent>>>,
+) -> Result<Vec<RunEvent>, String> {
+    let observations = std::mem::take(
+        &mut *observations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
+    let session_id = effective_session_id(&runner.default_run_config, &resume_context.config);
+    let (event_store, event_store_fail_closed) =
+        effective_event_store(&runner.default_run_config, &resume_context.config);
+    let mut events = Vec::with_capacity(observations.len());
+    for observation in observations {
+        let mut event = approval_lifecycle_run_event(
+            observation,
+            resumed_run_id,
+            source.trace_id(),
+            source.agent_name(),
+            cycle_index,
+        );
+        if let Some(session_id) = session_id.as_deref() {
+            event = event.with_session_id(session_id);
+        }
+        capture_event(
+            None,
+            None,
+            event_store.as_ref(),
+            event_store_fail_closed,
+            event.clone(),
+        )?;
+        events.push(event);
+    }
+    Ok(events)
+}
+
+fn approval_lifecycle_run_event(
+    observation: ToolLifecycleEvent,
+    run_id: &str,
+    trace_id: &str,
+    agent_name: &str,
+    cycle_index: u32,
+) -> RunEvent {
+    match observation {
+        ToolLifecycleEvent::Planned {
+            call,
+            tool_metadata,
+        } => RunEvent::tool_call_planned(
+            run_id,
+            trace_id,
+            agent_name,
+            cycle_index,
+            call.id,
+            call.name,
+            Value::Object(call.arguments.into_iter().collect()),
+        )
+        .with_tool_metadata(tool_metadata.as_ref()),
+        ToolLifecycleEvent::Started {
+            call,
+            tool_metadata,
+        } => RunEvent::tool_call_started(
+            run_id,
+            trace_id,
+            agent_name,
+            cycle_index,
+            call.id,
+            call.name,
+            Value::Object(call.arguments.into_iter().collect()),
+        )
+        .with_tool_metadata(tool_metadata.as_ref()),
+        ToolLifecycleEvent::Completed {
+            call,
+            result,
+            execution_started,
+            duration_ms,
+            tool_metadata,
+        } => {
+            let status = match result.status {
+                crate::types::ToolResultStatus::Success => ToolStatus::Success,
+                crate::types::ToolResultStatus::Error => ToolStatus::Error,
+                crate::types::ToolResultStatus::WaitResponse => ToolStatus::WaitResponse,
+                crate::types::ToolResultStatus::Running => ToolStatus::Running,
+                crate::types::ToolResultStatus::PendingCompress => ToolStatus::PendingCompress,
+            };
+            RunEvent::tool_call_completed(
+                run_id,
+                trace_id,
+                agent_name,
+                Some(cycle_index),
+                result.tool_call_id.clone(),
+                call.name,
+                status,
+            )
+            .with_tool_completion_observations(
+                result.directive,
+                result.error_code.as_deref(),
+                execution_started,
+                duration_ms,
+            )
+            .with_tool_metadata(tool_metadata.as_ref())
+            .with_metadata(
+                "tool_arguments",
+                Value::Object(call.arguments.into_iter().collect()),
+            )
+            .with_metadata(
+                "metadata",
+                Value::Object(result.metadata.into_iter().collect()),
+            )
+            .with_metadata("content", Value::String(result.content))
+        }
     }
 }
 

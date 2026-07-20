@@ -113,7 +113,11 @@ fn configured_child_hides_policy_tools_and_blocks_malicious_forced_calls() {
             "allowed_tools",
             "approval",
             "can_use_tool",
-            "disallowed_tools"
+            "disallowed_tools",
+            "denied_side_effects",
+            "denied_capability_tags",
+            "deny_terminal_tools",
+            "denied_cost_dimensions"
         ])
     );
     assert_eq!(
@@ -123,6 +127,8 @@ fn configured_child_hides_policy_tools_and_blocks_malicious_forced_calls() {
             "allowed_tools",
             "disallowed_tools",
             "can_use_tool",
+            "tool_lookup",
+            "metadata_denials",
             "approval",
             "executor"
         ])
