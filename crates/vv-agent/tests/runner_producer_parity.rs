@@ -700,7 +700,7 @@ async fn real_runner_projection_matches_python_fixture_bytes() {
 
 fn trace_projection(event: &RunEvent) -> Value {
     let event = serde_json::to_value(event).expect("event JSON");
-    let projected = TRACE_FIELDS
+    let mut projected: serde_json::Map<String, Value> = TRACE_FIELDS
         .iter()
         .filter_map(|field| {
             event
@@ -709,5 +709,11 @@ fn trace_projection(event: &RunEvent) -> Value {
                 .map(|value| ((*field).to_string(), value))
         })
         .collect();
+    // Wall-clock duration is observable but intentionally not deterministic
+    // across hosts. Its presence and non-negative type are asserted above;
+    // normalize only the value for the cross-language semantic projection.
+    if projected.contains_key("duration_ms") {
+        projected.insert("duration_ms".to_string(), Value::from(0));
+    }
     Value::Object(projected)
 }
