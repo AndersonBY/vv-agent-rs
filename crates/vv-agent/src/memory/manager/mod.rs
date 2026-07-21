@@ -147,6 +147,7 @@ impl MemoryManager {
         let cleaned = self.remove_previous_summary(messages);
         let sanitized = filter_empty_assistant_messages(&cleaned);
         let changed_by_sanitize = sanitized != messages;
+        let mut legacy_changed = changed_by_sanitize;
         let mut mode = if changed_by_sanitize {
             MemoryCompactMode::Structural
         } else {
@@ -178,52 +179,30 @@ impl MemoryManager {
                     self.calculate_effective_length(&working_messages, None, recent_tool_call_ids);
             }
         }
+        if !force && self.should_preemptive_microcompact(message_length) {
+            let (microcompacted, cleared) =
+                self.microcompact_messages(&working_messages, cycle_index);
+            if cleared > 0 {
+                working_messages = microcompacted;
+                mode = mode.max(MemoryCompactMode::Micro);
+                legacy_changed = true;
+                message_length = self.calculate_effective_length(&working_messages, None, None);
+            }
+        }
         if !force && message_length <= self.autocompact_threshold() {
             let (warned, warning_inserted) =
                 self.maybe_append_memory_warning(&working_messages, message_length);
             if warning_inserted {
-                return MemoryCompactionOutcome::new(
-                    messages,
-                    warned,
-                    mode.max(MemoryCompactMode::Structural),
-                    true,
-                );
+                mode = mode.max(MemoryCompactMode::Structural);
+                legacy_changed = true;
             }
-            if self.should_preemptive_microcompact(message_length) {
-                let (microcompacted, cleared) =
-                    self.microcompact_messages(&working_messages, cycle_index);
-                if cleared > 0 {
-                    return MemoryCompactionOutcome::new(
-                        messages,
-                        microcompacted,
-                        mode.max(MemoryCompactMode::Micro),
-                        true,
-                    );
-                }
-            }
-            return MemoryCompactionOutcome::new(
-                messages,
-                working_messages,
-                mode,
-                changed_by_sanitize,
-            );
+            return MemoryCompactionOutcome::new(messages, warned, mode, legacy_changed);
         }
         let mut summary_source = self.strip_session_memory_context(&working_messages);
         if summary_source != working_messages {
             mode = mode.max(MemoryCompactMode::Structural);
         }
         if !force {
-            let (microcompacted, cleared) =
-                self.microcompact_messages(&working_messages, cycle_index);
-            if cleared > 0 {
-                mode = mode.max(MemoryCompactMode::Micro);
-                if self.calculate_effective_length(&microcompacted, None, None)
-                    <= self.autocompact_threshold()
-                {
-                    return MemoryCompactionOutcome::new(messages, microcompacted, mode, true);
-                }
-                summary_source = microcompacted;
-            }
             let (image_compacted, image_changed) =
                 compact_processed_image_messages(&summary_source);
             let (artifact_compacted, artifact_changed) =
@@ -255,7 +234,7 @@ impl MemoryManager {
                 session_memory.on_compaction(Some(post_compaction_tokens));
             }
         }
-        MemoryCompactionOutcome::new(messages, compacted, mode, changed)
+        MemoryCompactionOutcome::new(messages, compacted, mode, legacy_changed || changed)
     }
 
     fn remove_previous_summary(&self, messages: &[Message]) -> Vec<Message> {

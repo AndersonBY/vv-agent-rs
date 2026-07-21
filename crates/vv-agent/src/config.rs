@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -127,16 +128,11 @@ impl ResolvedModelConfig {
 
 pub fn apply_resolved_model_limits(task: &mut AgentTask, resolved: &ResolvedModelConfig) {
     task.native_multimodal = resolved.native_multimodal;
-    if let Some(context_length) = resolved.context_length {
-        task.metadata
-            .entry("model_context_window".to_string())
-            .or_insert_with(|| Value::from(context_length));
-    }
-    if let Some(max_output_tokens) = resolved.max_output_tokens {
-        task.metadata
-            .entry("model_max_output_tokens".to_string())
-            .or_insert_with(|| Value::from(max_output_tokens));
-    }
+    project_resolved_model_limits(
+        &mut task.metadata,
+        resolved.context_length,
+        resolved.max_output_tokens,
+    );
     task.metadata
         .entry("function_call_available".to_string())
         .or_insert_with(|| Value::Bool(resolved.function_call_available));
@@ -146,6 +142,30 @@ pub fn apply_resolved_model_limits(task: &mut AgentTask, resolved: &ResolvedMode
     task.metadata
         .entry("native_multimodal".to_string())
         .or_insert_with(|| Value::Bool(resolved.native_multimodal));
+}
+
+pub(crate) fn project_resolved_model_limits(
+    metadata: &mut BTreeMap<String, Value>,
+    context_length: Option<u64>,
+    max_output_tokens: Option<u64>,
+) {
+    let has_positive_context = metadata
+        .get("model_context_window")
+        .and_then(Value::as_u64)
+        .is_some_and(|value| value > 0);
+    if !has_positive_context {
+        if let Some(context_length) = context_length.filter(|value| *value > 0) {
+            metadata.insert(
+                "model_context_window".to_string(),
+                Value::from(context_length),
+            );
+        }
+    }
+    if let Some(max_output_tokens) = max_output_tokens {
+        metadata
+            .entry("model_max_output_tokens".to_string())
+            .or_insert_with(|| Value::from(max_output_tokens));
+    }
 }
 
 pub fn load_memory_summary_defaults_from_file(path: &Path) -> MemorySummaryDefaults {

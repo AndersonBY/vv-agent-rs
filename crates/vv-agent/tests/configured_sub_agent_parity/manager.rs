@@ -658,6 +658,12 @@ fn explicit_backend_and_resolved_limits_reach_real_child_request_and_run_context
     for (label, child_metadata, expected_context, expected_reserve) in [
         ("resolved limits", BTreeMap::new(), context_length, None),
         (
+            "non-positive child metadata uses resolved limit",
+            BTreeMap::from([("model_context_window".to_string(), json!(0))]),
+            context_length,
+            None,
+        ),
+        (
             "explicit child metadata wins",
             BTreeMap::from([
                 ("model_context_window".to_string(), json!(12_345)),
@@ -786,6 +792,14 @@ fn explicit_backend_and_resolved_limits_reach_real_child_request_and_run_context
         assert_eq!(
             requests[0].metadata["model_max_output_tokens"], max_output_tokens,
             "{label}"
+        );
+        assert!(
+            requests[0]
+                .model_settings
+                .as_ref()
+                .and_then(|settings| settings.max_tokens)
+                .is_none(),
+            "{label}: output capability must not become a request limit"
         );
         assert_eq!(
             requests[0]

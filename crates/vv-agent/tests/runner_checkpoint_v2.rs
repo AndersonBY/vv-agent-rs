@@ -753,12 +753,21 @@ fn run_config(
     store: InMemoryCheckpointStoreV2,
     session: MemorySession,
     crash_once: Arc<AtomicBool>,
+    host_request_id: &str,
+    reserved_output_tokens: u64,
 ) -> RunConfig {
+    let mut checkpoint = checkpoint_config(store, "runner-checkpoint");
+    checkpoint.capability_refs.insert(
+        "behavior_affecting_run_metadata".to_string(),
+        CapabilityRef::new("metadata.request-42", "1").expect("run metadata capability ref"),
+    );
     RunConfig::builder()
         .max_cycles(2)
         .no_tool_policy(NoToolPolicy::Finish)
+        .metadata("host_request_id", json!(host_request_id))
+        .metadata("reserved_output_tokens", json!(reserved_output_tokens))
         .session(session)
-        .checkpoint_config(checkpoint_config(store, "runner-checkpoint"))
+        .checkpoint_config(checkpoint)
         .before_cycle_messages(move |cycle, _messages, _state| {
             if cycle == 2 && crash_once.swap(false, Ordering::SeqCst) {
                 panic!("deterministic crash after committed cycle");
@@ -771,21 +780,32 @@ fn run_config(
 #[tokio::test]
 async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free() {
     let model_calls = Arc::new(AtomicUsize::new(0));
+    let model_metadata = Arc::new(Mutex::new(Vec::<Value>::new()));
     let first_calls = model_calls.clone();
     let second_calls = model_calls.clone();
+    let first_metadata = model_metadata.clone();
+    let second_metadata = model_metadata.clone();
     let provider = ScriptedModelProvider::from_steps(
         "scripted",
         "checkpoint-model",
         vec![
-            ScriptStep::callback(move |_request| {
+            ScriptStep::callback(move |request| {
                 first_calls.fetch_add(1, Ordering::SeqCst);
+                first_metadata
+                    .lock()
+                    .expect("first model metadata")
+                    .push(request.metadata.clone());
                 Ok(LLMResponse::with_tool_calls(
                     "write once",
                     vec![ToolCall::new("call-write", "write_record", BTreeMap::new())],
                 ))
             }),
-            ScriptStep::callback(move |_request| {
+            ScriptStep::callback(move |request| {
                 second_calls.fetch_add(1, Ordering::SeqCst);
+                second_metadata
+                    .lock()
+                    .expect("second model metadata")
+                    .push(request.metadata.clone());
                 Ok(LLMResponse::new("done"))
             }),
         ],
@@ -830,7 +850,13 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
         .run_with_config(
             &agent,
             "process item 42",
-            run_config(store.clone(), session.clone(), crash_once.clone()),
+            run_config(
+                store.clone(),
+                session.clone(),
+                crash_once.clone(),
+                "request-42",
+                4_096,
+            ),
         )
         .await;
     let first_error = match first {
@@ -854,8 +880,18 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
     assert_eq!(crashed.cycles.len(), 1);
     assert_eq!(crashed.resume_attempt, 1);
     assert!(crashed.claim_token.is_some());
+    assert_eq!(
+        crashed.run_definition["run_metadata"]["host_request_id"],
+        "request-42"
+    );
+    assert_eq!(
+        crashed.run_definition["run_metadata"]["reserved_output_tokens"],
+        4_096
+    );
     let original_run_id = crashed.root_run_id.clone();
     let original_trace_id = crashed.trace_id.clone();
+    assert!(!crashed.messages[0].metadata.is_empty());
+    crashed.messages[0].metadata.clear();
     crashed.lease_expires_at_ms = Some(1);
     store
         .save_checkpoint_v2(crashed)
@@ -865,7 +901,13 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
         .run_with_config(
             &agent,
             "process item 42",
-            run_config(store.clone(), session.clone(), crash_once.clone()),
+            run_config(
+                store.clone(),
+                session.clone(),
+                crash_once.clone(),
+                "stale-request",
+                1_024,
+            ),
         )
         .await
         .expect("resume");
@@ -876,6 +918,12 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
     assert_eq!(resumed.result().cycles.len(), 2);
     assert_eq!(model_calls.load(Ordering::SeqCst), 2);
     assert_eq!(observed_keys.lock().expect("idempotency keys").len(), 1);
+    {
+        let observed_metadata = model_metadata.lock().expect("model metadata");
+        assert_eq!(observed_metadata.len(), 2);
+        assert_eq!(observed_metadata[1]["host_request_id"], "request-42");
+        assert_eq!(observed_metadata[1]["reserved_output_tokens"], 4_096);
+    }
 
     let terminal = store
         .load_checkpoint_v2("runner-checkpoint")
@@ -891,7 +939,13 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
         .run_with_config(
             &agent,
             "process item 42",
-            run_config(store.clone(), session.clone(), crash_once),
+            run_config(
+                store.clone(),
+                session.clone(),
+                crash_once,
+                "newer-stale-request",
+                512,
+            ),
         )
         .await
         .expect("terminal replay");

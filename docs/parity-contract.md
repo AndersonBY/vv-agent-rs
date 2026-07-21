@@ -18,6 +18,11 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
+The current lock selects contract `0.10.1` at revision
+`9e6f356eb20ed81e0e1a66f87ef07445d2324b4b`. The central support matrix keeps
+both implementations at `pending-adoption` until the paired full gates and a
+recording cross-repository run pass.
+
 ## Required Reading
 
 For shared public, model-visible, runtime, persistence, or wire changes, read:
@@ -96,22 +101,30 @@ Rust records a resolved model's output capability in task metadata as
 that capability. This projection is preserved through the main Runner path,
 checkpoint reconstruction, and configured sub-agent creation.
 
-`runtime/engine/memory.rs` resolves the context window from explicit task
-metadata, resolved model capability, then `200000`. It resolves output reserve
-from an effective positive `ModelSettings.max_tokens`, explicit task metadata,
-then the `16000` framework fallback. Only that fallback may be capped by a
-smaller `model_max_output_tokens` capability. The memory manager subtracts the
-`13000` default auto-compaction buffer and preserves a known derived capacity
-of zero. Omitted task and manager compact thresholds default to `250000`;
-explicit values in durable tasks remain unchanged.
+`runtime/engine/memory.rs` resolves the context window from positive explicit
+task metadata, resolved model capability, then `200000`; non-positive metadata
+is absent. It resolves output reserve from an effective positive
+`ModelSettings.max_tokens`, explicit task metadata, then the `16000` framework
+fallback. Only that fallback may be capped by a smaller
+`model_max_output_tokens` capability. The memory manager subtracts the `13000`
+default auto-compaction buffer and preserves a known derived capacity of zero
+from a positive context. Omitted task and manager compact thresholds default to
+`250000`; explicit values in durable tasks remain unchanged.
 
-The runtime emits every new capacity field on `memory_compact_started`, then
-emits the strongest applied mode and a message-content comparison as `changed`
-on `memory_compact_completed`. `runner/event_stream.rs` maps those runtime
-producer payloads into typed `RunEventPayload` variants. The v1 decoder accepts
+The runtime microcompacts eligible old tool results before evaluating an
+optional warning against recalculated usage, including when the original usage
+also crossed the full-compaction threshold. It emits every new capacity field
+on `memory_compact_started`, then emits the strongest applied mode and a
+message-content comparison as `changed` on `memory_compact_completed`.
+Provider callbacks, runtime payloads, and `runner/event_stream.rs` journal
+projections reuse the same `event_id` and `created_at`. The v1 decoder accepts
 legacy events that omit additive fields, while rejecting known fields with an
 invalid type or unknown enum value. No capacity or compaction branch inspects
 task category, answer meaning, or semantic progress.
+
+Runner checkpoint resume restores `run_metadata` from the frozen run definition
+before rebuilding runtime controls; current caller metadata does not rewrite
+the behavior-affecting snapshot.
 
 ## Output Validation Mapping
 

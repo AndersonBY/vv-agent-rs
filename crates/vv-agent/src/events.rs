@@ -8,6 +8,7 @@ use crate::tools::ToolMetadata;
 use crate::types::ToolDirective;
 use crate::types::{AgentStatus, CompletionReason, Metadata};
 
+mod identity;
 mod payload;
 mod wire;
 

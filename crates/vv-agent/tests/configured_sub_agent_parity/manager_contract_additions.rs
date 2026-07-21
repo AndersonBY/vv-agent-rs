@@ -369,6 +369,11 @@ fn same_model_parent_client_inherits_fixture_token_limits() {
         request.metadata["model_max_output_tokens"],
         limits["max_output_tokens"]
     );
+    assert!(request
+        .model_settings
+        .as_ref()
+        .and_then(|settings| settings.max_tokens)
+        .is_none());
     assert!(request.metadata.get("reserved_output_tokens").is_none());
     assert_eq!(
         model_contract["same_model_parent_client_inherits_token_limits"],

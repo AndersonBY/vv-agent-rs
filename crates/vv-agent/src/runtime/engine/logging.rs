@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use serde_json::Value;
 
@@ -31,9 +32,16 @@ pub(super) fn emit_runtime_log(
         }
     }
     if let Some(handler) = runtime_handler {
-        if let Ok(mut handler) = handler.lock() {
-            (handler)(event, &payload);
-        }
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let mut callback = match handler.lock() {
+                Ok(callback) => callback,
+                Err(poisoned) => {
+                    handler.clear_poison();
+                    poisoned.into_inner()
+                }
+            };
+            (callback)(event, &payload);
+        }));
     }
     if let Some(handler) = event_handler {
         handler(event, &payload);
@@ -263,4 +271,43 @@ pub(super) fn tool_result_status_value(status: ToolResultStatus) -> Value {
         ToolResultStatus::PendingCompress => "pending_compress",
     };
     Value::String(status.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    };
+
+    use super::*;
+
+    #[test]
+    fn panicking_raw_runtime_handler_does_not_poison_later_events() {
+        let raw_calls = Arc::new(AtomicUsize::new(0));
+        let raw_calls_for_handler = raw_calls.clone();
+        let raw_handler: RuntimeLogHandler = Arc::new(Mutex::new(Box::new(move |_, _| {
+            if raw_calls_for_handler.fetch_add(1, Ordering::SeqCst) == 0 {
+                panic!("raw runtime observer panic");
+            }
+        })));
+        let typed_calls = Arc::new(AtomicUsize::new(0));
+        let typed_calls_for_handler = typed_calls.clone();
+        let typed_handler: RuntimeEventHandler = Arc::new(move |_, _| {
+            typed_calls_for_handler.fetch_add(1, Ordering::SeqCst);
+        });
+
+        for event in ["memory_compact_started", "memory_compact_completed"] {
+            emit_runtime_log(
+                Some(&raw_handler),
+                Some(&typed_handler),
+                None,
+                event,
+                BTreeMap::new(),
+            );
+        }
+
+        assert_eq!(raw_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(typed_calls.load(Ordering::SeqCst), 2);
+    }
 }
