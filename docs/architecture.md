@@ -39,7 +39,10 @@ model tool-call start/progress into typed events with framework-owned identity
 and cycle fields. Model tool generation uses `model_tool_call_*`; actual tool
 execution continues to use `tool_call_started` / `tool_call_completed`.
 Reasoning remains private telemetry and is not rendered as App Server answer
-text. Unknown or malformed raw stream payloads stay raw-only.
+text. Unknown or malformed raw stream payloads stay raw-only. Known runtime
+events are recorded before the matching raw observer is called, and raw
+observer panics are isolated from runtime decisions; event-store failure policy
+remains a separate host choice.
 
 Token accounting keeps provider truth separate from compatibility values.
 `TokenUsage::usage_source` identifies provider-reported, estimated, or missing

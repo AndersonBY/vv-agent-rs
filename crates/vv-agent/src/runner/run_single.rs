@@ -523,7 +523,7 @@ impl Runner {
                         }
                     }
                     if let Some(handler) = configured_runtime_log_handler.as_ref() {
-                        handler(event, payload);
+                        let _ = catch_unwind(AssertUnwindSafe(|| handler(event, payload)));
                     }
                 },
             ) as crate::runtime::RuntimeEventHandler)

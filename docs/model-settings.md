@@ -109,8 +109,9 @@ resolves model capabilities.
 
 Memory capacity uses these precedence rules:
 
-1. Context window: explicit task `model_context_window`, resolved capability,
-   then `200000`.
+1. Context window: positive explicit task `model_context_window`, resolved
+   capability, then `200000`. Zero metadata is absent rather than a zero-sized
+   model.
 2. Output reserve: effective positive `ModelSettings.max_tokens`, explicit task
    `reserved_output_tokens`, then `16000`.
 3. Only the `16000` fallback reserve is reduced when
@@ -123,6 +124,11 @@ effective full-compaction threshold is the smaller of that capacity and the
 configured task threshold (`250000` when omitted); a known zero capacity stays
 zero. This calculation is task-neutral and does not inspect answer content or
 task type.
+
+When both warning and microcompact thresholds are crossed, eligible old tool
+results are cleared first. Runtime recalculates usage from the changed messages
+and appends the optional warning only if that post-microcompact usage remains
+eligible.
 
 ## Cache Usage Accounting
 

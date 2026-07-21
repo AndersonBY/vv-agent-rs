@@ -30,11 +30,10 @@ pub(super) fn map_memory_compact_started(
         payload_enum::<ReservedOutputSource>(payload, "reserved_output_source")?,
         payload_u64(payload, "autocompact_buffer_tokens")?,
     );
-    Some(with_selected_payload_metadata(
-        event,
+    with_observed_identity(
+        with_selected_payload_metadata(event, payload, PROVIDER_METADATA_FIELDS),
         payload,
-        PROVIDER_METADATA_FIELDS,
-    ))
+    )
 }
 
 pub(super) fn map_memory_compact_completed(
@@ -52,11 +51,19 @@ pub(super) fn map_memory_compact_completed(
         payload_enum::<MemoryCompactMode>(payload, "mode")?,
         payload.get("changed").and_then(Value::as_bool)?,
     );
-    Some(with_selected_payload_metadata(
-        event,
+    with_observed_identity(
+        with_selected_payload_metadata(event, payload, PROVIDER_METADATA_FIELDS),
         payload,
-        PROVIDER_METADATA_FIELDS,
-    ))
+    )
+}
+
+fn with_observed_identity(event: RunEvent, payload: &BTreeMap<String, Value>) -> Option<RunEvent> {
+    event
+        .with_observed_identity(
+            payload.get("event_id")?.as_str()?,
+            payload.get("created_at")?.as_f64()?,
+        )
+        .ok()
 }
 
 fn payload_u64(payload: &BTreeMap<String, Value>, field: &str) -> Option<u64> {

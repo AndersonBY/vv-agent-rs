@@ -178,7 +178,8 @@ fn resolve_memory_capacity(
     resolved_max_output_tokens: Option<u64>,
 ) -> RuntimeMemoryCapacity {
     let model_context_window = read_optional_u64_metadata(&task.metadata, "model_context_window")
-        .or(resolved_context_window)
+        .filter(|value| *value > 0)
+        .or(resolved_context_window.filter(|value| *value > 0))
         .unwrap_or(MODEL_CONTEXT_WINDOW_FALLBACK);
     let model_max_output_tokens =
         read_optional_u64_metadata(&task.metadata, "model_max_output_tokens")
@@ -379,6 +380,11 @@ pub(super) fn memory_compact_completed_event(
 
 pub(super) fn memory_compact_event_payload(event: &RunEvent) -> BTreeMap<String, Value> {
     let mut payload = event.metadata().clone();
+    payload.insert(
+        "event_id".to_string(),
+        Value::String(event.event_id().as_str().to_string()),
+    );
+    payload.insert("created_at".to_string(), Value::from(event.created_at()));
     if let Some(cycle_index) = event.cycle_index() {
         payload.insert("cycle".to_string(), Value::from(cycle_index));
     }

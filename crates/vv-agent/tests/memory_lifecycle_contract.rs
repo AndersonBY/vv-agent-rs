@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
-use vv_agent::memory::token_utils::count_messages_tokens;
+use vv_agent::memory::{token_utils::count_messages_tokens, CLEARED_MARKER};
 use vv_agent::{
     Agent, AgentRuntime, AgentStatus, AgentTask, ExecutionContext, LLMResponse, LlmClient,
     LlmError, LlmRequest, MemoryCompactMode, MemoryCompactTrigger, MemoryError, MemoryFuture,
@@ -13,6 +13,9 @@ use vv_agent::{
     RunEvent, RunEventPayload, Runner, RuntimeRunControls, SessionMemory, SessionMemoryConfig,
     SessionMemoryEntry, ToolCall,
 };
+
+#[path = "memory_lifecycle_contract/capacity.rs"]
+mod capacity;
 
 fn contract() -> Value {
     serde_json::from_str(include_str!("fixtures/parity/memory_lifecycle_v1.json"))
@@ -36,149 +39,23 @@ fn summary_payload() -> String {
     .to_string()
 }
 
-#[test]
-fn memory_capacity_defaults_match_contract_without_rewriting_explicit_values() {
-    let contract = contract();
-    let expected = &contract["capacity_contract"];
-
-    assert_eq!(
-        AgentTask::new("task", "model", "system", "user").memory_compact_threshold,
-        expected["configured_default_threshold"].as_u64().unwrap()
-    );
-    assert_eq!(
-        MemoryManagerConfig::default().compact_threshold,
-        expected["configured_default_threshold"].as_u64().unwrap()
-    );
-
-    let mut historical = AgentTask::new("task", "model", "system", "user");
-    historical.memory_compact_threshold = 128_000;
-    let restored: AgentTask = serde_json::from_value(
-        serde_json::to_value(&historical).expect("serialize historical task"),
-    )
-    .expect("restore historical task");
-    assert_eq!(restored.memory_compact_threshold, 128_000);
-}
-
-#[test]
-fn runtime_capacity_resolution_matches_every_contract_case() {
-    let contract = contract();
-    let capacity = &contract["capacity_contract"];
-
-    for case in capacity["cases"].as_array().expect("capacity cases") {
-        let input = &case["input"];
-        let expected = &case["expected"];
-        let mut task = AgentTask::new(
-            format!("capacity-{}", case["name"].as_str().unwrap()),
-            "capacity-model",
-            "system",
-            "continue",
-        );
-        task.initial_messages = vec![
-            Message::system("system"),
-            Message::user("first"),
-            Message::assistant("working"),
-        ];
-        task.max_cycles = 1;
-        task.no_tool_policy = NoToolPolicy::Finish;
-        task.memory_compact_threshold = input["configured_threshold"].as_u64().unwrap();
-        task.metadata.insert(
-            "model_context_window".to_string(),
-            input["model_context_window"].clone(),
-        );
-        task.metadata.insert(
-            "autocompact_buffer_tokens".to_string(),
-            input["autocompact_buffer_tokens"].clone(),
-        );
-        if let Some(value) = input["task_metadata_reserved_output_tokens"].as_u64() {
-            task.metadata
-                .insert("reserved_output_tokens".to_string(), Value::from(value));
-        }
-        if let Some(value) = input["model_max_output_tokens"].as_u64() {
-            task.metadata
-                .insert("model_max_output_tokens".to_string(), Value::from(value));
-        }
-        if let Some(value) = input["effective_model_max_tokens"].as_u64() {
-            task.model_settings = Some(
-                ModelSettings::builder()
-                    .max_tokens(u32::try_from(value).expect("request limit fits u32"))
-                    .build(),
-            );
-        }
-
-        let logs = Arc::new(Mutex::new(Vec::<(String, BTreeMap<String, Value>)>::new()));
-        let log_sink = logs.clone();
-        AgentRuntime::new(PromptTooLongThenSuccess::new(1))
-            .run_with_controls(
-                task,
-                RuntimeRunControls {
-                    log_handler: Some(Arc::new(move |event, payload| {
-                        if event.starts_with("memory_compact_") {
-                            log_sink
-                                .lock()
-                                .expect("capacity logs")
-                                .push((event.to_string(), payload.clone()));
-                        }
-                    })),
-                    ..RuntimeRunControls::default()
-                },
-            )
-            .unwrap_or_else(|error| panic!("{}: {error}", case["name"]));
-
-        let logs = logs.lock().expect("capacity logs");
-        let started = logs
-            .iter()
-            .find(|(event, payload)| {
-                event == "memory_compact_started" && payload["trigger"] == "prompt_too_long"
-            })
-            .unwrap_or_else(|| panic!("{}: forced started event", case["name"]));
-        assert_eq!(
-            started.1["configured_threshold"],
-            input["configured_threshold"]
-        );
-        assert_eq!(
-            started.1["effective_threshold"],
-            expected["effective_threshold"]
-        );
-        assert_eq!(
-            started.1["microcompact_threshold"],
-            expected["microcompact_threshold"]
-        );
-        assert_eq!(
-            started.1["model_context_window"],
-            input["model_context_window"]
-        );
-        assert_eq!(
-            started.1["model_max_output_tokens"],
-            input["model_max_output_tokens"]
-        );
-        assert_eq!(
-            started.1["reserved_output_tokens"],
-            expected["reserved_output_tokens"]
-        );
-        assert_eq!(
-            started.1["reserved_output_source"],
-            expected["reserved_output_source"]
-        );
-        assert_eq!(
-            started.1["autocompact_buffer_tokens"],
-            input["autocompact_buffer_tokens"]
-        );
-    }
-}
-
 #[tokio::test]
 async fn runner_journal_emits_typed_memory_capacity_and_completion_observation() {
-    let provider = ReusableRecordingModelProvider::default();
-    let captured = provider.requests.clone();
+    let model_provider = ReusableRecordingModelProvider::default();
+    let captured = model_provider.requests.clone();
+    let memory_provider = RecordingMemoryProvider::default();
+    let runtime_events = Arc::new(Mutex::new(Vec::<(String, BTreeMap<String, Value>)>::new()));
+    let runtime_event_sink = runtime_events.clone();
     let workspace = tempfile::tempdir().expect("workspace");
     let runner = Runner::builder()
-        .model_provider(provider)
+        .model_provider(model_provider)
         .workspace(workspace.path())
         .build()
         .expect("runner");
     let agent = Agent::builder("capacity-agent")
         .instructions("Finish.")
         .model(ModelRef::named("capacity-model"))
+        .metadata("model_context_window", json!(0))
         .build()
         .expect("agent");
 
@@ -194,6 +71,18 @@ async fn runner_journal_emits_typed_memory_capacity_and_completion_observation()
                     Message::user("token ".repeat(30_000)),
                     Message::assistant("working"),
                 ])
+                .memory_provider(Arc::new(memory_provider.clone()))
+                .runtime_log_handler(move |event, payload| {
+                    if event.starts_with("memory_compact_") {
+                        runtime_event_sink
+                            .lock()
+                            .expect("runtime memory events")
+                            .push((event.to_string(), payload.clone()));
+                    }
+                    if event == "memory_compact_started" {
+                        panic!("raw memory observer panic");
+                    }
+                })
                 .build(),
         )
         .await
@@ -263,6 +152,83 @@ async fn runner_journal_emits_typed_memory_capacity_and_completion_observation()
         .expect("typed memory completed event");
     assert_eq!(completed.0, Some(MemoryCompactMode::Summary));
     assert_eq!(completed.1, Some(true));
+
+    let provider_events = memory_provider.events.lock().expect("provider events");
+    let runtime_events = runtime_events.lock().expect("runtime memory events");
+    for (event_name, is_expected_payload) in [
+        (
+            "memory_compact_started",
+            matches_memory_compact_started as fn(&RunEventPayload) -> bool,
+        ),
+        (
+            "memory_compact_completed",
+            matches_memory_compact_completed as fn(&RunEventPayload) -> bool,
+        ),
+    ] {
+        let provider_events_for_type = provider_events
+            .iter()
+            .filter(|event| is_expected_payload(event.payload()))
+            .collect::<Vec<_>>();
+        let runtime_payloads_for_type = runtime_events
+            .iter()
+            .filter(|(name, _)| name == event_name)
+            .map(|(_, payload)| payload)
+            .collect::<Vec<_>>();
+        let runner_events_for_type = result
+            .events()
+            .iter()
+            .filter(|event| is_expected_payload(event.payload()))
+            .collect::<Vec<_>>();
+
+        assert!(
+            !provider_events_for_type.is_empty(),
+            "provider {event_name}"
+        );
+        assert_eq!(
+            runtime_payloads_for_type.len(),
+            provider_events_for_type.len(),
+            "runtime {event_name} count"
+        );
+        assert_eq!(
+            runner_events_for_type.len(),
+            provider_events_for_type.len(),
+            "Runner {event_name} count"
+        );
+        for ((provider_event, runtime_payload), runner_event) in provider_events_for_type
+            .iter()
+            .zip(runtime_payloads_for_type.iter())
+            .zip(runner_events_for_type.iter())
+        {
+            assert_eq!(
+                runtime_payload.get("event_id").and_then(Value::as_str),
+                Some(provider_event.event_id().as_str()),
+                "{event_name} runtime payload must reuse the provider event id"
+            );
+            assert_eq!(
+                runtime_payload.get("created_at").and_then(Value::as_f64),
+                Some(provider_event.created_at()),
+                "{event_name} runtime payload must reuse the provider timestamp"
+            );
+            assert_eq!(
+                runner_event.event_id(),
+                provider_event.event_id(),
+                "{event_name} Runner journal must reuse the provider event id"
+            );
+            assert_eq!(
+                runner_event.created_at(),
+                provider_event.created_at(),
+                "{event_name} Runner journal must reuse the provider timestamp"
+            );
+        }
+    }
+}
+
+fn matches_memory_compact_started(payload: &RunEventPayload) -> bool {
+    matches!(payload, RunEventPayload::MemoryCompactStarted { .. })
+}
+
+fn matches_memory_compact_completed(payload: &RunEventPayload) -> bool {
+    matches!(payload, RunEventPayload::MemoryCompactCompleted { .. })
 }
 
 #[derive(Clone, Default)]
@@ -534,6 +500,7 @@ fn runtime_routes_session_extraction_through_its_own_backend_model_pair() {
 #[derive(Clone, Default)]
 struct RecordingMemoryProvider {
     calls: Arc<Mutex<Vec<String>>>,
+    events: Arc<Mutex<Vec<RunEvent>>>,
     fail_before: bool,
     fail_after: bool,
 }
@@ -563,6 +530,10 @@ impl MemoryProvider for RecordingMemoryProvider {
             .lock()
             .expect("provider calls")
             .push("before".to_string());
+        self.events
+            .lock()
+            .expect("provider events")
+            .push(event.clone());
         let fail = self.fail_before;
         Box::pin(async move {
             if fail {
@@ -577,11 +548,15 @@ impl MemoryProvider for RecordingMemoryProvider {
         })
     }
 
-    fn after_compact(&self, _event: &RunEvent) -> MemoryFuture<()> {
+    fn after_compact(&self, event: &RunEvent) -> MemoryFuture<()> {
         self.calls
             .lock()
             .expect("provider calls")
             .push("after".to_string());
+        self.events
+            .lock()
+            .expect("provider events")
+            .push(event.clone());
         let fail = self.fail_after;
         Box::pin(async move {
             if fail {

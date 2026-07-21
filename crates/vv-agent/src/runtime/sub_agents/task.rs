@@ -3,6 +3,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use crate::config::project_resolved_model_limits;
 use crate::prompt::{
     build_raw_system_prompt_sections, build_system_prompt_bundle_with_options,
     BuildSystemPromptOptions,
@@ -94,18 +95,11 @@ pub(super) fn build_sub_agent_task(
         &context.workspace_path,
         generated_sections,
     );
-    if let Some(context_length) = inputs.resolved_context_length {
-        sub_task
-            .metadata
-            .entry("model_context_window".to_string())
-            .or_insert_with(|| Value::from(context_length));
-    }
-    if let Some(max_output_tokens) = inputs.resolved_max_output_tokens {
-        sub_task
-            .metadata
-            .entry("model_max_output_tokens".to_string())
-            .or_insert_with(|| Value::from(max_output_tokens));
-    }
+    project_resolved_model_limits(
+        &mut sub_task.metadata,
+        inputs.resolved_context_length,
+        inputs.resolved_max_output_tokens,
+    );
     let mut effective_policy = context.tool_policy.clone().unwrap_or_default();
     effective_policy.extend_metadata_denials(&sub_agent.declared_tool_policy());
     project_tool_policy(&mut sub_task, &effective_policy);
