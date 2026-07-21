@@ -19,6 +19,7 @@ fn sparse_agent_task_payload() -> Value {
 
 fn assert_agent_task_defaults(task: &AgentTask) {
     assert_eq!(task, &AgentTask::new("task-1", "model-1", "system", "user"));
+    assert_eq!(task.memory_compact_threshold, 250_000);
 }
 
 #[test]
@@ -167,6 +168,19 @@ fn agent_task_sparse_wire_uses_new_defaults_for_dict_and_serde() {
 
     assert_agent_task_defaults(&from_dict);
     assert_agent_task_defaults(&from_serde);
+}
+
+#[test]
+fn agent_task_preserves_explicit_historical_memory_threshold() {
+    let mut payload = sparse_agent_task_payload();
+    payload["memory_compact_threshold"] = json!(128_000);
+
+    let from_dict = AgentTask::from_dict(&payload).expect("historical AgentTask dict");
+    let from_serde: AgentTask =
+        serde_json::from_value(payload).expect("historical AgentTask serde");
+
+    assert_eq!(from_dict.memory_compact_threshold, 128_000);
+    assert_eq!(from_serde.memory_compact_threshold, 128_000);
 }
 
 #[test]

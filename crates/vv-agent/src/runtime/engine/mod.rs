@@ -247,14 +247,17 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     );
                     event
                 });
-                let (mut compacted_messages, memory_compacted) = memory_manager
-                    .compact_for_cycle_with_usage(
+                let compaction_outcome = memory_manager
+                    .compact_for_cycle_with_usage_observed(
                         &pre_compact_messages,
                         cycle_index,
                         false,
                         previous_prompt_tokens,
                         recent_tool_call_ids.as_ref(),
                     );
+                let compaction_mode = compaction_outcome.mode;
+                let memory_compacted = compaction_outcome.legacy_changed;
+                let mut compacted_messages = compaction_outcome.messages;
                 if let Some(started_event) = memory_compact_event.as_ref() {
                     let completed = memory_compact_completed_event(
                         started_event,
@@ -262,6 +265,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         &pre_compact_messages,
                         &compacted_messages,
                         &memory_manager.config.model,
+                        compaction_mode,
                     );
                     let completed =
                         notify_memory_after_compact(controls.execution_context.as_ref(), completed);
@@ -366,18 +370,28 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 "memory_compact_started",
                                 memory_compact_event_payload(&started),
                             );
+                            let compaction_mode;
                             compacted_messages = if prompt_too_long_retries == 1 {
-                                let (compacted, _) = memory_manager.compact_for_cycle(
+                                let outcome = memory_manager.compact_for_cycle_with_usage_observed(
                                     &compacted_messages,
                                     cycle_index,
                                     true,
+                                    None,
+                                    recent_tool_call_ids.as_ref(),
                                 );
-                                compacted
+                                compaction_mode = outcome.mode;
+                                outcome.messages
                             } else {
-                                memory_manager.emergency_compact(
+                                let emergency = memory_manager.emergency_compact(
                                     &compacted_messages,
                                     (0.2 * prompt_too_long_retries as f64).min(0.95),
-                                )
+                                );
+                                compaction_mode = if emergency == compacted_messages {
+                                    crate::events::MemoryCompactMode::None
+                                } else {
+                                    crate::events::MemoryCompactMode::Emergency
+                                };
+                                emergency
                             };
                             let completed = memory_compact_completed_event(
                                 &started,
@@ -385,6 +399,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 &before_retry_compact,
                                 &compacted_messages,
                                 &memory_manager.config.model,
+                                compaction_mode,
                             );
                             let completed = notify_memory_after_compact(
                                 controls.execution_context.as_ref(),

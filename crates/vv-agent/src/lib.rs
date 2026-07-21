@@ -76,7 +76,8 @@ pub use event_store::{
     EventStoreError, JsonlRunEventStore, RunEventIter, RunEventReplayQuery, RunEventStore,
 };
 pub use events::{
-    AgentErrorPayload, EventId, RunEvent, RunEventPayload, RunEventVersion, ToolStatus,
+    AgentErrorPayload, EventId, MemoryCompactMode, MemoryCompactTrigger, ReservedOutputSource,
+    RunEvent, RunEventPayload, RunEventVersion, ToolStatus,
 };
 pub use execution_mode::ExecutionMode;
 pub use guardrails::{GuardrailOutcome, InputGuardrail, OutputGuardrail};

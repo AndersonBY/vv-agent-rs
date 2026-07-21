@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::MemoryManager;
+use crate::events::MemoryCompactTrigger;
 use crate::memory::token_utils::{compute_compaction_threshold, count_messages_tokens};
 use crate::types::{Message, MessageRole};
 
@@ -35,16 +36,19 @@ impl MemoryManager {
         (used_tokens.saturating_mul(100)) / threshold
     }
 
-    pub(crate) fn should_attempt_compaction(
+    pub(crate) fn compaction_trigger(
         &self,
         messages: &[Message],
         total_tokens: Option<u64>,
         recent_tool_call_ids: Option<&BTreeSet<String>>,
-    ) -> bool {
+    ) -> Option<MemoryCompactTrigger> {
         let used_tokens =
             self.calculate_effective_length(messages, total_tokens, recent_tool_call_ids);
+        if used_tokens > self.autocompact_threshold() {
+            return Some(MemoryCompactTrigger::FullThreshold);
+        }
         self.should_preemptive_microcompact(used_tokens)
-            || used_tokens > self.autocompact_threshold()
+            .then_some(MemoryCompactTrigger::MicroThreshold)
     }
 
     pub fn warning_threshold(&self) -> u64 {

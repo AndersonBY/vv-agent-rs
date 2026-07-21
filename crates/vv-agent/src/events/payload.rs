@@ -88,12 +88,34 @@ pub enum RunEventPayload {
         message_count: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         estimated_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trigger: Option<MemoryCompactTrigger>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        configured_threshold: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effective_threshold: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        microcompact_threshold: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_context_window: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_max_output_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reserved_output_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reserved_output_source: Option<ReservedOutputSource>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        autocompact_buffer_tokens: Option<u64>,
     },
     MemoryCompactCompleted {
         before_count: usize,
         after_count: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         summary_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mode: Option<MemoryCompactMode>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        changed: Option<bool>,
     },
     SubRunStarted {
         parent_tool_call_id: String,
@@ -182,6 +204,33 @@ pub enum RunEventPayload {
     RunCancelled {
         reason: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryCompactTrigger {
+    MicroThreshold,
+    FullThreshold,
+    PromptTooLong,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryCompactMode {
+    None,
+    Micro,
+    Structural,
+    Summary,
+    Emergency,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReservedOutputSource {
+    ModelSettings,
+    TaskMetadata,
+    FrameworkFallback,
+    FrameworkFallbackCappedByModelCapability,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

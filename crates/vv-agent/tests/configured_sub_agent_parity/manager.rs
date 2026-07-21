@@ -655,13 +655,8 @@ fn explicit_backend_and_resolved_limits_reach_real_child_request_and_run_context
         .as_u64()
         .expect("resolved max output tokens");
 
-    for (label, child_metadata, expected_context, expected_output) in [
-        (
-            "resolved limits",
-            BTreeMap::new(),
-            context_length,
-            max_output_tokens,
-        ),
+    for (label, child_metadata, expected_context, expected_reserve) in [
+        ("resolved limits", BTreeMap::new(), context_length, None),
         (
             "explicit child metadata wins",
             BTreeMap::from([
@@ -669,7 +664,7 @@ fn explicit_backend_and_resolved_limits_reach_real_child_request_and_run_context
                 ("reserved_output_tokens".to_string(), json!(678)),
             ]),
             12_345,
-            678,
+            Some(678),
         ),
     ] {
         let child_requests = Arc::new(Mutex::new(Vec::<LlmRequest>::new()));
@@ -789,7 +784,15 @@ fn explicit_backend_and_resolved_limits_reach_real_child_request_and_run_context
             "{label}"
         );
         assert_eq!(
-            requests[0].metadata["reserved_output_tokens"], expected_output,
+            requests[0].metadata["model_max_output_tokens"], max_output_tokens,
+            "{label}"
+        );
+        assert_eq!(
+            requests[0]
+                .metadata
+                .get("reserved_output_tokens")
+                .and_then(Value::as_u64),
+            expected_reserve,
             "{label}"
         );
         let run_model = inspected_model

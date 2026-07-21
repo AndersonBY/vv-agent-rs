@@ -288,7 +288,7 @@ const fn default_agent_task_max_cycles() -> u32 {
 }
 
 const fn default_memory_compact_threshold() -> u64 {
-    128_000
+    250_000
 }
 
 const fn default_memory_threshold_percentage() -> u8 {
@@ -396,7 +396,7 @@ impl AgentTask {
             system_prompt: system_prompt.into(),
             user_prompt: user_prompt.into(),
             max_cycles: 8,
-            memory_compact_threshold: 128_000,
+            memory_compact_threshold: default_memory_compact_threshold(),
             memory_threshold_percentage: 90,
             no_tool_policy: NoToolPolicy::Continue,
             allow_interruption: true,

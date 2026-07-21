@@ -10,7 +10,7 @@ use vv_agent::cli::{
 use vv_agent::{AgentResult, AgentStatus, ResolvedModelConfig};
 
 const CONTRACT_SOURCE: &str = include_str!("cli_contract_v1.json");
-const CONTRACT_SHA256: &str = "029e2357351d7029932907bd84448dda92b0dc220eac5f215acd7eb69dee6d09";
+const CONTRACT_SHA256: &str = "7fa3ce692deea100e77d52e4167fdd123bb18f9ff0adadeefd10609b519d2561";
 
 fn contract() -> Value {
     assert_eq!(

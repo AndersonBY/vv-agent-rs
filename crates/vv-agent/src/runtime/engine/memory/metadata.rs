@@ -18,6 +18,17 @@ pub(super) fn read_u64_metadata(
         .unwrap_or(default)
 }
 
+pub(super) fn read_optional_u64_metadata(
+    metadata: &BTreeMap<String, Value>,
+    key: &str,
+) -> Option<u64> {
+    metadata.get(key).and_then(|value| match value {
+        Value::Number(number) => number.as_u64(),
+        Value::String(text) => text.trim().parse::<u64>().ok(),
+        _ => None,
+    })
+}
+
 pub(super) fn read_usize_metadata(
     metadata: &BTreeMap<String, Value>,
     key: &str,

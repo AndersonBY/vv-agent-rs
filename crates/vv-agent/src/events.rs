@@ -11,11 +11,15 @@ use crate::types::{AgentStatus, CompletionReason, Metadata};
 mod payload;
 mod wire;
 
-pub use payload::{AgentErrorPayload, ApprovalAction, RunEventPayload, ToolStatus};
+pub use payload::{
+    AgentErrorPayload, ApprovalAction, MemoryCompactMode, MemoryCompactTrigger,
+    ReservedOutputSource, RunEventPayload, ToolStatus,
+};
 
 use wire::{
     add_default_supplemental_fields, supplemental_wire_fields, validate_budget_wire_fields,
-    validate_checkpoint_wire_fields, validate_completion_wire_fields, validate_stream_wire_fields,
+    validate_checkpoint_wire_fields, validate_compaction_wire_fields,
+    validate_completion_wire_fields, validate_stream_wire_fields,
     validate_tool_lifecycle_wire_fields,
 };
 
@@ -207,6 +211,7 @@ impl<'de> Deserialize<'de> for RunEvent {
         validate_budget_wire_fields(&value).map_err(D::Error::custom)?;
         validate_stream_wire_fields(&wire.payload, wire.cycle_index).map_err(D::Error::custom)?;
         validate_tool_lifecycle_wire_fields(&value, &wire.payload).map_err(D::Error::custom)?;
+        validate_compaction_wire_fields(&value, &wire.payload).map_err(D::Error::custom)?;
         validate_checkpoint_wire_fields(&wire.payload, wire.cycle_index)
             .map_err(D::Error::custom)?;
         if let RunEventPayload::ApprovalResolved { approved, .. } = &mut wire.payload {
@@ -464,8 +469,62 @@ impl RunEvent {
             RunEventPayload::MemoryCompactStarted {
                 message_count,
                 estimated_tokens,
+                trigger: None,
+                configured_threshold: None,
+                effective_threshold: None,
+                microcompact_threshold: None,
+                model_context_window: None,
+                model_max_output_tokens: None,
+                reserved_output_tokens: None,
+                reserved_output_source: None,
+                autocompact_buffer_tokens: None,
             },
         )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn memory_compact_started_observed(
+        run_id: impl Into<String>,
+        trace_id: impl Into<String>,
+        agent_name: impl Into<String>,
+        cycle_index: u32,
+        message_count: usize,
+        estimated_tokens: Option<u64>,
+        trigger: MemoryCompactTrigger,
+        configured_threshold: u64,
+        effective_threshold: u64,
+        microcompact_threshold: u64,
+        model_context_window: u64,
+        model_max_output_tokens: Option<u64>,
+        reserved_output_tokens: u64,
+        reserved_output_source: ReservedOutputSource,
+        autocompact_buffer_tokens: u64,
+    ) -> Self {
+        let mut event = Self::new(
+            run_id,
+            trace_id,
+            agent_name,
+            Some(cycle_index),
+            RunEventPayload::MemoryCompactStarted {
+                message_count,
+                estimated_tokens,
+                trigger: Some(trigger),
+                configured_threshold: Some(configured_threshold),
+                effective_threshold: Some(effective_threshold),
+                microcompact_threshold: Some(microcompact_threshold),
+                model_context_window: Some(model_context_window),
+                model_max_output_tokens,
+                reserved_output_tokens: Some(reserved_output_tokens),
+                reserved_output_source: Some(reserved_output_source),
+                autocompact_buffer_tokens: Some(autocompact_buffer_tokens),
+            },
+        );
+        if model_max_output_tokens.is_none() {
+            event
+                .extra_fields
+                .insert("model_max_output_tokens".to_string(), Value::Null);
+        }
+        event
     }
 
     pub fn memory_compact_completed(
@@ -486,6 +545,35 @@ impl RunEvent {
                 before_count,
                 after_count,
                 summary_tokens,
+                mode: None,
+                changed: None,
+            },
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn memory_compact_completed_observed(
+        run_id: impl Into<String>,
+        trace_id: impl Into<String>,
+        agent_name: impl Into<String>,
+        cycle_index: u32,
+        before_count: usize,
+        after_count: usize,
+        summary_tokens: Option<u64>,
+        mode: MemoryCompactMode,
+        changed: bool,
+    ) -> Self {
+        Self::new(
+            run_id,
+            trace_id,
+            agent_name,
+            Some(cycle_index),
+            RunEventPayload::MemoryCompactCompleted {
+                before_count,
+                after_count,
+                summary_tokens,
+                mode: Some(mode),
+                changed: Some(changed),
             },
         )
     }

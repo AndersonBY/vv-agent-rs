@@ -345,7 +345,7 @@ fn same_model_parent_client_inherits_fixture_token_limits() {
         limits["context_length"].clone(),
     );
     parent.metadata.insert(
-        "reserved_output_tokens".to_string(),
+        "model_max_output_tokens".to_string(),
         limits["max_output_tokens"].clone(),
     );
     let mut child = SubAgentConfig::new("shared-model", "Research");
@@ -366,9 +366,10 @@ fn same_model_parent_client_inherits_fixture_token_limits() {
         limits["context_length"]
     );
     assert_eq!(
-        request.metadata["reserved_output_tokens"],
+        request.metadata["model_max_output_tokens"],
         limits["max_output_tokens"]
     );
+    assert!(request.metadata.get("reserved_output_tokens").is_none());
     assert_eq!(
         model_contract["same_model_parent_client_inherits_token_limits"],
         true

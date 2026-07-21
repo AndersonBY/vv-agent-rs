@@ -128,7 +128,8 @@ fn cli_task_applies_resolved_vv_llm_token_limits_to_memory_metadata() {
 
     assert_eq!(task.model, "deepseek-v4-pro");
     assert_eq!(task.metadata["model_context_window"], 1_000_000);
-    assert_eq!(task.metadata["reserved_output_tokens"], 384_000);
+    assert_eq!(task.metadata["model_max_output_tokens"], 384_000);
+    assert!(!task.metadata.contains_key("reserved_output_tokens"));
 }
 
 #[test]

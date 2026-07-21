@@ -103,7 +103,7 @@ pub(super) fn build_sub_agent_task(
     if let Some(max_output_tokens) = inputs.resolved_max_output_tokens {
         sub_task
             .metadata
-            .entry("reserved_output_tokens".to_string())
+            .entry("model_max_output_tokens".to_string())
             .or_insert_with(|| Value::from(max_output_tokens));
     }
     let mut effective_policy = context.tool_policy.clone().unwrap_or_default();
@@ -450,6 +450,9 @@ mod parity_tests {
                 request: &request,
             },
         );
+        assert_eq!(task.metadata["model_context_window"], json!(32_000));
+        assert_eq!(task.metadata["model_max_output_tokens"], json!(4_096));
+        assert!(!task.metadata.contains_key("reserved_output_tokens"));
         let projection = json!({
             "model": task.model,
             "user_prompt": task.user_prompt,

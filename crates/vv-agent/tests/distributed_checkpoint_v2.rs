@@ -180,6 +180,10 @@ fn envelope(
         "Summarize the status.",
     );
     task.max_cycles = 10;
+    task.memory_compact_threshold = checkpoint.run_definition["runtime_controls"]
+        ["memory_compact_threshold"]
+        .as_u64()
+        .expect("durable memory compact threshold");
     task.use_workspace = false;
     task.exclude_tools = vec!["task_finish".to_string(), "ask_user".to_string()];
     task.metadata.insert(
