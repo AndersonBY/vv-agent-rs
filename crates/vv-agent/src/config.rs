@@ -134,7 +134,7 @@ pub fn apply_resolved_model_limits(task: &mut AgentTask, resolved: &ResolvedMode
     }
     if let Some(max_output_tokens) = resolved.max_output_tokens {
         task.metadata
-            .entry("reserved_output_tokens".to_string())
+            .entry("model_max_output_tokens".to_string())
             .or_insert_with(|| Value::from(max_output_tokens));
     }
     task.metadata

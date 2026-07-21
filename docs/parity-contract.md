@@ -76,6 +76,7 @@ Never repair a contract failure by editing a file under
 | Model stream projection | `crates/vv-agent/src/events/`, `crates/vv-agent/src/runner/event_stream/stream_projection.rs`, `crates/vv-agent/src/runner/run_single.rs`, `crates/vv-agent/src/runtime/sub_agents/events.rs`, `crates/vv-agent/src/app_server/protocol/item.rs`, `crates/vv-agent/tests/runner_producer_parity.rs` |
 | Token and cache usage | `crates/vv-agent/src/types/token_usage.rs`, `crates/vv-agent/src/runtime/token_usage.rs`, `crates/vv-agent/src/llm/vv_llm_client/`, `crates/vv-agent/tests/token_usage.rs` |
 | Assistant reasoning history | `crates/vv-agent/src/memory/message_sanitizer.rs`, `crates/vv-agent/src/llm/vv_llm_client/`, `crates/vv-agent/tests/message_sanitizer.rs`, `crates/vv-agent/tests/completion_policy_contract.rs` |
+| Memory capacity and compaction lifecycle | `crates/vv-agent/src/config.rs`, `crates/vv-agent/src/memory/manager/`, `crates/vv-agent/src/runtime/engine/memory.rs`, `crates/vv-agent/src/runner/event_stream.rs`, `crates/vv-agent/src/events/`; `crates/vv-agent/tests/memory_lifecycle_contract.rs`, `crates/vv-agent/tests/runtime_cycle/microcompact.rs`, `crates/vv-agent/tests/run_events_v1.rs`, `crates/vv-agent/tests/run_events_v1_invalid.rs`, `crates/vv-agent/tests/configured_sub_agent_parity.rs`, `crates/vv-agent/tests/runner_checkpoint_v2.rs` |
 | Run budgets | `crates/vv-agent/src/budget.rs`, `crates/vv-agent/src/runtime/engine/budget.rs`, `crates/vv-agent/tests/run_budget.rs` |
 | After-cycle lifecycle hooks | `crates/vv-agent/src/runtime/lifecycle.rs`, `crates/vv-agent/src/runtime/engine/lifecycle.rs`, `crates/vv-agent/src/runtime/run_definition_v2.rs`, `crates/vv-agent/src/runtime/backends/distributed/`, `crates/vv-agent/tests/runtime_cycle/after_cycle.rs`, `crates/vv-agent/tests/distributed_checkpoint_v2.rs` |
 | Completion policy and terminal observations | `crates/vv-agent/src/runner/`, `crates/vv-agent/src/runtime/engine/`, `crates/vv-agent/tests/completion_policy_contract.rs`, `crates/vv-agent/tests/approval_resume_completion.rs`, `crates/vv-agent/tests/runner_terminal_contract.rs` |
@@ -87,6 +88,30 @@ Never repair a contract failure by editing a file under
 A fixture parser or private helper test cannot replace a real public producer
 test. A field that is declared but ignored by a planner, executor, provider, or
 store remains a contract failure.
+
+## Memory Capacity Mapping
+
+Rust records a resolved model's output capability in task metadata as
+`model_max_output_tokens`. It does not synthesize `reserved_output_tokens` from
+that capability. This projection is preserved through the main Runner path,
+checkpoint reconstruction, and configured sub-agent creation.
+
+`runtime/engine/memory.rs` resolves the context window from explicit task
+metadata, resolved model capability, then `200000`. It resolves output reserve
+from an effective positive `ModelSettings.max_tokens`, explicit task metadata,
+then the `16000` framework fallback. Only that fallback may be capped by a
+smaller `model_max_output_tokens` capability. The memory manager subtracts the
+`13000` default auto-compaction buffer and preserves a known derived capacity
+of zero. Omitted task and manager compact thresholds default to `250000`;
+explicit values in durable tasks remain unchanged.
+
+The runtime emits every new capacity field on `memory_compact_started`, then
+emits the strongest applied mode and a message-content comparison as `changed`
+on `memory_compact_completed`. `runner/event_stream.rs` maps those runtime
+producer payloads into typed `RunEventPayload` variants. The v1 decoder accepts
+legacy events that omit additive fields, while rejecting known fields with an
+invalid type or unknown enum value. No capacity or compaction branch inspects
+task category, answer meaning, or semantic progress.
 
 ## Output Validation Mapping
 

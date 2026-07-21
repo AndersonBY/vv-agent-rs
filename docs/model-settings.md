@@ -97,6 +97,33 @@ default is explicit.
 contract and are forwarded to runtime request metadata while the runtime
 continues to use `vv-llm` for provider transport.
 
+## Runtime Capacity Metadata
+
+Resolved `context_length` and `max_output_tokens` values describe model
+capabilities. The Runner projects them into task/request metadata as
+`model_context_window` and `model_max_output_tokens`. In particular,
+`model_max_output_tokens` is not copied into `reserved_output_tokens` and does
+not become an implicit per-request output limit. The same distinction is kept
+when a checkpoint is resumed and when a configured sub-agent inherits or
+resolves model capabilities.
+
+Memory capacity uses these precedence rules:
+
+1. Context window: explicit task `model_context_window`, resolved capability,
+   then `200000`.
+2. Output reserve: effective positive `ModelSettings.max_tokens`, explicit task
+   `reserved_output_tokens`, then `16000`.
+3. Only the `16000` fallback reserve is reduced when
+   `model_max_output_tokens` is smaller. Explicit request and task reserves are
+   never capped or raised by the capability.
+
+The prompt capacity subtracts the selected reserve and the default `13000`
+auto-compaction buffer from the context window with saturation at zero. The
+effective full-compaction threshold is the smaller of that capacity and the
+configured task threshold (`250000` when omitted); a known zero capacity stays
+zero. This calculation is task-neutral and does not inspect answer content or
+task type.
+
 ## Cache Usage Accounting
 
 OpenAI-compatible request serialization remains owned by `vv-llm`. This

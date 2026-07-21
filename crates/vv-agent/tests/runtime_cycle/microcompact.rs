@@ -26,8 +26,28 @@ fn runtime_microcompacts_before_full_memory_compaction() {
         .insert("microcompact_keep_recent_cycles".to_string(), json!(0));
     task.metadata
         .insert("microcompact_min_result_length".to_string(), json!(200));
+    let lifecycle = Arc::new(Mutex::new(Vec::<(
+        String,
+        BTreeMap<String, serde_json::Value>,
+    )>::new()));
+    let lifecycle_sink = lifecycle.clone();
 
-    let result = runtime.run(task).expect("run");
+    let result = runtime
+        .run_with_controls(
+            task,
+            RuntimeRunControls {
+                log_handler: Some(Arc::new(move |event, payload| {
+                    if event.starts_with("memory_compact_") {
+                        lifecycle_sink
+                            .lock()
+                            .expect("memory lifecycle")
+                            .push((event.to_string(), payload.clone()));
+                    }
+                })),
+                ..RuntimeRunControls::default()
+            },
+        )
+        .expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
     let second_request = inspector.third_request_messages();
@@ -43,6 +63,19 @@ fn runtime_microcompacts_before_full_memory_compaction() {
             .all(|message| !message.content.contains("<Compressed Agent Memory>")),
         "microcompact should avoid full summary before threshold: {second_request:#?}"
     );
+    let lifecycle = lifecycle.lock().expect("memory lifecycle");
+    let started = lifecycle
+        .iter()
+        .find(|(event, _)| event == "memory_compact_started")
+        .expect("microcompact started");
+    let completed = lifecycle
+        .iter()
+        .find(|(event, _)| event == "memory_compact_completed")
+        .expect("microcompact completed");
+    assert_eq!(started.1["trigger"], "micro_threshold");
+    assert_eq!(completed.1["mode"], "micro");
+    assert_eq!(completed.1["changed"], true);
+    assert_eq!(completed.1["before_count"], completed.1["after_count"]);
 }
 
 #[test]

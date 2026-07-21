@@ -5,7 +5,7 @@ use vv_agent::{AgentErrorPayload, AgentStatus, RunEvent, RunEventPayload};
 
 const PARITY_FIXTURE: &str = include_str!("fixtures/parity/run_events_v1.jsonl");
 const PARITY_FIXTURE_SHA256: &str =
-    "3c45e094fdc8b2555e0d91664778866c4bc1dfe8c516a19d5cbe99209f6e3e41";
+    "c0f0f39979ea5e9268716d15dd98609adb83058425cb6e1312942c128c878cd0";
 const BUDGET_FIXTURE: &str = include_str!("fixtures/parity/budget_events_v1.jsonl");
 const BUDGET_FIXTURE_SHA256: &str =
     "3267292737ac6bf63ec4ee691fe0ef07f3e2cadd5a69098e3e267f4f6b692d2e";
@@ -145,6 +145,42 @@ fn run_events_v1_parity_fixture_has_stable_bytes_and_round_trips() {
     }
 
     assert_eq!(actual_types, expected_types);
+}
+
+#[test]
+fn legacy_memory_lifecycle_events_keep_additive_fields_omitted() {
+    for legacy in [
+        json!({
+            "version": "v1",
+            "type": "memory_compact_started",
+            "event_id": "evt_legacy_started",
+            "run_id": "run_legacy",
+            "trace_id": "trace_legacy",
+            "created_at": 1,
+            "cycle_index": 2,
+            "agent_name": "assistant",
+            "message_count": 8,
+            "estimated_tokens": 120
+        }),
+        json!({
+            "version": "v1",
+            "type": "memory_compact_completed",
+            "event_id": "evt_legacy_completed",
+            "run_id": "run_legacy",
+            "trace_id": "trace_legacy",
+            "created_at": 1,
+            "cycle_index": 2,
+            "agent_name": "assistant",
+            "before_count": 8,
+            "after_count": 3,
+            "summary_tokens": 20
+        }),
+    ] {
+        let decoded: RunEvent =
+            serde_json::from_value(legacy.clone()).expect("legacy memory event");
+        let encoded = serde_json::to_value(decoded).expect("serialize legacy memory event");
+        assert_eq!(encoded, legacy);
+    }
 }
 
 #[test]

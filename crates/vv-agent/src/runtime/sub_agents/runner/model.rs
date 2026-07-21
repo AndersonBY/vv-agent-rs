@@ -98,7 +98,7 @@ pub(super) fn resolve_sub_agent_client(
             .and_then(serde_json::Value::as_u64),
         max_output_tokens: parent_task
             .metadata
-            .get("reserved_output_tokens")
+            .get("model_max_output_tokens")
             .and_then(serde_json::Value::as_u64),
         payload: BTreeMap::new(),
     })

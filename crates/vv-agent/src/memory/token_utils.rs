@@ -44,10 +44,10 @@ pub fn compute_compaction_threshold(
     } else {
         0
     };
-    match (configured_threshold, derived) {
-        (configured, derived) if configured > 0 && derived > 0 => configured.min(derived),
-        (configured, _) if configured > 0 => configured,
-        (_, derived) => derived,
+    if configured_threshold > 0 {
+        configured_threshold.min(derived)
+    } else {
+        derived
     }
 }
 

@@ -11,6 +11,7 @@ mod prompts;
 mod session_context;
 mod warnings;
 
+use crate::events::{MemoryCompactMode, ReservedOutputSource};
 use crate::memory::message_sanitizer::filter_empty_assistant_messages;
 use crate::memory::session::SessionMemory;
 use crate::memory::token_utils::count_messages_tokens;
@@ -26,6 +27,15 @@ const MEMORY_SUMMARY_NAME: &str = "memory_summary";
 pub struct MemoryManager {
     pub config: MemoryManagerConfig,
     session_memory: Option<SessionMemory>,
+    model_max_output_tokens: Option<u64>,
+    reserved_output_source: ReservedOutputSource,
+}
+
+#[derive(Debug)]
+pub(crate) struct MemoryCompactionOutcome {
+    pub(crate) messages: Vec<Message>,
+    pub(crate) legacy_changed: bool,
+    pub(crate) mode: MemoryCompactMode,
 }
 
 impl MemoryManager {
@@ -34,11 +44,32 @@ impl MemoryManager {
         Self {
             config,
             session_memory,
+            model_max_output_tokens: None,
+            reserved_output_source: ReservedOutputSource::FrameworkFallback,
         }
+    }
+
+    pub(crate) fn with_capacity_observation(
+        mut self,
+        model_max_output_tokens: Option<u64>,
+        reserved_output_source: ReservedOutputSource,
+    ) -> Self {
+        self.model_max_output_tokens = model_max_output_tokens;
+        self.reserved_output_source = reserved_output_source;
+        self
+    }
+
+    pub(crate) fn model_max_output_tokens(&self) -> Option<u64> {
+        self.model_max_output_tokens
+    }
+
+    pub(crate) fn reserved_output_source(&self) -> ReservedOutputSource {
+        self.reserved_output_source
     }
 
     pub fn compact(&mut self, messages: &[Message], force: bool) -> (Vec<Message>, bool) {
         self.compact_for_cycle_with_usage_inner(messages, 0, None, force, None, None)
+            .into_tuple()
     }
 
     pub fn compact_for_cycle(
@@ -55,6 +86,7 @@ impl MemoryManager {
             None,
             None,
         )
+        .into_tuple()
     }
 
     pub fn compact_for_cycle_with_usage(
@@ -73,6 +105,25 @@ impl MemoryManager {
             total_tokens,
             recent_tool_call_ids,
         )
+        .into_tuple()
+    }
+
+    pub(crate) fn compact_for_cycle_with_usage_observed(
+        &mut self,
+        messages: &[Message],
+        cycle_index: u32,
+        force: bool,
+        total_tokens: Option<u64>,
+        recent_tool_call_ids: Option<&BTreeSet<String>>,
+    ) -> MemoryCompactionOutcome {
+        self.compact_for_cycle_with_usage_inner(
+            messages,
+            cycle_index,
+            Some(cycle_index),
+            force,
+            total_tokens,
+            recent_tool_call_ids,
+        )
     }
 
     fn compact_for_cycle_with_usage_inner(
@@ -83,19 +134,28 @@ impl MemoryManager {
         force: bool,
         total_tokens: Option<u64>,
         recent_tool_call_ids: Option<&BTreeSet<String>>,
-    ) -> (Vec<Message>, bool) {
+    ) -> MemoryCompactionOutcome {
         if messages.is_empty() {
-            return (Vec::new(), false);
+            return MemoryCompactionOutcome::new(
+                messages,
+                Vec::new(),
+                MemoryCompactMode::None,
+                false,
+            );
         }
 
         let cleaned = self.remove_previous_summary(messages);
         let sanitized = filter_empty_assistant_messages(&cleaned);
-        let changed_by_sanitize = sanitized.len() != messages.len()
-            || sanitized
-                .iter()
-                .zip(messages.iter())
-                .any(|(left, right)| left != right);
+        let changed_by_sanitize = sanitized != messages;
+        let mut mode = if changed_by_sanitize {
+            MemoryCompactMode::Structural
+        } else {
+            MemoryCompactMode::None
+        };
         let mut working_messages = self.apply_session_memory_context(&sanitized);
+        if working_messages != sanitized {
+            mode = mode.max(MemoryCompactMode::Structural);
+        }
         let mut message_length =
             self.calculate_effective_length(&working_messages, total_tokens, recent_tool_call_ids);
         if let Some(session_memory) = self.session_memory.as_mut() {
@@ -109,7 +169,11 @@ impl MemoryManager {
             if session_memory.should_extract(message_length, text_messages)
                 && session_memory.extract(&working_messages, cycle_index as i32, message_length) > 0
             {
+                let before_refresh = working_messages;
                 working_messages = self.apply_session_memory_context(&sanitized);
+                if working_messages != before_refresh {
+                    mode = mode.max(MemoryCompactMode::Structural);
+                }
                 message_length =
                     self.calculate_effective_length(&working_messages, None, recent_tool_call_ids);
             }
@@ -118,26 +182,45 @@ impl MemoryManager {
             let (warned, warning_inserted) =
                 self.maybe_append_memory_warning(&working_messages, message_length);
             if warning_inserted {
-                return (warned, true);
+                return MemoryCompactionOutcome::new(
+                    messages,
+                    warned,
+                    mode.max(MemoryCompactMode::Structural),
+                    true,
+                );
             }
             if self.should_preemptive_microcompact(message_length) {
                 let (microcompacted, cleared) =
                     self.microcompact_messages(&working_messages, cycle_index);
                 if cleared > 0 {
-                    return (microcompacted, true);
+                    return MemoryCompactionOutcome::new(
+                        messages,
+                        microcompacted,
+                        mode.max(MemoryCompactMode::Micro),
+                        true,
+                    );
                 }
             }
-            return (working_messages, changed_by_sanitize);
+            return MemoryCompactionOutcome::new(
+                messages,
+                working_messages,
+                mode,
+                changed_by_sanitize,
+            );
         }
         let mut summary_source = self.strip_session_memory_context(&working_messages);
+        if summary_source != working_messages {
+            mode = mode.max(MemoryCompactMode::Structural);
+        }
         if !force {
             let (microcompacted, cleared) =
                 self.microcompact_messages(&working_messages, cycle_index);
             if cleared > 0 {
+                mode = mode.max(MemoryCompactMode::Micro);
                 if self.calculate_effective_length(&microcompacted, None, None)
                     <= self.autocompact_threshold()
                 {
-                    return (microcompacted, true);
+                    return MemoryCompactionOutcome::new(messages, microcompacted, mode, true);
                 }
                 summary_source = microcompacted;
             }
@@ -149,14 +232,21 @@ impl MemoryManager {
                 && count_messages_tokens(&artifact_compacted, &self.config.model)
                     <= self.autocompact_threshold()
             {
-                return (artifact_compacted, true);
+                return MemoryCompactionOutcome::new(
+                    messages,
+                    artifact_compacted,
+                    mode.max(MemoryCompactMode::Structural),
+                    true,
+                );
             }
             if image_changed || artifact_changed {
+                mode = mode.max(MemoryCompactMode::Structural);
                 summary_source = artifact_compacted;
             }
         }
         let (compacted, changed) = self.compress_memory(&summary_source, artifact_cycle_index);
         if changed {
+            mode = mode.max(MemoryCompactMode::Summary);
             let post_compaction_tokens = count_messages_tokens(
                 &self.apply_session_memory_context(&compacted),
                 &self.config.model,
@@ -165,7 +255,7 @@ impl MemoryManager {
                 session_memory.on_compaction(Some(post_compaction_tokens));
             }
         }
-        (compacted, changed)
+        MemoryCompactionOutcome::new(messages, compacted, mode, changed)
     }
 
     fn remove_previous_summary(&self, messages: &[Message]) -> Vec<Message> {
@@ -177,5 +267,32 @@ impl MemoryManager {
             })
             .cloned()
             .collect()
+    }
+}
+
+impl MemoryCompactionOutcome {
+    fn new(
+        original: &[Message],
+        messages: Vec<Message>,
+        mode: MemoryCompactMode,
+        legacy_changed: bool,
+    ) -> Self {
+        let content_changed = messages != original;
+        let mode = if !content_changed {
+            MemoryCompactMode::None
+        } else if mode == MemoryCompactMode::None {
+            MemoryCompactMode::Structural
+        } else {
+            mode
+        };
+        Self {
+            messages,
+            legacy_changed,
+            mode,
+        }
+    }
+
+    fn into_tuple(self) -> (Vec<Message>, bool) {
+        (self.messages, self.legacy_changed)
     }
 }

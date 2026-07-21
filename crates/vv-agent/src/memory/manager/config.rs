@@ -99,7 +99,7 @@ impl fmt::Debug for MemoryManagerConfig {
 impl Default for MemoryManagerConfig {
     fn default() -> Self {
         Self {
-            compact_threshold: 128_000,
+            compact_threshold: 250_000,
             keep_recent_messages: 10,
             model: String::new(),
             model_context_window: 200_000,

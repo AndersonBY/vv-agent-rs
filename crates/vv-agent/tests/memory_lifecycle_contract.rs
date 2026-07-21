@@ -5,11 +5,12 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use vv_agent::memory::token_utils::count_messages_tokens;
 use vv_agent::{
-    AgentRuntime, AgentStatus, AgentTask, ExecutionContext, LLMResponse, LlmClient, LlmError,
-    LlmRequest, MemoryError, MemoryFuture, MemoryManager, MemoryManagerConfig, MemoryProvider,
-    MemoryProviderResult, MemorySaveRequest, MemorySaveResult, MemorySearchRequest,
-    MemorySearchResult, Message, ModelError, ModelProvider, ModelRef, NoToolPolicy,
-    ResolvedModelConfig, RunEvent, RuntimeRunControls, SessionMemory, SessionMemoryConfig,
+    Agent, AgentRuntime, AgentStatus, AgentTask, ExecutionContext, LLMResponse, LlmClient,
+    LlmError, LlmRequest, MemoryCompactMode, MemoryCompactTrigger, MemoryError, MemoryFuture,
+    MemoryManager, MemoryManagerConfig, MemoryProvider, MemoryProviderResult, MemorySaveRequest,
+    MemorySaveResult, MemorySearchRequest, MemorySearchResult, Message, ModelError, ModelProvider,
+    ModelRef, ModelSettings, NoToolPolicy, ReservedOutputSource, ResolvedModelConfig, RunConfig,
+    RunEvent, RunEventPayload, Runner, RuntimeRunControls, SessionMemory, SessionMemoryConfig,
     SessionMemoryEntry, ToolCall,
 };
 
@@ -33,6 +34,269 @@ fn summary_payload() -> String {
         "next_steps": [],
     })
     .to_string()
+}
+
+#[test]
+fn memory_capacity_defaults_match_contract_without_rewriting_explicit_values() {
+    let contract = contract();
+    let expected = &contract["capacity_contract"];
+
+    assert_eq!(
+        AgentTask::new("task", "model", "system", "user").memory_compact_threshold,
+        expected["configured_default_threshold"].as_u64().unwrap()
+    );
+    assert_eq!(
+        MemoryManagerConfig::default().compact_threshold,
+        expected["configured_default_threshold"].as_u64().unwrap()
+    );
+
+    let mut historical = AgentTask::new("task", "model", "system", "user");
+    historical.memory_compact_threshold = 128_000;
+    let restored: AgentTask = serde_json::from_value(
+        serde_json::to_value(&historical).expect("serialize historical task"),
+    )
+    .expect("restore historical task");
+    assert_eq!(restored.memory_compact_threshold, 128_000);
+}
+
+#[test]
+fn runtime_capacity_resolution_matches_every_contract_case() {
+    let contract = contract();
+    let capacity = &contract["capacity_contract"];
+
+    for case in capacity["cases"].as_array().expect("capacity cases") {
+        let input = &case["input"];
+        let expected = &case["expected"];
+        let mut task = AgentTask::new(
+            format!("capacity-{}", case["name"].as_str().unwrap()),
+            "capacity-model",
+            "system",
+            "continue",
+        );
+        task.initial_messages = vec![
+            Message::system("system"),
+            Message::user("first"),
+            Message::assistant("working"),
+        ];
+        task.max_cycles = 1;
+        task.no_tool_policy = NoToolPolicy::Finish;
+        task.memory_compact_threshold = input["configured_threshold"].as_u64().unwrap();
+        task.metadata.insert(
+            "model_context_window".to_string(),
+            input["model_context_window"].clone(),
+        );
+        task.metadata.insert(
+            "autocompact_buffer_tokens".to_string(),
+            input["autocompact_buffer_tokens"].clone(),
+        );
+        if let Some(value) = input["task_metadata_reserved_output_tokens"].as_u64() {
+            task.metadata
+                .insert("reserved_output_tokens".to_string(), Value::from(value));
+        }
+        if let Some(value) = input["model_max_output_tokens"].as_u64() {
+            task.metadata
+                .insert("model_max_output_tokens".to_string(), Value::from(value));
+        }
+        if let Some(value) = input["effective_model_max_tokens"].as_u64() {
+            task.model_settings = Some(
+                ModelSettings::builder()
+                    .max_tokens(u32::try_from(value).expect("request limit fits u32"))
+                    .build(),
+            );
+        }
+
+        let logs = Arc::new(Mutex::new(Vec::<(String, BTreeMap<String, Value>)>::new()));
+        let log_sink = logs.clone();
+        AgentRuntime::new(PromptTooLongThenSuccess::new(1))
+            .run_with_controls(
+                task,
+                RuntimeRunControls {
+                    log_handler: Some(Arc::new(move |event, payload| {
+                        if event.starts_with("memory_compact_") {
+                            log_sink
+                                .lock()
+                                .expect("capacity logs")
+                                .push((event.to_string(), payload.clone()));
+                        }
+                    })),
+                    ..RuntimeRunControls::default()
+                },
+            )
+            .unwrap_or_else(|error| panic!("{}: {error}", case["name"]));
+
+        let logs = logs.lock().expect("capacity logs");
+        let started = logs
+            .iter()
+            .find(|(event, payload)| {
+                event == "memory_compact_started" && payload["trigger"] == "prompt_too_long"
+            })
+            .unwrap_or_else(|| panic!("{}: forced started event", case["name"]));
+        assert_eq!(
+            started.1["configured_threshold"],
+            input["configured_threshold"]
+        );
+        assert_eq!(
+            started.1["effective_threshold"],
+            expected["effective_threshold"]
+        );
+        assert_eq!(
+            started.1["microcompact_threshold"],
+            expected["microcompact_threshold"]
+        );
+        assert_eq!(
+            started.1["model_context_window"],
+            input["model_context_window"]
+        );
+        assert_eq!(
+            started.1["model_max_output_tokens"],
+            input["model_max_output_tokens"]
+        );
+        assert_eq!(
+            started.1["reserved_output_tokens"],
+            expected["reserved_output_tokens"]
+        );
+        assert_eq!(
+            started.1["reserved_output_source"],
+            expected["reserved_output_source"]
+        );
+        assert_eq!(
+            started.1["autocompact_buffer_tokens"],
+            input["autocompact_buffer_tokens"]
+        );
+    }
+}
+
+#[tokio::test]
+async fn runner_journal_emits_typed_memory_capacity_and_completion_observation() {
+    let provider = ReusableRecordingModelProvider::default();
+    let captured = provider.requests.clone();
+    let workspace = tempfile::tempdir().expect("workspace");
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(workspace.path())
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("capacity-agent")
+        .instructions("Finish.")
+        .model(ModelRef::named("capacity-model"))
+        .build()
+        .expect("agent");
+
+    let result = runner
+        .run_with_config(
+            &agent,
+            "finish",
+            RunConfig::builder()
+                .max_cycles(1)
+                .no_tool_policy(NoToolPolicy::Finish)
+                .initial_messages(vec![
+                    Message::system("system"),
+                    Message::user("token ".repeat(30_000)),
+                    Message::assistant("working"),
+                ])
+                .build(),
+        )
+        .await
+        .expect("runner memory lifecycle");
+
+    let captured = captured.lock().expect("runner requests");
+    let request = captured
+        .iter()
+        .find(|request| request.metadata.get("model_max_output_tokens").is_some())
+        .cloned()
+        .unwrap_or_else(|| panic!("main model request: {captured:#?}"));
+    assert_eq!(request.metadata["model_context_window"], 32_000);
+    assert_eq!(request.metadata["model_max_output_tokens"], 8_192);
+    assert!(request.metadata.get("reserved_output_tokens").is_none());
+
+    let started = result
+        .events()
+        .iter()
+        .find_map(|event| match event.payload() {
+            RunEventPayload::MemoryCompactStarted {
+                trigger,
+                configured_threshold,
+                effective_threshold,
+                microcompact_threshold,
+                model_context_window,
+                model_max_output_tokens,
+                reserved_output_tokens,
+                reserved_output_source,
+                autocompact_buffer_tokens,
+                ..
+            } => Some((
+                trigger,
+                configured_threshold,
+                effective_threshold,
+                microcompact_threshold,
+                model_context_window,
+                model_max_output_tokens,
+                reserved_output_tokens,
+                reserved_output_source,
+                autocompact_buffer_tokens,
+            )),
+            _ => None,
+        })
+        .expect("typed memory started event");
+    assert_eq!(*started.0, Some(MemoryCompactTrigger::FullThreshold));
+    assert_eq!(*started.1, Some(250_000));
+    assert_eq!(*started.2, Some(10_808));
+    assert_eq!(*started.3, Some(8_106));
+    assert_eq!(*started.4, Some(32_000));
+    assert_eq!(*started.5, Some(8_192));
+    assert_eq!(*started.6, Some(8_192));
+    assert_eq!(
+        *started.7,
+        Some(ReservedOutputSource::FrameworkFallbackCappedByModelCapability)
+    );
+    assert_eq!(*started.8, Some(13_000));
+
+    let completed = result
+        .events()
+        .iter()
+        .find_map(|event| match event.payload() {
+            RunEventPayload::MemoryCompactCompleted { mode, changed, .. } => {
+                Some((*mode, *changed))
+            }
+            _ => None,
+        })
+        .expect("typed memory completed event");
+    assert_eq!(completed.0, Some(MemoryCompactMode::Summary));
+    assert_eq!(completed.1, Some(true));
+}
+
+#[derive(Clone, Default)]
+struct ReusableRecordingLlm {
+    requests: Arc<Mutex<Vec<LlmRequest>>>,
+}
+
+impl LlmClient for ReusableRecordingLlm {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        self.requests.lock().expect("runner requests").push(request);
+        Ok(LLMResponse::new("done"))
+    }
+}
+
+#[derive(Clone, Default)]
+struct ReusableRecordingModelProvider {
+    requests: Arc<Mutex<Vec<LlmRequest>>>,
+}
+
+impl ModelProvider for ReusableRecordingModelProvider {
+    fn resolve(&self, model: &ModelRef) -> Result<ResolvedModelConfig, ModelError> {
+        let model = model.model();
+        Ok(
+            ResolvedModelConfig::new("scripted", model, model, model, Vec::new())
+                .with_token_limits(Some(32_000), Some(8_192))
+                .with_capabilities(true, true, false),
+        )
+    }
+
+    fn client(&self, _resolved: &ResolvedModelConfig) -> Result<Arc<dyn LlmClient>, ModelError> {
+        Ok(Arc::new(ReusableRecordingLlm {
+            requests: self.requests.clone(),
+        }))
+    }
 }
 
 #[derive(Clone, Default)]
@@ -447,6 +711,31 @@ fn ptl_forced_and_emergency_attempts_notify_providers() {
         memory_logs[0].1["memory_provider_results"]["RecordingMemoryProvider"]["phase"],
         attempts["result_metadata"]["phase"]
     );
+    let started = memory_logs
+        .iter()
+        .filter(|(event, _)| event == "memory_compact_started")
+        .map(|(_, payload)| payload)
+        .collect::<Vec<_>>();
+    assert!(started
+        .iter()
+        .all(|payload| payload["trigger"] == "prompt_too_long"));
+    assert!(started.iter().all(|payload| {
+        contract["compaction_events"]["started"]["new_producer_fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .all(|field| payload.contains_key(field))
+    }));
+    let completed = memory_logs
+        .iter()
+        .filter(|(event, _)| event == "memory_compact_completed")
+        .map(|(_, payload)| payload)
+        .collect::<Vec<_>>();
+    assert_eq!(completed[0]["mode"], "summary");
+    assert_eq!(completed[0]["changed"], true);
+    assert_eq!(completed[1]["mode"], "none");
+    assert_eq!(completed[1]["changed"], false);
 }
 
 #[test]

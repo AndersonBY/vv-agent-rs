@@ -1,4 +1,5 @@
 mod budget_events;
+mod memory_events;
 mod payload;
 mod stream_projection;
 
@@ -310,6 +311,8 @@ pub fn map_runtime_event(
         )),
         "budget_snapshot" => budget_events::map_budget_snapshot(payload, context),
         "budget_exhausted" => budget_events::map_budget_exhausted(payload, context),
+        "memory_compact_started" => memory_events::map_memory_compact_started(payload, context),
+        "memory_compact_completed" => memory_events::map_memory_compact_completed(payload, context),
         "assistant_delta" => Some(RunEvent::assistant_delta(
             &context.run_id,
             &context.trace_id,
@@ -727,6 +730,8 @@ pub fn map_runtime_event(
                 | "sub_agent_tool_call_progress"
                 | "sub_run_started"
                 | "sub_run_completed"
+                | "memory_compact_started"
+                | "memory_compact_completed"
                 | "budget_snapshot"
                 | "budget_exhausted"
         );

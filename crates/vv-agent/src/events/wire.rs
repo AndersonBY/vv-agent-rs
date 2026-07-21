@@ -151,6 +151,57 @@ pub(super) fn validate_tool_lifecycle_wire_fields(
     Ok(())
 }
 
+pub(super) fn validate_compaction_wire_fields(
+    value: &Value,
+    payload: &RunEventPayload,
+) -> Result<(), String> {
+    match payload {
+        RunEventPayload::MemoryCompactStarted { .. } => {
+            for field in ["trigger", "reserved_output_source"] {
+                if value.get(field).is_some_and(Value::is_null) {
+                    return Err(format!("run event {field} must not be null"));
+                }
+            }
+            for field in [
+                "configured_threshold",
+                "effective_threshold",
+                "microcompact_threshold",
+                "model_context_window",
+                "model_max_output_tokens",
+                "reserved_output_tokens",
+                "autocompact_buffer_tokens",
+            ] {
+                if let Some(raw) = value.get(field) {
+                    if field == "model_max_output_tokens" && raw.is_null() {
+                        continue;
+                    }
+                    raw.as_u64()
+                        .filter(|counter| *counter <= JSON_SAFE_INTEGER_MAX)
+                        .ok_or_else(|| {
+                            format!(
+                                "run event {field} must be a non-negative JSON-safe integer{}",
+                                if field == "model_max_output_tokens" {
+                                    " or null"
+                                } else {
+                                    ""
+                                }
+                            )
+                        })?;
+                }
+            }
+        }
+        RunEventPayload::MemoryCompactCompleted { .. } => {
+            for field in ["mode", "changed"] {
+                if value.get(field).is_some_and(Value::is_null) {
+                    return Err(format!("run event {field} must not be null"));
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn validate_tool_completion_additions(value: &Value) -> Result<(), String> {
     if let Some(directive) = value.get("directive") {
         serde_json::from_value::<crate::types::ToolDirective>(directive.clone())
@@ -342,6 +393,18 @@ pub(super) fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload)
             "duration_ms",
             "tool_metadata",
         ],
+        RunEventPayload::MemoryCompactStarted { .. } => &[
+            "trigger",
+            "configured_threshold",
+            "effective_threshold",
+            "microcompact_threshold",
+            "model_context_window",
+            "model_max_output_tokens",
+            "reserved_output_tokens",
+            "reserved_output_source",
+            "autocompact_buffer_tokens",
+        ],
+        RunEventPayload::MemoryCompactCompleted { .. } => &["mode", "changed"],
         RunEventPayload::ApprovalResolved { .. } => &["action"],
         RunEventPayload::SubRunStarted { .. } => &["status"],
         RunEventPayload::SubRunCompleted { .. } => &[
