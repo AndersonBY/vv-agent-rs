@@ -36,10 +36,6 @@ impl AgentTask {
             ),
             ("use_workspace".to_string(), Value::Bool(self.use_workspace)),
             (
-                "has_sub_agents".to_string(),
-                Value::Bool(self.has_sub_agents),
-            ),
-            (
                 "sub_agents".to_string(),
                 serde_json::to_value(&self.sub_agents).unwrap_or(Value::Null),
             ),

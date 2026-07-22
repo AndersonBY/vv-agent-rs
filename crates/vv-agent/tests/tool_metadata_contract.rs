@@ -4,25 +4,21 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Map, Value};
 use vv_agent::{
-    FunctionTool, Tool, ToolCall, ToolContext, ToolDirective, ToolIdempotency, ToolLifecycleEvent,
-    ToolMetadata, ToolOrchestrator, ToolOutput, ToolPolicy, ToolRegistry, ToolResultStatus,
-    ToolRunOptions, ToolSideEffect,
+    FunctionTool, Tool, ToolCall, ToolContext, ToolDirective, ToolLifecycleEvent, ToolMetadata,
+    ToolOrchestrator, ToolOutput, ToolPolicy, ToolRegistry, ToolResultStatus, ToolRunOptions,
+    ToolSideEffect,
 };
 
-const CONTRACT_SOURCE: &str = include_str!("fixtures/parity/tool_metadata_v1.json");
+const CONTRACT_SOURCE: &str = include_str!("fixtures/parity/tool_metadata.json");
 const TOOL_NAME: &str = "fixture_tool";
 
 fn contract() -> Value {
     serde_json::from_str(CONTRACT_SOURCE).expect("valid tool metadata parity fixture")
 }
 
-fn build_tool(
-    tool_metadata: Option<ToolMetadata>,
-    idempotency: ToolIdempotency,
-) -> Result<FunctionTool<Value>, String> {
-    let builder = FunctionTool::builder(TOOL_NAME)
-        .description("Fixture-backed tool metadata producer.")
-        .idempotency(idempotency);
+fn build_tool(tool_metadata: Option<ToolMetadata>) -> Result<FunctionTool<Value>, String> {
+    let builder =
+        FunctionTool::builder(TOOL_NAME).description("Fixture-backed tool metadata producer.");
     let builder = match tool_metadata {
         Some(tool_metadata) => builder.tool_metadata(tool_metadata),
         None => builder,
@@ -160,7 +156,7 @@ fn public_tool_metadata_serde_and_function_builder_consume_fixture_cases() {
         let name = case["name"].as_str().expect("case name");
         let metadata: ToolMetadata = serde_json::from_value(case["input"].clone())
             .unwrap_or_else(|error| panic!("{name}: metadata must deserialize: {error}"));
-        let tool = build_tool(Some(metadata), ToolIdempotency::Unknown)
+        let tool = build_tool(Some(metadata))
             .unwrap_or_else(|error| panic!("{name}: tool must build: {error}"));
 
         assert_eq!(serialized_tool_metadata(&tool), case["expected"], "{name}");
@@ -205,56 +201,6 @@ fn public_tool_metadata_serde_and_function_builder_consume_fixture_cases() {
                 "{name}: invalid generated metadata must be rejected"
             );
         }
-    }
-}
-
-#[test]
-fn function_tool_builder_consumes_legacy_idempotency_alias_cases() {
-    let contract = contract();
-
-    for case in contract["legacy_idempotency"]["cases"]
-        .as_array()
-        .expect("legacy idempotency cases")
-    {
-        let name = case["name"].as_str().expect("case name");
-        let legacy: ToolIdempotency = serde_json::from_value(case["legacy"].clone())
-            .unwrap_or_else(|error| panic!("{name}: legacy idempotency: {error}"));
-        let typed: Option<ToolMetadata> = serde_json::from_value(case["typed"].clone())
-            .unwrap_or_else(|error| panic!("{name}: typed metadata: {error}"));
-        let result = build_tool(typed, legacy);
-
-        if !case["valid"].as_bool().expect("valid flag") {
-            let error = match result {
-                Ok(_) => panic!("{name}: conflicting idempotency must fail closed"),
-                Err(error) => error,
-            };
-            assert!(
-                error.contains(case["error_code"].as_str().expect("error code")),
-                "{name}: {error}"
-            );
-            continue;
-        }
-
-        let tool = result.unwrap_or_else(|error| panic!("{name}: tool must build: {error}"));
-        assert_eq!(
-            serde_json::to_value(tool.idempotency()).expect("idempotency serializes"),
-            case["expected_effective"],
-            "{name}"
-        );
-        assert_eq!(
-            serialized_tool_metadata(&tool),
-            case["expected_run_definition_tool_metadata"],
-            "{name}"
-        );
-
-        let normalized_again = build_tool(tool.tool_metadata().cloned(), tool.idempotency())
-            .unwrap_or_else(|error| panic!("{name}: normalized metadata must rebuild: {error}"));
-        assert_eq!(normalized_again.idempotency(), tool.idempotency(), "{name}");
-        assert_eq!(
-            serialized_tool_metadata(&normalized_again),
-            serialized_tool_metadata(&tool),
-            "{name}"
-        );
     }
 }
 
@@ -489,7 +435,14 @@ async fn real_orchestrator_consumes_canonical_producer_cases() {
                 .unwrap_or_else(|error| panic!("{name}: metadata: {error}"));
         let invocations = Arc::new(AtomicUsize::new(0));
         let handler_invocations = Arc::clone(&invocations);
-        let builder = FunctionTool::builder(tool_name).description("Canonical telemetry producer.");
+        let builder = FunctionTool::builder(tool_name)
+            .description("Canonical telemetry producer.")
+            .json_schema(json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"}
+                }
+            }));
         let builder = match tool_metadata {
             Some(tool_metadata) => builder.tool_metadata(tool_metadata),
             None => builder,

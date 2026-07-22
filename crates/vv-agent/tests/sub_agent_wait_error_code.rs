@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde_json::{json, Value};
 use vv_agent::{AgentStatus, CompletionReason, RunEvent, SubTaskManager, SubTaskOutcome};
 
-const MANAGER_CONTRACT: &str = include_str!("fixtures/parity/manager_tool_envelope_v1.json");
+const MANAGER_CONTRACT: &str = include_str!("fixtures/parity/manager_tool_envelope.json");
 
 fn wait_contract() -> Value {
     serde_json::from_str::<Value>(MANAGER_CONTRACT).expect("manager contract")["sync_wait_outcome"]

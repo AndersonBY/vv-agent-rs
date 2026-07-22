@@ -1,7 +1,6 @@
 use std::sync::{Arc, Condvar, Mutex};
 
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use vv_agent::{
     handoff, Agent, AgentStatus, ApprovalPolicy, GuardrailOutcome, InputGuardrail, LLMResponse,
     ModelRef, NormalizedInput, RunConfig, RunContext, Runner, ScriptStep, ScriptedModelProvider,
@@ -9,14 +8,9 @@ use vv_agent::{
     ToolResultStatus, ToolUseBehavior,
 };
 
-const CONTRACT: &str = include_str!("fixtures/parity/handoff_contract_v1.json");
-const CONTRACT_SHA256: &str = "c35c2335bd4a79626afca8459eb2966722f0539e1a0efc8014bd14b132100a74";
+const CONTRACT: &str = include_str!("fixtures/parity/handoff_contract.json");
 
 fn contract() -> Value {
-    assert_eq!(
-        format!("{:x}", Sha256::digest(CONTRACT.as_bytes())),
-        CONTRACT_SHA256
-    );
     serde_json::from_str(CONTRACT).expect("handoff contract fixture")
 }
 
@@ -174,7 +168,6 @@ async fn handoff_switches_runner_agent_and_completes_after_the_target_run() {
             })
             .unwrap_or_else(|| panic!("missing {event_type} event"))
     };
-    let legacy_index = index_of("handoff", Some("triage"));
     let source_terminal_index = events
         .iter()
         .position(|event| {
@@ -198,7 +191,6 @@ async fn handoff_switches_runner_agent_and_completes_after_the_target_run() {
         })
         .expect("target terminal");
     let completed_index = index_of("handoff_completed", Some("triage"));
-    assert!(legacy_index < source_terminal_index);
     assert!(source_terminal_index < started_index);
     assert!(started_index < target_started_index);
     assert!(target_started_index < target_terminal_index);

@@ -33,7 +33,6 @@ fn runtime_recipe_round_trips_through_json() {
         workspace: "/tmp/workspace".to_string(),
         timeout_seconds: 120.0,
         log_preview_chars: Some(300),
-        state_store: None,
         capabilities: Default::default(),
     };
 
@@ -54,7 +53,6 @@ fn runtime_recipe_round_trips_through_json() {
             "log_preview_chars",
             "model",
             "settings_file",
-            "state_store",
             "timeout_seconds",
             "workspace"
         ]
@@ -65,7 +63,7 @@ fn runtime_recipe_round_trips_through_json() {
 }
 
 #[test]
-fn runtime_recipe_matches_dict_and_default_checkpoint_path() {
+fn runtime_recipe_matches_current_wire_shape() {
     let recipe = RuntimeRecipe::new(
         "/tmp/settings.json",
         "deepseek",
@@ -79,54 +77,279 @@ fn runtime_recipe_matches_dict_and_default_checkpoint_path() {
 
     let restored = RuntimeRecipe::from_dict(&payload).expect("runtime recipe from dict");
     assert_eq!(restored, recipe);
-    assert!(restored
-        .default_sqlite_checkpoint_path()
-        .ends_with(".vv-agent-state/checkpoints.db"));
+}
+
+const DISTRIBUTED_WORKER_RESPONSE_FIXTURE: &str =
+    include_str!("../fixtures/parity/distributed_worker_response.json");
+
+fn distributed_worker_response_fixture() -> Value {
+    serde_json::from_str(DISTRIBUTED_WORKER_RESPONSE_FIXTURE)
+        .expect("distributed worker response fixture")
+}
+
+fn response_fixture_case(fixture: &Value, case: &Value) -> Value {
+    if let Some(response) = case.get("response") {
+        return response.clone();
+    }
+
+    let base_name = case["base_valid_case"]
+        .as_str()
+        .expect("mutation base valid case");
+    let mut response = fixture["valid_cases"]
+        .as_array()
+        .expect("valid cases")
+        .iter()
+        .find(|candidate| candidate["name"] == base_name)
+        .expect("mutation base response")["response"]
+        .clone();
+    let mutation = &case["mutation"];
+    let path = mutation["path"]
+        .as_array()
+        .expect("mutation path")
+        .iter()
+        .map(|field| field.as_str().expect("mutation path field"))
+        .collect::<Vec<_>>();
+    let (field, parents) = path.split_last().expect("non-empty mutation path");
+    let mut object = response.as_object_mut().expect("response object");
+    for parent in parents {
+        object = object
+            .get_mut(*parent)
+            .and_then(Value::as_object_mut)
+            .expect("mutation parent object");
+    }
+
+    match mutation["operation"].as_str().expect("mutation operation") {
+        "add" => {
+            assert!(
+                object
+                    .insert(
+                        (*field).to_string(),
+                        mutation.get("value").expect("mutation value").clone(),
+                    )
+                    .is_none(),
+                "add mutation must target a missing field"
+            );
+        }
+        "replace" => {
+            assert!(
+                object
+                    .insert(
+                        (*field).to_string(),
+                        mutation.get("value").expect("mutation value").clone(),
+                    )
+                    .is_some(),
+                "replace mutation must target an existing field"
+            );
+        }
+        "remove" => {
+            assert!(
+                object.remove(*field).is_some(),
+                "remove mutation must target an existing field"
+            );
+        }
+        operation => panic!("unsupported response mutation {operation}"),
+    }
+    response
+}
+
+fn fixture_completed_result(response: &Value) -> AgentResult {
+    let result_wire = &response["result"];
+    let result = AgentResult::from_dict(result_wire).expect("fixture AgentResult");
+    assert_eq!(result.to_dict(), *result_wire);
+    result
 }
 
 #[test]
-fn cycle_dispatch_result_matches_worker_payload_shape() {
-    let result = AgentResult::completed(vec![Message::assistant("done")], Vec::new(), "ok");
-    let terminal = CycleDispatchResult::finished(result.clone());
-
-    let payload = terminal.to_dict();
-    assert_eq!(payload["finished"], json!(true));
-    assert_eq!(payload["result"]["status"], json!("completed"));
-    assert_eq!(payload["result"]["final_answer"], json!("ok"));
-
-    let restored = CycleDispatchResult::from_dict(&payload).expect("dispatch result");
-    assert!(restored.finished);
-    assert_eq!(restored.result, Some(result));
-
-    let unfinished_payload = CycleDispatchResult::unfinished().to_dict();
-    assert_eq!(unfinished_payload, json!({"finished": false}));
-    let unfinished =
-        CycleDispatchResult::from_dict(&unfinished_payload).expect("unfinished dispatch result");
-    assert!(!unfinished.finished);
-    assert!(unfinished.result.is_none());
-
-    let candidate = CycleDispatchResult::terminal_candidate(
-        AgentResult::completed(Vec::new(), Vec::new(), "candidate"),
-        9,
-    );
-    let candidate_wire = serde_json::to_value(&candidate).expect("serialize candidate");
-    assert_eq!(candidate_wire["terminal_candidate"], json!(true));
-    assert_eq!(candidate_wire["checkpoint_revision"], json!(9));
+fn cycle_dispatch_result_consumes_every_valid_fixture_variant() {
+    let fixture = distributed_worker_response_fixture();
     assert_eq!(
-        serde_json::from_value::<CycleDispatchResult>(candidate_wire)
-            .expect("deserialize candidate"),
+        vv_agent::runtime::backends::distributed::DISTRIBUTED_WORKER_RESPONSE_SCHEMA_VERSION,
+        fixture["schema_version"]
+    );
+
+    for case in fixture["valid_cases"].as_array().expect("valid cases") {
+        let name = case["name"].as_str().expect("case name");
+        let response = &case["response"];
+        let parsed = CycleDispatchResult::from_dict(response).expect(name);
+
+        assert_eq!(parsed.kind(), name, "{name}");
+        assert_eq!(parsed.to_dict(), *response, "{name}");
+        assert_eq!(
+            serde_json::from_value::<CycleDispatchResult>(response.clone()).expect(name),
+            parsed,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn cycle_dispatch_result_produces_every_valid_fixture_variant() {
+    let fixture = distributed_worker_response_fixture();
+
+    for case in fixture["valid_cases"].as_array().expect("valid cases") {
+        let name = case["name"].as_str().expect("case name");
+        let response = &case["response"];
+        let produced = match name {
+            "pending" => CycleDispatchResult::pending(),
+            "committed" => CycleDispatchResult::committed(
+                response["committed_cycle"]
+                    .as_u64()
+                    .expect("committed cycle"),
+                response["checkpoint_revision"]
+                    .as_u64()
+                    .expect("checkpoint revision"),
+            )
+            .expect(name),
+            "terminal_candidate" => CycleDispatchResult::terminal_candidate(
+                fixture_completed_result(response),
+                response["checkpoint_revision"]
+                    .as_u64()
+                    .expect("checkpoint revision"),
+            )
+            .expect(name),
+            "terminal_replay" => CycleDispatchResult::terminal_replay(
+                fixture_completed_result(response),
+                response["checkpoint_revision"]
+                    .as_u64()
+                    .expect("checkpoint revision"),
+            )
+            .expect(name),
+            other => panic!("unsupported valid fixture case {other}"),
+        };
+
+        assert_eq!(produced.to_dict(), *response, "{name}");
+        assert_eq!(
+            serde_json::to_value(&produced).expect(name),
+            *response,
+            "{name}"
+        );
+    }
+
+    assert_eq!(
+        CycleDispatchResult::committed(1, 0)
+            .expect("zero checkpoint revision")
+            .to_dict()["checkpoint_revision"],
+        json!(0)
+    );
+}
+
+#[test]
+fn cycle_dispatch_result_rejects_every_invalid_fixture_case_and_invalid_producer() {
+    let fixture = distributed_worker_response_fixture();
+    let invalid_cases = fixture["invalid_cases"].as_array().expect("invalid cases");
+
+    for case in invalid_cases {
+        let name = case["name"].as_str().expect("case name");
+        let expected = case["error"].as_str().expect("expected error");
+        let response = response_fixture_case(&fixture, case);
+        assert_eq!(
+            CycleDispatchResult::from_dict(&response).unwrap_err(),
+            expected,
+            "{name}"
+        );
+        assert!(
+            serde_json::from_value::<CycleDispatchResult>(response)
+                .unwrap_err()
+                .to_string()
+                .contains(expected),
+            "{name}"
+        );
+    }
+
+    let expected = |name: &str| {
+        invalid_cases
+            .iter()
+            .find(|case| case["name"] == name)
+            .expect("invalid fixture case")["error"]
+            .as_str()
+            .expect("expected error")
+    };
+    assert_eq!(
+        CycleDispatchResult::committed(0, 2).unwrap_err(),
+        expected("committed_zero_cycle")
+    );
+    assert_eq!(
+        CycleDispatchResult::committed(1, 1_u64 << 53).unwrap_err(),
+        expected("committed_revision_above_wire_maximum")
+    );
+    assert_eq!(
+        CycleDispatchResult::terminal_candidate(AgentResult::default(), 2).unwrap_err(),
+        expected("terminal_candidate_invalid_result")
+    );
+    let reconciliation = AgentResult {
+        status: AgentStatus::ReconciliationRequired,
+        ..AgentResult::default()
+    };
+    let candidate = CycleDispatchResult::terminal_candidate(reconciliation.clone(), 2)
+        .expect("reconciliation-required terminal candidate");
+    let candidate_wire = candidate.to_dict();
+    assert_eq!(
+        CycleDispatchResult::from_dict(&candidate_wire).expect("parsed terminal candidate"),
         candidate
     );
-
-    let committed = CycleDispatchResult::committed(3, 11);
     assert_eq!(
-        committed.to_dict(),
-        json!({
-            "finished": false,
-            "checkpoint_revision": 11,
-            "committed_cycle": 3
-        })
+        CycleDispatchResult::terminal_replay(reconciliation.clone(), 2).unwrap_err(),
+        expected("terminal_candidate_invalid_result")
     );
+
+    let mut replay_wire = candidate_wire.clone();
+    replay_wire["type"] = json!("terminal_replay");
+    assert_eq!(
+        CycleDispatchResult::from_dict(&replay_wire).unwrap_err(),
+        expected("terminal_candidate_invalid_result")
+    );
+
+    let mut unknown_result_field = candidate_wire.clone();
+    unknown_result_field["result"]["unexpected"] = json!(true);
+    assert_eq!(
+        CycleDispatchResult::from_dict(&unknown_result_field).unwrap_err(),
+        expected("terminal_candidate_invalid_result")
+    );
+
+    let mut legacy_terminal_flags = candidate_wire.clone();
+    legacy_terminal_flags["finished"] = json!(true);
+    legacy_terminal_flags["terminal_candidate"] = json!(true);
+    legacy_terminal_flags["terminal_replay"] = json!(false);
+    assert_eq!(
+        CycleDispatchResult::from_dict(&legacy_terminal_flags).unwrap_err(),
+        "distributed worker response fields do not match type terminal_candidate"
+    );
+
+    let mut unsafe_revision = candidate_wire;
+    unsafe_revision["checkpoint_revision"] = json!(1_u64 << 53);
+    assert_eq!(
+        CycleDispatchResult::from_dict(&unsafe_revision).unwrap_err(),
+        "checkpoint_revision must be a JSON-safe unsigned integer"
+    );
+}
+
+#[test]
+fn cycle_dispatch_result_accepts_exactly_the_contract_status_matrix() {
+    let fixture = distributed_worker_response_fixture();
+    for matrix in fixture["status_matrix_cases"]
+        .as_array()
+        .expect("status matrix cases")
+    {
+        let response_type = matrix["type"].as_str().expect("response type");
+        let base = fixture["valid_cases"]
+            .as_array()
+            .expect("valid cases")
+            .iter()
+            .find(|case| case["name"] == response_type)
+            .expect("matching valid terminal case")["response"]
+            .clone();
+        for status in matrix["accepted_statuses"]
+            .as_array()
+            .expect("accepted statuses")
+        {
+            let mut response = base.clone();
+            response["result"]["status"] = status.clone();
+            let parsed = CycleDispatchResult::from_dict(&response)
+                .unwrap_or_else(|error| panic!("{response_type}/{status}: {error}"));
+            assert_eq!(parsed.kind(), response_type);
+            assert_eq!(parsed.to_dict(), response);
+        }
+    }
 }
 
 #[test]
@@ -206,7 +429,11 @@ fn inline_backend_execute_returns_agent_max_cycles_result() {
         Some("Reached max cycles without finish signal.")
     );
     assert_eq!(result.cycles.len(), 2);
-    assert_eq!(result.token_usage, TaskTokenUsage::default());
+    assert_eq!(
+        result.token_usage,
+        vv_agent::runtime::token_usage::summarize_task_token_usage(&result.cycles)
+    );
+    assert_eq!(result.token_usage.cycles.len(), 2);
 }
 
 #[test]
@@ -262,93 +489,4 @@ fn distributed_backend_inline_execute_matches_inline_fallback() {
     assert_eq!(result.status, AgentStatus::Completed);
     assert_eq!(result.final_answer.as_deref(), Some("distributed-inline"));
     assert_eq!(result.cycles[0].index, 1);
-}
-
-#[test]
-fn distributed_backend_requires_store_and_dispatcher() {
-    let backend = DistributedBackend::distributed(RuntimeRecipe::new(
-        "settings.json",
-        "deepseek",
-        "deepseek-v4-pro",
-        ".",
-    ));
-    let task = AgentTask::new(
-        "distributed-misconfigured",
-        "deepseek-v4-pro",
-        "system",
-        "prompt",
-    );
-
-    let result = backend.execute(
-        &task,
-        vec![Message::user("hello")],
-        Default::default(),
-        |_cycle_index, _messages, _cycles, _shared_state, _cancellation| {
-            panic!("misconfigured distributed backend should not fall back to inline execution")
-        },
-        None,
-        1,
-    );
-
-    assert_eq!(result.status, AgentStatus::Failed);
-    assert_eq!(result.messages[0].content, "hello");
-    assert!(result
-        .error
-        .as_deref()
-        .is_some_and(|error| error.contains("requires a state_store and cycle_dispatcher")));
-}
-
-#[derive(Debug)]
-struct RecordingDispatcher {
-    store: Arc<InMemoryStateStore>,
-    calls: Arc<Mutex<Vec<(String, u32)>>>,
-}
-
-impl CycleDispatcher for RecordingDispatcher {
-    fn dispatch_cycle(
-        &self,
-        task: &AgentTask,
-        _recipe: &RuntimeRecipe,
-        cycle_name: &str,
-        cycle_index: u32,
-    ) -> Result<CycleDispatchResult, String> {
-        self.calls
-            .lock()
-            .expect("calls")
-            .push((cycle_name.to_string(), cycle_index));
-        let mut checkpoint = self
-            .store
-            .load_checkpoint(&task.task_id)
-            .expect("load checkpoint")
-            .expect("checkpoint exists");
-        if cycle_index == 1 {
-            assert_eq!(checkpoint.cycle_index, 0);
-            checkpoint.cycle_index = 1;
-            checkpoint
-                .messages
-                .push(Message::assistant("worker cycle 1"));
-            checkpoint.cycles.push(CycleRecord::from_response(
-                cycle_index,
-                &LLMResponse::new("worker cycle 1"),
-                vec![],
-            ));
-            checkpoint
-                .shared_state
-                .insert("worker_cycle".to_string(), Value::from(cycle_index));
-            self.store
-                .save_checkpoint(checkpoint)
-                .expect("save cycle 1");
-            Ok(CycleDispatchResult::unfinished())
-        } else {
-            assert_eq!(checkpoint.cycle_index, 1);
-            Ok(CycleDispatchResult::finished(
-                AgentResult::completed_with_shared_state(
-                    checkpoint.messages,
-                    checkpoint.cycles,
-                    "distributed done",
-                    checkpoint.shared_state,
-                ),
-            ))
-        }
-    }
 }

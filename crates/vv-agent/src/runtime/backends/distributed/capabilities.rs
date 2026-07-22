@@ -8,10 +8,10 @@ use crate::budget::HostCostMeter;
 use crate::checkpoint::{CheckpointExtension, IdempotentRunEventStore, ReconciliationProvider};
 use crate::llm::LlmClient;
 use crate::memory::MemoryProvider;
-use crate::runtime::engine::RuntimeEventHandler;
+use crate::runtime::engine::RunEventHandler;
 use crate::runtime::hooks::RuntimeHook;
 use crate::runtime::lifecycle::AfterCycleHook;
-use crate::runtime::state_v2::CheckpointStoreV2;
+use crate::runtime::state::CheckpointStore;
 use crate::runtime::sub_task_manager::SubTaskManager;
 use crate::runtime::CancellationToken;
 use crate::tools::{ApprovalPolicy, CanUseToolPredicate, ToolPolicy, ToolRegistry};
@@ -53,16 +53,16 @@ struct CapabilityMaps {
     approval_providers: BTreeMap<CapabilityKey, Arc<dyn ApprovalProvider>>,
     approval_brokers: BTreeMap<CapabilityKey, ApprovalBroker>,
     cancellations: BTreeMap<CapabilityKey, CancellationToken>,
-    event_sinks: BTreeMap<CapabilityKey, RuntimeEventHandler>,
+    event_sinks: BTreeMap<CapabilityKey, RunEventHandler>,
     host_cost_meters: BTreeMap<CapabilityKey, Arc<dyn HostCostMeter>>,
     app_states: BTreeMap<CapabilityKey, Arc<dyn std::any::Any + Send + Sync>>,
     memory_providers: BTreeMap<CapabilityKey, Arc<dyn MemoryProvider>>,
     hooks: BTreeMap<CapabilityKey, Arc<dyn RuntimeHook>>,
     after_cycle_hooks: BTreeMap<CapabilityKey, Arc<dyn AfterCycleHook>>,
-    observers: BTreeMap<CapabilityKey, RuntimeEventHandler>,
+    observers: BTreeMap<CapabilityKey, RunEventHandler>,
     sub_task_managers: BTreeMap<CapabilityKey, SubTaskManager>,
     tool_predicates: BTreeMap<CapabilityKey, CanUseToolPredicate>,
-    checkpoint_stores: BTreeMap<CapabilityKey, Arc<dyn CheckpointStoreV2>>,
+    checkpoint_stores: BTreeMap<CapabilityKey, Arc<dyn CheckpointStore>>,
     checkpoint_event_stores: BTreeMap<CapabilityKey, Arc<dyn IdempotentRunEventStore>>,
     checkpoint_extensions: BTreeMap<CapabilityKey, Arc<dyn CheckpointExtension>>,
     reconciliation_providers: BTreeMap<CapabilityKey, Arc<dyn ReconciliationProvider>>,
@@ -153,7 +153,7 @@ impl DistributedCapabilityRegistry {
             .insert(key(&reference), token);
     }
 
-    pub fn register_event_sink(&self, reference: CapabilityRef, sink: RuntimeEventHandler) {
+    pub fn register_event_sink(&self, reference: CapabilityRef, sink: RunEventHandler) {
         self.write_unpoisoned()
             .event_sinks
             .insert(key(&reference), sink);
@@ -203,7 +203,7 @@ impl DistributedCapabilityRegistry {
             .insert(key(&reference), hook);
     }
 
-    pub fn register_observer(&self, reference: CapabilityRef, observer: RuntimeEventHandler) {
+    pub fn register_observer(&self, reference: CapabilityRef, observer: RunEventHandler) {
         self.write_unpoisoned()
             .observers
             .insert(key(&reference), observer);
@@ -228,7 +228,7 @@ impl DistributedCapabilityRegistry {
     pub fn register_checkpoint_store(
         &self,
         reference: CapabilityRef,
-        store: Arc<dyn CheckpointStoreV2>,
+        store: Arc<dyn CheckpointStore>,
     ) {
         self.write_unpoisoned()
             .checkpoint_stores
@@ -268,7 +268,7 @@ impl DistributedCapabilityRegistry {
     pub(crate) fn resolve_checkpoint_store_required(
         &self,
         reference: &CapabilityRef,
-    ) -> Result<Arc<dyn CheckpointStoreV2>, DistributedCapabilityError> {
+    ) -> Result<Arc<dyn CheckpointStore>, DistributedCapabilityError> {
         self.read()?
             .checkpoint_stores
             .get(&key(reference))
@@ -416,15 +416,15 @@ pub struct ResolvedDistributedCapabilities {
     pub approval_broker: Option<ApprovalBroker>,
     pub approval_timeout_seconds: Option<f64>,
     pub cancellation: Option<CancellationToken>,
-    pub event_sink: Option<RuntimeEventHandler>,
+    pub event_sink: Option<RunEventHandler>,
     pub host_cost_meter: Option<Arc<dyn HostCostMeter>>,
     pub app_state: Option<Arc<dyn std::any::Any + Send + Sync>>,
     pub memory_providers: Vec<Arc<dyn MemoryProvider>>,
     pub hooks: Vec<Arc<dyn RuntimeHook>>,
     pub after_cycle_hooks: Vec<Arc<dyn AfterCycleHook>>,
-    pub observers: Vec<RuntimeEventHandler>,
+    pub observers: Vec<RunEventHandler>,
     pub sub_task_manager: Option<SubTaskManager>,
-    pub checkpoint_store: Option<Arc<dyn CheckpointStoreV2>>,
+    pub checkpoint_store: Option<Arc<dyn CheckpointStore>>,
     pub checkpoint_event_store: Option<Arc<dyn IdempotentRunEventStore>>,
     pub checkpoint_extensions: Vec<ResolvedDistributedCheckpointExtension>,
     pub reconciliation_provider: Option<Arc<dyn ReconciliationProvider>>,

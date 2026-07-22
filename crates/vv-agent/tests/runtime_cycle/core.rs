@@ -106,20 +106,24 @@ fn runtime_collects_cycle_and_total_token_usage_from_llm_responses() {
 
     assert_eq!(result.status, AgentStatus::Completed);
     assert_eq!(result.token_usage.cycles.len(), 2);
-    assert_eq!(result.cycles[0].token_usage.prompt_tokens, 100);
-    assert_eq!(result.cycles[0].token_usage.completion_tokens, 25);
-    assert_eq!(result.cycles[0].token_usage.cached_tokens, 40);
-    assert_eq!(result.cycles[0].token_usage.reasoning_tokens, 10);
-    assert_eq!(result.cycles[1].token_usage.prompt_tokens, 50);
-    assert_eq!(result.cycles[1].token_usage.completion_tokens, 30);
-    assert_eq!(result.cycles[1].token_usage.cache_creation_tokens, 12);
+    assert_eq!(result.cycles[0].token_usage.input_tokens, Some(100));
+    assert_eq!(result.cycles[0].token_usage.output_tokens, Some(25));
+    assert_eq!(result.cycles[0].token_usage.reasoning_tokens, Some(10));
+    assert_eq!(
+        result.cycles[0].token_usage.cache_usage.read_input_tokens,
+        Some(40)
+    );
+    assert_eq!(result.cycles[1].token_usage.input_tokens, Some(50));
+    assert_eq!(result.cycles[1].token_usage.output_tokens, Some(30));
+    assert_eq!(
+        result.cycles[1].token_usage.cache_usage.write_input_tokens,
+        Some(12)
+    );
 
-    assert_eq!(result.token_usage.prompt_tokens, 150);
-    assert_eq!(result.token_usage.completion_tokens, 55);
-    assert_eq!(result.token_usage.total_tokens, 205);
-    assert_eq!(result.token_usage.cached_tokens, 40);
-    assert_eq!(result.token_usage.reasoning_tokens, 10);
-    assert_eq!(result.token_usage.cache_creation_tokens, 12);
+    assert_eq!(result.token_usage.input_tokens, Some(150));
+    assert_eq!(result.token_usage.output_tokens, Some(55));
+    assert_eq!(result.token_usage.total_tokens, Some(205));
+    assert_eq!(result.token_usage.reasoning_tokens, None);
 }
 
 #[test]
@@ -127,7 +131,7 @@ fn runtime_preserves_shared_state_when_task_finishes() {
     let todo_args = BTreeMap::from([(
         "todos".to_string(),
         json!([
-            {"id": "t1", "title": "done item", "status": "completed"}
+            {"id": "t1", "title": "done item", "status": "completed", "priority": "medium"}
         ]),
     )]);
     let finish_args = BTreeMap::from([("message".to_string(), json!("done"))]);

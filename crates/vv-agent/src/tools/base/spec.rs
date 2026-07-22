@@ -4,7 +4,6 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use super::ToolContext;
-use crate::checkpoint::ToolIdempotency;
 use crate::tools::{ToolApprovalRule, ToolMetadata};
 use crate::types::{Metadata, ToolArguments, ToolExecutionResult};
 
@@ -25,7 +24,6 @@ pub struct ToolSpec {
     pub exposure: crate::tools::ToolExposure,
     pub timeout: Option<Duration>,
     pub approval: ToolApprovalRule,
-    pub idempotency: ToolIdempotency,
     pub tool_metadata: Option<ToolMetadata>,
     pub metadata: Metadata,
 }
@@ -52,10 +50,16 @@ impl ToolSpec {
                 "function": {
                     "name": name,
                     "description": fallback_description,
-                    "parameters": {"type": "object", "properties": {}, "required": []},
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                        "additionalProperties": false
+                    },
                 }
             })
         });
+        let schema = crate::tools::argument_validation::close_object_schemas(&schema);
         let description = schema["function"]["description"]
             .as_str()
             .unwrap_or(&fallback_description)
@@ -70,7 +74,6 @@ impl ToolSpec {
             exposure: crate::tools::ToolExposure::Direct,
             timeout: None,
             approval: ToolApprovalRule::default(),
-            idempotency: ToolIdempotency::Unknown,
             tool_metadata: None,
             metadata: Metadata::new(),
         }

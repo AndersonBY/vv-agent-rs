@@ -17,10 +17,10 @@ cd path/to/vv-agent-rs
 大多数示例会通过 `vv-llm` 调真实模型。默认读取：
 
 - `VV_AGENT_LOCAL_SETTINGS=local_settings.json`
-- `V_AGENT_EXAMPLE_BACKEND=moonshot`
-- `V_AGENT_EXAMPLE_MODEL=kimi-k2.6`
-- `V_AGENT_EXAMPLE_WORKSPACE=./workspace`
-- `V_AGENT_EXAMPLE_VERBOSE=true`
+- `VV_AGENT_EXAMPLE_BACKEND=moonshot`
+- `VV_AGENT_EXAMPLE_MODEL=kimi-k3`
+- `VV_AGENT_EXAMPLE_WORKSPACE=./workspace`
+- `VV_AGENT_EXAMPLE_VERBOSE=true`
 
 可以从仓库内的模板复制一份本地配置，真实 key 文件不要提交：
 
@@ -31,7 +31,7 @@ cp crates/vv-agent/tests/dev_settings.example.json local_settings.json
 填好 `local_settings.json` 里的 endpoint key 后运行示例：
 
 ```bash
-V_AGENT_EXAMPLE_MODEL=kimi-k2.6 \
+VV_AGENT_EXAMPLE_MODEL=kimi-k3 \
 cargo run -p vv-agent --example 01_quick_start
 ```
 
@@ -39,7 +39,7 @@ cargo run -p vv-agent --example 01_quick_start
 
 ```bash
 VV_AGENT_LOCAL_SETTINGS=crates/vv-agent/tests/dev_settings.json \
-V_AGENT_EXAMPLE_MODEL=kimi-k2.6 \
+VV_AGENT_EXAMPLE_MODEL=kimi-k3 \
 cargo run -p vv-agent --example 03_sdk_client
 ```
 

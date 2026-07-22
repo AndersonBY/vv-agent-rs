@@ -18,10 +18,10 @@ cd path/to/vv-agent-rs
 Most examples call a real model through `vv-llm`. By default they read:
 
 - `VV_AGENT_LOCAL_SETTINGS=local_settings.json`
-- `V_AGENT_EXAMPLE_BACKEND=moonshot`
-- `V_AGENT_EXAMPLE_MODEL=kimi-k2.6`
-- `V_AGENT_EXAMPLE_WORKSPACE=./workspace`
-- `V_AGENT_EXAMPLE_VERBOSE=true`
+- `VV_AGENT_EXAMPLE_BACKEND=moonshot`
+- `VV_AGENT_EXAMPLE_MODEL=kimi-k3`
+- `VV_AGENT_EXAMPLE_WORKSPACE=./workspace`
+- `VV_AGENT_EXAMPLE_VERBOSE=true`
 
 You can start from the checked-in settings template and keep the real key file
 untracked:
@@ -33,7 +33,7 @@ cp crates/vv-agent/tests/dev_settings.example.json local_settings.json
 Fill the endpoint keys in `local_settings.json`, then run an example:
 
 ```bash
-V_AGENT_EXAMPLE_MODEL=kimi-k2.6 \
+VV_AGENT_EXAMPLE_MODEL=kimi-k3 \
 cargo run -p vv-agent --example 01_quick_start
 ```
 
@@ -41,7 +41,7 @@ To use a different settings file:
 
 ```bash
 VV_AGENT_LOCAL_SETTINGS=crates/vv-agent/tests/dev_settings.json \
-V_AGENT_EXAMPLE_MODEL=kimi-k2.6 \
+VV_AGENT_EXAMPLE_MODEL=kimi-k3 \
 cargo run -p vv-agent --example 03_sdk_client
 ```
 

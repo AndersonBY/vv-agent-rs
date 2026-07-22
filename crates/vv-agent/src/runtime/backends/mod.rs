@@ -7,10 +7,10 @@ pub mod thread;
 
 pub use base::RuntimeExecutionBackend;
 pub use distributed::{
-    run_checkpointed_cycle, CapabilityRef, CycleDispatchResult, CycleDispatcher,
-    DistributedBackend, DistributedCapabilities, DistributedCapabilityError,
-    DistributedCapabilityRegistry, DistributedCycleWorker, DistributedRunEnvelope,
-    DistributedToolPolicy, ResolvedDistributedCapabilities, ToolsetRef,
+    CapabilityRef, CycleDispatchResult, CycleDispatcher, DistributedBackend,
+    DistributedCapabilities, DistributedCapabilityError, DistributedCapabilityRegistry,
+    DistributedCycleWorker, DistributedRunEnvelope, DistributedToolPolicy,
+    ResolvedDistributedCapabilities, ToolsetRef,
 };
 pub use inline::InlineBackend;
 pub use recipe::RuntimeRecipe;

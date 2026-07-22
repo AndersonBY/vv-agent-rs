@@ -178,7 +178,7 @@ fn create_sub_task_batch_uses_execution_backend_parallel_map() {
 }
 
 #[test]
-fn create_sub_task_coerces_agent_boolean_arguments() {
+fn create_sub_task_rejects_non_boolean_arguments() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -226,16 +226,11 @@ fn create_sub_task_coerces_agent_boolean_arguments() {
         )
         .expect("create_sub_task");
 
-    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
     let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["wait_for_completion"], false);
-    assert_eq!(payload["status"], "running");
-    let task_id = payload["task_id"].as_str().expect("task id");
-    manager.wait(task_id, None);
-    assert_eq!(
-        captured_flags.lock().expect("captured flags").as_slice(),
-        &[true]
-    );
+    assert_eq!(payload["error_code"], "invalid_tool_arguments");
+    assert!(captured_flags.lock().expect("captured flags").is_empty());
 }
 
 #[test]
@@ -285,51 +280,9 @@ fn create_sub_task_rejects_scalar_text_arguments() {
         .expect("create_sub_task scalar arguments");
 
     assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.error_code.as_deref(), Some("invalid_agent_id"));
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
     let captured = captured.lock().expect("captured");
     assert!(captured.is_empty());
-}
-
-#[test]
-fn create_sub_task_rejects_removed_agent_name_alias() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-    context.sub_task_runner = Some(Arc::new(move |request| SubTaskOutcome {
-        task_id: "unused".to_string(),
-        agent_name: request.agent_name,
-        status: AgentStatus::Completed,
-        session_id: None,
-        final_answer: None,
-        wait_reason: None,
-        error: None,
-        error_code: None,
-        completion_reason: None,
-        completion_tool_name: None,
-        partial_output: None,
-        cycles: 0,
-        todo_list: Vec::new(),
-        resolved: BTreeMap::new(),
-    }));
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "legacy_agent_name",
-                "create_sub_task",
-                BTreeMap::from([
-                    ("agent_name".to_string(), json!("researcher")),
-                    ("task_description".to_string(), json!("Check fallback")),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("create_sub_task legacy agent_name");
-
-    assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.error_code.as_deref(), Some("agent_id_required"));
-    let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["error_code"], json!("agent_id_required"));
 }
 
 #[test]
@@ -393,67 +346,13 @@ fn create_sub_task_rejects_non_array_batch_payload() {
         .expect("create_sub_task");
 
     assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.error_code.as_deref(), Some("invalid_tasks_payload"));
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
     let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["error_code"], "invalid_tasks_payload");
+    assert_eq!(payload["error_code"], "invalid_tool_arguments");
 }
 
 #[test]
-fn create_sub_task_batch_reports_invalid_items_and_errors_when_none_are_valid() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-    context.sub_task_runner = Some(Arc::new(|request| SubTaskOutcome {
-        task_id: "sub_never".to_string(),
-        agent_name: request.agent_name,
-        status: AgentStatus::Completed,
-        session_id: None,
-        final_answer: Some("should not run".to_string()),
-        wait_reason: None,
-        error: None,
-        error_code: None,
-        completion_reason: None,
-        completion_tool_name: None,
-        partial_output: None,
-        cycles: 0,
-        todo_list: Vec::new(),
-        resolved: BTreeMap::new(),
-    }));
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "sub_all_invalid",
-                "create_sub_task",
-                BTreeMap::from([
-                    ("agent_id".to_string(), json!("research-sub")),
-                    (
-                        "tasks".to_string(),
-                        json!(["not an object", {"output_requirements": "missing task"}]),
-                    ),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("create_sub_task");
-
-    assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.error_code.as_deref(), Some("invalid_tasks_payload"));
-    let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["details"]["summary"]["accepted"], 0);
-    assert_eq!(payload["details"]["summary"]["failed"], 2);
-    assert_eq!(
-        payload["details"]["results"][0]["error"],
-        "Task item must be an object"
-    );
-    assert_eq!(
-        payload["details"]["results"][1]["error"],
-        "`task_description` is required"
-    );
-}
-
-#[test]
-fn create_sub_task_batch_keeps_invalid_item_entries() {
+fn create_sub_task_rejects_batch_with_any_schema_invalid_item() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -491,18 +390,10 @@ fn create_sub_task_batch_keeps_invalid_item_entries() {
         )
         .expect("create_sub_task");
 
-    assert_eq!(result.status, ToolResultStatus::Success);
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
     let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(
-        payload["summary"],
-        json!({"total": 2, "completed": 1, "failed": 1})
-    );
-    assert_eq!(payload["results"][0]["status"], "failed");
-    assert_eq!(
-        payload["results"][0]["error"],
-        "Task item must be an object"
-    );
-    assert_eq!(payload["results"][1]["final_answer"], "done: Collect facts");
+    assert_eq!(payload["error_code"], "invalid_tool_arguments");
 }
 
 #[test]

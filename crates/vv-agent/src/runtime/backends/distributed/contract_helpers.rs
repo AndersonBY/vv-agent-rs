@@ -5,12 +5,12 @@ use serde_json::Value;
 use crate::budget::MAX_WIRE_INTEGER;
 use crate::checkpoint::RUN_DEFINITION_SCHEMA;
 
-pub(crate) fn validate_v2_discriminator_fields(payload: &Value) -> Result<(), String> {
+pub(crate) fn validate_current_discriminator_fields(payload: &Value) -> Result<(), String> {
     if payload.get("run_definition_schema").and_then(Value::as_str) != Some(RUN_DEFINITION_SCHEMA) {
         return Err("checkpoint_definition_schema_unsupported".to_string());
     }
     if payload.get("checkpoint_config").is_none_or(Value::is_null) {
-        return Err("distributed v2 requires checkpoint_config".to_string());
+        return Err("distributed run requires checkpoint_config".to_string());
     }
     if !matches!(
         payload.get("claim_mode").and_then(Value::as_str),

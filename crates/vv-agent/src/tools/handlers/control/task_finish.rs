@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{coerce_truthy_arg, stringify_tool_arg};
+use crate::tools::common::{bool_arg, string_arg};
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 pub fn task_finish(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
@@ -19,12 +19,12 @@ pub(crate) fn task_finish_tool() -> ToolSpec {
         Arc::new(|context, arguments| {
             let message = arguments
                 .get("message")
-                .map(|value| stringify_tool_arg(Some(value), "").trim().to_string())
+                .map(|value| string_arg(Some(value), "").trim().to_string())
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "Task completed".to_string());
             let require_all_done = arguments
                 .get("require_all_todos_completed")
-                .map(|value| coerce_truthy_arg(Some(value), true))
+                .map(|value| bool_arg(Some(value), true))
                 .unwrap_or(true);
             if require_all_done {
                 let incomplete_todos = context
@@ -40,7 +40,7 @@ pub(crate) fn task_finish_tool() -> ToolSpec {
                                     .and_then(Value::as_str)
                                     .unwrap_or_default()
                                     .to_ascii_lowercase();
-                                let done = coerce_truthy_arg(todo.get("done"), false);
+                                let done = bool_arg(todo.get("done"), false);
                                 if matches!(status.as_str(), "completed" | "done" | "finished")
                                     || done
                                 {
@@ -82,7 +82,7 @@ pub(crate) fn task_finish_tool() -> ToolSpec {
                 let exposed_files = exposed_files
                     .iter()
                     .filter_map(|path| {
-                        let path = stringify_tool_arg(Some(path), "").trim().to_string();
+                        let path = string_arg(Some(path), "").trim().to_string();
                         (!path.is_empty()).then_some(Value::String(path))
                     })
                     .collect::<Vec<_>>();

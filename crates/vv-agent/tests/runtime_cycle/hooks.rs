@@ -171,26 +171,16 @@ fn runtime_short_circuit_tool_result_keeps_original_tool_call_id_after_call_patc
 }
 
 #[test]
-fn runtime_emits_lifecycle_log_events() {
+fn runtime_emits_typed_lifecycle_events() {
     let mut finish_args = BTreeMap::new();
     finish_args.insert("message".to_string(), json!("logged finish"));
     let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
         "assistant log",
         vec![ToolCall::new("log_finish", "task_finish", finish_args)],
     )]);
-    let events = Arc::new(Mutex::new(Vec::<(
-        String,
-        BTreeMap<String, serde_json::Value>,
-    )>::new()));
-    let sink = events.clone();
+    let (events, event_handler) = run_event_collector();
     let mut runtime = AgentRuntime::new(llm);
-    runtime.log_handler = Some(Arc::new(Mutex::new(Box::new(
-        move |event: &str, payload: &BTreeMap<String, serde_json::Value>| {
-            sink.lock()
-                .expect("events poisoned")
-                .push((event.to_string(), payload.clone()));
-        },
-    ))));
+    runtime.event_handler = Some(event_handler);
 
     let result = runtime
         .run(AgentTask::new("log_task", "demo", "system", "finish"))
@@ -198,10 +188,7 @@ fn runtime_emits_lifecycle_log_events() {
 
     assert_eq!(result.status, AgentStatus::Completed);
     let events = events.lock().expect("events poisoned").clone();
-    let event_names = events
-        .iter()
-        .map(|(event, _)| event.as_str())
-        .collect::<Vec<_>>();
+    let event_names = events.iter().map(observable_event_name).collect::<Vec<_>>();
     assert_eq!(
         event_names,
         vec![
@@ -217,26 +204,53 @@ fn runtime_emits_lifecycle_log_events() {
             "run_completed"
         ]
     );
-    assert_eq!(events[0].1["task_id"], "log_task");
-    assert_eq!(events[0].1["model"], "demo");
-    assert_eq!(events[4].1["assistant_message"], "assistant log");
-    assert_eq!(events[4].1["tool_call_count"], 1);
-    assert_eq!(events[5].1["tool_name"], "task_finish");
-    assert_eq!(events[5].1["tool_call_id"], "log_finish");
-    assert_eq!(events[6].1["tool_name"], "task_finish");
-    assert_eq!(events[6].1["tool_call_id"], "log_finish");
-    assert_eq!(events[7].1["tool_name"], "task_finish");
-    assert_eq!(events[7].1["tool_call_id"], "log_finish");
-    assert_eq!(events[7].1["directive"], "finish");
-    assert_eq!(events[7].1["execution_started"], true);
-    assert_eq!(events[8].1["tool_name"], "task_finish");
-    assert_eq!(events[8].1["tool_call_id"], "log_finish");
-    assert_eq!(events[8].1["directive"], "finish");
-    assert_eq!(events[9].1["final_answer"], "logged finish");
+    assert_eq!(events[0].metadata()["task_id"], "log_task");
+    assert_eq!(events[0].metadata()["model"], "demo");
+    let cycle_details =
+        diagnostic_details(&events[4], "cycle_llm_response").expect("cycle llm response details");
+    assert_eq!(cycle_details["assistant_message"], "assistant log");
+    assert_eq!(cycle_details["tool_call_count"], 1);
+    assert!(matches!(
+        events[5].payload(),
+        RunEventPayload::ToolCallPlanned { tool_call_id, tool_name, .. }
+            if tool_call_id == "log_finish" && tool_name == "task_finish"
+    ));
+    assert!(matches!(
+        events[6].payload(),
+        RunEventPayload::ToolCallStarted { tool_call_id, tool_name, .. }
+            if tool_call_id == "log_finish" && tool_name == "task_finish"
+    ));
+    assert!(matches!(
+        events[7].payload(),
+        RunEventPayload::ToolCallCompleted {
+            tool_call_id,
+            tool_name,
+            directive: ToolDirective::Finish,
+            execution_started: true,
+            ..
+        } if tool_call_id == "log_finish" && tool_name == "task_finish"
+    ));
+    let tool_result_details =
+        diagnostic_details(&events[8], "tool_result").expect("tool result details");
+    let tool_result_content: serde_json::Value = serde_json::from_str(
+        tool_result_details["content"]
+            .as_str()
+            .expect("tool result content"),
+    )
+    .expect("structured tool result content");
+    assert_eq!(
+        tool_result_content,
+        json!({"message": "logged finish", "ok": true})
+    );
+    assert_eq!(
+        diagnostic_details(&events[9], "run_completed").expect("run completed details")
+            ["final_answer"],
+        "logged finish"
+    );
 }
 
 #[test]
-fn runtime_log_events_include_agent_previews() {
+fn runtime_diagnostic_events_include_agent_previews() {
     let assistant_text = "assistant preview text ".repeat(4);
     let final_text = "final answer preview text ".repeat(4);
     let mut finish_args = BTreeMap::new();
@@ -245,20 +259,10 @@ fn runtime_log_events_include_agent_previews() {
         assistant_text.clone(),
         vec![ToolCall::new("preview_finish", "task_finish", finish_args)],
     )]);
-    let events = Arc::new(Mutex::new(Vec::<(
-        String,
-        BTreeMap<String, serde_json::Value>,
-    )>::new()));
-    let sink = events.clone();
+    let (events, event_handler) = run_event_collector();
     let mut runtime = AgentRuntime::new(llm);
     runtime.log_preview_chars = Some(10);
-    runtime.log_handler = Some(Arc::new(Mutex::new(Box::new(
-        move |event: &str, payload: &BTreeMap<String, serde_json::Value>| {
-            sink.lock()
-                .expect("events poisoned")
-                .push((event.to_string(), payload.clone()));
-        },
-    ))));
+    runtime.event_handler = Some(event_handler);
 
     let result = runtime
         .run(AgentTask::new(
@@ -273,27 +277,27 @@ fn runtime_log_events_include_agent_previews() {
     let events = events.lock().expect("events poisoned").clone();
     let cycle_event = events
         .iter()
-        .find(|(event, _)| event == "cycle_llm_response")
+        .find_map(|event| diagnostic_details(event, "cycle_llm_response"))
         .expect("cycle llm response");
     let tool_event = events
         .iter()
-        .find(|(event, _)| event == "tool_result")
+        .find_map(|event| diagnostic_details(event, "tool_result"))
         .expect("tool result");
     let completed_event = events
         .iter()
-        .find(|(event, _)| event == "run_completed")
+        .find_map(|event| diagnostic_details(event, "run_completed"))
         .expect("run completed");
-    assert_eq!(cycle_event.1["assistant_message"], assistant_text);
+    assert_eq!(cycle_event["assistant_message"], assistant_text);
     assert_eq!(
-        cycle_event.1["assistant_preview"],
+        cycle_event["assistant_preview"],
         preview_text_for_test(&assistant_text, Some(10))
     );
     assert_eq!(
-        tool_event.1["content_preview"],
-        preview_text_for_test(tool_event.1["content"].as_str().expect("content"), Some(10))
+        tool_event["content_preview"],
+        preview_text_for_test(tool_event["content"].as_str().expect("content"), Some(10))
     );
     assert_eq!(
-        completed_event.1["final_answer"],
+        completed_event["final_answer"],
         preview_text_for_test(&final_text, Some(10))
     );
 }
@@ -316,19 +320,9 @@ fn runtime_tool_result_event_keeps_full_content_by_default() {
             vec![ToolCall::new("finish_long", "task_finish", finish_args)],
         ),
     ]);
-    let events = Arc::new(Mutex::new(Vec::<(
-        String,
-        BTreeMap<String, serde_json::Value>,
-    )>::new()));
-    let sink = events.clone();
+    let (events, event_handler) = run_event_collector();
     let mut runtime = AgentRuntime::new(llm);
-    runtime.log_handler = Some(Arc::new(Mutex::new(Box::new(
-        move |event: &str, payload: &BTreeMap<String, serde_json::Value>| {
-            sink.lock()
-                .expect("events poisoned")
-                .push((event.to_string(), payload.clone()));
-        },
-    ))));
+    runtime.event_handler = Some(event_handler);
 
     let mut task = AgentTask::new("task_long_tool_result", "demo", "system", "go");
     task.max_cycles = 4;
@@ -338,33 +332,23 @@ fn runtime_tool_result_event_keeps_full_content_by_default() {
     let events = events.lock().expect("events poisoned").clone();
     let tool_event = events
         .iter()
-        .find(|(event, _)| event == "tool_result")
+        .find_map(|event| diagnostic_details(event, "tool_result"))
         .expect("tool result");
-    let full_content = tool_event.1["content"].as_str().expect("content");
+    let full_content = tool_event["content"].as_str().expect("content");
     assert!(full_content.contains(&long_title));
     assert!(full_content.len() > 220);
     assert_eq!(
-        tool_event.1["content_preview"].as_str().expect("preview"),
+        tool_event["content_preview"].as_str().expect("preview"),
         full_content
     );
 }
 
 #[test]
-fn runtime_emits_run_max_cycles_log_with_final_answer() {
+fn runtime_emits_run_max_cycles_diagnostic_with_final_answer() {
     let llm = ScriptedLlmClient::new(vec![LLMResponse::new("step 1"), LLMResponse::new("step 2")]);
-    let events = Arc::new(Mutex::new(Vec::<(
-        String,
-        BTreeMap<String, serde_json::Value>,
-    )>::new()));
-    let sink = events.clone();
+    let (events, event_handler) = run_event_collector();
     let mut runtime = AgentRuntime::new(llm);
-    runtime.log_handler = Some(Arc::new(Mutex::new(Box::new(
-        move |event: &str, payload: &BTreeMap<String, serde_json::Value>| {
-            sink.lock()
-                .expect("events poisoned")
-                .push((event.to_string(), payload.clone()));
-        },
-    ))));
+    runtime.event_handler = Some(event_handler);
     let mut task = AgentTask::new("max_cycles_log", "demo", "system", "keep going");
     task.max_cycles = 2;
 
@@ -372,13 +356,15 @@ fn runtime_emits_run_max_cycles_log_with_final_answer() {
 
     assert_eq!(result.status, AgentStatus::MaxCycles);
     let events = events.lock().expect("events poisoned").clone();
-    let max_cycles = events
+    let max_cycles_event = events
         .iter()
-        .find(|(event, _)| event == "run_max_cycles")
+        .find(|event| diagnostic_details(event, "run_max_cycles").is_some())
         .expect("run max cycles event");
-    assert_eq!(max_cycles.1["cycle"], json!(2));
+    assert_eq!(max_cycles_event.cycle_index(), Some(2));
+    let max_cycles =
+        diagnostic_details(max_cycles_event, "run_max_cycles").expect("run max cycles details");
     assert_eq!(
-        max_cycles.1["final_answer"],
+        max_cycles["final_answer"],
         json!("Reached max cycles without finish signal.")
     );
 }
@@ -448,11 +434,7 @@ fn runtime_interruption_provider_skips_remaining_tools() {
     let runtime = AgentRuntime::new(llm).with_tool_registry(registry);
     let used = Arc::new(Mutex::new(false));
     let provider_used = used.clone();
-    let events = Arc::new(Mutex::new(Vec::<(
-        String,
-        BTreeMap<String, serde_json::Value>,
-    )>::new()));
-    let sink = events.clone();
+    let (events, event_handler) = run_event_collector();
 
     let mut task = AgentTask::new("steer_skip", "demo", "system", "go");
     task.max_cycles = 4;
@@ -471,11 +453,7 @@ fn runtime_interruption_provider_skips_remaining_tools() {
                         vec![Message::user("STEER_NOW")]
                     }
                 })),
-                log_handler: Some(Arc::new(move |event, payload| {
-                    sink.lock()
-                        .expect("events")
-                        .push((event.to_string(), payload.clone()));
-                })),
+                event_handler: Some(event_handler),
                 ..RuntimeRunControls::default()
             },
         )
@@ -491,7 +469,9 @@ fn runtime_interruption_provider_skips_remaining_tools() {
         .iter()
         .any(|message| message.content == "STEER_NOW"));
     let events = events.lock().expect("events").clone();
-    assert!(events.iter().any(|(event, _)| event == "run_steered"));
+    assert!(events
+        .iter()
+        .any(|event| diagnostic_details(event, "run_steered").is_some()));
 }
 struct PendingToolCallIdHook;
 

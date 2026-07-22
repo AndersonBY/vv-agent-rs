@@ -3,8 +3,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use serde_json::json;
+use vv_agent::types::AgentTask;
 use vv_agent::{
-    Agent, AgentResult, AgentRuntime, AgentStatus, AgentTask, CancellationToken, CompletionReason,
+    Agent, AgentResult, AgentRuntime, AgentStatus, CancellationToken, CompletionReason,
     ExecutionContext, GuardrailOutcome, LLMResponse, LlmClient, LlmError, LlmRequest, ModelRef,
     OutputGuardrail, RunConfig, RunContext, RunEventPayload, RunHandleStatus, Runner,
     RuntimeExecutionBackend, RuntimeRunControls, ScriptedModelProvider, SubAgentConfig,

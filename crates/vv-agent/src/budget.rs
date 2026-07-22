@@ -627,10 +627,12 @@ impl BudgetEvaluator {
     }
 
     fn observe_token_usage(&mut self, usage: &TokenUsage) {
+        let total_tokens = usage.total_tokens;
         if !matches!(
             usage.usage_source,
             UsageSource::ProviderReported | UsageSource::Estimated
-        ) {
+        ) || total_tokens.is_none()
+        {
             self.total_tokens = None;
             self.latch_unavailable(
                 BudgetDimension::TotalTokens,
@@ -640,13 +642,9 @@ impl BudgetEvaluator {
                 None,
                 None,
             );
-        } else if let Some(current) = self.total_tokens {
-            self.total_tokens = self.safe_add_or_latch(
-                BudgetDimension::TotalTokens,
-                current,
-                usage.total_tokens,
-                "tokens",
-            );
+        } else if let (Some(current), Some(increment)) = (self.total_tokens, total_tokens) {
+            self.total_tokens =
+                self.safe_add_or_latch(BudgetDimension::TotalTokens, current, increment, "tokens");
         }
 
         let uncached = if usage.cache_usage.status == CacheUsageStatus::ProviderReported {

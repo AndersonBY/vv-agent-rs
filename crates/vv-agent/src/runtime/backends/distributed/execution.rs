@@ -5,12 +5,11 @@ use crate::types::{AgentResult, AgentTask, CycleRecord, Message, Metadata};
 
 use super::super::{execute_cycle_loop, execute_cycle_loop_with_state, failed_backend_result};
 use super::backend::DistributedBackend;
-use super::r#loop::DistributedRunContext;
 
 impl DistributedBackend {
     pub fn execute<F>(
         &self,
-        task: &AgentTask,
+        _task: &AgentTask,
         initial_messages: Vec<Message>,
         shared_state: Metadata,
         cycle_executor: F,
@@ -26,36 +25,13 @@ impl DistributedBackend {
             Option<&CancellationToken>,
         ) -> Option<AgentResult>,
     {
-        match (
-            &self.runtime_recipe,
-            &self.state_store,
-            &self.cycle_dispatcher,
-        ) {
-            (Some(recipe), Some(state_store), Some(cycle_dispatcher)) => {
-                return self.execute_distributed(
-                    initial_messages,
-                    shared_state,
-                    DistributedRunContext {
-                        task,
-                        recipe,
-                        state_store,
-                        cycle_dispatcher,
-                        cancellation_token,
-                        max_cycles,
-                        budget_limits: None,
-                        initial_budget_usage: None,
-                    },
-                );
-            }
-            (Some(_), _, _) => {
-                return failed_backend_result(
-                    initial_messages,
-                    Vec::new(),
-                    shared_state,
-                    "Distributed backend requires a state_store and cycle_dispatcher".to_string(),
-                );
-            }
-            (None, _, _) => {}
+        if self.runtime_recipe.is_some() {
+            return failed_backend_result(
+                initial_messages,
+                Vec::new(),
+                shared_state,
+                "DistributedBackend requires RunConfig.checkpoint_config".to_string(),
+            );
         }
         execute_cycle_loop(
             initial_messages,
@@ -78,7 +54,7 @@ impl DistributedBackend {
         cycle_index_start: u32,
         cycle_count: u32,
         budget_limits: Option<RunBudgetLimits>,
-        initial_budget_usage: Option<BudgetUsageSnapshot>,
+        _initial_budget_usage: Option<BudgetUsageSnapshot>,
         checkpoint_controller: Option<CheckpointController>,
     ) -> AgentResult
     where
@@ -103,7 +79,7 @@ impl DistributedBackend {
         }
         if self.runtime_recipe.is_some() {
             if let Some(checkpoint_controller) = checkpoint_controller {
-                return self.execute_distributed_v2(
+                return self.execute_distributed(
                     task,
                     cycle_index_start,
                     cycle_count,
@@ -112,33 +88,12 @@ impl DistributedBackend {
                     checkpoint_controller,
                 );
             }
-            return match (
-                &self.runtime_recipe,
-                &self.state_store,
-                &self.cycle_dispatcher,
-            ) {
-                (Some(recipe), Some(state_store), Some(cycle_dispatcher)) => self
-                    .execute_distributed(
-                        initial_messages,
-                        shared_state,
-                        DistributedRunContext {
-                            task,
-                            recipe,
-                            state_store,
-                            cycle_dispatcher,
-                            cancellation_token,
-                            max_cycles: cycle_count,
-                            budget_limits,
-                            initial_budget_usage,
-                        },
-                    ),
-                _ => failed_backend_result(
-                    initial_messages,
-                    initial_cycles,
-                    shared_state,
-                    "Distributed backend requires a state_store and cycle_dispatcher".to_string(),
-                ),
-            };
+            return failed_backend_result(
+                initial_messages,
+                initial_cycles,
+                shared_state,
+                "DistributedBackend requires RunConfig.checkpoint_config".to_string(),
+            );
         }
         execute_cycle_loop_with_state(
             initial_messages,

@@ -6,6 +6,19 @@ fn assert_error_metadata_matches_content(result: &ToolExecutionResult) {
     assert_eq!(json!(result.metadata), payload);
 }
 
+fn assert_schema_error_metadata(result: &ToolExecutionResult) {
+    let payload: Value = serde_json::from_str(&result.content).expect("schema error payload");
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(payload["error_code"], "invalid_tool_arguments");
+    assert_eq!(
+        json!(result.metadata),
+        json!({
+            "error_code": "invalid_tool_arguments",
+            "issue_count": payload["issues"].as_array().expect("schema issues").len()
+        })
+    );
+}
+
 struct RawPathWorkspaceBackend {
     paths: Vec<String>,
     fallback: MemoryWorkspaceBackend,
@@ -390,7 +403,7 @@ fn create_sub_task_validates_payload_structure_before_exclude_pattern() {
                 ("tasks".to_string(), json!("not an array")),
                 ("exclude_files_pattern".to_string(), json!(r"(?=secret)")),
             ]),
-            "invalid_tasks_payload",
+            "invalid_tool_arguments",
         ),
         (
             BTreeMap::from([
@@ -398,7 +411,7 @@ fn create_sub_task_validates_payload_structure_before_exclude_pattern() {
                 ("tasks".to_string(), json!([])),
                 ("exclude_files_pattern".to_string(), json!(r"(?=secret)")),
             ]),
-            "invalid_tasks_payload",
+            "invalid_tool_arguments",
         ),
         (
             BTreeMap::from([
@@ -406,7 +419,7 @@ fn create_sub_task_validates_payload_structure_before_exclude_pattern() {
                 ("tasks".to_string(), json!([42])),
                 ("exclude_files_pattern".to_string(), json!(r"(?=secret)")),
             ]),
-            "invalid_tasks_payload",
+            "invalid_tool_arguments",
         ),
     ];
 
@@ -422,10 +435,14 @@ fn create_sub_task_validates_payload_structure_before_exclude_pattern() {
             )
             .expect("create_sub_task validation result");
         assert_eq!(result.error_code.as_deref(), Some(expected_code));
-        assert_error_metadata_matches_content(&result);
+        if expected_code == "invalid_tool_arguments" {
+            assert_schema_error_metadata(&result);
+        } else {
+            assert_error_metadata_matches_content(&result);
+        }
     }
     assert_eq!(
-        fixture["validation"]["payload_validation_precedes_exclude_pattern"],
+        fixture["validation"]["payload_mode_validation_precedes_exclude_pattern"],
         true
     );
 }
@@ -487,7 +504,7 @@ fn configured_tools_reject_non_string_schema_values_without_stringifying() {
                 &mut create_context,
             )
             .expect("create_sub_task type validation");
-        assert_error_metadata_matches_content(&result);
+        assert_schema_error_metadata(&result);
     }
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 
@@ -517,9 +534,12 @@ fn configured_tools_reject_non_string_schema_values_without_stringifying() {
                 &mut status_context,
             )
             .expect("sub_task_status type validation");
-        assert_error_metadata_matches_content(&result);
+        assert_schema_error_metadata(&result);
     }
-    assert_eq!(fixture["validation"]["non_string_schema_values"], "reject");
+    assert_eq!(
+        fixture["validation"]["handler_receives_schema_valid_arguments"],
+        true
+    );
 }
 
 #[test]

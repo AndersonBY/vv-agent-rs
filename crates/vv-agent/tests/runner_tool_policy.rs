@@ -55,6 +55,7 @@ async fn runner_exposes_custom_agent_and_handoff_tool_schemas() {
         })
         .build()
         .expect("custom tool");
+    let custom_parameters = custom_tool.parameters_schema().clone();
     let researcher = Agent::builder("researcher")
         .instructions("Research delegated tasks.")
         .model(ModelRef::backend("scripted", "child-model"))

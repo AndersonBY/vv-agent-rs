@@ -16,11 +16,11 @@ Delegation rules:
 Execution:
 - `wait_for_completion=true` (default): wait for result(s) and return final payload. Batch mode may run requests through the runtime execution backend in parallel and returns a summary plus one result per task.
 - `wait_for_completion=false`: start background sub-task(s) and return `task_id` / `task_ids` for later polling.
-- Batch payloads can include partial failures; inspect the summary and each result before deciding whether the parent task can continue.
+- After a schema-valid batch is accepted, individual child executions or background submissions can still fail; inspect each runtime result before deciding whether the parent task can continue.
 
 Result handling:
 - For synchronous runs, read every returned result and error entry before using the child output.
-- Treat partial failures as unresolved work unless the failed child was optional or its failure is itself the required evidence.
+- Treat runtime partial failures as unresolved work unless the failed child was optional or its failure is itself the required evidence.
 - For background runs, preserve the returned task ids and use `sub_task_status` later to inspect progress, fetch results, or send follow-up messages."#;
 
 pub(in crate::tools::schemas) fn create_sub_task_schema() -> Value {
@@ -46,6 +46,7 @@ pub(in crate::tools::schemas) fn create_sub_task_schema() -> Value {
                     },
                     "tasks": {
                         "type": "array",
+                        "minItems": 1,
                         "description": "Batch mode: multiple independent tasks for the same sub-agent. Use when parallel work can be safely delegated without shared mutable state or ordering dependencies.",
                         "items": {
                             "type": "object",

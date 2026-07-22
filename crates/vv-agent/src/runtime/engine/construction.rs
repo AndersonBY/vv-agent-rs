@@ -16,7 +16,7 @@ impl<C: LlmClient> AgentRuntime<C> {
             llm_client,
             tool_registry: build_default_registry(),
             default_workspace: None,
-            log_handler: None,
+            event_handler: None,
             log_preview_chars: None,
             workspace_backend: Arc::new(LocalWorkspaceBackend::new(PathBuf::from("./workspace"))),
             hooks: Vec::new(),

@@ -1,4 +1,5 @@
 pub mod agent_tool;
+pub(crate) mod argument_validation;
 pub mod background_agent_task;
 pub mod base;
 pub mod builtins;

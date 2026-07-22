@@ -26,24 +26,13 @@ fn runtime_microcompacts_before_full_memory_compaction() {
         .insert("microcompact_keep_recent_cycles".to_string(), json!(0));
     task.metadata
         .insert("microcompact_min_result_length".to_string(), json!(200));
-    let lifecycle = Arc::new(Mutex::new(Vec::<(
-        String,
-        BTreeMap<String, serde_json::Value>,
-    )>::new()));
-    let lifecycle_sink = lifecycle.clone();
+    let (lifecycle, event_handler) = run_event_collector();
 
     let result = runtime
         .run_with_controls(
             task,
             RuntimeRunControls {
-                log_handler: Some(Arc::new(move |event, payload| {
-                    if event.starts_with("memory_compact_") {
-                        lifecycle_sink
-                            .lock()
-                            .expect("memory lifecycle")
-                            .push((event.to_string(), payload.clone()));
-                    }
-                })),
+                event_handler: Some(event_handler),
                 ..RuntimeRunControls::default()
             },
         )
@@ -66,16 +55,39 @@ fn runtime_microcompacts_before_full_memory_compaction() {
     let lifecycle = lifecycle.lock().expect("memory lifecycle");
     let started = lifecycle
         .iter()
-        .find(|(event, _)| event == "memory_compact_started")
+        .find(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::MemoryCompactStarted { .. }
+            )
+        })
         .expect("microcompact started");
     let completed = lifecycle
         .iter()
-        .find(|(event, _)| event == "memory_compact_completed")
+        .find(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::MemoryCompactCompleted { .. }
+            )
+        })
         .expect("microcompact completed");
-    assert_eq!(started.1["trigger"], "micro_threshold");
-    assert_eq!(completed.1["mode"], "micro");
-    assert_eq!(completed.1["changed"], true);
-    assert_eq!(completed.1["before_count"], completed.1["after_count"]);
+    assert!(matches!(
+        started.payload(),
+        RunEventPayload::MemoryCompactStarted {
+            trigger: MemoryCompactTrigger::MicroThreshold,
+            ..
+        }
+    ));
+    assert!(matches!(
+        completed.payload(),
+        RunEventPayload::MemoryCompactCompleted {
+            before_count,
+            after_count,
+            mode: MemoryCompactMode::Micro,
+            changed: true,
+            ..
+        } if before_count == after_count
+    ));
 }
 
 #[test]

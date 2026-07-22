@@ -18,12 +18,7 @@ fn skills_public_api_validates_metadata() {
             .as_str(),
         "compat"
     );
-    assert_eq!(
-        normalize_validation_mode(Some("relaxed"))
-            .expect("legacy mode alias")
-            .as_str(),
-        "compat"
-    );
+    assert!(normalize_validation_mode(Some("relaxed")).is_err());
     assert_eq!(VALIDATION_MODES, ["strict", "compat", "minimal"]);
     assert!(normalize_validation_mode(Some("unknown")).is_err());
 

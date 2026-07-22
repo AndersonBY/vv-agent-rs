@@ -111,9 +111,7 @@ mod tests {
             settings_file: None,
             default_backend: None,
             sub_agent_timeout_seconds: 30.0,
-            stream_callback: None,
-            parent_log_handler: None,
-            parent_event_handler: None,
+            event_handler: None,
             parent_execution_context: None,
             model_provider: None,
             parent_run_context: None,
@@ -260,7 +258,7 @@ mod tests {
     fn non_string_identity_metadata_is_ignored_and_falls_through() {
         let contract: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/parity/configured_sub_agent_v1.json"
+            "/tests/fixtures/parity/configured_sub_agent.json"
         )))
         .expect("configured sub-agent contract");
         assert_eq!(

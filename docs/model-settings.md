@@ -45,16 +45,17 @@ The template uses `vv-llm` settings schema version `2`:
   "backends": {
     "moonshot": {
       "models": {
-        "kimi-k2.6": {
-          "id": "kimi-k2.6",
+        "kimi-k3": {
+          "id": "kimi-k3",
           "endpoints": [
             {
               "endpoint_id": "moonshot-default",
-              "model_id": "kimi-k2.6"
+              "model_id": "kimi-k3"
             }
           ],
-          "context_length": 128000,
-          "max_output_tokens": 16384,
+          "context_length": 1048576,
+          "max_output_tokens": 131072,
+          "native_multimodal": true,
           "function_call_available": true,
           "response_format_available": true
         }
@@ -66,9 +67,8 @@ The template uses `vv-llm` settings schema version `2`:
 }
 ```
 
-`load_llm_settings_from_file()` also supports Python-style settings literals
-used by older templates, but new checked-in fixtures should prefer JSON unless
-there is a concrete need for a Python source fixture.
+`load_llm_settings_from_file()` accepts JSON, TOML, and Python literal settings
+as current input formats. Checked-in Rust fixtures use JSON.
 
 ## Agent + Runner Model Provider
 
@@ -83,7 +83,7 @@ let runner = Runner::builder()
     .model_provider(provider)
     .workspace("./workspace")
     .build()?;
-let model = ModelRef::backend("moonshot", "kimi-k2.6");
+let model = ModelRef::backend("moonshot", "kimi-k3");
 ```
 
 Use `ModelRef::backend(backend, model)` when a call must resolve a specific
@@ -110,8 +110,10 @@ resolves model capabilities.
 Memory capacity uses these precedence rules:
 
 1. Context window: positive explicit task `model_context_window`, resolved
-   capability, then `200000`. Zero metadata is absent rather than a zero-sized
-   model.
+   capability, then a derived planning context. The derived prompt capacity is
+   the positive configured compaction threshold or `250000`; output reserve
+   and the `13000` buffer are added afterward, so the default is `279000`.
+   Zero metadata is absent rather than a zero-sized model.
 2. Output reserve: effective positive `ModelSettings.max_tokens`, explicit task
    `reserved_output_tokens`, then `16000`.
 3. Only the `16000` fallback reserve is reduced when
@@ -156,9 +158,9 @@ Model keys are exact. `resolve_model_endpoint(settings, backend, model)` asks
 `LLM_SETTINGS.backends.<backend>.models`.
 
 Do not add aliases between independent provider models. For example,
-`kimi-k2.5` and `kimi-k2.6` are separate model ids. If only `kimi-k2.6` is
+`kimi-k2.5` and `kimi-k3` are separate model ids. If only `kimi-k3` is
 configured, requesting `kimi-k2.5` must fail instead of silently using
-`kimi-k2.6`.
+`kimi-k3`.
 
 This behavior is covered by `tests/vv_llm_integration.rs`.
 
@@ -166,8 +168,8 @@ This behavior is covered by `tests/vv_llm_integration.rs`.
 
 `kimi-k3` always uses its provider-defined reasoning and sampling profile. The
 LLM bridge sends top-level `reasoning_effort="max"`, omits `temperature`,
-`top_p`, fixed penalty/count fields, and legacy K2.x `thinking` controls, and
-maps public `max_tokens` / `max_output_tokens` to the provider's
+`top_p`, fixed penalty/count fields, and K2.x `thinking` controls, and maps the
+explicit public `max_tokens` request setting to the provider's
 `max_completion_tokens` field. These invariants are applied after public
 `ModelSettings` are merged so provider-specific `extra_body` values cannot
 override them. Unrelated `extra_body` fields continue to pass through.
@@ -181,10 +183,10 @@ the end of the provider stream before that message is stored.
 | Surface | Default |
 | --- | --- |
 | CLI `--backend` | `moonshot` |
-| CLI `--model` | `kimi-k2.6` |
-| Examples `V_AGENT_EXAMPLE_BACKEND` | `moonshot` |
-| Examples `V_AGENT_EXAMPLE_MODEL` | `kimi-k2.6` |
-| Live Moonshot `VV_AGENT_LIVE_MODEL` | `kimi-k2.6` |
+| CLI `--model` | `kimi-k3` |
+| Examples `VV_AGENT_EXAMPLE_BACKEND` | `moonshot` |
+| Examples `VV_AGENT_EXAMPLE_MODEL` | `kimi-k3` |
+| Live Moonshot `VV_AGENT_LIVE_MODEL` | `kimi-k3` |
 
 When changing a model default, update all user-facing surfaces together: CLI,
 README, examples, live-test docs, tests, and

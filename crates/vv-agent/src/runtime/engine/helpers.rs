@@ -256,11 +256,7 @@ pub(super) fn previous_cycle_memory_usage(
     let Some(last_cycle) = cycles.last() else {
         return (None, None);
     };
-    let prompt_tokens = if last_cycle.token_usage.prompt_tokens > 0 {
-        last_cycle.token_usage.prompt_tokens
-    } else {
-        last_cycle.token_usage.input_tokens
-    };
+    let input_tokens = last_cycle.token_usage.input_tokens;
     let recent_tool_call_ids = last_cycle
         .tool_calls
         .iter()
@@ -270,7 +266,7 @@ pub(super) fn previous_cycle_memory_usage(
         })
         .collect::<BTreeSet<_>>();
     (
-        (prompt_tokens > 0).then_some(prompt_tokens),
+        input_tokens.filter(|value| *value > 0),
         (!recent_tool_call_ids.is_empty()).then_some(recent_tool_call_ids),
     )
 }

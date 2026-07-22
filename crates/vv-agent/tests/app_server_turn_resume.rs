@@ -23,13 +23,12 @@ use vv_agent::app_server::thread_state::ThreadStateManager;
 use vv_agent::app_server::thread_store::SqliteThreadStore;
 use vv_agent::app_server::transport::ConnectionId;
 use vv_agent::{
-    Agent, CapabilityRef, CheckpointConfig, CheckpointStoreV2, FunctionTool,
-    InMemoryCheckpointStoreV2, LLMResponse, ModelRef, NoToolPolicy, ResumePolicy, RunBudgetLimits,
-    RunConfig, Runner, ScriptStep, ScriptedModelProvider, TokenUsage, ToolCall, ToolOutput,
-    UsageSource,
+    Agent, CapabilityRef, CheckpointConfig, CheckpointStore, FunctionTool, InMemoryCheckpointStore,
+    LLMResponse, ModelRef, NoToolPolicy, ResumePolicy, RunBudgetLimits, RunConfig, Runner,
+    ScriptStep, ScriptedModelProvider, TokenUsage, ToolCall, ToolOutput, UsageSource,
 };
 
-const CONTRACT_SOURCE: &str = include_str!("fixtures/parity/app_server_observable_v1.json");
+const CONTRACT_SOURCE: &str = include_str!("fixtures/parity/app_server_observable.json");
 
 struct ScriptedDurableResumeProvider {
     outcomes: Mutex<VecDeque<DurableTurnResumeOutcome>>,
@@ -436,7 +435,7 @@ async fn terminal_replay_is_response_only_and_updates_the_existing_turn_snapshot
 #[tokio::test]
 async fn standard_app_server_terminal_replay_uses_real_runner_checkpoint() {
     let checkpoint_key = "app-server/terminal-replay";
-    let checkpoint_store = InMemoryCheckpointStoreV2::new();
+    let checkpoint_store = InMemoryCheckpointStore::new();
     let model_calls = Arc::new(AtomicUsize::new(0));
     let calls_for_model = model_calls.clone();
     let provider = ScriptedModelProvider::from_steps(
@@ -446,11 +445,9 @@ async fn standard_app_server_terminal_replay_uses_real_runner_checkpoint() {
             calls_for_model.fetch_add(1, Ordering::SeqCst);
             let mut response = LLMResponse::new("durable app-server answer");
             response.token_usage = TokenUsage {
-                prompt_tokens: 7,
-                completion_tokens: 3,
-                total_tokens: 10,
-                input_tokens: 7,
-                output_tokens: 3,
+                input_tokens: Some(7),
+                output_tokens: Some(3),
+                total_tokens: Some(10),
                 usage_source: UsageSource::ProviderReported,
                 ..TokenUsage::default()
             };
@@ -535,7 +532,7 @@ async fn standard_app_server_terminal_replay_uses_real_runner_checkpoint() {
         first_completion
             .token_usage
             .as_ref()
-            .map(|usage| usage.total_tokens),
+            .and_then(|usage| usage.total_tokens),
         Some(10)
     );
     assert_eq!(
@@ -611,7 +608,7 @@ async fn standard_app_server_terminal_replay_uses_real_runner_checkpoint() {
         stored_before_replay.result.get("budgetUsage")
     );
     let terminal = checkpoint_store
-        .load_checkpoint_v2(checkpoint_key)
+        .load_checkpoint(checkpoint_key)
         .expect("checkpoint load")
         .expect("terminal checkpoint");
     assert!(terminal.terminal_acknowledged);
@@ -621,7 +618,7 @@ async fn standard_app_server_terminal_replay_uses_real_runner_checkpoint() {
 #[tokio::test]
 async fn concurrent_standard_app_servers_have_one_checkpoint_claim_winner() {
     let checkpoint_key = "app-server/concurrent-resume";
-    let checkpoint_store = InMemoryCheckpointStoreV2::new();
+    let checkpoint_store = InMemoryCheckpointStore::new();
     let model_calls = Arc::new(AtomicUsize::new(0));
     let first_calls = model_calls.clone();
     let resumed_calls = model_calls.clone();
@@ -736,7 +733,7 @@ async fn concurrent_standard_app_servers_have_one_checkpoint_claim_winner() {
         .expect("reset App Server turn after simulated process crash");
     assert_eq!(model_calls.load(Ordering::SeqCst), 1);
     let mut crashed = checkpoint_store
-        .load_checkpoint_v2(checkpoint_key)
+        .load_checkpoint(checkpoint_key)
         .expect("checkpoint load")
         .expect("crashed checkpoint");
     assert_eq!(crashed.cycle_index, 1);
@@ -744,7 +741,7 @@ async fn concurrent_standard_app_servers_have_one_checkpoint_claim_winner() {
     let original_run_id = crashed.root_run_id.clone();
     crashed.lease_expires_at_ms = Some(1);
     checkpoint_store
-        .save_checkpoint_v2(crashed)
+        .save_checkpoint(crashed)
         .expect("expire crashed claim");
 
     let (mut processor_a, mut outgoing_a) =

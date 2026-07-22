@@ -3,12 +3,14 @@ use std::fs;
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
+use vv_agent::types::AgentTask;
 use vv_agent::{
-    memory::CLEARED_MARKER, AgentRuntime, AgentStatus, AgentTask, BeforeLlmPatch,
-    BeforeToolCallPatch, CancellationToken, ExecutionContext, HostCost, HostCostMeter, LLMResponse,
-    LlmClient, LlmError, LlmRequest, LlmStreamCallback, Message, RunBudgetLimits, RuntimeHook,
-    RuntimeRunControls, ScriptedLlmClient, SubAgentConfig, TokenUsage, ToolCall, ToolDirective,
-    ToolExecutionResult, UsageSource,
+    memory::CLEARED_MARKER, AgentRuntime, AgentStatus, BeforeLlmPatch, BeforeToolCallPatch,
+    CancellationToken, ExecutionContext, HostCost, HostCostMeter, LLMResponse, LlmClient, LlmError,
+    LlmRequest, LlmStreamCallback, MemoryCompactMode, MemoryCompactTrigger, Message,
+    RunBudgetLimits, RunEvent, RunEventHandler, RunEventPayload, RuntimeHook, RuntimeRunControls,
+    ScriptedLlmClient, SubAgentConfig, TokenUsage, ToolCall, ToolDirective, ToolExecutionResult,
+    UsageSource,
 };
 
 const PNG_1X1: &[u8] = &[
@@ -34,6 +36,37 @@ fn preview_text_for_test(text: &str, log_preview_chars: Option<usize>) -> String
             .take(limit.saturating_sub(3))
             .collect::<String>()
     )
+}
+
+fn run_event_collector() -> (Arc<Mutex<Vec<RunEvent>>>, RunEventHandler) {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    let handler = Arc::new(move |event: &RunEvent| {
+        sink.lock().expect("run events").push(event.clone());
+    });
+    (events, handler)
+}
+
+fn observable_event_name(event: &RunEvent) -> String {
+    if let RunEventPayload::Diagnostic { code, .. } = event.payload() {
+        return code.clone();
+    }
+    serde_json::to_value(event.payload())
+        .expect("run event payload")
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .expect("run event type")
+        .to_string()
+}
+
+fn diagnostic_details<'a>(
+    event: &'a RunEvent,
+    expected_code: &str,
+) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+    match event.payload() {
+        RunEventPayload::Diagnostic { code, details, .. } if code == expected_code => Some(details),
+        _ => None,
+    }
 }
 
 #[path = "runtime_cycle/after_cycle.rs"]

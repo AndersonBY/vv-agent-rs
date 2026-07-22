@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{path_escapes_workspace_error, stringify_tool_arg};
+use crate::tools::common::{path_escapes_workspace_error, string_arg};
 use crate::types::{Metadata, ToolArguments, ToolExecutionResult};
 
 use super::super::edit::{workspace_tool_error, workspace_tool_error_with_details};
@@ -25,7 +25,7 @@ pub(crate) fn file_info_tool() -> ToolSpec {
                     Metadata::from([("missing_arguments".to_string(), json!(["path"]))]),
                 );
             }
-            let path = stringify_tool_arg(arguments.get("path"), "");
+            let path = string_arg(arguments.get("path"), "");
             if let Err(error) = context.resolve_workspace_path(&path) {
                 return path_escapes_workspace_error(error);
             }

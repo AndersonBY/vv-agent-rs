@@ -19,7 +19,7 @@ fn live_moonshot_kimi_smoke_completion() {
     );
 
     let backend = env::var("VV_AGENT_LIVE_BACKEND").unwrap_or_else(|_| "moonshot".to_string());
-    let model = env::var("VV_AGENT_LIVE_MODEL").unwrap_or_else(|_| "kimi-k2.6".to_string());
+    let model = env::var("VV_AGENT_LIVE_MODEL").unwrap_or_else(|_| "kimi-k3".to_string());
     let (llm, resolved) = build_vv_llm_from_local_settings(&settings_path, &backend, &model, 90.0)
         .expect("build Moonshot vv-llm client");
 

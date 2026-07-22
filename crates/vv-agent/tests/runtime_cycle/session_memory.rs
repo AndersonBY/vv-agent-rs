@@ -202,46 +202,6 @@ fn runtime_does_not_reuse_main_client_for_metadata_memory_route_without_provider
 }
 
 #[test]
-fn runtime_does_not_reuse_main_client_for_settings_memory_route_without_provider() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let settings_file = workspace.path().join("local_settings.json");
-    fs::write(
-        &settings_file,
-        r#"
-DEFAULT_USER_MEMORY_SUMMARIZE_BACKEND = "settings-backend"
-DEFAULT_USER_MEMORY_SUMMARIZE_MODEL = "settings-model"
-"#,
-    )
-    .expect("settings file");
-    let llm = SummaryModelInspectingLlmClient::default();
-    let inspector = llm.clone();
-    let mut runtime = AgentRuntime::new(llm)
-        .with_settings_file(settings_file)
-        .with_default_backend("fallback-backend");
-    runtime.default_workspace = Some(workspace.path().to_path_buf());
-    runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
-        workspace.path(),
-    ));
-    let mut task = AgentTask::new(
-        "summary_model_settings_task",
-        "task-model",
-        "system",
-        "inspect memory",
-    );
-    task.memory_compact_threshold = 1;
-    task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
-    task.metadata
-        .insert("session_memory_min_tokens".to_string(), json!(1));
-    task.metadata
-        .insert("session_memory_min_text_messages".to_string(), json!(1));
-
-    let result = runtime.run(task).expect("run");
-
-    assert_eq!(result.status, AgentStatus::Completed);
-    assert_eq!(inspector.extraction_model(), None);
-}
-
-#[test]
 fn runtime_uses_settings_model_token_limits_for_direct_runtime_memory() {
     let workspace = tempfile::tempdir().expect("workspace");
     let settings_file = workspace.path().join("llm_settings.json");

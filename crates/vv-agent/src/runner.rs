@@ -34,10 +34,10 @@ use crate::runtime::checkpoint_resume::{
     CheckpointController, CheckpointControllerRequest, CheckpointEventSink,
     CheckpointResumeController,
 };
-use crate::runtime::run_definition_v2::{
+use crate::runtime::run_definition::{
     build_frozen_task, build_run_definition, frozen_definition_messages, RunDefinitionRequest,
 };
-use crate::runtime::state_v2::CheckpointV2;
+use crate::runtime::state::Checkpoint;
 use crate::runtime::tool_planner::project_tool_policy;
 use crate::runtime::{
     AgentRuntime, CheckpointRuntimeControl, ExecutionContext, RuntimeRunControls,
@@ -52,13 +52,12 @@ use checkpoint_runtime::{
     prepare_checkpoint_resume, prepare_checkpoint_runtime, prepare_checkpoint_terminal,
     replay_checkpoint_terminal, CheckpointRuntimeRequest, CheckpointRuntimeState,
 };
-use event_stream::map_stream_event;
+pub(crate) use event_stream::map_stream_event;
 pub use event_stream::RunEventStream;
 #[doc(hidden)]
 pub use event_stream::{map_runtime_event, RuntimeEventContext};
 use helpers::{
-    effective_model_ref, effective_trace_id, effective_workflow_name, is_runtime_terminal_log,
-    status_string, terminal_event,
+    effective_model_ref, effective_trace_id, effective_workflow_name, status_string, terminal_event,
 };
 pub(crate) use producer::CheckpointStartOutcome;
 use session_blocking::block_on_session;
@@ -101,7 +100,7 @@ struct InstructionBuildRequest<'a> {
 }
 
 pub(super) struct CheckpointAdmission {
-    pub checkpoint: CheckpointV2,
+    pub checkpoint: Checkpoint,
     pub terminal_replayed: bool,
 }
 
@@ -298,7 +297,7 @@ impl LlmClient for ArcLlmClient {
     }
 }
 
-fn preload_checkpoint(config: Option<&CheckpointConfig>) -> Result<Option<CheckpointV2>, String> {
+fn preload_checkpoint(config: Option<&CheckpointConfig>) -> Result<Option<Checkpoint>, String> {
     let Some(config) = config else {
         return Ok(None);
     };
@@ -315,7 +314,7 @@ fn preload_checkpoint(config: Option<&CheckpointConfig>) -> Result<Option<Checkp
             .to_string()
     })?;
     store
-        .load_checkpoint_v2(key)
+        .load_checkpoint(key)
         .map_err(|error| error.to_string())
 }
 

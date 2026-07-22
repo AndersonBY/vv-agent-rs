@@ -1,10 +1,5 @@
-use std::io;
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-use crate::runtime::state::{StateStore, StateStoreSpec};
 
 use super::distributed::DistributedCapabilities;
 
@@ -16,8 +11,6 @@ pub struct RuntimeRecipe {
     pub workspace: String,
     pub timeout_seconds: f64,
     pub log_preview_chars: Option<usize>,
-    #[serde(default)]
-    pub state_store: Option<StateStoreSpec>,
     pub capabilities: DistributedCapabilities,
 }
 
@@ -35,7 +28,6 @@ impl RuntimeRecipe {
             workspace: workspace.into(),
             timeout_seconds: 90.0,
             log_preview_chars: None,
-            state_store: None,
             capabilities: DistributedCapabilities::default(),
         }
     }
@@ -48,7 +40,6 @@ impl RuntimeRecipe {
             "workspace": self.workspace,
             "timeout_seconds": self.timeout_seconds,
             "log_preview_chars": self.log_preview_chars,
-            "state_store": self.state_store.as_ref().map(StateStoreSpec::to_dict),
             "capabilities": self.capabilities.to_dict(),
         })
     }
@@ -71,12 +62,6 @@ impl RuntimeRecipe {
                 .filter(|value| !value.is_null())
                 .and_then(Value::as_u64)
                 .and_then(|value| usize::try_from(value).ok()),
-            state_store: object
-                .get("state_store")
-                .filter(|value| !value.is_null())
-                .map(StateStoreSpec::from_dict)
-                .transpose()
-                .map_err(|error| error.to_string())?,
             capabilities: DistributedCapabilities::from_dict(
                 object
                     .get("capabilities")
@@ -104,22 +89,6 @@ impl RuntimeRecipe {
             );
         }
         self.capabilities.validate()
-    }
-
-    pub fn default_sqlite_checkpoint_path(&self) -> PathBuf {
-        PathBuf::from(&self.workspace)
-            .join(".vv-agent-state")
-            .join("checkpoints.db")
-    }
-
-    pub fn build_state_store(&self) -> io::Result<std::sync::Arc<dyn StateStore>> {
-        let spec = self.state_store.as_ref().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "distributed RuntimeRecipe is missing state_store",
-            )
-        })?;
-        spec.build()
     }
 }
 

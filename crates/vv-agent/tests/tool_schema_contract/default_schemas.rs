@@ -104,7 +104,7 @@ fn default_tool_schemas_include_actionable_descriptions() {
     let todo_write = description(&registry, "todo_write");
     assert!(todo_write.contains("Protocol:"));
     assert!(todo_write.contains("Only one item may have `status=in_progress`"));
-    assert!(todo_write.contains("Missing status defaults to `pending`"));
+    assert!(todo_write.contains("Each item must include `title`, `status`, and `priority`"));
     let todo_schema = registry.get_schema("todo_write").expect("todo schema");
     assert_eq!(
         todo_schema["function"]["parameters"]["properties"]["todos"]["items"]["required"],

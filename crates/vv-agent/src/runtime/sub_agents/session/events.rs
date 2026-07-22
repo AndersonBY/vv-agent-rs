@@ -20,10 +20,11 @@ impl RuntimeSubAgentSession {
         emit_sub_agent_session_event(&self.listeners, event, &payload);
         let enriched =
             enrich_sub_agent_payload(&payload, &self.task_id, &self.session_id, &self.agent_name);
-        let current_turn_event_handler =
-            SubTaskTurnSnapshot::current_event_handler().and_then(|handler| handler);
+        let current_turn_event_handler = match SubTaskTurnSnapshot::current_event_handler() {
+            Some(handler) => handler,
+            None => self.event_handler.clone(),
+        };
         emit_parent_sub_agent_event(
-            &self.parent_log_handler,
             &current_turn_event_handler,
             &format!("sub_agent_{event}"),
             enriched,

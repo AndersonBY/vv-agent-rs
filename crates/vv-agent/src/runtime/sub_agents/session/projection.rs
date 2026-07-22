@@ -53,8 +53,8 @@ pub(super) fn project_execution_context(
     }
     ExecutionContext {
         cancellation_token,
-        stream_callback: None,
-        state_store: parent.and_then(|context| context.state_store.clone()),
+        event_handler: None,
+        checkpoint_store: parent.and_then(|context| context.checkpoint_store.clone()),
         approval_provider: parent.and_then(|context| context.approval_provider.clone()),
         approval_broker: parent.and_then(|context| context.approval_broker.clone()),
         approval_timeout: parent.and_then(|context| context.approval_timeout),

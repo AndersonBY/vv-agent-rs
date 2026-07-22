@@ -5,7 +5,7 @@ use vv_agent::{Message, ToolCall};
 
 fn reasoning_history_contract() -> serde_json::Value {
     serde_json::from_str(include_str!(
-        "fixtures/parity/assistant_reasoning_history_v1.json"
+        "fixtures/parity/assistant_reasoning_history.json"
     ))
     .expect("assistant reasoning history fixture")
 }
@@ -182,7 +182,7 @@ fn sanitize_for_resume_matches_tool_call_ids_after_trimming() {
 }
 
 fn configured_sub_agent_contract() -> serde_json::Value {
-    serde_json::from_str(include_str!("fixtures/parity/configured_sub_agent_v1.json"))
+    serde_json::from_str(include_str!("fixtures/parity/configured_sub_agent.json"))
         .expect("configured sub-agent fixture")
 }
 

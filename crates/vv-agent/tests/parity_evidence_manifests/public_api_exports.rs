@@ -344,6 +344,15 @@ fn public_export_path(id: &str) -> &'static str {
             let _ = variant;
             "vv_agent::RunEventPayload::ToolCallPlanned"
         }
+        "events.diagnostic" => {
+            let variant = vv_agent::RunEventPayload::Diagnostic {
+                level: vv_agent::events::DiagnosticLevel::Info,
+                code: "diagnostic".to_string(),
+                details: serde_json::Map::new(),
+            };
+            let _ = variant;
+            "vv_agent::RunEventPayload::Diagnostic"
+        }
         "llm_bridge.client" => export_type!(dyn vv_agent::LlmClient, "vv_agent::LlmClient"),
         "llm_bridge.request" => export_type!(vv_agent::LlmRequest, "vv_agent::LlmRequest"),
         "llm_bridge.error" => export_type!(vv_agent::LlmError, "vv_agent::LlmError"),
@@ -397,26 +406,20 @@ fn public_export_path(id: &str) -> &'static str {
         "runtime_backend.recipe" => {
             export_type!(vv_agent::RuntimeRecipe, "vv_agent::RuntimeRecipe")
         }
-        "runtime_backend.state_store" => {
-            export_type!(dyn vv_agent::StateStore, "vv_agent::StateStore")
-        }
-        "runtime_backend.in_memory_state_store" => {
-            export_type!(vv_agent::InMemoryStateStore, "vv_agent::InMemoryStateStore")
-        }
-        "runtime_backend.sqlite_state_store" => {
-            export_type!(vv_agent::SqliteStateStore, "vv_agent::SqliteStateStore")
-        }
-        "runtime_backend.redis_state_store" => {
-            export_type!(vv_agent::RedisStateStore, "vv_agent::RedisStateStore")
-        }
         "runtime_backend.checkpoint" => {
             export_type!(vv_agent::Checkpoint, "vv_agent::Checkpoint")
         }
-        "runtime_backend.checkpoint_v2" => {
-            export_type!(vv_agent::CheckpointV2, "vv_agent::CheckpointV2")
+        "runtime_backend.checkpoint_store" => {
+            export_type!(dyn vv_agent::CheckpointStore, "vv_agent::CheckpointStore")
         }
-        "runtime_backend.checkpoint_store_v2" => {
-            export_type!(dyn vv_agent::CheckpointStoreV2, "vv_agent::CheckpointStoreV2")
+        "runtime_backend.in_memory_checkpoint_store" => {
+            export_type!(vv_agent::InMemoryCheckpointStore, "vv_agent::InMemoryCheckpointStore")
+        }
+        "runtime_backend.sqlite_checkpoint_store" => {
+            export_type!(vv_agent::SqliteCheckpointStore, "vv_agent::SqliteCheckpointStore")
+        }
+        "runtime_backend.redis_checkpoint_store" => {
+            export_type!(vv_agent::RedisCheckpointStore, "vv_agent::RedisCheckpointStore")
         }
         "runtime_backend.idempotent_event_store" => export_type!(
             dyn vv_agent::IdempotentRunEventStore,
@@ -465,4 +468,3 @@ macro_rules! compile_fields {
         }
     };
 }
-

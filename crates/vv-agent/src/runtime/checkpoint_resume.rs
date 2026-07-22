@@ -11,19 +11,18 @@ use sha2::{Digest, Sha256};
 
 use crate::budget::BudgetUsageSnapshot;
 use crate::checkpoint::{
-    event_payload_digest, operation_request_digest, run_definition_comparison_copy,
-    run_definition_digest, AmbiguousModelPolicy, AmbiguousToolPolicy, CheckpointConfig,
-    CheckpointError, CheckpointExtension, CheckpointResult, CheckpointStatus, ClaimMode,
-    EventCursor, OperationKind, OperationState, ReconciliationDecision, ReconciliationDecisionKind,
-    ReconciliationProvider, ResumeObservation, ResumePolicy, ToolIdempotency,
-    OPERATION_REQUEST_SCHEMA,
+    event_payload_digest, operation_request_digest, run_definition_digest, AmbiguousModelPolicy,
+    AmbiguousToolPolicy, CheckpointConfig, CheckpointError, CheckpointExtension, CheckpointResult,
+    CheckpointStatus, ClaimMode, EventCursor, OperationKind, OperationState,
+    ReconciliationDecision, ReconciliationDecisionKind, ReconciliationProvider, ResumeObservation,
+    ResumePolicy, ToolIdempotency, OPERATION_REQUEST_SCHEMA,
 };
 use crate::event_store::RunEventStore;
 use crate::events::{RunEvent, RunEventPayload};
 use crate::llm::{LlmError, LlmRequest};
 use crate::runtime::backends::CapabilityRef;
-use crate::runtime::state_v2::{
-    validate_extension_state_size, CheckpointStoreV2, CheckpointV2, EventOutboxEntry,
+use crate::runtime::state::{
+    validate_extension_state_size, Checkpoint, CheckpointStore, EventOutboxEntry,
     ExtensionStateEntry, OperationError, OperationJournalEntry,
 };
 use crate::runtime::token_usage::summarize_task_token_usage;
@@ -53,7 +52,7 @@ pub(crate) struct CheckpointControllerRequest {
     pub reconciliation_provider: Option<Arc<dyn ReconciliationProvider>>,
     pub event_sink: CheckpointEventSink,
     pub event_store: Option<Arc<dyn RunEventStore>>,
-    pub preloaded_checkpoint: Option<CheckpointV2>,
+    pub preloaded_checkpoint: Option<Checkpoint>,
 }
 
 #[derive(Debug)]
@@ -77,7 +76,7 @@ struct HeartbeatHandle {
 
 pub(crate) struct CheckpointResumeController {
     config: CheckpointConfig,
-    store: Arc<dyn CheckpointStoreV2>,
+    store: Arc<dyn CheckpointStore>,
     task_id: String,
     run_id: String,
     trace_id: String,
@@ -91,8 +90,8 @@ pub(crate) struct CheckpointResumeController {
     reconciliation_provider: Option<Arc<dyn ReconciliationProvider>>,
     event_sink: CheckpointEventSink,
     event_store: Option<Arc<dyn RunEventStore>>,
-    preloaded_checkpoint: Option<CheckpointV2>,
-    checkpoint: Option<CheckpointV2>,
+    preloaded_checkpoint: Option<Checkpoint>,
+    checkpoint: Option<Checkpoint>,
     created: bool,
     first_claim_is_recovery: bool,
     owned_claim_token: Option<String>,
@@ -110,7 +109,7 @@ impl Drop for CheckpointResumeController {
     }
 }
 
-fn queue_event(checkpoint: &mut CheckpointV2, event: RunEvent) -> CheckpointResult<()> {
+fn queue_event(checkpoint: &mut Checkpoint, event: RunEvent) -> CheckpointResult<()> {
     let event_value = serde_json::to_value(&event).map_err(|error| {
         CheckpointError::new(
             "checkpoint_event_outbox_invalid",
@@ -194,7 +193,7 @@ fn observation(entry: &OperationJournalEntry) -> ResumeObservation {
     }
 }
 
-fn reconciliation_result(checkpoint: &CheckpointV2, observation: ResumeObservation) -> AgentResult {
+fn reconciliation_result(checkpoint: &Checkpoint, observation: ResumeObservation) -> AgentResult {
     AgentResult {
         status: AgentStatus::ReconciliationRequired,
         messages: checkpoint.messages.clone(),
@@ -215,7 +214,7 @@ fn reconciliation_result(checkpoint: &CheckpointV2, observation: ResumeObservati
     }
 }
 
-fn operator_abort_result(checkpoint: &CheckpointV2, observation: ResumeObservation) -> AgentResult {
+fn operator_abort_result(checkpoint: &Checkpoint, observation: ResumeObservation) -> AgentResult {
     let mut result = reconciliation_result(checkpoint, observation);
     result.status = AgentStatus::Failed;
     result.completion_reason = Some(crate::types::CompletionReason::Failed);

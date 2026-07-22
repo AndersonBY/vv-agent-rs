@@ -144,21 +144,23 @@ fn register_tool_with_parameters_creates_schema_and_handler() {
 #[test]
 fn register_preserves_explicit_schema_registered_before_handler() {
     let mut registry = ToolRegistry::new();
-    registry.register_schema(
-        "_workflow_custom_run",
-        json!({
-            "type": "function",
-            "function": {
-                "name": "_workflow_custom_run",
-                "description": "Run workflow via custom integration layer.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"workflow": {"type": "string"}},
-                    "required": ["workflow"],
+    registry
+        .register_schema(
+            "_workflow_custom_run",
+            json!({
+                "type": "function",
+                "function": {
+                    "name": "_workflow_custom_run",
+                    "description": "Run workflow via custom integration layer.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"workflow": {"type": "string"}},
+                        "required": ["workflow"],
+                    },
                 },
-            },
-        }),
-    );
+            }),
+        )
+        .expect("register schema");
 
     registry
         .register(ToolSpec::new(
@@ -203,17 +205,19 @@ fn register_preserves_explicit_schema_registered_before_handler() {
 #[test]
 fn list_openai_schemas_defaults_to_registered_tools_order() {
     let mut registry = ToolRegistry::new();
-    registry.register_schema(
-        "_schema_only",
-        json!({
-            "type": "function",
-            "function": {
-                "name": "_schema_only",
-                "description": "Schema without a handler.",
-                "parameters": {"type": "object", "properties": {}, "required": []},
-            },
-        }),
-    );
+    registry
+        .register_schema(
+            "_schema_only",
+            json!({
+                "type": "function",
+                "function": {
+                    "name": "_schema_only",
+                    "description": "Schema without a handler.",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }),
+        )
+        .expect("register schema");
     registry
         .register_tool(
             "_b_second",
@@ -250,17 +254,19 @@ fn list_openai_schemas_rejects_missing_schema() {
         ))
         .expect("register handler");
 
-    registry.register_schema(
-        "_schema_only",
-        json!({
-            "type": "function",
-            "function": {
-                "name": "_schema_only",
-                "description": "Schema without a handler.",
-                "parameters": {"type": "object", "properties": {}, "required": []},
-            },
-        }),
-    );
+    registry
+        .register_schema(
+            "_schema_only",
+            json!({
+                "type": "function",
+                "function": {
+                    "name": "_schema_only",
+                    "description": "Schema without a handler.",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            }),
+        )
+        .expect("register schema");
 
     let names = vec![
         "_handler_without_schema".to_string(),
@@ -287,6 +293,11 @@ fn register_tool_keeps_agent_default_empty_object_schema() {
     let schema = registry.get_schema("_noop").expect("schema");
     assert_eq!(
         schema["function"]["parameters"],
-        json!({"type": "object", "properties": {}, "required": []})
+        json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+        })
     );
 }

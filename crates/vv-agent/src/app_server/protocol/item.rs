@@ -174,31 +174,25 @@ pub fn map_run_event_to_notifications(
             tool_call_id,
             tool_name,
             status,
+            ..
         } => {
             let mut payload = serde_json::json!({
                 "toolCallId": tool_call_id,
                 "toolName": tool_name,
                 "status": status,
             });
-            if event.has_tool_completion_field("directive") {
-                payload["directive"] = event
-                    .tool_directive()
-                    .map(|value| serde_json::to_value(value).expect("directive serializes"))
-                    .unwrap_or(Value::Null);
-            }
-            if event.has_tool_completion_field("error_code") {
-                payload["errorCode"] = event
-                    .tool_error_code()
-                    .map_or(Value::Null, |value| Value::String(value.to_string()));
-            }
-            if event.has_tool_completion_field("execution_started") {
-                payload["executionStarted"] = event
-                    .tool_execution_started()
-                    .map_or(Value::Null, Value::Bool);
-            }
-            if event.has_tool_completion_field("duration_ms") {
-                payload["durationMs"] = event.tool_duration_ms().map_or(Value::Null, Value::from);
-            }
+            payload["directive"] = event
+                .tool_directive()
+                .map(|value| serde_json::to_value(value).expect("directive serializes"))
+                .expect("tool completion directive is present");
+            payload["errorCode"] = event
+                .tool_error_code()
+                .map_or(Value::Null, |value| Value::String(value.to_string()));
+            payload["executionStarted"] = event
+                .tool_execution_started()
+                .map(Value::Bool)
+                .expect("tool completion execution_started is present");
+            payload["durationMs"] = event.tool_duration_ms().map_or(Value::Null, Value::from);
             if let Some(tool_metadata) = event.tool_metadata() {
                 payload["toolMetadata"] = tool_metadata_payload(&tool_metadata);
             }
@@ -259,11 +253,8 @@ pub fn map_run_event_to_notifications(
             request_id,
             tool_call_id,
             tool_name,
-            approved,
+            action,
         } => {
-            let action = event
-                .approval_action()
-                .unwrap_or_else(|| ApprovalAction::from_approved(*approved));
             let decision = match action {
                 ApprovalAction::Allow => ApprovalDecision::Allow,
                 ApprovalAction::AllowSession => ApprovalDecision::AllowSession,
@@ -298,7 +289,7 @@ pub fn map_run_event_to_notifications(
                     "toolCallId": tool_call_id,
                     "toolName": tool_name,
                     "action": action.as_str(),
-                    "approved": approved,
+                    "approved": action.is_approved(),
                     "reason": reason,
                     "decisionMetadata": decision_metadata,
                 }),
@@ -372,7 +363,7 @@ fn item(
 }
 
 fn event_timestamp(event: &RunEvent) -> f64 {
-    event.created_at_ms() as f64 / 1000.0
+    event.created_at()
 }
 
 fn tool_status_to_item_status(status: ToolStatus) -> AppItemStatus {

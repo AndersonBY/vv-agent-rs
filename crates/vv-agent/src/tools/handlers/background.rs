@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::runtime::background_sessions::background_session_manager;
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{stringify_tool_arg, tool_error_with_code, tool_result_with_metadata};
+use crate::tools::common::{string_arg, tool_error_with_code, tool_result_with_metadata};
 use crate::types::{Metadata, ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 pub fn check_background_command(
@@ -20,7 +20,7 @@ pub(crate) fn check_background_command_tool() -> ToolSpec {
         "check_background_command",
         "Check status and output for a background command.",
         Arc::new(|_context, arguments| {
-            let session_id = stringify_tool_arg(arguments.get("session_id"), "");
+            let session_id = string_arg(arguments.get("session_id"), "");
             let session_id = session_id.trim();
             if session_id.is_empty() {
                 return tool_error_with_code("`session_id` is required", "session_id_required");

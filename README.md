@@ -6,8 +6,8 @@
 agent runtime, SDK, CLI, tool system, memory layer, and workspace abstraction
 for model-driven automation.
 
-It is designed around explicit agent control flow. The backward-compatible
-default uses `task_finish` to complete and `ask_user` to pause. Hosts can
+It is designed around explicit agent control flow. The default uses
+`task_finish` to complete and `ask_user` to pause. Hosts can
 instead opt into `NoToolPolicy::Finish` or `NoToolPolicy::WaitUser` when a
 normal assistant response should be terminal. The runtime applies the declared
 policy without classifying whether the text looks like a final answer.
@@ -43,7 +43,7 @@ Run commands from this repository root:
 
 ```bash
 cd vv-agent-rs
-cargo test -p vv-agent
+cargo test -p vv-agent -- --test-threads=1
 ```
 
 Most real-model examples and the CLI read a local `vv-llm` settings file. Keep
@@ -312,7 +312,7 @@ Rust test client.
 
 ```bash
 vv-agent app-server --listen stdio
-vv-agent app-server generate-json-schema --out target/app-server-schema/json
+vv-agent app-server schema --out target/app-server-schema/json
 vv-agent app-server generate-ts --out target/app-server-schema/typescript
 ```
 
@@ -330,7 +330,8 @@ use std::path::PathBuf;
 
 use vv_agent::config::build_vv_llm_from_local_settings;
 use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
-use vv_agent::{build_default_registry, AgentRuntime, AgentTask, RuntimeRunControls};
+use vv_agent::types::AgentTask;
+use vv_agent::{build_default_registry, AgentRuntime, RuntimeRunControls};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (llm, resolved) = build_vv_llm_from_local_settings(
@@ -464,7 +465,7 @@ Run the standard checks from `vv-agent-rs/`:
 
 ```bash
 cargo fmt --check
-cargo test -p vv-agent
+cargo test -p vv-agent -- --test-threads=1
 cargo check --examples
 cargo clippy --all-targets --all-features -- -D warnings
 ```

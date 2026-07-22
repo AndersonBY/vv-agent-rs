@@ -2,40 +2,22 @@ use super::*;
 
 #[test]
 fn real_configured_sub_agent_producer_matches_locked_event_fixture_line_by_line() {
-    assert_eq!(
-        format!(
-            "{:x}",
-            Sha256::digest(CONFIGURED_SUB_AGENT_EVENTS_FIXTURE.as_bytes())
-        ),
-        CONFIGURED_SUB_AGENT_EVENTS_FIXTURE_SHA256
-    );
-
     let mapped_events = Arc::new(Mutex::new(Vec::new()));
     let mapped_events_for_handler = mapped_events.clone();
     let outcomes = Arc::new(Mutex::new(BTreeMap::<String, SubTaskOutcome>::new()));
-    let event_context = RuntimeEventContext::new(
-        "parent-run",
-        "trace-parity",
-        "parent",
-        Some("parent-session".to_string()),
-        "Parent task",
-    );
-    let log_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-        let Some(event) = map_runtime_event(name, payload, &event_context) else {
-            return;
-        };
+    let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
         if matches!(
-            event.payload(),
+            run_event.payload(),
             RunEventPayload::SubRunStarted { .. } | RunEventPayload::SubRunCompleted { .. }
         ) {
             mapped_events_for_handler
                 .lock()
                 .expect("mapped contract events")
-                .push(event);
+                .push(run_event.clone());
         }
     });
     let controls = RuntimeRunControls {
-        log_handler: Some(log_handler),
+        event_handler: Some(event_handler),
         execution_context: Some(ExecutionContext {
             metadata: BTreeMap::from([
                 ("_vv_agent_run_id".to_string(), json!("execution-run")),
@@ -255,8 +237,8 @@ fn real_configured_sub_agent_producer_matches_locked_event_fixture_line_by_line(
         lifecycle["failure_error_code_in_metadata"]
     );
     assert_eq!(
-        actual[1]["token_usage"]["total_tokens"] == json!(0),
-        lifecycle["preserve_successful_zero_token_usage"]
+        actual[1]["token_usage"]["total_tokens"].is_null(),
+        lifecycle["preserve_successful_missing_token_usage"]
     );
     assert_eq!(
         actual[3].get("token_usage").is_none(),

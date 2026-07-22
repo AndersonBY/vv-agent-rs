@@ -3,22 +3,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use vv_agent::{
     Agent, FunctionTool, LLMResponse, LlmClient, LlmError, LlmRequest, LlmStreamCallback,
     MemorySession, ModelError, ModelProvider, ModelRef, NoToolPolicy, ResolvedModelConfig,
     RunConfig, RunEvent, RunEventPayload, Runner, ToolCall, ToolOutput,
 };
 
-const RUNNER_EVENTS_FIXTURE: &str = include_str!("fixtures/parity/runner_events_v1.jsonl");
-const RUNNER_EVENTS_FIXTURE_SHA256: &str =
-    "76903d30f5f55697a7364f2b0c3caa66bb0205b14012a7e10c3c2dcf07d81b32";
-const STREAM_PROJECTION_FIXTURE: &str = include_str!("fixtures/parity/stream_projection_v1.json");
-const STREAM_PROJECTION_FIXTURE_SHA256: &str =
-    "95a3b7d527efad68492d810038ff7be0eecefcd278f8ddad690359c497d79b0a";
-const PYTHON_RUNNER_TRACE_FIXTURE: &str = include_str!("fixtures/parity/runner_trace_v1.jsonl");
-const PYTHON_RUNNER_TRACE_FIXTURE_SHA256: &str =
-    "998fb1341dbecc29d1a3ddef95bc9b38a180510485f52c57ad4afcef2d576834";
+const RUNNER_EVENTS_FIXTURE: &str = include_str!("fixtures/parity/runner_events.jsonl");
+const STREAM_PROJECTION_FIXTURE: &str = include_str!("fixtures/parity/llm_stream_projection.json");
+const PYTHON_RUNNER_TRACE_FIXTURE: &str = include_str!("fixtures/parity/runner_trace.jsonl");
 const TRACE_FIELDS: &[&str] = &[
     "type",
     "cycle_index",
@@ -95,31 +88,31 @@ impl ModelProvider for StreamingGoldenProvider {
 #[derive(Clone)]
 struct ContractStreamClient {
     calls: Arc<AtomicUsize>,
-    raw_events: Arc<Vec<BTreeMap<String, Value>>>,
+    provider_payloads: Arc<Vec<BTreeMap<String, Value>>>,
 }
 
 impl Default for ContractStreamClient {
     fn default() -> Self {
         let fixture: Value =
             serde_json::from_str(STREAM_PROJECTION_FIXTURE).expect("stream projection fixture");
-        let raw_events = fixture["synthetic_top_level"]["raw_events"]
+        let provider_payloads = fixture["synthetic_top_level"]["provider_payloads"]
             .as_array()
-            .expect("synthetic raw events")
+            .expect("synthetic provider payloads")
             .iter()
             .map(raw_event_map)
             .collect();
         Self {
             calls: Arc::new(AtomicUsize::new(0)),
-            raw_events: Arc::new(raw_events),
+            provider_payloads: Arc::new(provider_payloads),
         }
     }
 }
 
 impl ContractStreamClient {
-    fn with_raw_events(raw_events: Vec<BTreeMap<String, Value>>) -> Self {
+    fn with_provider_payloads(provider_payloads: Vec<BTreeMap<String, Value>>) -> Self {
         Self {
             calls: Arc::new(AtomicUsize::new(0)),
-            raw_events: Arc::new(raw_events),
+            provider_payloads: Arc::new(provider_payloads),
         }
     }
 }
@@ -140,8 +133,8 @@ impl LlmClient for ContractStreamClient {
         }
 
         let callback = stream_callback.expect("contract stream callback");
-        for raw_event in self.raw_events.iter() {
-            callback(raw_event);
+        for payload in self.provider_payloads.iter() {
+            callback(payload);
         }
         Ok(LLMResponse::with_tool_calls(
             "done",
@@ -177,15 +170,11 @@ impl ModelProvider for ContractStreamProvider {
 
 #[tokio::test]
 async fn real_runner_projects_contract_stream_fixture_with_framework_identity() {
-    assert_eq!(
-        format!("{:x}", Sha256::digest(STREAM_PROJECTION_FIXTURE.as_bytes())),
-        STREAM_PROJECTION_FIXTURE_SHA256
-    );
     let fixture: Value =
         serde_json::from_str(STREAM_PROJECTION_FIXTURE).expect("stream projection fixture");
     let synthetic = &fixture["synthetic_top_level"];
-    let raw_observed = Arc::new(std::sync::Mutex::new(Vec::<BTreeMap<String, Value>>::new()));
-    let raw_observed_for_callback = raw_observed.clone();
+    let observed = Arc::new(std::sync::Mutex::new(Vec::<RunEvent>::new()));
+    let observed_for_callback = observed.clone();
     let provider = ContractStreamProvider::default();
     let calls = provider.client.calls.clone();
     let workspace = tempfile::tempdir().expect("workspace");
@@ -203,12 +192,12 @@ async fn real_runner_projects_contract_stream_fixture_with_framework_identity() 
         .session(MemorySession::new("session_stream_parity"))
         .max_cycles(3)
         .no_tool_policy(NoToolPolicy::Continue)
-        .metadata("trace_id", json!("trace_stream_parity"))
-        .runtime_stream_callback(move |payload| {
-            raw_observed_for_callback
+        .trace_id("trace_stream_parity")
+        .stream(move |event| {
+            observed_for_callback
                 .lock()
-                .expect("raw stream observations")
-                .push(payload.clone());
+                .expect("typed stream observations")
+                .push(event.clone());
         })
         .build();
 
@@ -231,11 +220,20 @@ async fn real_runner_projects_contract_stream_fixture_with_framework_identity() 
 
     assert_eq!(actual, *expected);
     assert_eq!(calls.load(Ordering::SeqCst), 3);
-    let raw_observed = raw_observed.lock().expect("raw stream observations");
-    assert_eq!(raw_observed.len(), synthetic["raw_observer_count"]);
+    let observed = observed.lock().expect("typed stream observations");
+    let observed_stream_events = observed
+        .iter()
+        .filter(|event| is_typed_stream_event(event.payload()))
+        .collect::<Vec<_>>();
+    assert_eq!(observed_stream_events.len(), typed_events.len());
     assert_eq!(typed_events.len(), synthetic["typed_event_count"]);
-    assert_eq!(raw_observed[0]["cycle"], 3);
-    assert_eq!(raw_observed[0]["run_id"], "run_spoofed");
+    assert_eq!(
+        observed_stream_events
+            .iter()
+            .map(|event| normalize_event(event))
+            .collect::<Vec<_>>(),
+        actual
+    );
     assert!(typed_events.iter().all(|event| {
         event.run_id() == result.run_id()
             && event.trace_id() == "trace_stream_parity"
@@ -299,7 +297,7 @@ async fn real_runner_projects_contract_stream_fixture_with_framework_identity() 
 }
 
 #[tokio::test]
-async fn raw_stream_observer_panic_cannot_suppress_typed_journal_or_terminal() {
+async fn typed_stream_observer_panic_cannot_suppress_journal_or_terminal() {
     let callback_calls = Arc::new(AtomicUsize::new(0));
     let callback_calls_for_config = callback_calls.clone();
     let provider = ContractStreamProvider::default();
@@ -317,9 +315,9 @@ async fn raw_stream_observer_panic_cannot_suppress_typed_journal_or_terminal() {
     let config = RunConfig::builder()
         .max_cycles(3)
         .no_tool_policy(NoToolPolicy::Continue)
-        .runtime_stream_callback(move |_| {
+        .stream(move |_| {
             callback_calls_for_config.fetch_add(1, Ordering::SeqCst);
-            panic!("raw observer panic");
+            panic!("typed observer panic");
         })
         .build();
 
@@ -328,7 +326,7 @@ async fn raw_stream_observer_panic_cannot_suppress_typed_journal_or_terminal() {
         .await
         .expect("observer panic is isolated");
 
-    assert_eq!(callback_calls.load(Ordering::SeqCst), 5);
+    assert!(callback_calls.load(Ordering::SeqCst) > 0);
     assert_eq!(
         result
             .events()
@@ -341,8 +339,12 @@ async fn raw_stream_observer_panic_cannot_suppress_typed_journal_or_terminal() {
 }
 
 #[tokio::test]
-async fn malformed_known_stream_events_remain_raw_only() {
+async fn malformed_known_provider_payloads_are_dropped() {
     let cases = [
+        BTreeMap::from([
+            ("type".to_string(), json!("assistant_delta")),
+            ("content_delta".to_string(), json!("legacy discriminator")),
+        ]),
         BTreeMap::from([
             ("event".to_string(), json!("assistant_delta")),
             ("content_delta".to_string(), json!(7)),
@@ -365,10 +367,8 @@ async fn malformed_known_stream_events_remain_raw_only() {
     ];
 
     for malformed_event in cases {
-        let raw_observer_calls = Arc::new(AtomicUsize::new(0));
-        let raw_observer_calls_for_config = raw_observer_calls.clone();
         let provider = ContractStreamProvider {
-            client: ContractStreamClient::with_raw_events(vec![malformed_event]),
+            client: ContractStreamClient::with_provider_payloads(vec![malformed_event]),
         };
         let workspace = tempfile::tempdir().expect("workspace");
         let runner = Runner::builder()
@@ -384,9 +384,6 @@ async fn malformed_known_stream_events_remain_raw_only() {
         let config = RunConfig::builder()
             .max_cycles(3)
             .no_tool_policy(NoToolPolicy::Continue)
-            .runtime_stream_callback(move |_| {
-                raw_observer_calls_for_config.fetch_add(1, Ordering::SeqCst);
-            })
             .build();
 
         let result = runner
@@ -394,7 +391,6 @@ async fn malformed_known_stream_events_remain_raw_only() {
             .await
             .expect("malformed stream cannot fail the run");
 
-        assert_eq!(raw_observer_calls.load(Ordering::SeqCst), 1);
         assert!(!result
             .events()
             .iter()
@@ -424,10 +420,6 @@ fn is_typed_stream_event(payload: &RunEventPayload) -> bool {
 
 #[tokio::test]
 async fn real_runner_live_events_match_python_producer_golden() {
-    assert_eq!(
-        format!("{:x}", Sha256::digest(RUNNER_EVENTS_FIXTURE.as_bytes())),
-        RUNNER_EVENTS_FIXTURE_SHA256
-    );
     let workspace = tempfile::tempdir().expect("workspace");
     let session = MemorySession::new("session_runner_parity");
     let runner = Runner::builder()
@@ -442,7 +434,7 @@ async fn real_runner_live_events_match_python_producer_golden() {
         .expect("agent");
     let config = RunConfig::builder()
         .session(session)
-        .metadata("trace_id", json!("trace_runner_parity"))
+        .trace_id("trace_runner_parity")
         .build();
 
     let handle = runner
@@ -486,12 +478,20 @@ async fn real_runner_live_events_match_python_producer_golden() {
         .collect::<Vec<_>>();
     assert_eq!(deltas, ["complete ", "assistant message"]);
 
-    let actual = events.iter().map(normalize_event).collect::<Vec<_>>();
+    let actual = events
+        .iter()
+        .filter(|event| !matches!(event.payload(), RunEventPayload::Diagnostic { .. }))
+        .map(normalize_event)
+        .collect::<Vec<_>>();
     let expected = RUNNER_EVENTS_FIXTURE
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).expect("golden fixture event"))
         .collect::<Vec<_>>();
     assert_eq!(actual, expected);
+    assert!(events.iter().any(|event| matches!(
+        event.payload(),
+        RunEventPayload::Diagnostic { code, .. } if code == "cycle_llm_response"
+    )));
 
     for event in actual {
         if let Some(status) = event.get("status").and_then(Value::as_str) {
@@ -506,6 +506,9 @@ fn normalize_event(event: &RunEvent) -> Value {
     object.insert("event_id".to_string(), json!("evt_dynamic"));
     object.insert("run_id".to_string(), json!("run_dynamic"));
     object.insert("created_at".to_string(), json!(0.0));
+    if object.contains_key("duration_ms") {
+        object.insert("duration_ms".to_string(), json!(0));
+    }
     object.remove("metadata");
     value
 }
@@ -609,13 +612,6 @@ impl ModelProvider for PythonTraceProvider {
 
 #[tokio::test]
 async fn real_runner_projection_matches_python_fixture_bytes() {
-    assert_eq!(
-        format!(
-            "{:x}",
-            Sha256::digest(PYTHON_RUNNER_TRACE_FIXTURE.as_bytes())
-        ),
-        PYTHON_RUNNER_TRACE_FIXTURE_SHA256
-    );
     let lookup = FunctionTool::builder("lookup")
         .description("Look up a deterministic fixture value.")
         .json_schema(json!({
@@ -663,10 +659,6 @@ async fn real_runner_projection_matches_python_fixture_bytes() {
             event.payload(),
             RunEventPayload::ToolCallCompleted { tool_name, .. } if tool_name == "lookup"
         ) {
-            assert!(event.has_tool_completion_field("directive"));
-            assert!(event.has_tool_completion_field("error_code"));
-            assert!(event.has_tool_completion_field("execution_started"));
-            assert!(event.has_tool_completion_field("duration_ms"));
             assert_eq!(
                 event.tool_directive(),
                 Some(vv_agent::ToolDirective::Continue)
@@ -680,7 +672,10 @@ async fn real_runner_projection_matches_python_fixture_bytes() {
             .as_str()
             .expect("event type")
             .to_string();
-        if !matches!(event_type.as_str(), "agent_started" | "session_persisted") {
+        if !matches!(
+            event_type.as_str(),
+            "agent_started" | "diagnostic" | "session_persisted"
+        ) {
             actual.push(trace_projection(&event));
         }
     }

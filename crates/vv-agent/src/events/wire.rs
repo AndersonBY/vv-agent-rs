@@ -3,6 +3,329 @@ use crate::checkpoint::{OperationKind, OperationState};
 
 const JSON_SAFE_INTEGER_MAX: u64 = (1_u64 << 53) - 1;
 
+const COMMON_FIELDS: &[&str] = &[
+    "version",
+    "type",
+    "event_id",
+    "run_id",
+    "trace_id",
+    "created_at",
+    "session_id",
+    "parent_event_id",
+    "parent_run_id",
+    "cycle_index",
+    "agent_name",
+    "metadata",
+];
+
+pub(super) fn validate_event_wire_shape(value: &Value) -> Result<(), String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "run event payload must be an object".to_string())?;
+    let event_type = object
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "run event type must be a non-empty string".to_string())?;
+    let (event_fields, required_fields): (&[&str], &[&str]) = match event_type {
+        "run_started" => (&["input"], &["input"]),
+        "agent_started" | "cycle_started" | "session_persisted" => (&[], &[]),
+        "llm_started" => (&["model"], &["model"]),
+        "run_state_changed" => (&["state"], &["state"]),
+        "diagnostic" => (&["level", "code", "details"], &["level", "code", "details"]),
+        "assistant_delta" => (
+            &["delta", "content_chars", "estimated_tokens"],
+            &["delta", "cycle_index"],
+        ),
+        "reasoning_delta" => (
+            &["delta", "reasoning_chars", "estimated_tokens"],
+            &["delta", "cycle_index"],
+        ),
+        "model_tool_call_started" | "model_tool_call_progress" => (
+            &[
+                "tool_call_id",
+                "tool_call_index",
+                "tool_name",
+                "arguments_chars",
+                "estimated_tokens",
+            ],
+            &["tool_call_id", "tool_name", "cycle_index"],
+        ),
+        "tool_call_planned" | "tool_call_started" => (
+            &["tool_call_id", "tool_name", "arguments", "tool_metadata"],
+            &["tool_call_id", "tool_name", "arguments"],
+        ),
+        "tool_call_completed" => (
+            &[
+                "tool_call_id",
+                "tool_name",
+                "status",
+                "directive",
+                "error_code",
+                "execution_started",
+                "duration_ms",
+                "tool_metadata",
+            ],
+            &[
+                "tool_call_id",
+                "tool_name",
+                "status",
+                "directive",
+                "error_code",
+                "execution_started",
+                "duration_ms",
+            ],
+        ),
+        "approval_requested" => (
+            &["request_id", "tool_call_id", "tool_name", "message"],
+            &["request_id", "tool_call_id", "tool_name", "message"],
+        ),
+        "approval_resolved" => (
+            &["request_id", "tool_call_id", "tool_name", "action"],
+            &["request_id", "tool_call_id", "tool_name", "action"],
+        ),
+        "memory_compact_started" => (
+            &[
+                "message_count",
+                "estimated_tokens",
+                "trigger",
+                "configured_threshold",
+                "effective_threshold",
+                "microcompact_threshold",
+                "model_context_window",
+                "model_max_output_tokens",
+                "reserved_output_tokens",
+                "reserved_output_source",
+                "autocompact_buffer_tokens",
+            ],
+            &[
+                "message_count",
+                "trigger",
+                "configured_threshold",
+                "effective_threshold",
+                "microcompact_threshold",
+                "model_context_window",
+                "model_max_output_tokens",
+                "reserved_output_tokens",
+                "reserved_output_source",
+                "autocompact_buffer_tokens",
+            ],
+        ),
+        "memory_compact_completed" => (
+            &[
+                "before_count",
+                "after_count",
+                "summary_tokens",
+                "mode",
+                "changed",
+            ],
+            &["before_count", "after_count", "mode", "changed"],
+        ),
+        "sub_run_started" => (
+            &[
+                "parent_tool_call_id",
+                "status",
+                "child_session_id",
+                "task_id",
+            ],
+            &["parent_tool_call_id", "status"],
+        ),
+        "sub_run_completed" => (
+            &[
+                "parent_tool_call_id",
+                "status",
+                "child_session_id",
+                "task_id",
+                "final_output",
+                "wait_reason",
+                "error",
+                "completion_reason",
+                "completion_tool_name",
+                "partial_output",
+                "token_usage",
+                "budget_usage",
+                "budget_exhaustion",
+            ],
+            &["parent_tool_call_id", "status"],
+        ),
+        "handoff_started" => (
+            &[
+                "source_agent",
+                "target_agent",
+                "tool_call_id",
+                "status",
+                "child_session_id",
+            ],
+            &["source_agent", "target_agent", "tool_call_id", "status"],
+        ),
+        "handoff_completed" => (
+            &[
+                "source_agent",
+                "target_agent",
+                "tool_call_id",
+                "status",
+                "child_session_id",
+                "child_run_id",
+            ],
+            &["source_agent", "target_agent", "tool_call_id", "status"],
+        ),
+        "budget_snapshot" => (
+            &["enforcement_boundary", "budget_usage"],
+            &["enforcement_boundary", "budget_usage"],
+        ),
+        "budget_exhausted" => (
+            &["enforcement_boundary", "budget_usage", "budget_exhaustion"],
+            &["enforcement_boundary", "budget_usage", "budget_exhaustion"],
+        ),
+        "checkpoint_created" | "checkpoint_resumed" => (
+            &["checkpoint_key", "resume_attempt"],
+            &["checkpoint_key", "resume_attempt", "cycle_index"],
+        ),
+        "operation_replayed" => (
+            &[
+                "checkpoint_key",
+                "operation_id",
+                "operation_kind",
+                "receipt_state",
+            ],
+            &[
+                "checkpoint_key",
+                "operation_id",
+                "operation_kind",
+                "receipt_state",
+                "cycle_index",
+            ],
+        ),
+        "operation_ambiguous" => (
+            &[
+                "checkpoint_key",
+                "operation_id",
+                "operation_kind",
+                "risk",
+                "idempotency_support",
+            ],
+            &[
+                "checkpoint_key",
+                "operation_id",
+                "operation_kind",
+                "risk",
+                "idempotency_support",
+                "cycle_index",
+            ],
+        ),
+        "reconciliation_required" => (
+            &[
+                "checkpoint_key",
+                "operation_id",
+                "operation_kind",
+                "interruption_reason",
+                "resume_observation",
+            ],
+            &[
+                "checkpoint_key",
+                "operation_id",
+                "operation_kind",
+                "interruption_reason",
+                "resume_observation",
+                "cycle_index",
+            ],
+        ),
+        "model_retry_duplicate_risk" => (
+            &["checkpoint_key", "operation_id", "operation_kind", "risk"],
+            &[
+                "checkpoint_key",
+                "operation_id",
+                "operation_kind",
+                "risk",
+                "cycle_index",
+            ],
+        ),
+        "reconciliation_resolved" => (
+            &[
+                "checkpoint_key",
+                "operation_id",
+                "operation_kind",
+                "decision",
+            ],
+            &[
+                "checkpoint_key",
+                "operation_id",
+                "operation_kind",
+                "decision",
+                "cycle_index",
+            ],
+        ),
+        "run_completed" => (
+            &[
+                "status",
+                "final_output",
+                "completion_reason",
+                "completion_tool_name",
+                "partial_output",
+                "budget_usage",
+                "budget_exhaustion",
+            ],
+            &["status"],
+        ),
+        "run_failed" => (
+            &[
+                "error",
+                "status",
+                "completion_reason",
+                "completion_tool_name",
+                "partial_output",
+                "budget_usage",
+                "budget_exhaustion",
+            ],
+            &["error"],
+        ),
+        "run_cancelled" => (
+            &[
+                "reason",
+                "completion_reason",
+                "partial_output",
+                "budget_usage",
+                "budget_exhaustion",
+            ],
+            &["reason"],
+        ),
+        other => return Err(format!("unsupported run event type `{other}`")),
+    };
+
+    let unknown = object
+        .keys()
+        .filter(|field| {
+            !COMMON_FIELDS.contains(&field.as_str()) && !event_fields.contains(&field.as_str())
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "run event {event_type} contains unknown fields: {}",
+            unknown.join(", ")
+        ));
+    }
+    let mut required = vec![
+        "version",
+        "type",
+        "event_id",
+        "run_id",
+        "trace_id",
+        "created_at",
+    ];
+    required.extend_from_slice(required_fields);
+    let missing = required
+        .into_iter()
+        .filter(|field| !object.contains_key(*field))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!(
+            "run event {event_type} is missing required fields: {}",
+            missing.join(", ")
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn validate_completion_wire_fields(value: &Value) -> Result<(), String> {
     if let Some(value) = value.get("completion_reason") {
         match value {
@@ -133,11 +456,25 @@ pub(super) fn validate_tool_lifecycle_wire_fields(
             tool_call_id,
             tool_name,
             status,
+            execution_started,
+            duration_ms,
+            ..
         } => {
             if matches!(status, ToolStatus::Started) {
                 return Err("unsupported completed tool status `started`".to_string());
             }
-            validate_tool_completion_additions(value)?;
+            if duration_ms.is_some_and(|value| value > JSON_SAFE_INTEGER_MAX) {
+                return Err(
+                    "run event duration_ms must be a non-negative JSON-safe integer or null"
+                        .to_string(),
+                );
+            }
+            if !execution_started && duration_ms.is_some() {
+                return Err(
+                    "run event duration_ms must be null when execution_started is false"
+                        .to_string(),
+                );
+            }
             (tool_call_id, tool_name)
         }
         _ => return Ok(()),
@@ -152,88 +489,43 @@ pub(super) fn validate_tool_lifecycle_wire_fields(
 }
 
 pub(super) fn validate_compaction_wire_fields(
-    value: &Value,
+    _value: &Value,
     payload: &RunEventPayload,
 ) -> Result<(), String> {
     match payload {
-        RunEventPayload::MemoryCompactStarted { .. } => {
-            for field in ["trigger", "reserved_output_source"] {
-                if value.get(field).is_some_and(Value::is_null) {
-                    return Err(format!("run event {field} must not be null"));
-                }
-            }
-            for field in [
-                "configured_threshold",
-                "effective_threshold",
-                "microcompact_threshold",
-                "model_context_window",
-                "model_max_output_tokens",
-                "reserved_output_tokens",
-                "autocompact_buffer_tokens",
+        RunEventPayload::MemoryCompactStarted {
+            configured_threshold,
+            effective_threshold,
+            microcompact_threshold,
+            model_context_window,
+            model_max_output_tokens,
+            reserved_output_tokens,
+            autocompact_buffer_tokens,
+            ..
+        } => {
+            for (field, counter) in [
+                ("configured_threshold", *configured_threshold),
+                ("effective_threshold", *effective_threshold),
+                ("microcompact_threshold", *microcompact_threshold),
+                ("model_context_window", *model_context_window),
+                ("reserved_output_tokens", *reserved_output_tokens),
+                ("autocompact_buffer_tokens", *autocompact_buffer_tokens),
             ] {
-                if let Some(raw) = value.get(field) {
-                    if field == "model_max_output_tokens" && raw.is_null() {
-                        continue;
-                    }
-                    raw.as_u64()
-                        .filter(|counter| *counter <= JSON_SAFE_INTEGER_MAX)
-                        .ok_or_else(|| {
-                            format!(
-                                "run event {field} must be a non-negative JSON-safe integer{}",
-                                if field == "model_max_output_tokens" {
-                                    " or null"
-                                } else {
-                                    ""
-                                }
-                            )
-                        })?;
+                if counter > JSON_SAFE_INTEGER_MAX {
+                    return Err(format!(
+                        "run event {field} must be a non-negative JSON-safe integer"
+                    ));
                 }
             }
-        }
-        RunEventPayload::MemoryCompactCompleted { .. } => {
-            for field in ["mode", "changed"] {
-                if value.get(field).is_some_and(Value::is_null) {
-                    return Err(format!("run event {field} must not be null"));
-                }
+            if model_max_output_tokens.is_some_and(|counter| counter > JSON_SAFE_INTEGER_MAX) {
+                return Err(
+                    "run event model_max_output_tokens must be a non-negative JSON-safe integer or null"
+                        .to_string(),
+                );
             }
         }
+        RunEventPayload::MemoryCompactCompleted { .. } => {}
         _ => {}
-    }
-    Ok(())
-}
-
-fn validate_tool_completion_additions(value: &Value) -> Result<(), String> {
-    if let Some(directive) = value.get("directive") {
-        serde_json::from_value::<crate::types::ToolDirective>(directive.clone())
-            .map_err(|_| "run event directive is invalid".to_string())?;
-    }
-    if value
-        .get("error_code")
-        .is_some_and(|value| !value.is_null() && !value.is_string())
-    {
-        return Err("run event error_code must be a string or null".to_string());
-    }
-    let execution_started = match value.get("execution_started") {
-        Some(Value::Bool(value)) => Some(*value),
-        Some(_) => return Err("run event execution_started must be a boolean".to_string()),
-        None => None,
-    };
-    let duration_ms = match value.get("duration_ms") {
-        Some(Value::Null) | None => None,
-        Some(value) => Some(
-            value
-                .as_u64()
-                .filter(|value| *value <= JSON_SAFE_INTEGER_MAX)
-                .ok_or_else(|| {
-                    "run event duration_ms must be a non-negative JSON-safe integer or null"
-                        .to_string()
-                })?,
-        ),
-    };
-    if execution_started == Some(false) && duration_ms.is_some() {
-        return Err(
-            "run event duration_ms must be null when execution_started is false".to_string(),
-        );
     }
     Ok(())
 }
@@ -386,26 +678,7 @@ pub(super) fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload)
         RunEventPayload::ToolCallPlanned { .. } | RunEventPayload::ToolCallStarted { .. } => {
             &["tool_metadata"]
         }
-        RunEventPayload::ToolCallCompleted { .. } => &[
-            "directive",
-            "error_code",
-            "execution_started",
-            "duration_ms",
-            "tool_metadata",
-        ],
-        RunEventPayload::MemoryCompactStarted { .. } => &[
-            "trigger",
-            "configured_threshold",
-            "effective_threshold",
-            "microcompact_threshold",
-            "model_context_window",
-            "model_max_output_tokens",
-            "reserved_output_tokens",
-            "reserved_output_source",
-            "autocompact_buffer_tokens",
-        ],
-        RunEventPayload::MemoryCompactCompleted { .. } => &["mode", "changed"],
-        RunEventPayload::ApprovalResolved { .. } => &["action"],
+        RunEventPayload::ToolCallCompleted { .. } => &["tool_metadata"],
         RunEventPayload::SubRunStarted { .. } => &["status"],
         RunEventPayload::SubRunCompleted { .. } => &[
             "child_session_id",
@@ -458,16 +731,11 @@ pub(super) fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload)
     fields
 }
 
-pub(super) fn add_default_supplemental_fields(payload: &RunEventPayload, fields: &mut Metadata) {
+pub(super) fn add_constructed_supplemental_fields(
+    payload: &RunEventPayload,
+    fields: &mut Metadata,
+) {
     let (key, value) = match payload {
-        RunEventPayload::ApprovalResolved { approved, .. } => (
-            "action",
-            Value::String(
-                ApprovalAction::from_approved(*approved)
-                    .as_str()
-                    .to_string(),
-            ),
-        ),
         RunEventPayload::SubRunStarted { .. } => ("status", Value::String("running".to_string())),
         RunEventPayload::HandoffStarted { .. } => ("status", Value::String("started".to_string())),
         RunEventPayload::HandoffCompleted { .. } => {

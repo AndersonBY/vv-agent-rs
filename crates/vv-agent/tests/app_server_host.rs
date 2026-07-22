@@ -47,7 +47,7 @@ async fn model_list_uses_the_injected_host() {
 }
 
 #[tokio::test]
-async fn model_list_host_failures_are_v1_internal_errors() {
+async fn model_list_host_failures_are_canonical_internal_errors() {
     let (mut processor, mut outgoing) = MessageProcessor::new_with_host(
         16,
         Arc::new(FailingHost {
@@ -67,7 +67,7 @@ async fn model_list_host_failures_are_v1_internal_errors() {
 }
 
 #[tokio::test]
-async fn host_resolution_failures_are_v1_internal_errors_without_creating_turns() {
+async fn host_resolution_failures_are_canonical_internal_errors_without_creating_turns() {
     for (stage, expected_message) in [
         (FailureStage::Agent, "agent resolution failed"),
         (FailureStage::RunConfig, "run config resolution failed"),

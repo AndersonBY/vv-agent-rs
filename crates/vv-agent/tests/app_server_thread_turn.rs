@@ -16,7 +16,7 @@ use vv_agent::{
     RunEvent, RunEventPayload, Runner, ScriptedModelProvider, ToolCall, ToolOutput, ToolStatus,
 };
 
-const APP_SERVER_CONTRACT: &str = include_str!("fixtures/parity/app_server_observable_v1.json");
+const APP_SERVER_CONTRACT: &str = include_str!("fixtures/parity/app_server_observable.json");
 
 fn status_projection(name: &str) -> Value {
     let contract: Value = serde_json::from_str(APP_SERVER_CONTRACT).expect("App Server contract");
@@ -127,14 +127,20 @@ fn item_mapping_tool_call_started_becomes_started_tool_item() {
 
 #[test]
 fn item_mapping_tool_call_completed_becomes_completed_item() {
-    let event = RunEvent::tool_call_completed(
+    let event = RunEvent::new(
         "run_1",
         "trace_1",
         "assistant",
         Some(1),
-        "call_1",
-        "bash",
-        ToolStatus::Success,
+        RunEventPayload::ToolCallCompleted {
+            tool_call_id: "call_1".to_string(),
+            tool_name: "bash".to_string(),
+            status: ToolStatus::Success,
+            directive: vv_agent::ToolDirective::Continue,
+            error_code: None,
+            execution_started: true,
+            duration_ms: Some(1),
+        },
     );
 
     let notifications = map_run_event_to_notifications("thread_1", "turn_1", &event);
@@ -144,10 +150,7 @@ fn item_mapping_tool_call_completed_becomes_completed_item() {
     };
     assert_eq!(completed.item.kind, AppItemKind::ToolCall);
     assert_eq!(completed.item.status, AppItemStatus::Completed);
-    assert_eq!(
-        completed.item.updated_at,
-        event.created_at_ms() as f64 / 1000.0
-    );
+    assert_eq!(completed.item.updated_at, event.created_at());
 }
 
 #[test]
@@ -194,11 +197,9 @@ fn item_mapping_approval_resolved_preserves_reason_and_metadata() {
             request_id: "approval_1".to_string(),
             tool_name: "bash".to_string(),
             tool_call_id: "call_1".to_string(),
-            approved: true,
+            action: ApprovalAction::AllowSession,
         },
     )
-    .with_approval_action(ApprovalAction::AllowSession)
-    .with_metadata("action", json!("allow_session"))
     .with_metadata("reason", json!("approved by owner"))
     .with_metadata("decision_metadata", json!({"ticket": 7}));
 

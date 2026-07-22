@@ -1,17 +1,18 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use vv_agent::types::AgentTask;
 use vv_agent::{
     background_session_manager, build_default_registry, dispatch_tool_call,
     load_llm_settings_from_file, resolve_model_endpoint, AfterLlmEvent, Agent, AgentRuntime,
-    AgentStatus, AgentTask, BackgroundSessionListener, BeforeLlmEvent, BeforeLlmPatch,
-    CancellationToken, Checkpoint, ConfigError, DistributedBackend, EndpointConfig, EndpointOption,
-    ExecutionContext, FileInfo, InMemoryStateStore, InlineBackend, LLMResponse, LlmClient,
-    LocalWorkspaceBackend, MemoryWorkspaceBackend, Message, ModelRef, RedisStateStore,
+    AgentStatus, BackgroundSessionListener, BeforeLlmEvent, BeforeLlmPatch, CancellationToken,
+    Checkpoint, CheckpointStore, ConfigError, DistributedBackend, EndpointConfig, EndpointOption,
+    ExecutionContext, FileInfo, InMemoryCheckpointStore, InlineBackend, LLMResponse, LlmClient,
+    LocalWorkspaceBackend, MemoryWorkspaceBackend, Message, ModelRef, RedisCheckpointStore,
     ResolvedModelConfig, Runner, RuntimeExecutionBackend, RuntimeHook, RuntimeRecipe,
     RuntimeRunControls, S3WorkspaceBackend, S3WorkspaceConfig, ScriptedLlmClient,
-    ScriptedModelProvider, SqliteStateStore, StateStore, ThreadBackend, ToolCall,
-    ToolExecutionResult, ToolNotFoundError, ToolRegistry, VvLlmClient, WorkspaceBackend,
+    ScriptedModelProvider, SqliteCheckpointStore, ThreadBackend, ToolCall, ToolExecutionResult,
+    ToolNotFoundError, ToolRegistry, VvLlmClient, WorkspaceBackend,
 };
 
 #[test]
@@ -129,12 +130,12 @@ fn internal_module_names_stay_runtime_focused() {
 }
 
 #[test]
-fn config_internals_are_split_by_runtime_responsibility() {
+fn config_internals_use_only_current_responsibility_modules() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let config_mod =
         std::fs::read_to_string(manifest_dir.join("src/config.rs")).expect("read config module");
 
-    for module in ["api_keys", "model_resolution", "settings_literal"] {
+    for module in ["model_resolution", "settings_literal"] {
         assert!(
             config_mod.contains(&format!("mod {module};")),
             "config internals should keep {module} in a focused submodule"
@@ -146,6 +147,8 @@ fn config_internals_are_split_by_runtime_responsibility() {
             "expected config/{module}.rs to exist"
         );
     }
+    assert!(!config_mod.contains("mod api_keys;"));
+    assert!(!manifest_dir.join("src/config/api_keys.rs").exists());
 }
 
 fn public_doc_forbidden_terms() -> Vec<String> {
@@ -239,24 +242,11 @@ fn top_level_types_are_constructible() {
     let _thread_backend = ThreadBackend::default();
     let _recipe = RuntimeRecipe::new("settings.json", "backend", "model", ".");
     let _distributed_backend = DistributedBackend::inline_fallback();
-    let _checkpoint = Checkpoint {
-        task_id: "task".to_string(),
-        cycle_index: 0,
-        status: AgentStatus::Pending,
-        messages: vec![],
-        cycles: vec![],
-        shared_state: BTreeMap::new(),
-        budget_usage: None,
-        revision: 0,
-        claim_token: None,
-        claimed_cycle: None,
-        lease_expires_at_ms: None,
-        terminal_result: None,
-    };
-    let _state_store = InMemoryStateStore::default();
-    let _state_store_ref: &dyn StateStore = &_state_store;
-    let _sqlite_state_store = SqliteStateStore::new(":memory:");
-    let _redis_key = RedisStateStore::checkpoint_key("task");
+    let _checkpoint = Checkpoint::default();
+    let checkpoint_store = InMemoryCheckpointStore::default();
+    let _checkpoint_store_ref: &dyn CheckpointStore = &checkpoint_store;
+    let _sqlite_checkpoint_store = SqliteCheckpointStore::new(":memory:");
+    let _redis_key = RedisCheckpointStore::data_key("task");
     let _runner = Runner::builder()
         .model_provider(ScriptedModelProvider::default())
         .workspace(".")
@@ -498,25 +488,15 @@ fn runtime_module_exports_agent_runtime_public_types() {
     let _managed: Option<vv_agent::runtime::ManagedSubTask> = None;
     let manager = vv_agent::runtime::RuntimeHookManager::default();
     assert!(!manager.has_hooks());
-    assert_eq!(vv_agent::runtime::cycle_runner::MAX_PTL_RETRIES, 3);
-    assert_eq!(vv_agent::runtime::MAX_PTL_RETRIES, 3);
-    assert_eq!(vv_agent::MAX_PTL_RETRIES, 3);
-    let _checkpoint = vv_agent::runtime::Checkpoint {
-        task_id: "task".to_string(),
-        cycle_index: 0,
-        status: vv_agent::AgentStatus::Pending,
-        messages: vec![],
-        cycles: vec![],
-        shared_state: BTreeMap::new(),
-        budget_usage: None,
-        revision: 0,
-        claim_token: None,
-        claimed_cycle: None,
-        lease_expires_at_ms: None,
-        terminal_result: None,
-    };
-    let state_store = vv_agent::runtime::InMemoryStateStore::default();
-    let _state_store_ref: &dyn vv_agent::runtime::StateStore = &state_store;
+    assert_eq!(
+        vv_agent::runtime::cycle_runner::MAX_PROMPT_TOO_LONG_RETRIES,
+        3
+    );
+    assert_eq!(vv_agent::runtime::MAX_PROMPT_TOO_LONG_RETRIES, 3);
+    assert_eq!(vv_agent::MAX_PROMPT_TOO_LONG_RETRIES, 3);
+    let _checkpoint = vv_agent::runtime::Checkpoint::default();
+    let checkpoint_store = vv_agent::runtime::InMemoryCheckpointStore::default();
+    let _checkpoint_store_ref: &dyn vv_agent::runtime::CheckpointStore = &checkpoint_store;
     let _get_session = vv_agent::runtime::engine::get_sub_agent_session;
     let _subscribe_session = vv_agent::runtime::engine::subscribe_sub_agent_session;
     let _steer_session = vv_agent::runtime::engine::steer_sub_agent_session;

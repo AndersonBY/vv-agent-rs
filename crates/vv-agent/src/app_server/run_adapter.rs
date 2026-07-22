@@ -13,12 +13,12 @@ use crate::app_server::host::{
 };
 use crate::app_server::outgoing::OutgoingMessageSender;
 use crate::app_server::protocol::{
-    map_run_event_to_notifications, AgentMessageDeltaParams, AppCacheUsage, AppItem,
-    AppServerError, AppServerErrorCode, AppThread, AppTokenUsage, AppTurn, ApprovalDecision,
-    ApprovalRequestParams, ApprovalResolveParams, CheckpointSummary, CheckpointSummaryStatus,
-    InterruptionIdempotencySupport, InterruptionOperationKind, InterruptionSummary,
-    ItemCompletedParams, ItemStartedParams, JsonRpcError, JsonRpcErrorBody, RequestId,
-    ServerNotification, ServerRequest, ThreadStatus, ThreadStatusChangedParams,
+    map_run_event_to_notifications, AgentMessageDeltaParams, AppCacheUsage, AppCycleTokenUsage,
+    AppCycleUsage, AppItem, AppServerError, AppServerErrorCode, AppThread, AppTokenUsage, AppTurn,
+    ApprovalDecision, ApprovalRequestParams, ApprovalResolveParams, CheckpointSummary,
+    CheckpointSummaryStatus, InterruptionIdempotencySupport, InterruptionOperationKind,
+    InterruptionSummary, ItemCompletedParams, ItemStartedParams, JsonRpcError, JsonRpcErrorBody,
+    RequestId, ServerNotification, ServerRequest, ThreadStatus, ThreadStatusChangedParams,
     TurnCompletedParams, TurnResumeParams, TurnResumeResponse, TurnStartParams, TurnStartedParams,
     TurnStatus, UserInput,
 };
@@ -31,9 +31,11 @@ use crate::checkpoint::{
 };
 use crate::events::RunEventPayload;
 use crate::runner::CheckpointStartOutcome;
-use crate::runtime::state_v2::{CheckpointStoreV2, CheckpointV2};
+use crate::runtime::state::{Checkpoint, CheckpointStore};
 use crate::tools::ApprovalDecision as ToolApprovalDecision;
-use crate::types::{AgentStatus, CacheUsageStatus, Metadata, TaskTokenUsage, ToolExecutionResult};
+use crate::types::{
+    AgentStatus, CacheUsageStatus, Metadata, TaskTokenUsage, ToolExecutionResult, UsageSource,
+};
 use crate::{
     Agent, ApprovalBroker, ApprovalFuture, ApprovalProvider, ApprovalRequest, BeforeLlmEvent,
     BeforeLlmPatch, BeforeToolCallEvent, BeforeToolCallPatch, Message, RunConfig, RunHandle,
@@ -502,7 +504,7 @@ impl AppServerRunAdapter {
         thread_id: String,
         turn_id: String,
         owner_connection_id: ConnectionId,
-        checkpoint_store: Option<Arc<dyn CheckpointStoreV2>>,
+        checkpoint_store: Option<Arc<dyn CheckpointStore>>,
         result: Result<RunResult, String>,
     ) {
         let (
@@ -893,14 +895,11 @@ fn turn_status(status: AgentStatus) -> TurnStatus {
 
 fn app_token_usage(usage: &TaskTokenUsage) -> AppTokenUsage {
     AppTokenUsage {
-        prompt_tokens: usage.prompt_tokens,
-        completion_tokens: usage.completion_tokens,
-        total_tokens: usage.total_tokens,
-        cached_tokens: usage.cached_tokens,
-        reasoning_tokens: usage.reasoning_tokens,
+        schema_version: "vv-agent.task-token-usage.v1".to_string(),
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
-        cache_creation_tokens: usage.cache_creation_tokens,
+        total_tokens: usage.total_tokens,
+        reasoning_tokens: usage.reasoning_tokens,
         cache_usage: AppCacheUsage {
             status: match usage.cache_usage.status {
                 CacheUsageStatus::ProviderReported => "provider_reported",
@@ -908,11 +907,44 @@ fn app_token_usage(usage: &TaskTokenUsage) -> AppTokenUsage {
                 CacheUsageStatus::Unsupported => "unsupported",
             }
             .to_string(),
-            read_tokens: usage.cache_usage.read_tokens,
-            write_tokens: usage.cache_usage.write_tokens,
+            read_input_tokens: usage.cache_usage.read_input_tokens,
+            write_input_tokens: usage.cache_usage.write_input_tokens,
             uncached_input_tokens: usage.cache_usage.uncached_input_tokens,
             source: usage.cache_usage.source.clone(),
         },
+        cycles: usage
+            .cycles
+            .iter()
+            .map(|cycle| AppCycleTokenUsage {
+                cycle_index: cycle.cycle_index,
+                usage: AppCycleUsage {
+                    schema_version: "vv-agent.token-usage.v1".to_string(),
+                    input_tokens: cycle.usage.input_tokens,
+                    output_tokens: cycle.usage.output_tokens,
+                    total_tokens: cycle.usage.total_tokens,
+                    reasoning_tokens: cycle.usage.reasoning_tokens,
+                    usage_source: match cycle.usage.usage_source {
+                        UsageSource::ProviderReported => "provider_reported",
+                        UsageSource::Estimated => "estimated",
+                        UsageSource::AccountingMissing => "accounting_missing",
+                    }
+                    .to_string(),
+                    cache_usage: AppCacheUsage {
+                        status: match cycle.usage.cache_usage.status {
+                            CacheUsageStatus::ProviderReported => "provider_reported",
+                            CacheUsageStatus::AccountingMissing => "accounting_missing",
+                            CacheUsageStatus::Unsupported => "unsupported",
+                        }
+                        .to_string(),
+                        read_input_tokens: cycle.usage.cache_usage.read_input_tokens,
+                        write_input_tokens: cycle.usage.cache_usage.write_input_tokens,
+                        uncached_input_tokens: cycle.usage.cache_usage.uncached_input_tokens,
+                        source: cycle.usage.cache_usage.source.clone(),
+                    },
+                    provider_usage: cycle.usage.provider_usage.clone().into_iter().collect(),
+                },
+            })
+            .collect(),
     }
 }
 

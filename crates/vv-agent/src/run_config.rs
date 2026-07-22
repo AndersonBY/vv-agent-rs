@@ -10,14 +10,13 @@ use crate::checkpoint::{CheckpointConfig, CheckpointExtension, ReconciliationPro
 use crate::context_providers::ContextProvider;
 use crate::event_store::RunEventStore;
 use crate::execution_mode::ExecutionMode;
-use crate::llm::LlmStreamCallback;
 use crate::memory::MemoryProvider;
 use crate::model::{ModelProvider, ModelRef};
 use crate::model_settings::ModelSettings;
 use crate::runtime::backends::RuntimeExecutionBackend;
 use crate::runtime::{
     AfterCycleHook, BeforeCycleMessageProvider, CancellationToken, InterruptionMessageProvider,
-    RuntimeEventHandler, RuntimeHook, SubTaskManager,
+    RunEventHandler, RuntimeHook, SubTaskManager,
 };
 use crate::sessions::Session;
 use crate::tools::{ToolPolicy, ToolRegistry};
@@ -74,8 +73,7 @@ pub struct RunConfig {
     pub before_cycle_messages: Option<BeforeCycleMessageProvider>,
     pub interruption_messages: Option<InterruptionMessageProvider>,
     pub sub_task_manager: Option<SubTaskManager>,
-    pub runtime_log_handler: Option<RuntimeEventHandler>,
-    pub runtime_stream_callback: Option<LlmStreamCallback>,
+    pub stream: Option<RunEventHandler>,
     pub budget_limits: Option<RunBudgetLimits>,
     pub host_cost_meter: Option<Arc<dyn HostCostMeter>>,
     pub checkpoint_config: Option<CheckpointConfig>,
@@ -103,8 +101,7 @@ impl RunConfig {
         child.before_cycle_messages = None;
         child.interruption_messages = None;
         child.sub_task_manager = None;
-        child.runtime_log_handler = None;
-        child.runtime_stream_callback = None;
+        child.stream = None;
         child.host_cost_meter = None;
         child.checkpoint_config = None;
         child.checkpoint_extensions.clear();
@@ -346,29 +343,16 @@ impl RunConfigBuilder {
         self
     }
 
-    pub fn runtime_log_handler(
+    pub fn stream(
         mut self,
-        handler: impl Fn(&str, &Metadata) + Send + Sync + 'static,
+        observer: impl Fn(&crate::events::RunEvent) + Send + Sync + 'static,
     ) -> Self {
-        self.config.runtime_log_handler = Some(Arc::new(handler));
+        self.config.stream = Some(Arc::new(observer));
         self
     }
 
-    pub fn runtime_log_handler_arc(mut self, handler: RuntimeEventHandler) -> Self {
-        self.config.runtime_log_handler = Some(handler);
-        self
-    }
-
-    pub fn runtime_stream_callback(
-        mut self,
-        callback: impl Fn(&Metadata) + Send + Sync + 'static,
-    ) -> Self {
-        self.config.runtime_stream_callback = Some(Arc::new(callback));
-        self
-    }
-
-    pub fn runtime_stream_callback_arc(mut self, callback: LlmStreamCallback) -> Self {
-        self.config.runtime_stream_callback = Some(callback);
+    pub fn stream_arc(mut self, observer: RunEventHandler) -> Self {
+        self.config.stream = Some(observer);
         self
     }
 

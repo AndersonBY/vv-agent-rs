@@ -5,35 +5,12 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::budget::{BudgetExhaustion, BudgetUsageSnapshot};
+use crate::events::{DiagnosticLevel, RunEvent, RunEventPayload};
 use crate::runtime::sub_agent_sessions::SubAgentSessionListener;
-use crate::runtime::{RuntimeEventHandler, RuntimeLogHandler};
+use crate::runtime::RunEventHandler;
 use crate::types::{AgentStatus, SubTaskOutcome, TaskTokenUsage};
 
 use super::types::SubRunLifecycle;
-
-const ASSISTANT_DELTA_FIELDS: &[&str] = &[
-    "content_chars",
-    "content_delta",
-    "delta",
-    "estimated_tokens",
-    "event",
-];
-const REASONING_DELTA_FIELDS: &[&str] = &[
-    "estimated_tokens",
-    "event",
-    "reasoning_chars",
-    "reasoning_delta",
-];
-const TOOL_STREAM_FIELDS: &[&str] = &[
-    "arguments_chars",
-    "estimated_tokens",
-    "event",
-    "function_name",
-    "tool_call_id",
-    "tool_call_index",
-];
-const TRUSTED_STREAM_RECEIPT_KEY: &str = "_vv_agent_stream_receipt";
-const TRUSTED_STREAM_SEQUENCE_KEY: &str = "_vv_agent_stream_sequence";
 
 pub(super) fn emit_sub_agent_session_event(
     listeners: &Arc<Mutex<BTreeMap<u64, SubAgentSessionListener>>>,
@@ -70,119 +47,40 @@ pub(super) fn enrich_sub_agent_payload(
     enriched
 }
 
-pub(super) fn canonicalize_sub_agent_stream_event(
-    payload: &BTreeMap<String, Value>,
-    lifecycle: &SubRunLifecycle,
-) -> Option<BTreeMap<String, Value>> {
-    let event = payload.get("event").and_then(Value::as_str)?;
-    let allowed_fields = match event {
-        "assistant_delta" => ASSISTANT_DELTA_FIELDS,
-        "reasoning_delta" => REASONING_DELTA_FIELDS,
-        "tool_call_started" | "tool_call_progress" => TOOL_STREAM_FIELDS,
-        _ => return None,
-    };
-    let mut canonical = payload
-        .iter()
-        .filter(|(key, _)| allowed_fields.contains(&key.as_str()))
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect::<BTreeMap<_, _>>();
-    canonical.extend(BTreeMap::from([
-        ("event".to_string(), Value::String(event.to_string())),
-        (
-            "agent_name".to_string(),
-            Value::String(lifecycle.agent_name.clone()),
-        ),
-        (
-            "child_run_id".to_string(),
-            Value::String(lifecycle.run_id.clone()),
-        ),
-        (
-            "child_session_id".to_string(),
-            Value::String(lifecycle.session_id.clone()),
-        ),
-        (
-            "parent_run_id".to_string(),
-            Value::String(lifecycle.parent_run_id.clone()),
-        ),
-        (
-            "parent_tool_call_id".to_string(),
-            Value::String(lifecycle.parent_tool_call_id.clone()),
-        ),
-        (
-            "run_id".to_string(),
-            Value::String(lifecycle.run_id.clone()),
-        ),
-        (
-            "session_id".to_string(),
-            Value::String(lifecycle.session_id.clone()),
-        ),
-        (
-            "sub_agent_name".to_string(),
-            Value::String(lifecycle.agent_name.clone()),
-        ),
-        (
-            "task_id".to_string(),
-            Value::String(lifecycle.task_id.clone()),
-        ),
-        (
-            "trace_id".to_string(),
-            Value::String(lifecycle.trace_id.clone()),
-        ),
-    ]));
-    if let Some(cycle_index) = payload
-        .get("cycle")
-        .and_then(Value::as_u64)
-        .and_then(|cycle| u32::try_from(cycle).ok())
-        .filter(|cycle| *cycle > 0)
-    {
-        canonical.insert("cycle_index".to_string(), Value::from(cycle_index));
-    }
-    Some(canonical)
-}
-
 pub(super) fn emit_parent_sub_agent_event(
-    parent_log_handler: &Option<RuntimeLogHandler>,
-    parent_event_handler: &Option<RuntimeEventHandler>,
-    event: &str,
-    payload: BTreeMap<String, Value>,
+    event_handler: &Option<RunEventHandler>,
+    code: &str,
+    mut payload: BTreeMap<String, Value>,
 ) {
-    emit_parent_log_event(parent_log_handler, event, &payload);
-    if let Some(handler) = parent_event_handler {
-        handler(event, &payload);
+    let run_id = take_identity(&mut payload, &["child_run_id", "run_id", "task_id"])
+        .unwrap_or_else(|| "sub_run".to_string());
+    let trace_id = take_identity(&mut payload, &["trace_id"]).unwrap_or_else(|| run_id.clone());
+    let agent_name = take_identity(&mut payload, &["agent_name", "sub_agent_name"])
+        .unwrap_or_else(|| "sub_agent".to_string());
+    let session_id = take_identity(&mut payload, &["child_session_id", "session_id"]);
+    let parent_run_id = take_identity(&mut payload, &["parent_run_id"]);
+    let cycle_index = payload
+        .remove("cycle")
+        .or_else(|| payload.remove("cycle_index"))
+        .and_then(|value| value.as_u64())
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0);
+    let mut event = RunEvent::diagnostic(
+        run_id,
+        trace_id,
+        agent_name,
+        cycle_index,
+        DiagnosticLevel::Debug,
+        code,
+        payload.into_iter().collect(),
+    );
+    if let Some(session_id) = session_id {
+        event = event.with_session_id(session_id);
     }
-}
-
-pub(super) fn emit_parent_sub_agent_stream_event(
-    parent_log_handler: &Option<RuntimeLogHandler>,
-    parent_event_handler: &Option<RuntimeEventHandler>,
-    canonical: &BTreeMap<String, Value>,
-    sequence: u64,
-) {
-    let event = canonical
-        .get("event")
-        .and_then(Value::as_str)
-        .expect("canonical sub-agent stream event");
-    let event = format!("sub_agent_{event}");
-    let mut public_payload = canonical.clone();
-    public_payload.remove("event");
-
-    if let Some(handler) = parent_log_handler {
-        if let Ok(mut handler) = handler.lock() {
-            let _ = catch_unwind(AssertUnwindSafe(|| handler(&event, &public_payload)));
-        }
+    if let Some(parent_run_id) = parent_run_id {
+        event = event.with_parent_run_id(parent_run_id);
     }
-    if let Some(handler) = parent_event_handler {
-        let mut trusted_payload = public_payload;
-        trusted_payload.insert(
-            TRUSTED_STREAM_RECEIPT_KEY.to_string(),
-            Value::String(format!("stream_{}", uuid::Uuid::new_v4().simple())),
-        );
-        trusted_payload.insert(
-            TRUSTED_STREAM_SEQUENCE_KEY.to_string(),
-            Value::from(sequence),
-        );
-        let _ = catch_unwind(AssertUnwindSafe(|| handler(&event, &trusted_payload)));
-    }
+    let _ = emit_typed_event(event_handler, &event);
 }
 
 pub(super) fn agent_status_value(status: AgentStatus) -> &'static str {
@@ -198,51 +96,47 @@ pub(super) fn agent_status_value(status: AgentStatus) -> &'static str {
 }
 
 pub(super) fn emit_sub_run_started(
-    parent_log_handler: &Option<RuntimeLogHandler>,
-    parent_event_handler: &Option<RuntimeEventHandler>,
+    event_handler: &Option<RunEventHandler>,
     lifecycle: &SubRunLifecycle,
 ) -> Result<(), String> {
-    let mut payload = BTreeMap::from([
-        (
-            "child_run_id".to_string(),
-            Value::String(lifecycle.run_id.clone()),
-        ),
-        (
-            "trace_id".to_string(),
-            Value::String(lifecycle.trace_id.clone()),
-        ),
-        (
-            "parent_tool_call_id".to_string(),
-            Value::String(lifecycle.parent_tool_call_id.clone()),
-        ),
-        (
-            "agent_name".to_string(),
-            Value::String(lifecycle.agent_name.clone()),
-        ),
-        (
-            "child_session_id".to_string(),
-            Value::String(lifecycle.session_id.clone()),
-        ),
-        (
-            "task_id".to_string(),
-            Value::String(lifecycle.task_id.clone()),
-        ),
-        (
-            "metadata".to_string(),
-            serde_json::json!({
-                "model": lifecycle.model,
-                "parent_task_id": lifecycle.parent_task_id,
-            }),
-        ),
-    ]);
-    insert_nonempty_string(&mut payload, "parent_run_id", &lifecycle.parent_run_id);
-    emit_parent_log_event(parent_log_handler, "sub_run_started", &payload);
-    emit_trusted_lifecycle_event(parent_event_handler, "sub_run_started", &payload)
+    let mut event = RunEvent::new(
+        &lifecycle.run_id,
+        &lifecycle.trace_id,
+        &lifecycle.agent_name,
+        None,
+        RunEventPayload::SubRunStarted {
+            parent_tool_call_id: lifecycle.parent_tool_call_id.clone(),
+            child_session_id: Some(lifecycle.session_id.clone()),
+            task_id: Some(lifecycle.task_id.clone()),
+        },
+    )
+    .with_session_id(&lifecycle.session_id)
+    .with_parent_run_id(&lifecycle.parent_run_id)
+    .with_metadata("model", Value::String(lifecycle.model.clone()))
+    .with_metadata(
+        "parent_task_id",
+        Value::String(lifecycle.parent_task_id.clone()),
+    );
+    if lifecycle.parent_run_id.trim().is_empty() {
+        event = RunEvent::new(
+            &lifecycle.run_id,
+            &lifecycle.trace_id,
+            &lifecycle.agent_name,
+            None,
+            event.payload().clone(),
+        )
+        .with_session_id(&lifecycle.session_id)
+        .with_metadata("model", Value::String(lifecycle.model.clone()))
+        .with_metadata(
+            "parent_task_id",
+            Value::String(lifecycle.parent_task_id.clone()),
+        );
+    }
+    emit_typed_event(event_handler, &event)
 }
 
 pub(super) fn emit_sub_run_completed(
-    parent_log_handler: &Option<RuntimeLogHandler>,
-    parent_event_handler: &Option<RuntimeEventHandler>,
+    event_handler: &Option<RunEventHandler>,
     lifecycle: &SubRunLifecycle,
     outcome: &SubTaskOutcome,
     token_usage: Option<&TaskTokenUsage>,
@@ -256,27 +150,20 @@ pub(super) fn emit_sub_run_completed(
         budget_usage,
         budget_exhaustion,
     );
-    emit_trusted_lifecycle_event(parent_event_handler, "sub_run_completed", &payload)?;
-    emit_parent_log_event(parent_log_handler, "sub_run_completed", &payload);
-    Ok(())
-}
-
-pub(super) fn emit_sub_run_completed_to_log(
-    parent_log_handler: &Option<RuntimeLogHandler>,
-    lifecycle: &SubRunLifecycle,
-    outcome: &SubTaskOutcome,
-    token_usage: Option<&TaskTokenUsage>,
-    budget_usage: Option<&BudgetUsageSnapshot>,
-    budget_exhaustion: Option<&BudgetExhaustion>,
-) {
-    let payload = sub_run_completed_payload(
-        lifecycle,
-        outcome,
-        token_usage,
-        budget_usage,
-        budget_exhaustion,
-    );
-    emit_parent_log_event(parent_log_handler, "sub_run_completed", &payload);
+    let mut event = crate::runner::map_runtime_event(
+        "sub_run_completed",
+        &payload,
+        &crate::runner::RuntimeEventContext::new(
+            &lifecycle.run_id,
+            &lifecycle.trace_id,
+            &lifecycle.agent_name,
+            Some(lifecycle.session_id.clone()),
+            "",
+        ),
+    )
+    .ok_or_else(|| "failed to build typed sub_run_completed event".to_string())?;
+    event = event.with_parent_run_id(&lifecycle.parent_run_id);
+    emit_typed_event(event_handler, &event)
 }
 
 fn sub_run_completed_payload(
@@ -374,32 +261,15 @@ fn sub_run_completed_payload(
     payload
 }
 
-fn emit_parent_log_event(
-    parent_log_handler: &Option<RuntimeLogHandler>,
-    event: &str,
-    payload: &BTreeMap<String, Value>,
-) {
-    if let Some(handler) = parent_log_handler {
-        if let Ok(mut handler) = handler.lock() {
-            let _ = catch_unwind(AssertUnwindSafe(|| handler(event, payload)));
-        }
-    }
-}
-
-fn emit_trusted_lifecycle_event(
-    parent_event_handler: &Option<RuntimeEventHandler>,
-    event: &str,
-    payload: &BTreeMap<String, Value>,
+fn emit_typed_event(
+    event_handler: &Option<RunEventHandler>,
+    event: &RunEvent,
 ) -> Result<(), String> {
-    let Some(handler) = parent_event_handler else {
-        return Ok(());
-    };
-    catch_unwind(AssertUnwindSafe(|| handler(event, payload))).map_err(|payload| {
-        format!(
-            "Trusted sub-run lifecycle event sink failed while emitting {event}: {}",
-            panic_payload_to_string(payload.as_ref())
-        )
-    })
+    if let Some(handler) = event_handler {
+        catch_unwind(AssertUnwindSafe(|| handler(event)))
+            .map_err(|payload| panic_payload_to_string(payload.as_ref()))?;
+    }
+    Ok(())
 }
 
 fn panic_payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
@@ -410,6 +280,16 @@ fn panic_payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
         return (*message).to_string();
     }
     "event sink panicked".to_string()
+}
+
+fn take_identity(payload: &mut BTreeMap<String, Value>, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        payload
+            .remove(*key)
+            .and_then(|value| value.as_str().map(str::to_string))
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
 }
 
 fn insert_nonempty_string(payload: &mut BTreeMap<String, Value>, key: &str, value: &str) {
@@ -434,10 +314,9 @@ mod tests {
     use super::{
         emit_parent_sub_agent_event, emit_sub_agent_session_event, emit_sub_run_completed,
     };
-    use crate::runner::{map_runtime_event, RuntimeEventContext};
     use crate::runtime::sub_agent_sessions::SubAgentSessionListener;
     use crate::runtime::sub_agents::types::SubRunLifecycle;
-    use crate::runtime::RuntimeEventHandler;
+    use crate::runtime::RunEventHandler;
     use crate::types::{AgentStatus, SubTaskOutcome, TaskTokenUsage};
 
     fn lifecycle() -> SubRunLifecycle {
@@ -473,19 +352,18 @@ mod tests {
         }
     }
 
-    fn completed_payload(
-        outcome: &SubTaskOutcome,
-        token_usage: Option<&TaskTokenUsage>,
-    ) -> BTreeMap<String, Value> {
+    fn completed_payload(outcome: &SubTaskOutcome, token_usage: Option<&TaskTokenUsage>) -> Value {
         let captured = Arc::new(Mutex::new(None));
         let captured_for_handler = captured.clone();
-        let handler: RuntimeEventHandler = Arc::new(move |event, payload| {
-            if event == "sub_run_completed" {
-                *captured_for_handler.lock().expect("captured payload") = Some(payload.clone());
+        let handler: RunEventHandler = Arc::new(move |event| {
+            if matches!(
+                event.payload(),
+                crate::events::RunEventPayload::SubRunCompleted { .. }
+            ) {
+                *captured_for_handler.lock().expect("captured payload") = Some(event.clone());
             }
         });
         emit_sub_run_completed(
-            &None,
             &Some(handler),
             &lifecycle(),
             outcome,
@@ -499,15 +377,7 @@ mod tests {
             .expect("captured payload")
             .clone()
             .expect("sub-run completion payload");
-        payload
-    }
-
-    fn mapped_wire(payload: &BTreeMap<String, Value>) -> Value {
-        let context =
-            RuntimeEventContext::new("parent-run", "parent-trace", "parent", None, "Delegate");
-        let event = map_runtime_event("sub_run_completed", payload, &context)
-            .expect("mapped sub-run completion");
-        serde_json::to_value(event).expect("serialized sub-run completion")
+        serde_json::to_value(payload).expect("serialized sub-run completion")
     }
 
     #[test]
@@ -520,10 +390,7 @@ mod tests {
 
         assert_eq!(payload["metadata"]["cycles"], json!(0));
         assert_eq!(payload["metadata"]["error_code"], "model_resolution_failed");
-        assert!(!payload.contains_key("token_usage"));
-        let wire = mapped_wire(&payload);
-        assert_eq!(wire["metadata"]["error_code"], "model_resolution_failed");
-        assert!(wire.get("token_usage").is_none());
+        assert!(payload.get("token_usage").is_none());
     }
 
     #[test]
@@ -531,15 +398,18 @@ mod tests {
         let mut outcome = outcome(AgentStatus::Completed);
         outcome.final_answer = Some("done".to_string());
         outcome.cycles = 1;
-        let usage = TaskTokenUsage::default();
+        let usage = TaskTokenUsage {
+            input_tokens: Some(0),
+            output_tokens: Some(0),
+            total_tokens: Some(0),
+            reasoning_tokens: Some(0),
+            ..TaskTokenUsage::default()
+        };
 
         let payload = completed_payload(&outcome, Some(&usage));
 
         assert_eq!(payload["token_usage"]["total_tokens"], json!(0));
         assert_eq!(payload["token_usage"]["cycles"], json!([]));
-        let wire = mapped_wire(&payload);
-        assert_eq!(wire["token_usage"]["total_tokens"], json!(0));
-        assert_eq!(wire["token_usage"]["cycles"], json!([]));
     }
 
     #[test]
@@ -556,11 +426,6 @@ mod tests {
         assert_eq!(payload["completion_reason"], "wait_user");
         assert_eq!(payload["completion_tool_name"], "dangerous");
         assert_eq!(payload["partial_output"], "proposed change");
-        let wire = mapped_wire(&payload);
-        assert!(wire["metadata"].get("error_code").is_none());
-        assert_eq!(wire["completion_reason"], "wait_user");
-        assert_eq!(wire["completion_tool_name"], "dangerous");
-        assert_eq!(wire["partial_output"], "proposed change");
     }
 
     #[test]
@@ -586,28 +451,9 @@ mod tests {
     }
 
     #[test]
-    fn panicking_parent_log_handler_does_not_block_parent_event_handler() {
-        let log_handler: crate::runtime::RuntimeLogHandler =
-            Arc::new(Mutex::new(Box::new(|_, _| panic!("broken log sink"))));
-        let received = Arc::new(Mutex::new(Vec::new()));
-        let received_for_handler = received.clone();
-        let event_handler: RuntimeEventHandler = Arc::new(move |event, _| {
-            received_for_handler
-                .lock()
-                .expect("received parent events")
-                .push(event.to_string());
-        });
+    fn panicking_parent_event_handler_is_isolated() {
+        let event_handler: RunEventHandler = Arc::new(|_| panic!("broken event sink"));
 
-        emit_parent_sub_agent_event(
-            &Some(log_handler),
-            &Some(event_handler),
-            "sub_run_started",
-            BTreeMap::new(),
-        );
-
-        assert_eq!(
-            received.lock().expect("received parent events").as_slice(),
-            ["sub_run_started"]
-        );
+        emit_parent_sub_agent_event(&Some(event_handler), "sub_run_started", BTreeMap::new());
     }
 }

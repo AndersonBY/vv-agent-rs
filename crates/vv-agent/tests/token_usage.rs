@@ -8,12 +8,25 @@ use vv_agent::{
 };
 
 fn token_usage_contract() -> Value {
-    serde_json::from_str(include_str!("fixtures/parity/token_usage_v1.json"))
+    serde_json::from_str(include_str!("fixtures/parity/token_usage.json"))
         .expect("token usage contract fixture")
 }
 
 fn optional_hint<T: DeserializeOwned>(value: &Value) -> Option<T> {
     (!value.is_null()).then(|| serde_json::from_value(value.clone()).expect("valid hint"))
+}
+
+#[test]
+fn task_token_usage_default_is_an_empty_aggregate() {
+    let summary = TaskTokenUsage::default();
+    let payload = serde_json::to_value(&summary).expect("serialized task token usage");
+
+    assert_eq!(summary.cache_usage.source.as_deref(), Some("aggregate"));
+    assert_eq!(payload["cache_usage"]["source"], json!("aggregate"));
+    assert_eq!(
+        serde_json::from_value::<TaskTokenUsage>(payload).expect("task token usage round trip"),
+        summary
+    );
 }
 
 #[test]
@@ -56,7 +69,7 @@ fn aggregation_matches_canonical_cache_observation_cases() {
             summary.add_cycle(
                 (index + 1) as u32,
                 TokenUsage {
-                    total_tokens: 1,
+                    total_tokens: Some(1),
                     usage_source: UsageSource::ProviderReported,
                     cache_usage: serde_json::from_value::<CacheUsage>(observation.clone())
                         .expect("cache observation"),
@@ -75,41 +88,35 @@ fn aggregation_matches_canonical_cache_observation_cases() {
 }
 
 #[test]
-fn explicit_zero_usage_is_observable_and_old_payload_is_missing() {
+fn explicit_zero_usage_is_observable_and_superseded_wire_is_rejected() {
     let explicit_zero = normalize_token_usage(&json!({
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
         "prompt_tokens_details": {"cached_tokens": 0}
     }));
-    let legacy =
-        serde_json::from_value::<TokenUsage>(json!({"cached_tokens": 0})).expect("legacy usage");
-
     assert!(explicit_zero.has_usage());
-    assert_eq!(explicit_zero.cache_usage.read_tokens, Some(0));
-    assert!(!legacy.has_usage());
-    assert_eq!(legacy.cache_usage.read_tokens, None);
+    assert_eq!(explicit_zero.cache_usage.read_input_tokens, Some(0));
+    assert!(serde_json::from_value::<TokenUsage>(json!({"cached_tokens": 0})).is_err());
 }
 
 #[test]
 fn normalizes_provider_token_usage() {
     let usage = normalize_token_usage(&json!({
         "prompt_tokens": "11",
-        "completion_tokens": 7.9,
+        "completion_tokens": 7,
         "prompt_tokens_details": {"cached_tokens": 3},
         "completion_tokens_details": {"reasoning_tokens": "5"},
         "input_tokens_details": {"cache_creation_tokens": 2}
     }));
 
-    assert_eq!(usage.prompt_tokens, 11);
-    assert_eq!(usage.completion_tokens, 7);
-    assert_eq!(usage.input_tokens, 11);
-    assert_eq!(usage.output_tokens, 7);
-    assert_eq!(usage.total_tokens, 18);
-    assert_eq!(usage.cached_tokens, 3);
-    assert_eq!(usage.reasoning_tokens, 5);
-    assert_eq!(usage.cache_creation_tokens, 2);
-    assert_eq!(usage.raw["prompt_tokens"], "11");
+    assert_eq!(usage.input_tokens, Some(11));
+    assert_eq!(usage.output_tokens, Some(7));
+    assert_eq!(usage.total_tokens, Some(18));
+    assert_eq!(usage.reasoning_tokens, Some(5));
+    assert_eq!(usage.cache_usage.read_input_tokens, Some(3));
+    assert_eq!(usage.cache_usage.write_input_tokens, Some(2));
+    assert_eq!(usage.provider_usage["prompt_tokens"], "11");
 }
 
 #[test]
@@ -122,9 +129,10 @@ fn summarizes_task_token_usage_from_cycles() {
             tool_results: vec![],
             memory_compacted: false,
             token_usage: TokenUsage {
-                prompt_tokens: 10,
-                completion_tokens: 5,
-                total_tokens: 15,
+                input_tokens: Some(10),
+                output_tokens: Some(5),
+                total_tokens: Some(15),
+                usage_source: UsageSource::ProviderReported,
                 ..TokenUsage::default()
             },
         },
@@ -140,9 +148,10 @@ fn summarizes_task_token_usage_from_cycles() {
 
     let summary = summarize_task_token_usage(&cycles);
 
-    assert_eq!(summary.prompt_tokens, 10);
-    assert_eq!(summary.completion_tokens, 5);
-    assert_eq!(summary.total_tokens, 15);
-    assert_eq!(summary.cycles.len(), 1);
+    assert_eq!(summary.input_tokens, None);
+    assert_eq!(summary.output_tokens, None);
+    assert_eq!(summary.total_tokens, None);
+    assert_eq!(summary.cycles.len(), 2);
     assert_eq!(summary.cycles[0].cycle_index, 2);
+    assert_eq!(summary.cycles[1].cycle_index, 3);
 }

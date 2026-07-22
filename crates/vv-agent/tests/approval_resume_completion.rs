@@ -11,7 +11,7 @@ use vv_agent::{
     ToolOutput, ToolPolicy, ToolUseBehavior,
 };
 
-const COMPLETION_CONTRACT: &str = include_str!("fixtures/parity/completion_policy_v1.json");
+const COMPLETION_CONTRACT: &str = include_str!("fixtures/parity/completion_policy.json");
 
 fn completion_contract() -> Value {
     serde_json::from_str(COMPLETION_CONTRACT).expect("completion contract")

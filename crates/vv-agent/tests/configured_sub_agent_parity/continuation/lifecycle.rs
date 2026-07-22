@@ -33,8 +33,8 @@ fn agent_task_wire_preserves_effective_model_settings_messages_and_state() {
 }
 
 #[test]
-fn sub_task_outcome_error_code_wire_is_backward_compatible() {
-    let legacy = json!({
+fn sub_task_outcome_omits_an_absent_optional_error_code() {
+    let current = json!({
         "task_id": "child-task",
         "agent_name": "researcher",
         "status": "failed",
@@ -47,7 +47,7 @@ fn sub_task_outcome_error_code_wire_is_backward_compatible() {
         "resolved": {}
     });
     let restored: vv_agent::SubTaskOutcome =
-        serde_json::from_value(legacy).expect("legacy outcome");
+        serde_json::from_value(current).expect("current outcome");
     assert!(restored.error_code.is_none());
     assert!(serde_json::to_value(restored)
         .expect("serialize outcome")
@@ -136,9 +136,19 @@ fn real_continuation_preserves_complete_history_state_and_lineage() {
     ]);
     let mut registry = build_default_registry();
     registry
-        .register(ToolSpec::new(
+        .register_tool_with_parameters(
             "child_state",
             "Set or inspect child shared state.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["set", "inspect"]
+                    }
+                },
+                "required": ["mode"]
+            }),
             Arc::new(move |context, arguments| {
                 match arguments.get("mode").and_then(Value::as_str) {
                     Some("set") => {
@@ -154,7 +164,7 @@ fn real_continuation_preserves_complete_history_state_and_lineage() {
                 }
                 ToolExecutionResult::success("", json!({"ok": true}).to_string())
             }),
-        ))
+        )
         .expect("register child state tool");
     let manager = SubTaskManager::default();
     let runtime = AgentRuntime::new(shared_llm).with_tool_registry(registry);
@@ -164,8 +174,9 @@ fn real_continuation_preserves_complete_history_state_and_lineage() {
     let mut child = SubAgentConfig::new("shared-model", "Research");
     child.max_cycles = 4;
     parent.sub_agents.insert("researcher".to_string(), child);
-    let log_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-        if matches!(name, "sub_run_started" | "sub_run_completed") {
+    let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+        let (name, payload) = typed_event_parts(run_event);
+        if matches!(name.as_str(), "sub_run_started" | "sub_run_completed") {
             lifecycle_events_for_handler
                 .lock()
                 .expect("lifecycle events")
@@ -173,7 +184,7 @@ fn real_continuation_preserves_complete_history_state_and_lineage() {
         }
     });
     let controls = RuntimeRunControls {
-        log_handler: Some(log_handler),
+        event_handler: Some(event_handler),
         execution_context: Some(ExecutionContext {
             metadata: BTreeMap::from([
                 ("_vv_agent_run_id".to_string(), json!("parent-run")),
@@ -291,25 +302,19 @@ fn real_continuation_preserves_complete_history_state_and_lineage() {
             "sub_run_completed"
         ]
     );
-    assert_ne!(
-        lifecycle[0].1["child_run_id"],
-        lifecycle[2].1["child_run_id"]
-    );
-    assert_ne!(
-        lifecycle[2].1["child_run_id"],
-        lifecycle[4].1["child_run_id"]
-    );
+    assert_ne!(lifecycle[0].1["run_id"], lifecycle[2].1["run_id"]);
+    assert_ne!(lifecycle[2].1["run_id"], lifecycle[4].1["run_id"]);
     assert_eq!(
         continuation_messages[0][0].metadata["_vv_agent_run_id"],
-        lifecycle[2].1["child_run_id"]
+        lifecycle[2].1["run_id"]
     );
     assert_eq!(
         continuation_messages[1][0].metadata["_vv_agent_run_id"],
-        lifecycle[4].1["child_run_id"]
+        lifecycle[4].1["run_id"]
     );
     assert_ne!(
         continuation_messages[0][0].metadata["_vv_agent_run_id"],
-        lifecycle[0].1["child_run_id"]
+        lifecycle[0].1["run_id"]
     );
     for (_, payload) in lifecycle.iter() {
         assert_eq!(payload["parent_run_id"], "parent-run");

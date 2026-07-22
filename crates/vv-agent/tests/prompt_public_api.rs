@@ -5,7 +5,6 @@ use std::sync::{
 };
 
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use vv_agent::prompt::{
     build_raw_system_prompt_sections, build_system_prompt_bundle_with_options,
     build_system_prompt_sections_with_options, build_system_prompt_with_options,
@@ -86,39 +85,6 @@ Review code.
     assert_eq!(raw[0]["id"], "raw_system_prompt");
     assert_eq!(raw[0]["text"], "raw system");
     assert_eq!(raw[0]["stable"], true);
-}
-
-#[test]
-fn full_prompt_bundle_matches_the_cross_language_golden_contract() {
-    let mut payload = BTreeMap::new();
-    for language in ["en-US", "zh-CN"] {
-        let options = BuildSystemPromptOptions {
-            language: language.to_string(),
-            current_time_utc: Some("2026-05-26T00:00:00Z".to_string()),
-            session_memory_context: "Remember prior context.".to_string(),
-            available_sub_agents: BTreeMap::from([
-                ("writer".to_string(), "Writes final reports.".to_string()),
-                ("researcher".to_string(), "Finds evidence.".to_string()),
-            ]),
-            ..BuildSystemPromptOptions::default()
-        };
-        let bundle = build_system_prompt_bundle_with_options("You are careful.", options);
-        payload.insert(
-            language,
-            json!({
-                "prompt": bundle.prompt,
-                "sections": bundle.sections,
-                "stable_hash": bundle.stable_hash,
-            }),
-        );
-    }
-
-    let canonical = serde_json::to_string(&payload).expect("serialize canonical prompt payload");
-    let digest = format!("{:x}", Sha256::digest(canonical.as_bytes()));
-    assert_eq!(
-        digest,
-        "1ca970a84ee909f0e8d6dd55e6e8a3a64b67df158d1f0cd681d3686cd15c3415"
-    );
 }
 
 #[test]

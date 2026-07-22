@@ -5,18 +5,17 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 use crate::budget::{BudgetUsageSnapshot, HostCostMeter, RunBudgetLimits};
+use crate::events::RunEvent;
 use crate::model::ModelProvider;
 use crate::runtime::cancellation::CancellationToken;
 use crate::runtime::checkpoint_resume::CheckpointController;
-use crate::runtime::context::{ExecutionContext, StreamCallback};
+use crate::runtime::context::ExecutionContext;
 use crate::runtime::sub_task_manager::SubTaskManager;
 use crate::types::{CycleRecord, Message};
 use crate::workspace::WorkspaceBackend;
 use crate::{RunConfig, RunContext};
 
-pub type RuntimeLogCallback = dyn FnMut(&str, &BTreeMap<String, Value>) + Send + Sync + 'static;
-pub type RuntimeLogHandler = Arc<Mutex<Box<RuntimeLogCallback>>>;
-pub type RuntimeEventHandler = Arc<dyn Fn(&str, &BTreeMap<String, Value>) + Send + Sync + 'static>;
+pub type RunEventHandler = Arc<dyn Fn(&RunEvent) + Send + Sync + 'static>;
 pub type BeforeCycleMessageProvider =
     Arc<dyn Fn(u32, &[Message], &BTreeMap<String, Value>) -> Vec<Message> + Send + Sync + 'static>;
 pub type InterruptionMessageProvider = Arc<dyn Fn() -> Vec<Message> + Send + Sync + 'static>;
@@ -43,7 +42,7 @@ impl CheckpointRuntimeControl {
 
 #[derive(Clone, Default)]
 pub struct RuntimeRunControls {
-    pub log_handler: Option<RuntimeEventHandler>,
+    pub event_handler: Option<RunEventHandler>,
     pub before_cycle_messages: Option<BeforeCycleMessageProvider>,
     pub interruption_messages: Option<InterruptionMessageProvider>,
     pub steering_queue: Option<Arc<Mutex<VecDeque<String>>>>,
@@ -87,10 +86,11 @@ impl RuntimeRunControls {
         })
     }
 
-    pub(in crate::runtime::engine) fn effective_stream_callback(&self) -> Option<StreamCallback> {
+    pub(in crate::runtime::engine) fn effective_event_handler(&self) -> Option<RunEventHandler> {
         self.execution_context
             .as_ref()
-            .and_then(|context| context.stream_callback.clone())
+            .and_then(|context| context.event_handler.clone())
+            .or_else(|| self.event_handler.clone())
     }
 
     pub(crate) fn effective_checkpoint_controller(&self) -> Option<&CheckpointController> {

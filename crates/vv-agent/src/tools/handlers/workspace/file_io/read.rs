@@ -3,9 +3,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{
-    coerce_truthy_arg, parse_integer_arg, path_escapes_workspace_error, stringify_tool_arg,
-};
+use crate::tools::common::{bool_arg, integer_arg, path_escapes_workspace_error, string_arg};
 use crate::types::{Metadata, ToolArguments, ToolExecutionResult};
 
 use super::super::edit::{
@@ -32,7 +30,7 @@ pub(crate) fn read_file_tool() -> ToolSpec {
                     Metadata::from([("missing_arguments".to_string(), json!(["path"]))]),
                 );
             }
-            let path = stringify_tool_arg(arguments.get("path"), "");
+            let path = string_arg(arguments.get("path"), "");
             if let Err(error) = context.resolve_workspace_path(&path) {
                 return path_escapes_workspace_error(error);
             }
@@ -49,7 +47,7 @@ pub(crate) fn read_file_tool() -> ToolSpec {
                 Err(error) => return workspace_backend_error(error),
             }
             let start_line = match arguments.get("start_line") {
-                Some(value) => match parse_integer_arg(value) {
+                Some(value) => match integer_arg(value) {
                     Ok(line) => line.max(1) as usize,
                     Err(_) => {
                         return workspace_tool_error(
@@ -62,7 +60,7 @@ pub(crate) fn read_file_tool() -> ToolSpec {
                 None => 1,
             };
             let end_line = match arguments.get("end_line") {
-                Some(value) => match parse_integer_arg(value) {
+                Some(value) => match integer_arg(value) {
                     Ok(line) => Some(line.max(start_line as i64) as usize),
                     Err(_) => {
                         return workspace_tool_error(
@@ -74,7 +72,7 @@ pub(crate) fn read_file_tool() -> ToolSpec {
                 },
                 None => None,
             };
-            let show_line_numbers = coerce_truthy_arg(arguments.get("show_line_numbers"), false);
+            let show_line_numbers = bool_arg(arguments.get("show_line_numbers"), false);
             match backend.read_bytes(&path) {
                 Ok(raw) => {
                     let text = match decode_workspace_text(&raw) {

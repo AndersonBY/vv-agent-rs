@@ -8,9 +8,10 @@ use vv_agent::runtime::{
     ExecutionContext, RuntimeRunControls, SubTaskLineage, SubTaskManager, SubTaskTurnSnapshot,
 };
 use vv_agent::tools::{build_default_registry, ToolSpec};
+use vv_agent::types::AgentTask;
 use vv_agent::{
-    AgentRuntime, AgentStatus, AgentTask, ApprovalPolicy, LLMResponse, LlmClient, LlmError,
-    LlmRequest, LlmStreamCallback, MemoryWorkspaceBackend, MessageRole, RunContext, ScriptStep,
+    AgentRuntime, AgentStatus, ApprovalPolicy, LLMResponse, LlmClient, LlmError, LlmRequest,
+    LlmStreamCallback, MemoryWorkspaceBackend, MessageRole, RunContext, ScriptStep,
     ScriptedLlmClient, SubAgentConfig, SubAgentSession, SubTaskOutcome, SubTaskSessionAttachment,
     ToolCall, ToolExecutionResult, ToolPolicy,
 };
@@ -29,10 +30,14 @@ mod parent_turn;
 mod trace;
 
 const CONFIGURED_SUB_AGENT_FIXTURE: &str =
-    include_str!("../fixtures/parity/configured_sub_agent_v1.json");
+    include_str!("../fixtures/parity/configured_sub_agent.json");
 
 fn contract() -> Value {
     serde_json::from_str(CONFIGURED_SUB_AGENT_FIXTURE).expect("configured sub-agent fixture")
+}
+
+fn typed_event_parts(event: &vv_agent::RunEvent) -> (String, BTreeMap<String, Value>) {
+    super::typed_event_parts(event)
 }
 
 fn finish_response(tool_call_id: &str, message: &str) -> LLMResponse {

@@ -91,12 +91,8 @@ fn find_files_rejects_pattern_argument() {
     let payload: Value = serde_json::from_str(&result.content).expect("payload");
 
     assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.error_code.as_deref(), Some("invalid_arguments"));
-    assert_eq!(payload["error_code"], json!("invalid_arguments"));
-    assert!(payload["error"]
-        .as_str()
-        .expect("error")
-        .contains("`pattern` is not supported"));
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
+    assert_eq!(payload["issues"][0]["rule"], "additionalProperties");
 }
 
 #[test]
@@ -306,18 +302,14 @@ fn find_files_reports_estimated_count_when_scan_limit_is_reached() {
 }
 
 #[test]
-fn find_files_accepts_string_limits() {
+fn find_files_rejects_non_integer_limits() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
-    for index in 0..5 {
-        std::fs::write(workspace.path().join(format!("file_{index}.txt")), "x").expect("file");
-    }
-
     let list = registry
         .execute(
             &ToolCall::new(
-                "list_string_limits",
+                "list_invalid_limits",
                 "find_files",
                 BTreeMap::from([
                     ("max_results".to_string(), json!("2")),
@@ -329,8 +321,12 @@ fn find_files_accepts_string_limits() {
         .expect("list tool");
     let payload: Value = serde_json::from_str(&list.content).expect("list payload");
 
-    assert_eq!(payload["returned_count"], 2);
-    assert_eq!(payload["max_results"], 2);
-    assert_eq!(payload["scan_limit"], 3);
-    assert_eq!(payload["count_is_estimate"], true);
+    assert_eq!(list.status, ToolResultStatus::Error);
+    assert_eq!(list.error_code.as_deref(), Some("invalid_tool_arguments"));
+    assert_eq!(payload["issues"].as_array().expect("issues").len(), 2);
+    assert!(payload["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .all(|issue| issue["rule"] == "type"));
 }

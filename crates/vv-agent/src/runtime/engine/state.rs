@@ -8,13 +8,13 @@ use crate::runtime::lifecycle::AfterCycleHook;
 use crate::tools::{ToolPolicy, ToolRegistry};
 use crate::workspace::WorkspaceBackend;
 
-use super::RuntimeLogHandler;
+use super::RunEventHandler;
 
 pub struct AgentRuntime<C: LlmClient> {
     pub llm_client: C,
     pub tool_registry: ToolRegistry,
     pub default_workspace: Option<PathBuf>,
-    pub log_handler: Option<RuntimeLogHandler>,
+    pub event_handler: Option<RunEventHandler>,
     pub log_preview_chars: Option<usize>,
     pub workspace_backend: Arc<dyn WorkspaceBackend>,
     pub hooks: Vec<Arc<dyn RuntimeHook>>,

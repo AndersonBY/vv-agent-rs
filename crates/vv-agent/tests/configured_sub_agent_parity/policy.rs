@@ -3,8 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use vv_agent::runtime::{ExecutionContext, RuntimeRunControls};
+use vv_agent::types::AgentTask;
 use vv_agent::{
-    build_default_registry, AgentRuntime, AgentStatus, AgentTask, ApprovalBroker, ApprovalDecision,
+    build_default_registry, AgentRuntime, AgentStatus, ApprovalBroker, ApprovalDecision,
     ApprovalFuture, ApprovalPolicy, ApprovalProvider, ApprovalRequest, FunctionTool, LLMResponse,
     ScriptStep, ScriptedLlmClient, SubAgentConfig, Tool, ToolCall, ToolOutput, ToolPolicy,
 };
@@ -83,6 +84,13 @@ fn register_counting_tool(
     let tool = FunctionTool::builder(name)
         .metadata("configured_tool", json!(name))
         .needs_approval(needs_approval)
+        .json_schema(json!({
+            "type": "object",
+            "properties": {
+                "scope": {"type": "string"}
+            },
+            "required": []
+        }))
         .handler(move |_context, _arguments: Value| {
             let executions = executions.clone();
             let execution_order = execution_order.clone();
@@ -292,7 +300,8 @@ fn configured_child_approval_uses_canonical_identity_auto_broker_and_includes_fi
     };
     let lifecycle = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
     let lifecycle_for_handler = lifecycle.clone();
-    let event_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
+    let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+        let (name, payload) = super::typed_event_parts(run_event);
         if name == "sub_run_started" {
             lifecycle_for_handler
                 .lock()
@@ -329,7 +338,7 @@ fn configured_child_approval_uses_canonical_identity_auto_broker_and_includes_fi
         .run_with_controls(
             parent,
             RuntimeRunControls {
-                log_handler: Some(event_handler),
+                event_handler: Some(event_handler),
                 execution_context: Some(ExecutionContext {
                     approval_provider: Some(Arc::new(provider)),
                     metadata: std::collections::BTreeMap::from([(
@@ -352,9 +361,7 @@ fn configured_child_approval_uses_canonical_identity_auto_broker_and_includes_fi
     assert_eq!(executions.load(Ordering::SeqCst), 1);
     let lifecycle = lifecycle.lock().expect("approval lifecycle");
     let started = &lifecycle[0].1;
-    let child_run_id = started["child_run_id"]
-        .as_str()
-        .expect("approval child run id");
+    let child_run_id = started["run_id"].as_str().expect("approval child run id");
     let child_session_id = started["child_session_id"]
         .as_str()
         .expect("approval child session id");

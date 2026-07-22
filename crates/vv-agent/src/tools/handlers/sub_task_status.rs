@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{coerce_bool, parse_integer_arg, tool_result, trim_portable_whitespace};
+use crate::tools::common::{bool_arg, integer_arg, tool_result, trim_portable_whitespace};
 use crate::types::{ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 const DEFAULT_SUB_TASK_WAIT_INTERVAL_SECONDS: i64 = 300;
@@ -76,10 +76,10 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
             };
             let workspace_file_limit = arguments
                 .get("workspace_file_limit")
-                .and_then(|value| parse_integer_arg(value).ok())
+                .and_then(|value| integer_arg(value).ok())
                 .unwrap_or(20)
                 .clamp(1, 100) as usize;
-            let wait_for_completion = coerce_bool(arguments.get("wait_for_completion"), false);
+            let wait_for_completion = bool_arg(arguments.get("wait_for_completion"), false);
             let check_interval_seconds =
                 normalize_wait_interval_seconds(arguments.get("check_interval_seconds"));
             let max_wait_seconds = normalize_max_wait_seconds(arguments.get("max_wait_seconds"));
@@ -93,7 +93,7 @@ pub(crate) fn sub_task_status_tool() -> ToolSpec {
                     return status_error("`message` must be a string", "invalid_sub_task_message");
                 }
             };
-            let wait_for_response = coerce_bool(arguments.get("wait_for_response"), false);
+            let wait_for_response = bool_arg(arguments.get("wait_for_response"), false);
             let mut interaction = None;
             if let Some(message) = message {
                 let target_id = task_ids[0].clone();
@@ -230,7 +230,7 @@ fn task_status_error(
 
 fn normalize_wait_interval_seconds(value: Option<&Value>) -> i64 {
     let seconds = value
-        .and_then(|value| parse_integer_arg(value).ok())
+        .and_then(|value| integer_arg(value).ok())
         .unwrap_or(DEFAULT_SUB_TASK_WAIT_INTERVAL_SECONDS);
     seconds.clamp(
         MIN_SUB_TASK_WAIT_INTERVAL_SECONDS,
@@ -244,7 +244,7 @@ fn normalize_max_wait_seconds(value: Option<&Value>) -> i64 {
             if value.is_null() {
                 None
             } else {
-                parse_integer_arg(value).ok()
+                integer_arg(value).ok()
             }
         })
         .unwrap_or(DEFAULT_SUB_TASK_MAX_WAIT_SECONDS);

@@ -7,9 +7,7 @@ mod process;
 mod result;
 mod sensitive_paths;
 
-pub(crate) use args::{
-    coerce_bool, coerce_truthy_arg, parse_integer_arg, stringify_tool_arg, trim_portable_whitespace,
-};
+pub(crate) use args::{bool_arg, integer_arg, string_arg, trim_portable_whitespace};
 pub(crate) use edit::replace_n;
 pub(crate) use file_types::{
     is_supported_file_type, matches_file_type, supported_file_types_message,

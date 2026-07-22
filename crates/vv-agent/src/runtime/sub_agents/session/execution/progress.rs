@@ -13,11 +13,14 @@ pub(super) struct ObservedRunProgress {
 }
 
 impl ObservedRunProgress {
-    pub(super) fn record_completed_cycle(&self, payload: &BTreeMap<String, Value>) {
-        let cycle_index = payload
-            .get("cycle")
-            .and_then(Value::as_u64)
-            .unwrap_or_default() as u32;
+    pub(super) fn record_completed_cycle(
+        &self,
+        cycle_index: Option<u32>,
+        payload: &BTreeMap<String, Value>,
+    ) {
+        let Some(cycle_index) = cycle_index.filter(|value| *value > 0) else {
+            return;
+        };
         self.completed_cycles
             .fetch_max(cycle_index, Ordering::Relaxed);
 

@@ -86,15 +86,7 @@ pub(super) fn start_batch_async(
     let mut started = 0usize;
     let mut failed = 0usize;
     for entry in entries {
-        let Some(request) = entry.request else {
-            failed += 1;
-            results.push(json!({
-                "index": entry.index,
-                "status": "failed",
-                "error": entry.error.unwrap_or_else(|| "Invalid task item".to_string()),
-            }));
-            continue;
-        };
+        let request = entry.request;
         let (task_id, session_id) =
             SubTaskManager::next_task_identity(&context.task_id, agent_name);
         let task_title = request.task_description.clone();

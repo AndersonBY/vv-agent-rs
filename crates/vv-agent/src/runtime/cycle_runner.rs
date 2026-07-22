@@ -12,7 +12,6 @@ use crate::tools::ToolRegistry;
 use crate::types::{AgentTask, CycleRecord, Message};
 
 pub const MAX_PROMPT_TOO_LONG_RETRIES: u32 = 3;
-pub const MAX_PTL_RETRIES: u32 = MAX_PROMPT_TOO_LONG_RETRIES;
 
 const PROMPT_TOO_LONG_PATTERNS: &[&str] = &[
     "prompt is too long",
@@ -147,12 +146,7 @@ impl<C: LlmClient> CycleRunner<C> {
             llm_request.metadata =
                 Value::Object(request.task.metadata.clone().into_iter().collect());
             llm_request.model_settings = request.task.model_settings.clone();
-            match self.llm_client.complete_with_stream(
-                llm_request,
-                request
-                    .execution_context
-                    .and_then(|context| context.stream_callback.clone()),
-            ) {
+            match self.llm_client.complete(llm_request) {
                 Ok(response) => break (response, request_messages, request_tool_schemas),
                 Err(error) if is_prompt_too_long_error(&error) => {
                     prompt_too_long_retries += 1;

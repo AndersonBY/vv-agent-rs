@@ -58,13 +58,22 @@ This file is a short map for coding agents. Keep durable project knowledge in
   records both implementation revisions.
 - If the sibling repository cannot be updated in the same change, record an
   explicit open parity gap and do not report the shared feature complete.
+- Keep `HEAD` forward-only. Maintain one current public and wire shape, and
+  delete superseded readers, aliases, shims, migrations, fixtures, tests, and
+  documentation in the same paired change. Git tags provide old runtimes.
+- Backward compatibility is not a design or acceptance requirement. Prefer a
+  breaking replacement when it improves the current architecture, update active
+  callers in the same change, and leave old behavior only in pinned releases.
+- Schema and protocol versions are strict rejection boundaries, not decoder
+  selectors. Reject missing, stale, unknown, and malformed versions, and reject
+  unknown fields unless the central contract defines a typed extension map.
 
 ## Common Commands
 
 ```bash
 python3 scripts/contract_snapshot.py check
 cargo fmt --check
-cargo test -p vv-agent
+cargo test -p vv-agent -- --test-threads=1
 cargo check --examples
 cargo clippy --all-targets --all-features -- -D warnings
 ```
@@ -74,7 +83,7 @@ Targeted checks are preferred while iterating:
 ```bash
 cargo test -p vv-agent --test vv_llm_integration
 cargo test -p vv-agent --test runtime_cycle
-cargo test -p vv-agent --test sdk_resources
+cargo test -p vv-agent --test public_sdk_redesign
 cargo test -p vv-agent --test workspace_tools
 cargo test -p vv-agent --test examples_coverage
 ```

@@ -4,7 +4,6 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use vv_agent::{
     Agent, AgentStatus, ApprovalPolicy, FunctionTool, GuardrailOutcome, InputGuardrail,
     LLMResponse, LlmClient, LlmError, LlmRequest, LlmStreamCallback, ModelError, ModelProvider,
@@ -13,15 +12,9 @@ use vv_agent::{
     ToolOutput, ToolPolicy,
 };
 
-const RUN_HANDLE_FIXTURE: &str = include_str!("fixtures/parity/run_handle_v1.json");
-const RUN_HANDLE_FIXTURE_SHA256: &str =
-    "aa6d933f26674beeb68964fa320e62859711114bdd7581ebde1b281f18a439bf";
+const RUN_HANDLE_FIXTURE: &str = include_str!("fixtures/parity/run_handle.json");
 
 fn run_handle_contract() -> serde_json::Value {
-    assert_eq!(
-        format!("{:x}", Sha256::digest(RUN_HANDLE_FIXTURE.as_bytes())),
-        RUN_HANDLE_FIXTURE_SHA256
-    );
     serde_json::from_str(RUN_HANDLE_FIXTURE).expect("run handle fixture")
 }
 

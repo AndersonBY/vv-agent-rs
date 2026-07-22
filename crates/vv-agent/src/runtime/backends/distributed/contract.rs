@@ -9,25 +9,21 @@ use crate::checkpoint::{
     AmbiguousToolPolicy, ClaimMode, ResumePolicy, DEFAULT_MAX_EXTENSION_STATE_BYTES,
     RUN_DEFINITION_SCHEMA,
 };
-use crate::runtime::tool_planner::{merge_projected_metadata_denials, projected_metadata_denials};
 use crate::tools::{ToolPolicy, ToolSideEffect};
 use crate::types::AgentTask;
 
 use super::super::RuntimeRecipe;
 pub(crate) use super::contract_helpers::now_unix_ms;
 use super::contract_helpers::{
-    normalize_integral_float, require_non_empty, utf16_cmp, validate_json_pointer,
-    validate_sorted_unique, validate_v2_discriminator_fields,
+    normalize_integral_float, require_non_empty, utf16_cmp, validate_current_discriminator_fields,
+    validate_json_pointer, validate_sorted_unique,
 };
 
-pub const DISTRIBUTED_RUN_SCHEMA_VERSION_V1: &str = "vv-agent.distributed-run.v1";
-pub const DISTRIBUTED_RUN_SCHEMA_VERSION_V2: &str = "vv-agent.distributed-run.v2";
-/// Backwards-compatible alias used by existing v1 callers.
-pub const DISTRIBUTED_RUN_SCHEMA_VERSION: &str = DISTRIBUTED_RUN_SCHEMA_VERSION_V1;
+pub const DISTRIBUTED_RUN_SCHEMA_VERSION: &str = "vv-agent.distributed-run.v2";
 pub const DEFAULT_TOOLSET_ID: &str = "vv-agent.builtin-tools";
 pub const DEFAULT_TOOLSET_VERSION: &str = "1";
 pub const DEFAULT_TOOLSET_SCHEMA_DIGEST: &str =
-    "f85422117d41d28ffa3cdfcfd9a42892854de624808fadc2124f4ebe7a452b61";
+    "24d8f7bde18b11374820f742cfa244c83666626a315e09d4b6e1b69e899a70aa";
 pub const DEFAULT_CYCLE_NAME: &str = "vv_agent.distributed.run_single_cycle";
 pub const DEFAULT_LEASE_DURATION_MS: u64 = 5 * 60 * 1000;
 
@@ -471,94 +467,18 @@ pub struct DistributedRunEnvelope {
     pub idempotency_key: String,
     pub deadline_unix_ms: Option<u64>,
     pub lease_duration_ms: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root_run_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trace_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_definition_schema: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_definition_digest: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claim_mode: Option<ClaimMode>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resume_attempt: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checkpoint_config: Option<DistributedCheckpointConfig>,
+    pub root_run_id: String,
+    pub trace_id: String,
+    pub run_definition_schema: String,
+    pub run_definition_digest: String,
+    pub claim_mode: ClaimMode,
+    pub resume_attempt: u64,
+    pub checkpoint_config: DistributedCheckpointConfig,
 }
 
 impl DistributedRunEnvelope {
     #[allow(clippy::too_many_arguments)]
     pub fn for_cycle(
-        task: AgentTask,
-        recipe: RuntimeRecipe,
-        cycle_index: u32,
-        cycle_name: impl Into<String>,
-        run_id: Option<String>,
-        deadline_unix_ms: Option<u64>,
-        lease_duration_ms: u64,
-        budget_limits: Option<RunBudgetLimits>,
-    ) -> Result<Self, String> {
-        let run_id = run_id
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| {
-                task.metadata
-                    .get("_vv_agent_run_id")
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.trim().is_empty())
-                    .map(str::to_string)
-            })
-            .unwrap_or_else(|| task.task_id.clone());
-        let idempotency_key = format!("{run_id}:cycle:{cycle_index}");
-        let mut envelope = Self {
-            schema_version: DISTRIBUTED_RUN_SCHEMA_VERSION.to_string(),
-            job_id: idempotency_key.clone(),
-            run_id,
-            task,
-            budget_limits,
-            recipe,
-            cycle_name: cycle_name.into(),
-            cycle_index,
-            idempotency_key,
-            deadline_unix_ms,
-            lease_duration_ms,
-            root_run_id: None,
-            trace_id: None,
-            run_definition_schema: None,
-            run_definition_digest: None,
-            claim_mode: None,
-            resume_attempt: None,
-            checkpoint_config: None,
-        };
-        envelope.restore_v1_metadata_denials()?;
-        envelope.validate()?;
-        Ok(envelope)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn enable_checkpoint_v2(
-        mut self,
-        root_run_id: impl Into<String>,
-        trace_id: impl Into<String>,
-        run_definition_digest: impl Into<String>,
-        claim_mode: ClaimMode,
-        resume_attempt: u64,
-        checkpoint_config: DistributedCheckpointConfig,
-    ) -> Result<Self, String> {
-        self.schema_version = DISTRIBUTED_RUN_SCHEMA_VERSION_V2.to_string();
-        self.root_run_id = Some(root_run_id.into());
-        self.trace_id = Some(trace_id.into());
-        self.run_definition_schema = Some(RUN_DEFINITION_SCHEMA.to_string());
-        self.run_definition_digest = Some(run_definition_digest.into());
-        self.claim_mode = Some(claim_mode);
-        self.resume_attempt = Some(resume_attempt);
-        self.checkpoint_config = Some(checkpoint_config);
-        self.validate()?;
-        Ok(self)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn for_checkpoint_cycle(
         task: AgentTask,
         recipe: RuntimeRecipe,
         cycle_index: u32,
@@ -586,7 +506,7 @@ impl DistributedRunEnvelope {
             .unwrap_or_else(|| task.task_id.clone());
         let idempotency_key = format!("{run_id}:cycle:{cycle_index}");
         let envelope = Self {
-            schema_version: DISTRIBUTED_RUN_SCHEMA_VERSION_V2.to_string(),
+            schema_version: DISTRIBUTED_RUN_SCHEMA_VERSION.to_string(),
             job_id: idempotency_key.clone(),
             run_id,
             task,
@@ -597,33 +517,26 @@ impl DistributedRunEnvelope {
             idempotency_key,
             deadline_unix_ms,
             lease_duration_ms,
-            root_run_id: Some(root_run_id.into()),
-            trace_id: Some(trace_id.into()),
-            run_definition_schema: Some(RUN_DEFINITION_SCHEMA.to_string()),
-            run_definition_digest: Some(run_definition_digest.into()),
-            claim_mode: Some(claim_mode),
-            resume_attempt: Some(resume_attempt),
-            checkpoint_config: Some(checkpoint_config),
+            root_run_id: root_run_id.into(),
+            trace_id: trace_id.into(),
+            run_definition_schema: RUN_DEFINITION_SCHEMA.to_string(),
+            run_definition_digest: run_definition_digest.into(),
+            claim_mode,
+            resume_attempt,
+            checkpoint_config,
         };
         envelope.validate()?;
         Ok(envelope)
     }
 
-    pub fn is_checkpoint_v2(&self) -> bool {
-        self.schema_version == DISTRIBUTED_RUN_SCHEMA_VERSION_V2
-    }
-
     pub fn validate(&self) -> Result<(), String> {
-        match self.schema_version.as_str() {
-            DISTRIBUTED_RUN_SCHEMA_VERSION_V1 => self.validate_v1_fields()?,
-            DISTRIBUTED_RUN_SCHEMA_VERSION_V2 => self.validate_v2_fields()?,
-            _ => {
-                return Err(format!(
-                    "unsupported distributed schema_version: {}",
-                    self.schema_version
-                ));
-            }
+        if self.schema_version != DISTRIBUTED_RUN_SCHEMA_VERSION {
+            return Err(format!(
+                "unsupported distributed schema_version: {}",
+                self.schema_version
+            ));
         }
+        self.validate_current_fields()?;
         for (field_name, value) in [
             ("job_id", self.job_id.as_str()),
             ("run_id", self.run_id.as_str()),
@@ -649,85 +562,26 @@ impl DistributedRunEnvelope {
         Ok(())
     }
 
-    fn validate_v1_fields(&self) -> Result<(), String> {
-        if self.root_run_id.is_some()
-            || self.trace_id.is_some()
-            || self.run_definition_schema.is_some()
-            || self.run_definition_digest.is_some()
-            || self.claim_mode.is_some()
-            || self.resume_attempt.is_some()
-            || self.checkpoint_config.is_some()
-            || self.recipe.capabilities.checkpoint_store_ref.is_some()
-            || self
-                .recipe
-                .capabilities
-                .checkpoint_event_store_ref
-                .is_some()
-            || !self
-                .recipe
-                .capabilities
-                .checkpoint_extension_refs
-                .is_empty()
-            || !self.recipe.capabilities.after_cycle_hook_refs.is_empty()
-            || self
-                .recipe
-                .capabilities
-                .reconciliation_provider_ref
-                .is_some()
-        {
-            return Err("distributed v1 envelope cannot carry checkpoint v2 fields".to_string());
-        }
-        Ok(())
-    }
-
-    fn restore_v1_metadata_denials(&mut self) -> Result<(), String> {
-        if self.schema_version != DISTRIBUTED_RUN_SCHEMA_VERSION_V1 {
-            return Ok(());
-        }
-        let mut effective_policy = self.recipe.capabilities.tool_policy.metadata_denials()?;
-        let projected_policy = projected_metadata_denials(&self.task)?;
-        effective_policy.extend_metadata_denials(&projected_policy);
-        self.recipe
-            .capabilities
-            .tool_policy
-            .set_metadata_denials(&effective_policy);
-        Ok(())
-    }
-
-    fn validate_v2_fields(&self) -> Result<(), String> {
+    fn validate_current_fields(&self) -> Result<(), String> {
         for (field_name, value) in [
-            ("root_run_id", self.root_run_id.as_deref()),
-            ("trace_id", self.trace_id.as_deref()),
+            ("root_run_id", self.root_run_id.as_str()),
+            ("trace_id", self.trace_id.as_str()),
         ] {
-            let value = value.ok_or_else(|| format!("distributed v2 requires {field_name}"))?;
             require_non_empty(value, &format!("distributed envelope {field_name}"))?;
         }
-        if self.run_definition_schema.as_deref() != Some(RUN_DEFINITION_SCHEMA) {
+        if self.run_definition_schema != RUN_DEFINITION_SCHEMA {
             return Err("checkpoint_definition_schema_unsupported".to_string());
         }
-        let digest = self
-            .run_definition_digest
-            .as_deref()
-            .ok_or_else(|| "distributed v2 requires run_definition_digest".to_string())?;
-        validate_sha256(digest, "run_definition_digest").map_err(|error| error.to_string())?;
-        if self.claim_mode.is_none() {
-            return Err("checkpoint_claim_mode_invalid".to_string());
-        }
-        let resume_attempt = self
-            .resume_attempt
-            .ok_or_else(|| "distributed v2 requires resume_attempt".to_string())?;
-        if resume_attempt == 0 || resume_attempt > MAX_WIRE_INTEGER {
+        validate_sha256(&self.run_definition_digest, "run_definition_digest")
+            .map_err(|error| error.to_string())?;
+        if self.resume_attempt == 0 || self.resume_attempt > MAX_WIRE_INTEGER {
             return Err("checkpoint_resume_attempt_invalid".to_string());
         }
-        let config = self
-            .checkpoint_config
-            .as_ref()
-            .ok_or_else(|| "distributed v2 requires checkpoint_config".to_string())?;
-        config.validate()?;
+        self.checkpoint_config.validate()?;
         if self.recipe.capabilities.checkpoint_store_ref.is_none() {
-            return Err("distributed v2 requires checkpoint_store_ref".to_string());
+            return Err("distributed run requires checkpoint_store_ref".to_string());
         }
-        for namespace in &config.required_extension_namespaces {
+        for namespace in &self.checkpoint_config.required_extension_namespaces {
             if !self
                 .recipe
                 .capabilities
@@ -745,7 +599,7 @@ impl DistributedRunEnvelope {
             .is_some_and(|value| value > MAX_WIRE_INTEGER)
             || self.lease_duration_ms > MAX_WIRE_INTEGER
         {
-            return Err("distributed v2 lease values must be JSON-safe integers".to_string());
+            return Err("distributed lease values must be JSON-safe integers".to_string());
         }
         Ok(())
     }
@@ -773,94 +627,43 @@ impl DistributedRunEnvelope {
     }
 
     pub fn to_dict(&self) -> Value {
-        let is_checkpoint_v2 = self.is_checkpoint_v2();
-        let mut task = self.task.clone();
-        let mut recipe = self.recipe.to_dict();
-        if !is_checkpoint_v2 {
-            if let Ok(policy) = self.recipe.capabilities.tool_policy.metadata_denials() {
-                let _ = merge_projected_metadata_denials(&mut task, &policy);
-            }
-            let tool_policy = recipe
-                .get_mut("capabilities")
-                .and_then(Value::as_object_mut)
-                .and_then(|capabilities| capabilities.get_mut("tool_policy"))
-                .and_then(Value::as_object_mut)
-                .expect("runtime recipe tool policy is always an object");
-            for field in [
-                "denied_side_effects",
-                "denied_capability_tags",
-                "deny_terminal_tools",
-                "denied_cost_dimensions",
-            ] {
-                tool_policy.remove(field);
-            }
-        }
         let mut value = serde_json::json!({
             "schema_version": self.schema_version,
             "job_id": self.job_id,
             "run_id": self.run_id,
-            "task": task.to_dict(),
+            "task": self.task.to_dict(),
             "budget_limits": self.budget_limits,
-            "recipe": recipe,
+            "recipe": self.recipe.to_dict(),
             "cycle_name": self.cycle_name,
             "cycle_index": self.cycle_index,
             "idempotency_key": self.idempotency_key,
             "deadline_unix_ms": self.deadline_unix_ms,
             "lease_duration_ms": self.lease_duration_ms,
+            "root_run_id": self.root_run_id,
+            "trace_id": self.trace_id,
+            "run_definition_schema": self.run_definition_schema,
+            "run_definition_digest": self.run_definition_digest,
+            "claim_mode": self.claim_mode,
+            "resume_attempt": self.resume_attempt,
+            "checkpoint_config": self.checkpoint_config,
         });
-        if is_checkpoint_v2 {
-            let object = value
-                .as_object_mut()
-                .expect("distributed envelope is always an object");
-            object.insert(
-                "root_run_id".to_string(),
-                serde_json::to_value(&self.root_run_id)
-                    .expect("distributed identity always serializes"),
-            );
-            object.insert(
-                "trace_id".to_string(),
-                serde_json::to_value(&self.trace_id)
-                    .expect("distributed identity always serializes"),
-            );
-            object.insert(
-                "run_definition_schema".to_string(),
-                serde_json::to_value(&self.run_definition_schema)
-                    .expect("run definition schema always serializes"),
-            );
-            object.insert(
-                "run_definition_digest".to_string(),
-                serde_json::to_value(&self.run_definition_digest)
-                    .expect("run definition digest always serializes"),
-            );
-            object.insert(
-                "claim_mode".to_string(),
-                serde_json::to_value(self.claim_mode).expect("claim mode always serializes"),
-            );
-            object.insert(
-                "resume_attempt".to_string(),
-                serde_json::to_value(self.resume_attempt)
-                    .expect("resume attempt always serializes"),
-            );
-            object.insert(
-                "checkpoint_config".to_string(),
-                serde_json::to_value(&self.checkpoint_config)
-                    .expect("checkpoint config always serializes"),
-            );
-            normalize_integral_float(
-                object
-                    .get_mut("recipe")
-                    .and_then(Value::as_object_mut)
-                    .expect("runtime recipe is always an object"),
-                "timeout_seconds",
-            );
-            if let Some(capabilities) = object
+        let object = value
+            .as_object_mut()
+            .expect("distributed envelope is always an object");
+        normalize_integral_float(
+            object
                 .get_mut("recipe")
                 .and_then(Value::as_object_mut)
-                .and_then(|recipe| recipe.get_mut("capabilities"))
-                .and_then(Value::as_object_mut)
-            {
-                normalize_integral_float(capabilities, "approval_timeout_seconds");
-            }
+                .expect("runtime recipe is always an object"),
+            "timeout_seconds",
+        );
+        if let Some(capabilities) = object
+            .get_mut("recipe")
+            .and_then(Value::as_object_mut)
+            .and_then(|recipe| recipe.get_mut("capabilities"))
+            .and_then(Value::as_object_mut)
+        {
+            normalize_integral_float(capabilities, "approval_timeout_seconds");
         }
         value
     }
@@ -883,37 +686,21 @@ impl DistributedRunEnvelope {
             .get("schema_version")
             .and_then(Value::as_str)
             .ok_or_else(|| "unsupported distributed schema_version".to_string())?;
-        if !matches!(
-            schema_version,
-            DISTRIBUTED_RUN_SCHEMA_VERSION_V1 | DISTRIBUTED_RUN_SCHEMA_VERSION_V2
-        ) {
+        if schema_version != DISTRIBUTED_RUN_SCHEMA_VERSION {
             return Err(format!(
                 "unsupported distributed schema_version: {schema_version}"
             ));
         }
-        if schema_version == DISTRIBUTED_RUN_SCHEMA_VERSION_V2 {
-            let has_v2_shape = [
-                "root_run_id",
-                "trace_id",
-                "run_definition_schema",
-                "run_definition_digest",
-                "claim_mode",
-                "resume_attempt",
-                "checkpoint_config",
-            ]
-            .iter()
-            .any(|field| payload.get(*field).is_some());
-            if !has_v2_shape {
-                return Err(format!(
-                    "unsupported distributed schema_version: {schema_version}"
-                ));
-            }
-            validate_v2_discriminator_fields(payload)?;
-        }
-        let mut envelope: Self =
+        validate_current_discriminator_fields(payload)?;
+        let envelope: Self =
             serde_json::from_value(payload.clone()).map_err(|error| error.to_string())?;
-        envelope.restore_v1_metadata_denials()?;
         envelope.validate()?;
+        if envelope.to_dict() != *payload {
+            return Err(
+                "distributed envelope must use the complete canonical current wire shape"
+                    .to_string(),
+            );
+        }
         Ok(envelope)
     }
 }

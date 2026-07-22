@@ -411,7 +411,7 @@ impl Runner {
             output_type_validation_error,
         );
         agent_result = validated_result;
-        let mut resumed = match self.finalize_approval_terminal(
+        let resumed = match self.finalize_approval_terminal(
             source,
             resume_context,
             &approval.interruption_id,
@@ -430,45 +430,10 @@ impl Runner {
         if let Some(error) = output_validation_error {
             return Some(Err(error));
         }
-        let session_id = effective_session_id(&self.default_run_config, &resume_context.config);
         let Some(handoff) = extract_handoff(resumed.result()) else {
             return Some(Ok(resumed));
         };
-
         let event_collector = Arc::new(Mutex::new(resumed.events().to_vec()));
-        let mut legacy_event = RunEvent::new(
-            resumed.run_id(),
-            resumed.trace_id(),
-            &handoff.from_agent,
-            Some(handoff.cycle_index),
-            RunEventPayload::Handoff {
-                source_agent: handoff.from_agent.clone(),
-                target_agent: handoff.to_agent.clone(),
-                tool_call_id: handoff.tool_call_id.clone(),
-            },
-        );
-        if let Some(session_id) = session_id.as_deref() {
-            legacy_event = legacy_event.with_session_id(session_id);
-        }
-        for (key, value) in &handoff.metadata {
-            legacy_event = legacy_event.with_metadata(key, value.clone());
-        }
-        let (event_store, event_store_fail_closed) =
-            effective_event_store(&self.default_run_config, &resume_context.config);
-        if let Err(error) = capture_event(
-            Some(&event_collector),
-            None,
-            event_store.as_ref(),
-            event_store_fail_closed,
-            legacy_event,
-        ) {
-            return Some(Err(error));
-        }
-        let events = event_collector
-            .lock()
-            .map(|events| events.clone())
-            .unwrap_or_default();
-        resumed = resumed.with_events(events);
         let initial_outcome = SingleRunOutcome {
             result: resumed,
             handoff: Some(handoff),
@@ -649,20 +614,20 @@ fn approval_lifecycle_run_event(
                 crate::types::ToolResultStatus::Running => ToolStatus::Running,
                 crate::types::ToolResultStatus::PendingCompress => ToolStatus::PendingCompress,
             };
-            RunEvent::tool_call_completed(
+            RunEvent::new(
                 run_id,
                 trace_id,
                 agent_name,
                 Some(cycle_index),
-                result.tool_call_id.clone(),
-                call.name,
-                status,
-            )
-            .with_tool_completion_observations(
-                result.directive,
-                result.error_code.as_deref(),
-                execution_started,
-                duration_ms,
+                RunEventPayload::ToolCallCompleted {
+                    tool_call_id: result.tool_call_id.clone(),
+                    tool_name: call.name,
+                    status,
+                    directive: result.directive,
+                    error_code: result.error_code.clone(),
+                    execution_started,
+                    duration_ms,
+                },
             )
             .with_tool_metadata(tool_metadata.as_ref())
             .with_metadata(

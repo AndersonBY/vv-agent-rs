@@ -16,7 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .model_settings(
                 ModelSettings::builder()
                     .temperature(0.3)
-                    .max_output_tokens(1200)
+                    .max_tokens(1200)
                     .build(),
             )
             .max_cycles(8)

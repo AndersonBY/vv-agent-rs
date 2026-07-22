@@ -9,7 +9,7 @@ use crate::runtime::sub_agent_sessions::{
     SubAgentSession, SubAgentSessionListener, SubAgentSessionUnsubscribe,
 };
 use crate::runtime::sub_task_manager::SubTaskTurnSnapshot;
-use crate::runtime::{CancellationToken, RuntimeEventHandler, RuntimeLogHandler, StreamCallback};
+use crate::runtime::{CancellationToken, RunEventHandler};
 use crate::tools::ToolPolicy;
 use crate::tools::ToolRegistry;
 use crate::types::{AgentTask, SubTaskOutcome};
@@ -40,9 +40,7 @@ pub(in crate::runtime::sub_agents) struct RuntimeSubAgentSession {
     settings_file: Option<PathBuf>,
     default_backend: Option<String>,
     parent_cancellation_token: Option<CancellationToken>,
-    stream_callback: Option<StreamCallback>,
-    parent_log_handler: Option<RuntimeLogHandler>,
-    parent_event_handler: Option<RuntimeEventHandler>,
+    event_handler: Option<RunEventHandler>,
     parent_execution_context: Option<ExecutionContext>,
     model_provider: Option<Arc<dyn ModelProvider>>,
     run_model_ref: ModelRef,
@@ -79,9 +77,7 @@ impl RuntimeSubAgentSession {
             settings_file: parts.settings_file,
             default_backend: parts.default_backend,
             parent_cancellation_token: parts.parent_cancellation_token,
-            stream_callback: parts.stream_callback,
-            parent_log_handler: parts.parent_log_handler,
-            parent_event_handler: parts.parent_event_handler,
+            event_handler: parts.event_handler,
             parent_execution_context: parts.parent_execution_context,
             model_provider: parts.model_provider,
             run_model_ref: parts.run_model_ref,

@@ -12,7 +12,7 @@ use vv_agent::{
     ToolDirective, ToolOrchestrator, ToolOutput, ToolPolicy, ToolResultStatus, ToolRunOptions,
 };
 
-const CONTRACT_JSON: &str = include_str!("fixtures/parity/approval_tool_policy_v1.json");
+const CONTRACT_JSON: &str = include_str!("fixtures/parity/approval_tool_policy.json");
 
 #[derive(Debug, Deserialize)]
 struct Contract {
@@ -86,7 +86,7 @@ struct PolicyCase {
 
 #[derive(Debug, Deserialize)]
 struct ResultShape {
-    status: String,
+    status_code: String,
     directive: String,
     content_keys: Vec<String>,
     metadata_keys: Vec<String>,
@@ -144,7 +144,7 @@ impl ApprovalProvider for FailingApprovalProvider {
 #[tokio::test]
 async fn runner_approval_results_match_the_canonical_fixture() {
     let contract = contract();
-    assert_eq!(contract.contract, "approval_tool_policy_v1");
+    assert_eq!(contract.contract, "approval_tool_policy");
     let request_id_pattern = Regex::new(&contract.request_id.regex).expect("request id regex");
     let mut request_ids = Vec::new();
 
@@ -248,19 +248,15 @@ async fn runner_approval_results_match_the_canonical_fixture() {
                     request_id,
                     tool_call_id,
                     tool_name,
-                    approved,
+                    action,
                 } => {
                     event_names.push("approval_resolved".to_string());
                     assert_eq!(tool_call_id, &contract.tool_call.id);
                     assert_eq!(tool_name, &contract.tool_call.name);
-                    assert!(!approved);
+                    assert_eq!(action.as_str(), decision_case.action);
                     assert_eq!(
                         sorted_keys(event.metadata()),
                         sorted_values(contract.approval.resolved_event_metadata_keys.clone())
-                    );
-                    assert_eq!(
-                        event.metadata().get("action"),
-                        Some(&Value::String(decision_case.action.clone()))
                     );
                     assert_eq!(
                         event.metadata().get("reason"),
@@ -395,6 +391,13 @@ async fn orchestrator_policy_precedence_matches_the_canonical_fixture() {
     let executions = Arc::new(AtomicUsize::new(0));
     let executions_for_tool = executions.clone();
     let tool = FunctionTool::builder(contract.tool_call.name.clone())
+        .json_schema(json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"}
+            },
+            "required": ["path"]
+        }))
         .handler(move |_context, _arguments: Value| {
             let executions = executions_for_tool.clone();
             async move {
@@ -469,6 +472,13 @@ fn contract() -> Contract {
 fn approval_runner(contract: &Contract, executions: Arc<AtomicUsize>) -> (Runner, Agent) {
     let executions_for_tool = executions.clone();
     let dangerous = FunctionTool::builder(contract.tool_call.name.clone())
+        .json_schema(json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"}
+            },
+            "required": ["path"]
+        }))
         .needs_approval(true)
         .handler(move |_context, _arguments: Value| {
             let executions = executions_for_tool.clone();
@@ -521,7 +531,7 @@ fn contract_tool_call(contract: &Contract) -> ToolCall {
 }
 
 fn assert_result_shape(result: &vv_agent::ToolExecutionResult, shape: &ResultShape) {
-    assert_eq!(shape.status, "error");
+    assert_eq!(shape.status_code, "ERROR");
     assert_eq!(shape.directive, "continue");
     assert_eq!(result.status, ToolResultStatus::Error);
     assert_eq!(result.directive, ToolDirective::Continue);

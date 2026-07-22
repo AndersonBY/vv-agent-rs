@@ -49,8 +49,9 @@ fn provider_resolve_and_client_panics_emit_one_failed_completion_and_cleanup() {
     ] {
         let lifecycle = Arc::new(Mutex::new(Vec::<(String, BTreeMap<String, Value>)>::new()));
         let lifecycle_for_handler = lifecycle.clone();
-        let event_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-            if matches!(name, "sub_run_started" | "sub_run_completed") {
+        let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+            let (name, payload) = super::typed_event_parts(run_event);
+            if matches!(name.as_str(), "sub_run_started" | "sub_run_completed") {
                 lifecycle_for_handler
                     .lock()
                     .expect("provider panic lifecycle")
@@ -97,7 +98,7 @@ fn provider_resolve_and_client_panics_emit_one_failed_completion_and_cleanup() {
             .run_with_controls(
                 parent,
                 RuntimeRunControls {
-                    log_handler: Some(event_handler),
+                    event_handler: Some(event_handler),
                     model_provider: Some(provider),
                     sub_task_manager: Some(manager.clone()),
                     ..RuntimeRunControls::default()
@@ -141,9 +142,6 @@ fn provider_resolve_and_client_panics_emit_one_failed_completion_and_cleanup() {
             "{label}"
         );
         assert_eq!(lifecycle[1].1["status"], "failed", "{label}");
-        assert_eq!(
-            lifecycle[0].1["child_run_id"],
-            lifecycle[1].1["child_run_id"]
-        );
+        assert_eq!(lifecycle[0].1["run_id"], lifecycle[1].1["run_id"]);
     }
 }

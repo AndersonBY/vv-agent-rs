@@ -5,9 +5,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{
-    coerce_truthy_arg, path_escapes_workspace_error, replace_n, stringify_tool_arg,
-};
+use crate::tools::common::{bool_arg, path_escapes_workspace_error, replace_n, string_arg};
 use crate::types::{Metadata, ToolArguments, ToolExecutionResult, ToolResultStatus};
 
 use super::workspace_backend_error;
@@ -50,7 +48,7 @@ pub(crate) fn edit_file_tool() -> ToolSpec {
                     Metadata::from([("missing_arguments".to_string(), json!(missing_arguments))]),
                 );
             }
-            let path = stringify_tool_arg(arguments.get("path"), "");
+            let path = string_arg(arguments.get("path"), "");
             if let Err(error) = context.resolve_workspace_path(&path) {
                 return path_escapes_workspace_error(error);
             }
@@ -66,7 +64,7 @@ pub(crate) fn edit_file_tool() -> ToolSpec {
                 }
                 Err(error) => return workspace_backend_error(error),
             }
-            let old_string = stringify_tool_arg(arguments.get("old_string"), "");
+            let old_string = string_arg(arguments.get("old_string"), "");
             if old_string.is_empty() {
                 return workspace_tool_error(
                     "`old_string` cannot be empty.",
@@ -74,7 +72,7 @@ pub(crate) fn edit_file_tool() -> ToolSpec {
                     &path,
                 );
             }
-            let new_string = stringify_tool_arg(arguments.get("new_string"), "");
+            let new_string = string_arg(arguments.get("new_string"), "");
             if old_string == new_string {
                 return workspace_tool_error(
                     "No changes: old_string and new_string are identical.",
@@ -82,7 +80,7 @@ pub(crate) fn edit_file_tool() -> ToolSpec {
                     &path,
                 );
             }
-            let replace_all = coerce_truthy_arg(arguments.get("replace_all"), false);
+            let replace_all = bool_arg(arguments.get("replace_all"), false);
 
             match backend.read_bytes(&path) {
                 Ok(raw) => {

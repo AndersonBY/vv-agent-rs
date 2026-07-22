@@ -28,7 +28,7 @@ CLI / SDK / embedding application
   -> RunResult / AgentResult
 ```
 
-The backward-compatible default is tool-driven: `task_finish` finishes and
+The default is tool-driven: `task_finish` finishes and
 `ask_user` waits for input. `Agent` and `RunConfig` can explicitly select a
 no-tool finish or wait policy. The runtime applies that control without
 classifying assistant text or inferring task-specific success.
@@ -44,12 +44,12 @@ events are recorded before the matching raw observer is called, and raw
 observer panics are isolated from runtime decisions; event-store failure policy
 remains a separate host choice.
 
-Token accounting keeps provider truth separate from compatibility values.
+Token accounting keeps canonical observations separate from native provider fields.
 `TokenUsage::usage_source` identifies provider-reported, estimated, or missing
 totals. `CacheUsage` distinguishes an explicit zero cache read from missing
 accounting and adapter-declared lack of support. `TaskTokenUsage` exposes a
-cache total only when every included cycle reports that metric; legacy numeric
-fields remain available but do not prove cache-accounting availability.
+cache total only when every included cycle reports that metric. Canonical token
+totals do not prove cache-accounting availability.
 
 ## Module Map
 
@@ -104,7 +104,8 @@ Workers resolve all referenced capabilities before claiming state, then use a
 revision/token lease with heartbeat renewal and CAS commit. The scheduler
 accepts a result only after reconciling it with the durable checkpoint;
 terminal checkpoints are immutable and replayable until acknowledged. SQLite
-uses WAL, a bounded busy timeout, and in-place legacy-column migration.
+uses WAL, a bounded busy timeout, and an exact current schema; stale,
+unversioned, and malformed schemas are rejected rather than migrated.
 Before entering the runtime cycle, a worker must complete one successful lease
 renewal; initial and renewed lease expiry never extends beyond the job deadline.
 Each periodic wait is derived from that renewal's actual deadline-clamped lease,
@@ -242,10 +243,9 @@ never become typed metadata.
 
 The two label collections trim only tab, LF, CR, and ASCII space, reject blank
 or longer-than-128-code-point labels, deduplicate exact matches, sort by UTF-16
-code units, and reject more than 32 normalized entries. The existing
-`FunctionTool::builder(...).idempotency(...)` input remains a compatibility
-alias. A typed `Unknown` inherits a non-unknown legacy value; conflicting
-non-unknown values fail construction with `tool_metadata_invalid`.
+code units, and reject more than 32 normalized entries. Tool idempotency is
+declared only through `ToolMetadata.idempotency`; there is no second builder
+field or merge rule.
 
 Typed metadata is host-visible only. `ToolRegistry::list_openai_schemas` still
 projects `ToolSpec::schema`, so declarations do not alter function names,

@@ -41,18 +41,13 @@ fn model_settings_compact_wire_matches_the_python_contract() {
         serde_json::from_value::<ModelSettings>(payload).expect("round trip"),
         settings
     );
-    assert_eq!(
-        serde_json::from_value::<ModelSettings>(json!({"max_output_tokens": 256}))
-            .expect("legacy alias")
-            .max_tokens,
-        Some(256)
-    );
 }
 
 #[test]
 fn model_settings_reject_unknown_fields_and_invalid_ranges() {
     for payload in [
         json!({"unknown": true}),
+        json!({"max_output_tokens": 256}),
         json!({"retry": {"unknown": true}}),
         json!({"max_tokens": 0}),
         json!({"timeout_seconds": 0}),

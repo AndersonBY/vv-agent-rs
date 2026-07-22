@@ -13,7 +13,7 @@ pub(super) fn map_memory_compact_started(
     payload: &BTreeMap<String, Value>,
     context: &RuntimeEventContext,
 ) -> Option<RunEvent> {
-    let event = RunEvent::memory_compact_started_observed(
+    let event = RunEvent::memory_compact_started(
         &context.run_id,
         &context.trace_id,
         &context.agent_name,
@@ -40,7 +40,7 @@ pub(super) fn map_memory_compact_completed(
     payload: &BTreeMap<String, Value>,
     context: &RuntimeEventContext,
 ) -> Option<RunEvent> {
-    let event = RunEvent::memory_compact_completed_observed(
+    let event = RunEvent::memory_compact_completed(
         &context.run_id,
         &context.trace_id,
         &context.agent_name,

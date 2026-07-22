@@ -1,5 +1,6 @@
 use serde_json::{json, Map, Value};
-use vv_agent::{AgentTask, SubAgentConfig};
+use vv_agent::types::AgentTask;
+use vv_agent::SubAgentConfig;
 
 #[test]
 fn validation_messages_and_codes_match_shared_fixture() {
@@ -184,29 +185,20 @@ fn sub_agent_config_from_wire_rejects_shared_type_and_range_corpus() {
 }
 
 #[test]
-fn configured_sub_agent_wire_ignores_unknown_top_level_fields() {
+fn configured_sub_agent_wire_rejects_unknown_top_level_fields() {
     let fixture = super::contract();
-    assert_eq!(fixture["validation"]["unknown_top_level_fields"], "ignore");
-    let config: SubAgentConfig = serde_json::from_value(json!({
+    assert_eq!(fixture["validation"]["unknown_top_level_fields"], "reject");
+    assert!(serde_json::from_value::<SubAgentConfig>(json!({
         "model": "child-model",
-        "backned": "ignored",
+        "backned": "invalid",
     }))
-    .expect("unknown config field is forward-compatible");
-    let task: AgentTask = serde_json::from_value(json!({
+    .is_err());
+    assert!(serde_json::from_value::<AgentTask>(json!({
         "task_id": "task",
         "model": "model",
         "system_prompt": "system",
         "user_prompt": "user",
-        "runtime_metadata": {"trace_id": "legacy"},
+        "runtime_metadata": {"trace_id": "invalid"},
     }))
-    .expect("removed task field is ignored");
-
-    assert!(serde_json::to_value(config)
-        .expect("serialize config")
-        .get("backned")
-        .is_none());
-    assert!(serde_json::to_value(task)
-        .expect("serialize task")
-        .get("runtime_metadata")
-        .is_none());
+    .is_err());
 }

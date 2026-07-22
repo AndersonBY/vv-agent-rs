@@ -41,38 +41,6 @@ fn todo_handlers_expose_agent_read_and_write_functions() {
 }
 
 #[test]
-fn handler_common_helpers_match_agent_module() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let mut context = ToolContext::new(workspace.path());
-    let common = vv_agent::tools::handlers::common::to_json(&json!({"text": "你好"}));
-    assert_eq!(common, r#"{"text":"你好"}"#);
-    assert!(vv_agent::tools::handlers::common::is_string_keyed_dict(
-        &json!({"a": 1})
-    ));
-    assert!(!vv_agent::tools::handlers::common::is_string_keyed_dict(
-        &json!(["a"])
-    ));
-
-    let todos = vv_agent::tools::handlers::common::get_todo_list(&mut context.shared_state);
-    todos.push(json!({"title": "existing", "done": true}));
-    assert_eq!(
-        context.shared_state["todo_list"][0]["title"],
-        json!("existing")
-    );
-
-    let normalized = vv_agent::tools::handlers::common::normalize_todo_items(&json!([
-        {"title": "  keep  ", "done": 1},
-        {"title": " "},
-        "skip"
-    ]));
-    assert_eq!(normalized, vec![json!({"title": "keep", "done": true})]);
-
-    let resolved = vv_agent::tools::handlers::common::resolve_workspace_path(&context, "notes.md")
-        .expect("resolved path");
-    assert!(resolved.ends_with("notes.md"));
-}
-
-#[test]
 fn todo_write_updates_shared_state_and_enforces_single_in_progress() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
@@ -140,21 +108,24 @@ fn todo_write_rejects_invalid_payloads() {
         .expect("todo_write");
 
     assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.error_code.as_deref(), Some("invalid_todos_payload"));
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
 
     let result = registry
         .execute(
             &ToolCall::new(
                 "todo_missing_title",
                 "todo_write",
-                BTreeMap::from([("todos".to_string(), json!([{"status": "pending"}]))]),
+                BTreeMap::from([(
+                    "todos".to_string(),
+                    json!([{"status": "pending", "priority": "medium"}]),
+                )]),
             ),
             &mut context,
         )
         .expect("todo_write");
 
     assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.error_code.as_deref(), Some("todo_title_required"));
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
 
     let result = registry
         .execute(
@@ -163,7 +134,7 @@ fn todo_write_rejects_invalid_payloads() {
                 "todo_write",
                 BTreeMap::from([(
                     "todos".to_string(),
-                    json!([{"title": "step", "status": "blocked"}]),
+                    json!([{"title": "step", "status": "blocked", "priority": "medium"}]),
                 )]),
             ),
             &mut context,
@@ -171,7 +142,7 @@ fn todo_write_rejects_invalid_payloads() {
         .expect("todo_write");
 
     assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.error_code.as_deref(), Some("invalid_todo_status"));
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
 }
 
 #[test]
@@ -185,7 +156,14 @@ fn todo_write_generates_agent_ids_timestamps_and_preserves_created_at() {
             &ToolCall::new(
                 "todo_create",
                 "todo_write",
-                BTreeMap::from([("todos".to_string(), json!([{"title": " Draft plan " }]))]),
+                BTreeMap::from([(
+                    "todos".to_string(),
+                    json!([{
+                        "title": " Draft plan ",
+                        "status": "pending",
+                        "priority": "medium"
+                    }]),
+                )]),
             ),
             &mut context,
         )
@@ -243,36 +221,62 @@ fn todo_write_generates_agent_ids_timestamps_and_preserves_created_at() {
 }
 
 #[test]
-fn todo_write_coerces_scalar_item_fields() {
+fn control_tools_reject_schema_invalid_argument_types() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
+    let cases = [
+        (
+            "todo_write",
+            BTreeMap::from([(
+                "todos".to_string(),
+                json!([{
+                    "id": false,
+                    "title": "step",
+                    "status": "pending",
+                    "priority": "medium"
+                }]),
+            )]),
+            "/todos/0/id",
+        ),
+        (
+            "task_finish",
+            BTreeMap::from([("require_all_todos_completed".to_string(), json!("false"))]),
+            "/require_all_todos_completed",
+        ),
+        (
+            "ask_user",
+            BTreeMap::from([("question".to_string(), json!(123))]),
+            "/question",
+        ),
+        (
+            "ask_user",
+            BTreeMap::from([
+                ("question".to_string(), json!("Choose")),
+                ("allow_custom_options".to_string(), json!("false")),
+            ]),
+            "/allow_custom_options",
+        ),
+        (
+            "activate_skill",
+            BTreeMap::from([("skill_name".to_string(), json!(123))]),
+            "/skill_name",
+        ),
+    ];
 
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "todo_scalar_fields",
-                "todo_write",
-                BTreeMap::from([(
-                    "todos".to_string(),
-                    json!([{
-                        "id": false,
-                        "title": true,
-                        "status": "pending",
-                        "priority": "medium"
-                    }]),
-                )]),
-            ),
-            &mut context,
-        )
-        .expect("todo_write");
-
-    assert_eq!(result.status, ToolResultStatus::Success);
-    let payload: serde_json::Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["todos"][0]["id"], "False");
-    assert_eq!(payload["todos"][0]["title"], "True");
-    assert_eq!(context.shared_state["todo_list"][0]["id"], "False");
-    assert_eq!(context.shared_state["todo_list"][0]["title"], "True");
+    for (tool_name, arguments, instance_path) in cases {
+        let result = registry
+            .execute(
+                &ToolCall::new(format!("{tool_name}_invalid"), tool_name, arguments),
+                &mut context,
+            )
+            .expect("tool validation");
+        let payload: serde_json::Value = serde_json::from_str(&result.content).expect("payload");
+        assert_eq!(result.status, ToolResultStatus::Error);
+        assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
+        assert_eq!(payload["issues"][0]["instance_path"], instance_path);
+        assert_eq!(payload["issues"][0]["rule"], "type");
+    }
 }
 
 #[test]
@@ -312,61 +316,6 @@ fn task_finish_blocks_when_todos_are_incomplete() {
 }
 
 #[test]
-fn task_finish_uses_json_truthiness_for_require_all_done() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-
-    registry
-        .execute(
-            &ToolCall::new(
-                "todo_1",
-                "todo_write",
-                BTreeMap::from([(
-                    "todos".to_string(),
-                    json!([{"title": "step1", "status": "pending", "priority": "medium"}]),
-                )]),
-            ),
-            &mut context,
-        )
-        .expect("todo_write");
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "finish_truthy",
-                "task_finish",
-                BTreeMap::from([
-                    ("message".to_string(), json!("done")),
-                    ("require_all_todos_completed".to_string(), json!("false")),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("task_finish");
-
-    assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.error_code.as_deref(), Some("todo_incomplete"));
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "finish_falsey_zero",
-                "task_finish",
-                BTreeMap::from([
-                    ("message".to_string(), json!("done")),
-                    ("require_all_todos_completed".to_string(), json!(0)),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("task_finish");
-
-    assert_eq!(result.status, ToolResultStatus::Success);
-    assert_eq!(result.directive, ToolDirective::Finish);
-}
-
-#[test]
 fn ask_user_returns_agent_selection_metadata_and_dedupes_options() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
@@ -396,89 +345,6 @@ fn ask_user_returns_agent_selection_metadata_and_dedupes_options() {
     assert_eq!(payload["allow_custom_options"], true);
     assert_eq!(payload["options"], json!(["A", "B"]));
     assert_eq!(result.metadata["options"], json!(["A", "B"]));
-}
-
-#[test]
-fn ask_user_uses_json_truthiness_for_allow_custom_options() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "ask_truthy",
-                "ask_user",
-                BTreeMap::from([
-                    ("question".to_string(), json!("Choose")),
-                    ("allow_custom_options".to_string(), json!("false")),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("ask_user");
-
-    let payload: serde_json::Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["allow_custom_options"], true);
-}
-
-#[test]
-fn control_tools_coerce_scalar_fields() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-
-    let ask_result = registry
-        .execute(
-            &ToolCall::new(
-                "ask_scalar",
-                "ask_user",
-                BTreeMap::from([
-                    ("question".to_string(), json!(123)),
-                    ("selection_type".to_string(), json!(false)),
-                    ("options".to_string(), json!([1, true, false, 1, null])),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("ask_user");
-
-    assert_eq!(ask_result.status, ToolResultStatus::Success);
-    let ask_payload: serde_json::Value =
-        serde_json::from_str(&ask_result.content).expect("ask payload");
-    assert_eq!(ask_payload["question"], "123");
-    assert_eq!(ask_payload["selection_type"], "single");
-    assert_eq!(
-        ask_payload["options"],
-        json!(["1", "True", "False", "None"])
-    );
-
-    let finish_result = registry
-        .execute(
-            &ToolCall::new(
-                "finish_scalar",
-                "task_finish",
-                BTreeMap::from([
-                    ("message".to_string(), json!(456)),
-                    (
-                        "exposed_files".to_string(),
-                        json!(["report.md", 7, false, null, ""]),
-                    ),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("task_finish");
-
-    assert_eq!(finish_result.status, ToolResultStatus::Success);
-    let finish_payload: serde_json::Value =
-        serde_json::from_str(&finish_result.content).expect("finish payload");
-    assert_eq!(finish_payload["message"], "456");
-    assert_eq!(finish_result.metadata["final_message"], json!("456"));
-    assert_eq!(
-        finish_result.metadata["exposed_files"],
-        json!(["report.md", "7", "False", "None"])
-    );
 }
 
 #[test]
@@ -627,49 +493,4 @@ fn activate_skill_accepts_inline_entries_and_reports_disallowed_skill() {
         .expect("activate missing skill");
     assert_eq!(result.status, ToolResultStatus::Error);
     assert_eq!(result.error_code.as_deref(), Some("skill_not_allowed"));
-}
-
-#[test]
-fn activate_skill_coerces_scalar_arguments_and_inline_fields() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-    context.shared_state.insert(
-        "available_skills".to_string(),
-        json!([
-            {
-                "name": 123,
-                "description": 456,
-                "instructions": 789,
-                "x_internal_note": true,
-                "metadata": {"priority": 5}
-            }
-        ]),
-    );
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "skill_scalar",
-                "activate_skill",
-                BTreeMap::from([
-                    ("skill_name".to_string(), json!(123)),
-                    ("reason".to_string(), json!(true)),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("activate scalar skill");
-
-    assert_eq!(result.status, ToolResultStatus::Success);
-    let payload: serde_json::Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["skill_name"], "123");
-    assert_eq!(payload["description"], "456");
-    assert_eq!(payload["instructions"], "789");
-    assert_eq!(payload["reason"], "True");
-    assert!(payload.get("metadata").is_none());
-    assert!(
-        payload.get("x_internal_note").is_none(),
-        "activate_skill result is model-visible and should not expose internal fields"
-    );
 }

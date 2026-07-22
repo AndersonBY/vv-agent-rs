@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 
 use crate::app_server::protocol::{AppTurn, UserInput};
 use crate::app_server::transport::ConnectionId;
-use crate::runtime::state_v2::CheckpointStoreV2;
+use crate::runtime::state::CheckpointStore;
 use crate::RunHandle;
 
 pub type SteeringQueue = Arc<StdMutex<VecDeque<Vec<UserInput>>>>;
@@ -31,7 +31,7 @@ pub struct ActiveTurn {
     pub handle: RunHandle,
     pub steering: SteeringQueue,
     pub owner_connection_id: ConnectionId,
-    pub checkpoint_store: Option<Arc<dyn CheckpointStoreV2>>,
+    pub checkpoint_store: Option<Arc<dyn CheckpointStore>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

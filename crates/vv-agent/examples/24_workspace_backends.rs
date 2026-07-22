@@ -7,8 +7,9 @@ use common::{
     ExampleConfig,
 };
 use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
+use vv_agent::types::AgentTask;
 use vv_agent::{
-    AgentTask, FileInfo, LocalWorkspaceBackend, MemoryWorkspaceBackend, RuntimeRunControls,
+    FileInfo, LocalWorkspaceBackend, MemoryWorkspaceBackend, RuntimeRunControls,
     S3WorkspaceBackend, S3WorkspaceConfig, WorkspaceBackend,
 };
 
@@ -64,7 +65,7 @@ impl WorkspaceBackend for PrefixedBackend {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ExampleConfig::load();
     config.ensure_workspace()?;
-    let mode = env_string("V_AGENT_EXAMPLE_WS_MODE", "all").to_ascii_lowercase();
+    let mode = env_string("VV_AGENT_EXAMPLE_WS_MODE", "all").to_ascii_lowercase();
     let (runtime, resolved) = build_direct_runtime(&config, 90.0)?;
     let system_prompt = build_system_prompt_with_options(
         "You are a helpful agent. Use workspace tools to complete tasks.",
@@ -171,7 +172,7 @@ fn run_backend_demo(
         RuntimeRunControls {
             workspace: Some(config.workspace.clone()),
             workspace_backend,
-            log_handler: runtime_log_handler(config.verbose),
+            event_handler: runtime_log_handler(config.verbose),
             ..RuntimeRunControls::default()
         },
     )?;

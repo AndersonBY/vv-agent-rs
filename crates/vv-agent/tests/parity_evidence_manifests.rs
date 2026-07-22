@@ -14,9 +14,9 @@ use vv_agent::{
 
 const FIXTURE_DIR: &str = "tests/fixtures/parity";
 const CANONICAL_FIXTURES: [&str; 3] = [
-    "public_api_v1.json",
-    "prompt_bundle_v1.json",
-    "builtin_tools_v1.json",
+    "public_api.json",
+    "prompt_bundle.json",
+    "builtin_tools.json",
 ];
 const EXPECTED_DOMAINS: [&str; 14] = [
     "agent",

@@ -1,6 +1,6 @@
 use vv_agent::{RunEvent, RunEventPayload};
 
-const FIXTURE: &str = include_str!("fixtures/parity/resume_events_v1.jsonl");
+const FIXTURE: &str = include_str!("fixtures/parity/resume_events.jsonl");
 
 #[test]
 fn resume_event_fixture_round_trips_typed_payloads() {

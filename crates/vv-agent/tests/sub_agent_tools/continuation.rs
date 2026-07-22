@@ -49,7 +49,7 @@ fn sub_task_status_can_continue_completed_registered_session() {
                 BTreeMap::from([
                     ("task_ids".to_string(), json!(["sub-task-completed"])),
                     ("message".to_string(), json!("add appendix")),
-                    ("wait_for_response".to_string(), json!("yes")),
+                    ("wait_for_response".to_string(), json!(true)),
                     ("detail_level".to_string(), json!("snapshot")),
                 ]),
             ),
@@ -230,7 +230,7 @@ fn sub_task_manager_sanitizes_session_messages_before_continue() {
     let manager = SubTaskManager::default();
     let workspace = tempfile::tempdir().expect("workspace");
     let reasoning_contract: Value = serde_json::from_str(include_str!(
-        "../fixtures/parity/assistant_reasoning_history_v1.json"
+        "../fixtures/parity/assistant_reasoning_history.json"
     ))
     .expect("assistant reasoning history fixture");
     let cases = reasoning_contract["cases"]

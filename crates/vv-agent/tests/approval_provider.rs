@@ -467,9 +467,9 @@ async fn brokered_live_allow_session_skips_same_tool_and_keeps_other_tool_broker
                 }
                 RunEventPayload::ApprovalResolved {
                     tool_call_id,
-                    approved,
+                    action,
                     ..
-                } => resolved_calls.push((tool_call_id.clone(), *approved)),
+                } => resolved_calls.push((tool_call_id.clone(), action.is_approved())),
                 RunEventPayload::RunCompleted { .. } => break,
                 _ => {}
             }

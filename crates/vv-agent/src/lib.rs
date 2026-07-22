@@ -62,10 +62,8 @@ pub use checkpoint::{
     ReconciliationError, ReconciliationProvider, ResumeObservation, ResumePolicy, ToolIdempotency,
 };
 pub use config::{
-    apply_resolved_model_limits, build_vv_llm_from_local_settings, build_vv_llm_settings,
-    decode_api_key, load_llm_settings_from_file, load_memory_summary_defaults_from_file,
-    resolve_model_endpoint, ConfigError, EndpointConfig, EndpointOption, MemorySummaryDefaults,
-    ResolvedModelConfig,
+    apply_resolved_model_limits, build_vv_llm_from_local_settings, load_llm_settings_from_file,
+    resolve_model_endpoint, ConfigError, EndpointConfig, EndpointOption, ResolvedModelConfig,
 };
 pub use context::{RunContext, ToolCallContext};
 pub use context_providers::{
@@ -98,7 +96,7 @@ pub use memory::{
     SessionMemoryEntry, SessionMemoryState, SummaryCallback,
 };
 pub use model::{ModelError, ModelProvider, ModelRef, ScriptedModelProvider, VvLlmModelProvider};
-pub use model_settings::{ModelSettings, ResponseFormat, RetryPolicy, RetrySettings, ToolChoice};
+pub use model_settings::{ModelSettings, ResponseFormat, RetrySettings, ToolChoice};
 pub use output_validation::{
     HostOutputValidator, OutputRepair, OutputRepairRequest, OutputValidationContext,
     OutputValidationResult, OUTPUT_VALIDATION_FAILED,
@@ -108,34 +106,28 @@ pub use run_config::{RunConfig, ToolRegistryFactory};
 pub use run_handle::{RunHandle, RunHandleState, RunHandleStatus};
 pub use runner::{NormalizedInput, RunEventStream, Runner};
 pub use runtime::backends::{
-    run_checkpointed_cycle, CapabilityRef, CycleDispatchResult, CycleDispatcher,
-    DistributedBackend, DistributedCapabilities, DistributedCapabilityError,
-    DistributedCapabilityRegistry, DistributedCycleWorker, DistributedRunEnvelope,
-    DistributedToolPolicy, InlineBackend, ResolvedDistributedCapabilities, RuntimeExecutionBackend,
-    RuntimeRecipe, ThreadBackend, ToolsetRef,
+    CapabilityRef, CycleDispatchResult, CycleDispatcher, DistributedBackend,
+    DistributedCapabilities, DistributedCapabilityError, DistributedCapabilityRegistry,
+    DistributedCycleWorker, DistributedRunEnvelope, DistributedToolPolicy, InlineBackend,
+    ResolvedDistributedCapabilities, RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
+    ToolsetRef,
 };
 pub use runtime::background_sessions::{
     background_session_manager, BackgroundSessionAdoptOptions, BackgroundSessionListener,
     BackgroundSessionManager, BackgroundSessionStartOptions, BackgroundSessionSubscription,
 };
-pub use runtime::checkpoint_codec_v2::{
-    checkpoint_v2_from_json, checkpoint_v2_to_json, decode_checkpoint, decode_checkpoint_bytes,
-    encode_checkpoint_v1, migrate_terminal_v1, DecodedCheckpoint,
-};
+pub use runtime::checkpoint_codec::{checkpoint_from_json, checkpoint_to_json};
 pub use runtime::shell::{
     build_shell_invocation, prepare_shell_execution, resolve_shell_invocation,
     PreparedShellCommand, ShellInvocation,
 };
-pub use runtime::state::{Checkpoint, InMemoryStateStore, StateStore};
-pub use runtime::state_v2::{
-    CheckpointStoreV2, CheckpointV2, EventOutboxEntry, ExtensionStateEntry, OperationError,
+pub use runtime::state::{
+    Checkpoint, CheckpointStore, EventOutboxEntry, ExtensionStateEntry, OperationError,
     OperationJournalEntry,
 };
-pub use runtime::stores::memory_v2::InMemoryCheckpointStoreV2;
-pub use runtime::stores::redis::RedisStateStore;
-pub use runtime::stores::redis_v2::RedisCheckpointStoreV2;
-pub use runtime::stores::sqlite::SqliteStateStore;
-pub use runtime::stores::sqlite_v2::SqliteCheckpointStoreV2;
+pub use runtime::stores::memory::InMemoryCheckpointStore;
+pub use runtime::stores::redis::RedisCheckpointStore;
+pub use runtime::stores::sqlite::SqliteCheckpointStore;
 pub use runtime::sub_task_manager::{
     ManagedSubTask, ManagedSubTaskSnapshot, SubTaskManager, SubTaskSessionAttachment,
     SubTaskTurnSnapshot,
@@ -148,10 +140,10 @@ pub use runtime::{
     AfterToolCallEvent, AgentRuntime, BeforeCycleMessageProvider, BeforeLlmEvent, BeforeLlmPatch,
     BeforeMemoryCompactEvent, BeforeToolCallEvent, BeforeToolCallPatch, CancellationToken,
     CancelledError, CycleRunRequest, CycleRunner, ExecutionContext, InterruptionMessageProvider,
-    NativeCycleOutcome, NativeCycleOutcomeKind, RuntimeEventHandler, RuntimeHook,
-    RuntimeHookManager, RuntimeRunControls, StreamCallback, SubAgentSession,
-    SubAgentSessionListener, SubAgentSessionRegistry, SubAgentSessionUnsubscribe, ToolCallRunner,
-    ToolRunOutcome, ToolRunRequest, MAX_PROMPT_TOO_LONG_RETRIES, MAX_PTL_RETRIES,
+    NativeCycleOutcome, NativeCycleOutcomeKind, RunEventHandler, RuntimeHook, RuntimeHookManager,
+    RuntimeRunControls, SubAgentSession, SubAgentSessionListener, SubAgentSessionRegistry,
+    SubAgentSessionUnsubscribe, ToolCallRunner, ToolRunOutcome, ToolRunRequest,
+    MAX_PROMPT_TOO_LONG_RETRIES,
 };
 pub use sessions::{
     session_store_conformance, MemorySession, MemorySessionStore, RedisSessionStore, Session,
@@ -169,8 +161,8 @@ pub use tools::{
 };
 pub use tracing::{JsonlTraceExporter, Span, TraceSink};
 pub use types::{
-    AgentResult, AgentStatus, AgentTask, CacheUsage, CacheUsageStatus, CompletionReason,
-    CycleRecord, CycleStatus, LLMResponse, Message, MessageRole, NoToolPolicy, SubAgentConfig,
+    AgentResult, AgentStatus, CacheUsage, CacheUsageStatus, CompletionReason, CycleRecord,
+    CycleStatus, LLMResponse, Message, MessageRole, NoToolPolicy, SubAgentConfig,
     SubAgentConfigValidationError, SubTaskOutcome, SubTaskRequest, TaskTokenUsage, TokenUsage,
     ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus, UsageSource,
     INVALID_SUB_AGENT_MODEL_CODE, INVALID_SUB_AGENT_MODEL_MESSAGE,

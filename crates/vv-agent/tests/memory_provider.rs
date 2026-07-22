@@ -90,7 +90,7 @@ fn memory_provider_receives_compaction_lifecycle_events() {
     runtime.default_workspace = Some(workspace.path().to_path_buf());
     runtime.workspace_backend = Arc::new(vv_agent::LocalWorkspaceBackend::new(workspace.path()));
 
-    let mut task = vv_agent::AgentTask::new("memory_provider_task", "demo", "system", "go");
+    let mut task = vv_agent::types::AgentTask::new("memory_provider_task", "demo", "system", "go");
     task.memory_compact_threshold = 20;
     task.metadata
         .insert("model_context_window".to_string(), json!(120));

@@ -21,7 +21,6 @@ pub struct ModelSettings {
     pub top_p: Option<f64>,
     #[serde(
         default,
-        alias = "max_output_tokens",
         with = "positive_u32_option",
         skip_serializing_if = "Option::is_none"
     )]
@@ -152,10 +151,6 @@ impl ModelSettingsBuilder {
     pub fn max_tokens(mut self, max_tokens: u32) -> Self {
         self.settings.max_tokens = Some(max_tokens);
         self
-    }
-
-    pub fn max_output_tokens(self, max_output_tokens: u32) -> Self {
-        self.max_tokens(max_output_tokens)
     }
 
     pub fn tool_choice(mut self, tool_choice: ToolChoice) -> Self {
@@ -393,8 +388,6 @@ impl<'de> Deserialize<'de> for RetrySettings {
         Ok(settings)
     }
 }
-
-pub type RetryPolicy = RetrySettings;
 
 mod duration_seconds_option {
     use std::time::Duration;

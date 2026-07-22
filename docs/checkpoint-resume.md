@@ -9,7 +9,7 @@ transport integration rules.
 ## Public Configuration
 
 Configure `RunConfig.checkpoint_config` with a stable key, a
-`CheckpointStoreV2`, and an explicit resume policy. A concrete store handle is
+`CheckpointStore`, and an explicit resume policy. A concrete store handle is
 used by the scheduler process. A distributed worker resolves the same logical
 store through `RuntimeRecipe.capabilities.checkpoint_store_ref` and its
 `DistributedCapabilityRegistry`.
@@ -20,25 +20,19 @@ reference are both needed, keep the concrete store in `CheckpointConfig` and
 record the stable worker reference in `capability_refs["checkpoint_store"]`.
 The distributed recipe must select that same reference.
 
-## Tool Metadata And Compatibility
+## Tool Metadata And Policy
 
-New checkpoint v2 run-definition writers freeze the effective
-`tool_metadata` object for every tool, writing `null` when no typed declaration
-exists. They retain the legacy `idempotency` field and also freeze
-`denied_side_effects`, `denied_capability_tags`, `deny_terminal_tools`, and
-`denied_cost_dimensions` in the effective tool policy. Distributed envelopes
-carry that already-merged policy; a worker does not create a new permission
-layer. Metadata or policy drift fails with `checkpoint_definition_mismatch`
-before claim, model calls, or tool effects.
+The current run-definition writer freezes the effective `tool_metadata` object
+for every tool, writing `null` when no typed declaration exists. It also
+freezes `denied_side_effects`, `denied_capability_tags`,
+`deny_terminal_tools`, and `denied_cost_dimensions` in the effective tool
+policy. Distributed envelopes carry that already-merged policy; a worker does
+not create another permission layer. Metadata or policy drift fails with
+`checkpoint_definition_mismatch` before claim, model calls, or tool effects.
 
-Definitions written by contract 0.7.1 do not contain the additive fields.
-Resume first verifies the digest against the exact stored definition, then
-adds `tool_metadata=null`, empty denial lists, and
-`deny_terminal_tools=false` only to an in-memory comparison copy. It never
-rewrites the stored definition or digest. This preserves exact 0.7.1 bytes and
-allows an old definition to resume only when the current declaration and
-policy are still at those defaults. Non-default current values fail closed.
-Generic tool metadata is never promoted during comparison.
+Run-definition readers accept exactly the current closed shape. Missing,
+unknown, stale, or malformed fields are rejected; no comparison copy is
+synthesized and no stored definition or digest is rewritten.
 
 Execution telemetry is not a durable receipt. A `tool_call_started` event may
 exist without `tool_call_completed` after cancellation, process loss, or an
@@ -46,19 +40,11 @@ exception. The checkpoint v2 operation journal remains authoritative for
 whether an operation is planned, started, committed, replayable, or ambiguous;
 neither `duration_ms` nor a lifecycle observer provides exactly-once effects.
 
-The typed `RunEvent` envelope remains wire version `v1`. Contract 0.8 writers
-add `tool_call_planned` and always include `directive`, `error_code`,
-`execution_started`, and `duration_ms` on newly written completed tool events.
-The reader still accepts legacy completed v1 events without those additive
-fields and preserves their absence instead of fabricating execution or timing
-facts. Legacy distributed v1 envelopes and checkpoint-v1 namespaces remain
-unchanged; additive tool-policy fields on durable v2 transports default to
-empty lists and `false` when absent.
-
-With typed metadata omitted and all new denials disabled, model-visible tool
-schemas, eligibility, approval, completion, budgets, and external side effects
-follow the previous behavior. The new telemetry is observational and does not
-change those decisions.
+The typed `RunEvent` envelope uses the strict current `v1` discriminator.
+Readers require every current field, reject unknown fields, and never dispatch
+to an older decoder. Checkpoint outbox entries must contain a canonical current
+`RunEvent`, match its embedded `event_id`, and match the recorded payload
+digest before a checkpoint is accepted.
 
 ## Ownership And Terminal Ordering
 
@@ -70,9 +56,8 @@ Only one component owns a claim at a time:
 3. The worker claims the cycle, renews its lease, and executes one real
    `AgentRuntime` cycle.
 4. A nonterminal cycle is committed and releases the claim.
-5. A terminal cycle returns a `CycleDispatchResult` with
-   `terminal_candidate=true`; it does not write `terminal_result` and keeps the
-   claim active.
+5. A terminal cycle returns the tagged `CycleDispatchResult::TerminalCandidate`;
+   it does not write `terminal_result` and keeps the claim active.
 6. The scheduler reloads the authoritative checkpoint, verifies cycle and
    revision, and adopts the claim.
 7. The original Runner applies output guardrails, append-once session
@@ -80,8 +65,12 @@ Only one component owns a claim at a time:
    claimed terminal finalization, event delivery, terminal acknowledgement,
    and only then returns to the host.
 
-Transport payloads are never ownership proof. The scheduler always reloads the
-store and obtains the current claim token there. A stale candidate is rejected.
+Transport payloads are never ownership proof. The only response variants are
+`Pending`, `Committed`, `TerminalCandidate`, and `TerminalReplay`; transport
+failure is out of band. The scheduler always reloads the store and obtains the
+current claim token there. A stale candidate is rejected, and a replay must
+exactly match the retained durable result. The old `finished` and terminal
+Boolean fields are rejected.
 
 If candidate acknowledgement is lost, the lease expires and the worker uses a
 recovery claim. Model and tool receipts are replayed without another external
@@ -113,7 +102,7 @@ Checkpoint polling cannot carry a terminal candidate because the candidate is
 not a durable terminal yet. Polling would wait for an acknowledgement that the
 scheduler cannot write until it receives the candidate.
 
-Use `apalis::ApalisResultCycleDispatcher` with a backend implementing both:
+Use `apalis::ApalisCycleDispatcher` with a backend implementing both:
 
 - `TaskSink<ApalisCycleJob>`
 - `WaitForCompletion<CycleDispatchResult>`
@@ -122,20 +111,20 @@ The backend must persist task results across processes, support replay by the
 preassigned task ID, and define retention/TTL appropriate for the scheduler's
 dispatch timeout. An in-process channel is suitable only for tests.
 
-`ApalisCycleDispatcher` remains the compatibility polling adapter for v1 and
-read-only replay of an already retained v2 terminal. It explicitly rejects new
-checkpoint-v2 work instead of entering a polling deadlock.
+The dispatcher submits the preassigned task id, waits for the retained
+`CycleDispatchResult`, observes cancellation and the envelope deadline, and
+returns terminal candidates to the scheduler for durable finalization.
 
 ## Verification
 
 Focused producer tests:
 
 ```bash
-cargo test -p vv-agent --test run_events_v1
-cargo test -p vv-agent --test run_events_v1_invalid
+cargo test -p vv-agent --test run_events_contract
+cargo test -p vv-agent --test run_event_validation
 cargo test -p vv-agent --test runner_producer_parity
-cargo test -p vv-agent --test runner_checkpoint_v2
-cargo test -p vv-agent --test distributed_checkpoint_v2
+cargo test -p vv-agent --test runner_checkpoint
+cargo test -p vv-agent --test distributed_checkpoint
 cargo test -p vv-agent --features apalis --test apalis_backend
 cargo test -p vv-agent --test app_server_turn_resume
 ```

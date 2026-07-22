@@ -76,18 +76,19 @@ pub(super) fn build_sub_agent_task(
         user_prompt,
     );
     sub_task.max_cycles = sub_agent.max_cycles.max(1);
-    sub_task.memory_compact_threshold = parent_task.memory_compact_threshold;
     sub_task.memory_threshold_percentage = parent_task.memory_threshold_percentage;
     sub_task.no_tool_policy = NoToolPolicy::Continue;
     sub_task.allow_interruption = false;
     sub_task.use_workspace = parent_task.use_workspace;
-    sub_task.has_sub_agents = false;
     sub_task.sub_agents = BTreeMap::new();
     sub_task.agent_type = parent_task.agent_type.clone();
     sub_task.native_multimodal = inputs.resolved_native_multimodal;
     sub_task.extra_tool_names = parent_task.extra_tool_names.clone();
     sub_task.exclude_tools = merged_sub_task_exclusions(parent_task, sub_agent);
-    sub_task.model_settings = parent_task.model_settings.clone();
+    sub_task.model_settings = parent_task.model_settings.clone().map(|mut settings| {
+        settings.max_tokens = None;
+        settings
+    });
     sub_task.metadata = build_sub_task_metadata(
         parent_task,
         inputs.lifecycle,
@@ -334,7 +335,7 @@ mod parity_tests {
     fn contract() -> Value {
         serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/parity/configured_sub_agent_v1.json"
+            "/tests/fixtures/parity/configured_sub_agent.json"
         )))
         .expect("configured sub-agent parity fixture")
     }
@@ -413,9 +414,7 @@ mod parity_tests {
             settings_file: None,
             default_backend: None,
             sub_agent_timeout_seconds: 30.0,
-            stream_callback: None,
-            parent_log_handler: None,
-            parent_event_handler: None,
+            event_handler: None,
             parent_execution_context: None,
             model_provider: None,
             parent_run_context: None,
@@ -456,7 +455,6 @@ mod parity_tests {
             "no_tool_policy": task.no_tool_policy,
             "allow_interruption": task.allow_interruption,
             "use_workspace": task.use_workspace,
-            "has_sub_agents": task.has_sub_agents,
             "agent_type": task.agent_type,
             "native_multimodal": task.native_multimodal,
             "extra_tool_names": task.extra_tool_names,

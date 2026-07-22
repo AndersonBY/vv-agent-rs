@@ -15,7 +15,7 @@ use vv_agent::{
 };
 
 fn fixture() -> Value {
-    serde_json::from_str(include_str!("fixtures/parity/run_budget_v1.json"))
+    serde_json::from_str(include_str!("fixtures/parity/run_budget.json"))
         .expect("run budget fixture must be valid JSON")
 }
 
@@ -95,7 +95,7 @@ impl HostCostMeter for ScriptedMeter {
 
 fn usage(total: u64, uncached: Option<u64>) -> TokenUsage {
     TokenUsage {
-        total_tokens: total,
+        total_tokens: Some(total),
         usage_source: UsageSource::ProviderReported,
         cache_usage: CacheUsage {
             status: if uncached.is_some() {
@@ -370,7 +370,7 @@ fn distributed_active_elapsed_continues_without_queue_time() {
 #[test]
 fn fixture_path_is_vendored_for_offline_producer_tests() {
     let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/parity/run_budget_v1.json");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/parity/run_budget.json");
     assert!(path.is_file());
 }
 
@@ -386,6 +386,13 @@ async fn approval_resume_preserves_reserved_tool_count_and_source_usage() {
     let executions = Arc::new(AtomicUsize::new(0));
     let tool_executions = executions.clone();
     let tool = FunctionTool::builder("guarded_delete")
+        .json_schema(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"}
+            },
+            "required": ["path"]
+        }))
         .needs_approval(true)
         .handler(move |_context, _arguments: Value| {
             let executions = tool_executions.clone();
@@ -475,6 +482,13 @@ async fn approval_continue_resumes_budget_counters_in_the_fresh_model_loop() {
     let executions = Arc::new(AtomicUsize::new(0));
     let tool_executions = executions.clone();
     let tool = FunctionTool::builder("guarded_lookup")
+        .json_schema(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"}
+            },
+            "required": ["query"]
+        }))
         .needs_approval(true)
         .handler(move |_context, _arguments: Value| {
             let executions = tool_executions.clone();
@@ -670,8 +684,11 @@ async fn completed_tool_cancellation_wins_without_losing_budget_usage() {
                 )
                 .host_cost_meter(meter)
                 .cancellation_token(cancellation)
-                .runtime_log_handler(move |event, _payload| {
-                    if event == "tool_result" {
+                .stream(move |event| {
+                    if matches!(
+                        event.payload(),
+                        vv_agent::RunEventPayload::ToolCallCompleted { .. }
+                    ) {
                         cancellation_after_tool
                             .cancel_with_reason("cancelled after completed tool call");
                     }

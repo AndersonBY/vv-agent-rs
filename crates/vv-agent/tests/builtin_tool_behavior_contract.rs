@@ -1,20 +1,20 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
+use vv_agent::types::AgentTask;
 use vv_agent::{
-    background_session_manager, build_default_registry, AgentTask, ToolCall, ToolContext,
-    ToolExecutionResult, ToolExposure, ToolRegistry, ToolSpec,
+    background_session_manager, build_default_registry, ToolCall, ToolContext, ToolExecutionResult,
+    ToolExposure, ToolRegistry, ToolSpec,
 };
 
 fn fixture() -> Value {
-    serde_json::from_str(include_str!(
-        "fixtures/parity/builtin_tool_behavior_v1.json"
-    ))
-    .expect("builtin tool behavior fixture")
+    serde_json::from_str(include_str!("fixtures/parity/builtin_tool_behavior.json"))
+        .expect("builtin tool behavior fixture")
 }
 
 fn arguments(value: &Value) -> BTreeMap<String, Value> {
@@ -46,7 +46,7 @@ fn execute(
 
 fn assert_result(result: &ToolExecutionResult, expected: &Value, contract: &Value) {
     let wire = result.to_dict();
-    for key in ["status", "status_code", "directive"] {
+    for key in ["status_code", "directive"] {
         assert_eq!(wire[key], expected[key], "outer result field {key}");
     }
     assert_eq!(wire.get("error_code"), expected.get("error_code"));
@@ -54,7 +54,7 @@ fn assert_result(result: &ToolExecutionResult, expected: &Value, contract: &Valu
     assert_eq!(content, expected["content"]);
     assert_eq!(json!(result.metadata), expected["metadata"]);
 
-    if expected["status"] == "error" {
+    if expected["status_code"] == "ERROR" {
         for key in contract["error_content_required_keys"]
             .as_array()
             .expect("required error keys")
@@ -73,6 +73,39 @@ fn assert_result(result: &ToolExecutionResult, expected: &Value, contract: &Valu
             "metadata must not repeat bulk field {key}"
         );
     }
+}
+
+#[test]
+fn fixture_drives_schema_validation_before_handler_execution() {
+    let fixture = fixture();
+    let contract = &fixture["canonical"];
+    let case = &fixture["tools"]["schema_validation"];
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let mut registry = ToolRegistry::new();
+    registry
+        .register_tool_with_parameters(
+            "schema_validation",
+            "Validate fixture arguments.",
+            case["schema"].clone(),
+            Arc::new(move |_context, _arguments| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                ToolExecutionResult::success("", "{}")
+            }),
+        )
+        .expect("register validation tool");
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut context = ToolContext::new(workspace.path());
+
+    let result = execute(
+        &registry,
+        &mut context,
+        "schema_validation",
+        &case["invalid_arguments"],
+    );
+
+    assert_result(&result, &case["result"], contract);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]

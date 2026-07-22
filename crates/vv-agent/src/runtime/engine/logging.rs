@@ -3,6 +3,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use serde_json::Value;
 
+use crate::events::{DiagnosticLevel, RunEvent};
 use crate::llm::LlmClient;
 use std::path::Path;
 
@@ -10,42 +11,124 @@ use crate::types::{
     AgentResult, AgentTask, CycleRecord, ToolCall, ToolExecutionResult, ToolResultStatus,
 };
 
-use super::{AgentRuntime, RuntimeEventHandler, RuntimeLogHandler, RuntimeRunControls};
+use super::{AgentRuntime, RunEventHandler, RuntimeRunControls};
 
-pub(super) fn emit_runtime_log(
-    runtime_handler: Option<&RuntimeLogHandler>,
-    event_handler: Option<&RuntimeEventHandler>,
+pub(super) fn emit_runtime_event(
+    runtime_handler: Option<&RunEventHandler>,
+    run_handler: Option<&RunEventHandler>,
     execution_context: Option<&crate::runtime::context::ExecutionContext>,
-    event: &str,
-    mut payload: BTreeMap<String, Value>,
+    code: &str,
+    payload: BTreeMap<String, Value>,
 ) {
-    if let Some(context) = execution_context {
-        for (metadata_key, payload_key) in [
-            ("_vv_agent_run_id", "run_id"),
-            ("_vv_agent_trace_id", "trace_id"),
-            ("_vv_agent_agent_name", "agent_name"),
-            ("_vv_agent_session_id", "session_id"),
-        ] {
-            if let Some(value) = context.metadata.get(metadata_key) {
-                payload.insert(payload_key.to_string(), value.clone());
-            }
+    let metadata = execution_context
+        .map(|context| &context.metadata)
+        .cloned()
+        .unwrap_or_default();
+    let run_id = identity(&metadata, &["_vv_agent_run_id", "run_id"])
+        .unwrap_or_else(|| "runtime".to_string());
+    let trace_id =
+        identity(&metadata, &["_vv_agent_trace_id", "trace_id"]).unwrap_or_else(|| run_id.clone());
+    let agent_name = identity(&metadata, &["_vv_agent_agent_name", "agent_name"])
+        .unwrap_or_else(|| "runtime".to_string());
+    let session_id = identity(&metadata, &["_vv_agent_session_id", "session_id"]);
+    let parent_run_id = identity(&metadata, &["_vv_agent_parent_run_id", "parent_run_id"]);
+    let input = identity(&metadata, &["_vv_agent_input"]).unwrap_or_default();
+    let context = crate::runner::RuntimeEventContext::new(
+        &run_id,
+        &trace_id,
+        &agent_name,
+        session_id.clone(),
+        input,
+    );
+    let terminal_observation = matches!(
+        code,
+        "cycle_failed"
+            | "run_cancelled"
+            | "run_completed"
+            | "run_failed"
+            | "run_max_cycles"
+            | "run_wait_user"
+    );
+    let mut event = if terminal_observation {
+        None
+    } else {
+        crate::runner::map_runtime_event(code, &payload, &context)
+    }
+    .unwrap_or_else(|| diagnostic_event(&run_id, &trace_id, &agent_name, code, payload));
+    if event.session_id().is_none() {
+        if let Some(session_id) = session_id {
+            event = event.with_session_id(session_id);
         }
     }
-    if let Some(handler) = runtime_handler {
-        let _ = catch_unwind(AssertUnwindSafe(|| {
-            let mut callback = match handler.lock() {
-                Ok(callback) => callback,
-                Err(poisoned) => {
-                    handler.clear_poison();
-                    poisoned.into_inner()
-                }
-            };
-            (callback)(event, &payload);
-        }));
+    if event.parent_run_id().is_none() {
+        if let Some(parent_run_id) = parent_run_id {
+            event = event.with_parent_run_id(parent_run_id);
+        }
     }
-    if let Some(handler) = event_handler {
-        handler(event, &payload);
+
+    let handler = execution_context
+        .and_then(|context| context.event_handler.as_ref())
+        .or(run_handler)
+        .or(runtime_handler);
+    if let Some(handler) = handler {
+        let _ = catch_unwind(AssertUnwindSafe(|| handler(&event)));
     }
+}
+
+fn diagnostic_event(
+    run_id: &str,
+    trace_id: &str,
+    agent_name: &str,
+    code: &str,
+    mut payload: BTreeMap<String, Value>,
+) -> RunEvent {
+    let cycle_index = payload
+        .remove("cycle")
+        .or_else(|| payload.remove("cycle_index"))
+        .and_then(|value| value.as_u64())
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0);
+    for field in [
+        "run_id",
+        "trace_id",
+        "session_id",
+        "parent_run_id",
+        "agent_name",
+    ] {
+        payload.remove(field);
+    }
+    RunEvent::diagnostic(
+        run_id,
+        trace_id,
+        agent_name,
+        cycle_index,
+        diagnostic_level(code),
+        code,
+        payload.into_iter().collect(),
+    )
+}
+
+fn diagnostic_level(code: &str) -> DiagnosticLevel {
+    if code.ends_with("_failed") || code == "cycle_failed" {
+        DiagnosticLevel::Error
+    } else if code == "run_max_cycles" {
+        DiagnosticLevel::Warning
+    } else if code.starts_with("after_cycle_") || matches!(code, "run_steered" | "run_wait_user") {
+        DiagnosticLevel::Info
+    } else {
+        DiagnosticLevel::Debug
+    }
+}
+
+fn identity(metadata: &BTreeMap<String, Value>, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        metadata
+            .get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
 }
 
 impl<C: LlmClient> AgentRuntime<C> {
@@ -55,9 +138,9 @@ impl<C: LlmClient> AgentRuntime<C> {
         event: &str,
         payload: BTreeMap<String, Value>,
     ) {
-        emit_runtime_log(
-            self.log_handler.as_ref(),
-            controls.log_handler.as_ref(),
+        emit_runtime_event(
+            self.event_handler.as_ref(),
+            controls.event_handler.as_ref(),
             controls.execution_context.as_ref(),
             event,
             payload,
@@ -271,43 +354,4 @@ pub(super) fn tool_result_status_value(status: ToolResultStatus) -> Value {
         ToolResultStatus::PendingCompress => "pending_compress",
     };
     Value::String(status.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
-    };
-
-    use super::*;
-
-    #[test]
-    fn panicking_raw_runtime_handler_does_not_poison_later_events() {
-        let raw_calls = Arc::new(AtomicUsize::new(0));
-        let raw_calls_for_handler = raw_calls.clone();
-        let raw_handler: RuntimeLogHandler = Arc::new(Mutex::new(Box::new(move |_, _| {
-            if raw_calls_for_handler.fetch_add(1, Ordering::SeqCst) == 0 {
-                panic!("raw runtime observer panic");
-            }
-        })));
-        let typed_calls = Arc::new(AtomicUsize::new(0));
-        let typed_calls_for_handler = typed_calls.clone();
-        let typed_handler: RuntimeEventHandler = Arc::new(move |_, _| {
-            typed_calls_for_handler.fetch_add(1, Ordering::SeqCst);
-        });
-
-        for event in ["memory_compact_started", "memory_compact_completed"] {
-            emit_runtime_log(
-                Some(&raw_handler),
-                Some(&typed_handler),
-                None,
-                event,
-                BTreeMap::new(),
-            );
-        }
-
-        assert_eq!(raw_calls.load(Ordering::SeqCst), 2);
-        assert_eq!(typed_calls.load(Ordering::SeqCst), 2);
-    }
 }

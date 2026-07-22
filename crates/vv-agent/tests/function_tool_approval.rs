@@ -22,6 +22,13 @@ fn function_tool_approval_defaults_false_and_predicate_uses_context_and_argument
     );
 
     let predicate_tool = FunctionTool::builder("conditional_tool")
+        .json_schema(json!({
+            "type": "object",
+            "properties": {
+                "destructive": {"type": "boolean"}
+            },
+            "required": ["destructive"]
+        }))
         .needs_approval_if(|context, arguments| {
             context.metadata.get("scope") == Some(&json!("protected"))
                 && arguments.get("destructive") == Some(&json!(true))
@@ -60,6 +67,13 @@ async fn on_request_static_approval_interrupts_before_handler_and_resume_execute
     let executions = Arc::new(AtomicUsize::new(0));
     let executions_for_tool = executions.clone();
     let tool = FunctionTool::builder("delete_file")
+        .json_schema(json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"}
+            },
+            "required": ["path"]
+        }))
         .needs_approval(true)
         .handler(move |_context, _arguments: Value| {
             let executions = executions_for_tool.clone();
@@ -232,6 +246,19 @@ async fn cloned_manual_approval_state_executes_once_and_persists_one_result() {
     let executions = Arc::new(AtomicUsize::new(0));
     let executions_for_tool = executions.clone();
     let tool = FunctionTool::builder("guarded_once")
+        .json_schema(json!({
+            "type": "object",
+            "properties": {
+                "nested": {
+                    "type": "object",
+                    "properties": {
+                        "value": {"type": "string"}
+                    },
+                    "required": ["value"]
+                }
+            },
+            "required": ["nested"]
+        }))
         .needs_approval(true)
         .handler(move |_context, arguments: Value| {
             let executions = executions_for_tool.clone();
@@ -323,6 +350,13 @@ async fn on_request_predicate_gates_only_matching_runtime_call() {
     let executed_modes = Arc::new(Mutex::new(Vec::new()));
     let executed_modes_for_tool = executed_modes.clone();
     let tool = FunctionTool::builder("change_setting")
+        .json_schema(json!({
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string"}
+            },
+            "required": ["mode"]
+        }))
         .needs_approval_if(|context, arguments| {
             context.metadata.get("scope") == Some(&json!("protected"))
                 && arguments.get("mode") == Some(&json!("destructive"))
@@ -544,6 +578,13 @@ async fn layered_argument_policies_are_anded_and_denial_precedes_approval() {
     let executions = Arc::new(AtomicUsize::new(0));
     let executions_for_tool = executions.clone();
     let tool = FunctionTool::builder("guarded_tool")
+        .json_schema(json!({
+            "type": "object",
+            "properties": {
+                "scope": {"type": "string"}
+            },
+            "required": ["scope"]
+        }))
         .needs_approval(true)
         .handler(move |_context, _arguments: Value| {
             let executions = executions_for_tool.clone();

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::runtime::sub_agent_sessions::SubAgentSession;
-use crate::runtime::{CancellationToken, ExecutionContext, RuntimeEventHandler, StreamCallback};
+use crate::runtime::{CancellationToken, ExecutionContext, RunEventHandler};
 use crate::tools::ToolPolicy;
 use crate::types::SubTaskOutcome;
 use crate::workspace::WorkspaceBackend;
@@ -20,8 +20,7 @@ pub struct SubTaskLineage {
 #[derive(Clone, Default)]
 pub struct SubTaskTurnSnapshot {
     pub cancellation_token: Option<CancellationToken>,
-    pub event_handler: Option<RuntimeEventHandler>,
-    pub stream_callback: Option<StreamCallback>,
+    pub event_handler: Option<RunEventHandler>,
     pub trace_id: Option<String>,
     pub parent_run_id: Option<String>,
     pub parent_tool_call_id: Option<String>,
@@ -31,21 +30,19 @@ pub struct SubTaskTurnSnapshot {
 }
 
 thread_local! {
-    static TURN_EVENT_HANDLER_STACK: RefCell<Vec<Option<RuntimeEventHandler>>> =
+    static TURN_EVENT_HANDLER_STACK: RefCell<Vec<Option<RunEventHandler>>> =
         const { RefCell::new(Vec::new()) };
 }
 
 impl SubTaskTurnSnapshot {
-    pub(crate) fn enter_event_handler_scope(
-        event_handler: Option<RuntimeEventHandler>,
-    ) -> impl Drop {
+    pub(crate) fn enter_event_handler_scope(event_handler: Option<RunEventHandler>) -> impl Drop {
         TURN_EVENT_HANDLER_STACK.with(|handlers| {
             handlers.borrow_mut().push(event_handler);
         });
         SubTaskTurnEventHandlerScope
     }
 
-    pub(crate) fn current_event_handler() -> Option<Option<RuntimeEventHandler>> {
+    pub(crate) fn current_event_handler() -> Option<Option<RunEventHandler>> {
         TURN_EVENT_HANDLER_STACK.with(|handlers| handlers.borrow().last().cloned())
     }
 }

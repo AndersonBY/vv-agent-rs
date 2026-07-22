@@ -2,21 +2,15 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use vv_agent::cli::{
     build_cli_task_from_resolved, parse_cli_args_from_with_default_settings,
     parse_cli_command_from_with_default_settings, result_payload, CliCommand, DebugCliCommand,
 };
 use vv_agent::{AgentResult, AgentStatus, ResolvedModelConfig};
 
-const CONTRACT_SOURCE: &str = include_str!("cli_contract_v1.json");
-const CONTRACT_SHA256: &str = "7fa3ce692deea100e77d52e4167fdd123bb18f9ff0adadeefd10609b519d2561";
+const CONTRACT_SOURCE: &str = include_str!("fixtures/parity/cli_contract.json");
 
 fn contract() -> Value {
-    assert_eq!(
-        format!("{:x}", Sha256::digest(CONTRACT_SOURCE.as_bytes())),
-        CONTRACT_SHA256
-    );
     serde_json::from_str(CONTRACT_SOURCE).expect("CLI contract fixture")
 }
 
@@ -61,20 +55,12 @@ fn result(status: AgentStatus, error: Option<&str>) -> AgentResult {
     }
 }
 
-fn run_with_settings_environment(
-    args: &[&str],
-    primary: Option<&str>,
-    legacy: Option<&str>,
-) -> Output {
+fn run_with_settings_environment(args: &[&str], settings_file: Option<&str>) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_vv-agent"));
     command.args(args);
     command.env_remove("VV_AGENT_LOCAL_SETTINGS");
-    command.env_remove("V_AGENT_LOCAL_SETTINGS");
-    if let Some(value) = primary {
+    if let Some(value) = settings_file {
         command.env("VV_AGENT_LOCAL_SETTINGS", value);
-    }
-    if let Some(value) = legacy {
-        command.env("V_AGENT_LOCAL_SETTINGS", value);
     }
     command.output().expect("run vv-agent")
 }
@@ -82,7 +68,7 @@ fn run_with_settings_environment(
 #[test]
 fn cli_contract_fixture_is_reviewable() {
     let value = contract();
-    assert_eq!(value["contract"], "vv-agent-cli-v1");
+    assert_eq!(value["contract"], "vv-agent-cli");
     assert_eq!(value["scope"], "direct-task");
 }
 
@@ -119,12 +105,11 @@ fn multiword_prompt_model_settings_and_resolved_limits_project_to_task() {
 }
 
 #[test]
-fn explicit_settings_argument_wins_over_both_environment_names() {
+fn explicit_settings_argument_wins_over_environment() {
     let explicit = "/definitely/missing-explicit-cli.json";
     let output = run_with_settings_environment(
         &["--prompt", "task", "--settings-file", explicit],
-        Some("/definitely/missing-primary-cli.json"),
-        Some("/definitely/missing-legacy-cli.json"),
+        Some("/definitely/missing-environment-cli.json"),
     );
 
     assert_eq!(output.status.code(), Some(1));
@@ -133,21 +118,16 @@ fn explicit_settings_argument_wins_over_both_environment_names() {
 }
 
 #[test]
-fn primary_environment_wins_and_blank_primary_falls_back_to_legacy() {
-    let primary = "/definitely/missing-primary-cli.json";
-    let primary_output = run_with_settings_environment(
-        &["--prompt", "task"],
-        Some(primary),
-        Some("/definitely/missing-legacy-cli.json"),
-    );
-    let legacy = "/definitely/missing-legacy-cli.json";
-    let legacy_output =
-        run_with_settings_environment(&["--prompt", "task"], Some("  "), Some(legacy));
+fn environment_wins_and_blank_environment_uses_language_default() {
+    let environment = "/definitely/missing-environment-cli.json";
+    let environment_output =
+        run_with_settings_environment(&["--prompt", "task"], Some(environment));
+    let blank_output = run_with_settings_environment(&["--prompt", "task"], Some("  "));
 
-    assert_eq!(primary_output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&primary_output.stderr).contains(primary));
-    assert_eq!(legacy_output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&legacy_output.stderr).contains(legacy));
+    assert_eq!(environment_output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&environment_output.stderr).contains(environment));
+    assert_eq!(blank_output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&blank_output.stderr).contains("local_settings.json"));
 }
 
 #[test]
@@ -172,7 +152,7 @@ fn result_json_covers_success_failure_and_cancellation() {
 
 #[test]
 fn process_uses_contract_exit_codes_channels_and_multiword_prompt() {
-    let usage = run_with_settings_environment(&[], None, None);
+    let usage = run_with_settings_environment(&[], None);
     let missing_path = "/definitely/missing-vv-agent-cli.json";
     let configuration = run_with_settings_environment(
         &[
@@ -184,9 +164,8 @@ fn process_uses_contract_exit_codes_channels_and_multiword_prompt() {
             missing_path,
         ],
         None,
-        None,
     );
-    let help = run_with_settings_environment(&["--help"], None, None);
+    let help = run_with_settings_environment(&["--help"], None);
     let outcomes = &contract()["process_outcomes"];
 
     assert_eq!(

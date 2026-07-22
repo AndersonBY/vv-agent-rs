@@ -9,7 +9,7 @@ use vv_agent::runtime::lifecycle::{
 };
 use vv_agent::{AfterCycleAction, AfterCycleDecision};
 
-const FIXTURE: &str = include_str!("fixtures/parity/after_cycle_hook_v1.json");
+const FIXTURE: &str = include_str!("fixtures/parity/after_cycle_hook.json");
 
 #[test]
 fn after_cycle_limits_and_closed_actions_match_canonical_fixture() {

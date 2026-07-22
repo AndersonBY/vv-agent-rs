@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{stringify_tool_arg, tool_error_with_code, tool_result_with_metadata};
+use crate::tools::common::{string_arg, tool_error_with_code, tool_result_with_metadata};
 use crate::types::{Metadata, ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 pub fn compress_memory(
@@ -19,7 +19,7 @@ pub(crate) fn compress_memory_tool() -> ToolSpec {
         "compress_memory",
         "Store key summary notes to reduce future context load.",
         Arc::new(|context, arguments| {
-            let core_information = stringify_tool_arg(arguments.get("core_information"), "")
+            let core_information = string_arg(arguments.get("core_information"), "")
                 .trim()
                 .to_string();
             if core_information.is_empty() {

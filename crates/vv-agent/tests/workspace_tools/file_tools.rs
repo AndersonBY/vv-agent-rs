@@ -71,11 +71,10 @@ fn default_workspace_tools_can_write_read_edit_and_find_files() {
 }
 
 #[test]
-fn edit_file_replaces_legacy_replace_tool_in_default_tools() {
+fn edit_file_schema_matches_current_contract() {
     let registry = build_default_registry();
 
     assert!(registry.has_tool("edit_file"));
-    assert!(!registry.has_tool(&format!("file_str_{}", "replace")));
 
     let schema = registry.get_schema("edit_file").expect("edit_file schema");
     let function = schema["function"].as_object().expect("function schema");
@@ -94,54 +93,21 @@ fn edit_file_replaces_legacy_replace_tool_in_default_tools() {
 }
 
 #[test]
-fn legacy_replace_tool_name_is_removed() {
+fn edit_file_rejects_unknown_arguments() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
-    let legacy_tool_name = format!("file_str_{}", "replace");
-
-    let result = registry.execute(
-        &ToolCall::new(
-            "removed_replace",
-            legacy_tool_name,
-            BTreeMap::from([
-                ("path".to_string(), json!("edit.txt")),
-                (format!("old_{}", "str"), json!("a")),
-                (format!("new_{}", "str"), json!("b")),
-            ]),
-        ),
-        &mut context,
-    );
-
-    assert!(result.is_err());
-}
-
-#[test]
-fn edit_file_rejects_legacy_argument_names() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-    std::fs::write(workspace.path().join("legacy.txt"), "hello").expect("file");
-    registry
-        .execute(
-            &ToolCall::new(
-                "read_legacy",
-                "read_file",
-                BTreeMap::from([("path".to_string(), json!("legacy.txt"))]),
-            ),
-            &mut context,
-        )
-        .expect("read_file");
 
     let result = registry
         .execute(
             &ToolCall::new(
-                "edit_legacy",
+                "edit_unknown",
                 "edit_file",
                 BTreeMap::from([
-                    ("path".to_string(), json!("legacy.txt")),
-                    (format!("old_{}", "str"), json!("hello")),
-                    (format!("new_{}", "str"), json!("hi")),
+                    ("path".to_string(), json!("current.txt")),
+                    ("old_string".to_string(), json!("hello")),
+                    ("new_string".to_string(), json!("hi")),
+                    ("unexpected".to_string(), json!(true)),
                 ]),
             ),
             &mut context,
@@ -150,128 +116,49 @@ fn edit_file_rejects_legacy_argument_names() {
 
     let payload: Value = serde_json::from_str(&result.content).expect("payload");
     assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.error_code.as_deref(), Some("invalid_arguments"));
-    assert_eq!(payload["error_code"], json!("invalid_arguments"));
-    assert!(payload["error"]
-        .as_str()
-        .expect("message")
-        .contains("old_string"));
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
+    assert_eq!(payload["issues"][0]["rule"], json!("additionalProperties"));
 }
 
 #[test]
-fn write_file_coerces_scalar_content() {
+fn workspace_file_tools_reject_non_string_arguments() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
+    let cases = [
+        (
+            "write_file",
+            BTreeMap::from([
+                ("path".to_string(), json!("number.txt")),
+                ("content".to_string(), json!(123)),
+            ]),
+            "/content",
+        ),
+        (
+            "read_file",
+            BTreeMap::from([("path".to_string(), json!(123))]),
+            "/path",
+        ),
+        (
+            "find_files",
+            BTreeMap::from([("glob".to_string(), json!(123))]),
+            "/glob",
+        ),
+    ];
 
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "write_number_content",
-                "write_file",
-                BTreeMap::from([
-                    ("path".to_string(), json!("number.txt")),
-                    ("content".to_string(), json!(123)),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("write_file");
-
-    assert_eq!(result.status, ToolResultStatus::Success);
-    assert_eq!(
-        std::fs::read_to_string(workspace.path().join("number.txt")).expect("file"),
-        "123"
-    );
-}
-
-#[test]
-fn workspace_file_tools_coerce_scalar_path_and_glob() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-
-    let write = registry
-        .execute(
-            &ToolCall::new(
-                "write_scalar_path",
-                "write_file",
-                BTreeMap::from([
-                    ("path".to_string(), json!(123)),
-                    ("content".to_string(), json!("one")),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("write_file");
-
-    assert_eq!(write.status, ToolResultStatus::Success);
-    assert_eq!(
-        std::fs::read_to_string(workspace.path().join("123")).expect("scalar path file"),
-        "one"
-    );
-
-    let read = registry
-        .execute(
-            &ToolCall::new(
-                "read_scalar_path",
-                "read_file",
-                BTreeMap::from([("path".to_string(), json!(123))]),
-            ),
-            &mut context,
-        )
-        .expect("read_file");
-    assert_eq!(read.status, ToolResultStatus::Success);
-    assert!(read.content.contains("\"path\":\"123\""));
-    assert!(read.content.contains("\"content\":\"one\""));
-
-    let edit = registry
-        .execute(
-            &ToolCall::new(
-                "edit_scalar_path",
-                "edit_file",
-                BTreeMap::from([
-                    ("path".to_string(), json!(123)),
-                    ("old_string".to_string(), json!("one")),
-                    ("new_string".to_string(), json!("two")),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("edit_file");
-    assert_eq!(edit.status, ToolResultStatus::Success);
-
-    let info = registry
-        .execute(
-            &ToolCall::new(
-                "info_scalar_path",
-                "file_info",
-                BTreeMap::from([("path".to_string(), json!(123))]),
-            ),
-            &mut context,
-        )
-        .expect("file_info");
-    assert_eq!(info.status, ToolResultStatus::Success);
-    assert!(info.content.contains("\"path\":\"123\""));
-
-    std::fs::create_dir_all(workspace.path().join("456")).expect("number dir");
-    std::fs::write(workspace.path().join("456/123"), "number glob").expect("number glob file");
-    std::fs::write(workspace.path().join("456/other.txt"), "other").expect("other file");
-    let list = registry
-        .execute(
-            &ToolCall::new(
-                "list_scalar_path_glob",
-                "find_files",
-                BTreeMap::from([
-                    ("path".to_string(), json!(456)),
-                    ("glob".to_string(), json!(123)),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("find_files");
-    let list_payload: Value = serde_json::from_str(&list.content).expect("list payload");
-    assert_eq!(list_payload["files"], json!(["456/123"]));
+    for (tool_name, arguments, expected_path) in cases {
+        let result = registry
+            .execute(
+                &ToolCall::new(format!("{tool_name}_invalid"), tool_name, arguments),
+                &mut context,
+            )
+            .expect("tool validation");
+        let payload: Value = serde_json::from_str(&result.content).expect("payload");
+        assert_eq!(result.status, ToolResultStatus::Error);
+        assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
+        assert_eq!(payload["issues"][0]["instance_path"], expected_path);
+        assert_eq!(payload["issues"][0]["rule"], json!("type"));
+    }
 }
 
 #[test]

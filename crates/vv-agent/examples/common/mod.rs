@@ -1,15 +1,15 @@
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
 use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::json;
+use vv_agent::types::AgentTask;
 use vv_agent::{
-    build_default_registry, build_vv_llm_from_local_settings, Agent, AgentRuntime, AgentTask,
-    ModelRef, RunConfig, RunResult, Runner, RuntimeEventHandler, RuntimeRunControls, VvLlmClient,
-    VvLlmModelProvider,
+    build_default_registry, build_vv_llm_from_local_settings, Agent, AgentRuntime, ModelRef,
+    RunConfig, RunEvent, RunEventHandler, RunEventPayload, RunResult, Runner, RuntimeRunControls,
+    VvLlmClient, VvLlmModelProvider,
 };
 
 pub struct ExampleConfig {
@@ -28,11 +28,11 @@ impl ExampleConfig {
                 "VV_AGENT_LOCAL_SETTINGS",
                 "local_settings.json",
             )),
-            backend: env_string("V_AGENT_EXAMPLE_BACKEND", "moonshot"),
-            model: env_string("V_AGENT_EXAMPLE_MODEL", "kimi-k2.6"),
-            workspace: PathBuf::from(env_string("V_AGENT_EXAMPLE_WORKSPACE", "./workspace")),
-            prompt: env::var("V_AGENT_EXAMPLE_PROMPT").ok(),
-            verbose: env_bool("V_AGENT_EXAMPLE_VERBOSE", true),
+            backend: env_string("VV_AGENT_EXAMPLE_BACKEND", "moonshot"),
+            model: env_string("VV_AGENT_EXAMPLE_MODEL", "kimi-k3"),
+            workspace: PathBuf::from(env_string("VV_AGENT_EXAMPLE_WORKSPACE", "./workspace")),
+            prompt: env::var("VV_AGENT_EXAMPLE_PROMPT").ok(),
+            verbose: env_bool("VV_AGENT_EXAMPLE_VERBOSE", true),
         }
     }
 
@@ -84,51 +84,18 @@ pub fn env_f64(name: &str, default: f64) -> f64 {
         .unwrap_or(default)
 }
 
-pub fn runtime_log_handler(verbose: bool) -> Option<RuntimeEventHandler> {
+pub fn runtime_log_handler(verbose: bool) -> Option<RunEventHandler> {
     verbose.then(|| {
-        Arc::new(move |event: &str, payload: &BTreeMap<String, Value>| {
-            if matches!(
-                event,
-                "run_started"
-                    | "cycle_started"
-                    | "cycle_llm_response"
-                    | "tool_result"
-                    | "run_completed"
-                    | "run_wait_user"
-                    | "run_max_cycles"
-                    | "cycle_failed"
-                    | "run_cancelled"
+        Arc::new(move |event: &RunEvent| {
+            if !matches!(
+                event.payload,
+                RunEventPayload::AssistantDelta { .. }
+                    | RunEventPayload::ReasoningDelta { .. }
+                    | RunEventPayload::ModelToolCallProgress { .. }
             ) {
-                eprintln!(
-                    "[{event}] {}",
-                    Value::Object(payload.clone().into_iter().collect())
-                );
+                eprintln!("{}", serde_json::to_value(event).unwrap_or_default());
             }
-        }) as RuntimeEventHandler
-    })
-}
-
-pub fn session_log_handler(verbose: bool) -> RuntimeEventHandler {
-    Arc::new(move |event: &str, payload: &BTreeMap<String, Value>| {
-        if verbose
-            && matches!(
-                event,
-                "session_run_start"
-                    | "cycle_started"
-                    | "cycle_llm_response"
-                    | "tool_result"
-                    | "run_wait_user"
-                    | "run_completed"
-                    | "session_run_end"
-                    | "session_steer_queued"
-                    | "session_follow_up_queued"
-            )
-        {
-            eprintln!(
-                "[{event}] {}",
-                Value::Object(payload.clone().into_iter().collect())
-            );
-        }
+        }) as RunEventHandler
     })
 }
 
@@ -194,7 +161,7 @@ pub fn run_direct_task(
 ) -> Result<vv_agent::AgentResult, Box<dyn std::error::Error>> {
     let controls = RuntimeRunControls {
         workspace: Some(config.workspace.clone()),
-        log_handler: runtime_log_handler(config.verbose),
+        event_handler: runtime_log_handler(config.verbose),
         ..RuntimeRunControls::default()
     };
     runtime

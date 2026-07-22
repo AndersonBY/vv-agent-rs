@@ -3,9 +3,8 @@ mod memory_events;
 mod payload;
 mod stream_projection;
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::thread::ThreadId;
 
 use serde_json::Value;
 use tokio::sync::broadcast;
@@ -16,25 +15,7 @@ use crate::run_handle::{active_sub_run_ids, SharedRunResult};
 use crate::tools::ToolMetadata;
 
 use payload::{agent_status, completion_reason_from_payload};
-pub(super) use stream_projection::map_stream_event;
-use stream_projection::{canonical_sub_agent_stream_payload, map_canonical_sub_agent_stream_event};
-
-const TRUSTED_STREAM_RECEIPT_KEY: &str = "_vv_agent_stream_receipt";
-const TRUSTED_STREAM_SEQUENCE_KEY: &str = "_vv_agent_stream_sequence";
-const MAX_PENDING_STREAM_RECEIPTS: usize = 256;
-
-#[derive(Debug)]
-struct TrustedStreamReceipt {
-    marker: String,
-    sequence: u64,
-    fingerprint: String,
-    thread_id: ThreadId,
-}
-
-#[derive(Debug, Default)]
-struct TrustedStreamReceipts {
-    pending: VecDeque<TrustedStreamReceipt>,
-}
+pub(crate) use stream_projection::map_stream_event;
 
 #[doc(hidden)]
 #[derive(Clone, Debug)]
@@ -44,7 +25,6 @@ pub struct RuntimeEventContext {
     agent_name: String,
     session_id: Option<String>,
     input: String,
-    trusted_stream_receipts: Arc<Mutex<TrustedStreamReceipts>>,
     observed_tool_completions: Arc<Mutex<HashSet<String>>>,
 }
 
@@ -62,7 +42,6 @@ impl RuntimeEventContext {
             agent_name: agent_name.into(),
             session_id,
             input: input.into(),
-            trusted_stream_receipts: Arc::new(Mutex::new(TrustedStreamReceipts::default())),
             observed_tool_completions: Arc::new(Mutex::new(HashSet::new())),
         }
     }
@@ -80,66 +59,6 @@ impl RuntimeEventContext {
             Some(session_id) => event.with_session_id(session_id),
             None => event,
         }
-    }
-
-    fn register_trusted_stream_receipt(
-        &self,
-        payload: &BTreeMap<String, Value>,
-        canonical: &BTreeMap<String, Value>,
-    ) -> bool {
-        let Some(marker) = payload
-            .get(TRUSTED_STREAM_RECEIPT_KEY)
-            .and_then(Value::as_str)
-            .filter(|marker| valid_stream_receipt(marker))
-        else {
-            return false;
-        };
-        let Some(sequence) = payload
-            .get(TRUSTED_STREAM_SEQUENCE_KEY)
-            .and_then(Value::as_u64)
-            .filter(|sequence| *sequence > 0)
-        else {
-            return false;
-        };
-        let Some(fingerprint) = canonical_stream_fingerprint(canonical) else {
-            return false;
-        };
-        let Ok(mut receipts) = self.trusted_stream_receipts.lock() else {
-            return false;
-        };
-        if receipts
-            .pending
-            .iter()
-            .any(|receipt| receipt.marker == marker && receipt.sequence == sequence)
-        {
-            return false;
-        }
-        while receipts.pending.len() >= MAX_PENDING_STREAM_RECEIPTS {
-            receipts.pending.pop_front();
-        }
-        receipts.pending.push_back(TrustedStreamReceipt {
-            marker: marker.to_string(),
-            sequence,
-            fingerprint,
-            thread_id: std::thread::current().id(),
-        });
-        true
-    }
-
-    fn consume_trusted_stream_receipt(&self, canonical: &BTreeMap<String, Value>) -> bool {
-        let Some(fingerprint) = canonical_stream_fingerprint(canonical) else {
-            return false;
-        };
-        let thread_id = std::thread::current().id();
-        let Ok(mut receipts) = self.trusted_stream_receipts.lock() else {
-            return false;
-        };
-        let Some(index) = receipts.pending.iter().position(|receipt| {
-            receipt.thread_id == thread_id && receipt.fingerprint == fingerprint
-        }) else {
-            return false;
-        };
-        receipts.pending.remove(index).is_some()
     }
 }
 
@@ -231,17 +150,6 @@ pub fn map_runtime_event(
     context: &RuntimeEventContext,
 ) -> Option<RunEvent> {
     let mapped = match event {
-        "sub_agent_assistant_delta"
-        | "sub_agent_reasoning_delta"
-        | "sub_agent_tool_call_started"
-        | "sub_agent_tool_call_progress" => {
-            let stream_event = event.strip_prefix("sub_agent_")?;
-            let canonical = canonical_sub_agent_stream_payload(stream_event, payload)?;
-            if !context.register_trusted_stream_receipt(payload, &canonical) {
-                return None;
-            }
-            map_canonical_sub_agent_stream_event(stream_event, &canonical)
-        }
         "run_started" => Some(RunEvent::run_started(
             &context.run_id,
             &context.trace_id,
@@ -352,15 +260,11 @@ pub fn map_runtime_event(
                         .and_then(Value::as_u64)
                         .map(|cycle| cycle as u32),
                     RunEventPayload::ApprovalRequested {
-                        request_id: payload_string(payload, "request_id"),
-                        tool_call_id: payload_string(payload, "tool_call_id"),
-                        tool_name,
-                        message: payload
-                            .get("message")
-                            .or_else(|| payload.get("preview"))
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
+                        request_id: payload_string_non_empty(payload, "request_id")?.to_string(),
+                        tool_call_id: payload_string_non_empty(payload, "tool_call_id")?
                             .to_string(),
+                        tool_name,
+                        message: payload.get("message")?.as_str()?.to_string(),
                     },
                 ),
                 payload,
@@ -368,15 +272,10 @@ pub fn map_runtime_event(
             ))
         }
         "approval_resolved" => {
-            let approved = payload
-                .get("approved")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
             let action = payload
                 .get("action")
                 .and_then(Value::as_str)
-                .and_then(ApprovalAction::parse)
-                .unwrap_or_else(|| ApprovalAction::from_approved(approved));
+                .and_then(ApprovalAction::parse)?;
             Some(with_selected_payload_metadata(
                 RunEvent::new(
                     &context.run_id,
@@ -387,27 +286,15 @@ pub fn map_runtime_event(
                         .and_then(Value::as_u64)
                         .map(|cycle| cycle as u32),
                     RunEventPayload::ApprovalResolved {
-                        request_id: payload
-                            .get("request_id")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
+                        request_id: payload_string_non_empty(payload, "request_id")?.to_string(),
+                        tool_name: payload_string_non_empty(payload, "tool_name")?.to_string(),
+                        tool_call_id: payload_string_non_empty(payload, "tool_call_id")?
                             .to_string(),
-                        tool_name: payload
-                            .get("tool_name")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        tool_call_id: payload
-                            .get("tool_call_id")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        approved: action.is_approved(),
+                        action,
                     },
-                )
-                .with_approval_action(action),
+                ),
                 payload,
-                &["action", "reason", "decision_metadata"],
+                &["reason", "decision_metadata"],
             ))
         }
         "sub_run_started" => {
@@ -548,37 +435,7 @@ pub fn map_runtime_event(
                 .and_then(Value::as_str)
                 .is_some_and(|mode| mode == "handoff")
             {
-                let metadata = metadata.expect("handoff metadata");
-                let mut event = RunEvent::new(
-                    &context.run_id,
-                    &context.trace_id,
-                    &context.agent_name,
-                    payload
-                        .get("cycle")
-                        .and_then(Value::as_u64)
-                        .map(|cycle| cycle as u32),
-                    RunEventPayload::Handoff {
-                        source_agent: metadata
-                            .get("handoff_from")
-                            .and_then(Value::as_str)
-                            .unwrap_or(&context.agent_name)
-                            .to_string(),
-                        target_agent: metadata
-                            .get("handoff_to")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        tool_call_id: payload
-                            .get("tool_call_id")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                    },
-                );
-                for (key, value) in metadata {
-                    event = event.with_metadata(key, value.clone());
-                }
-                Some(event)
+                None
             } else {
                 let already_observed = context
                     .observed_tool_completions
@@ -797,7 +654,27 @@ fn map_runtime_tool_completion(
     let tool_call_id = payload_string_non_empty(payload, "tool_call_id")?;
     let tool_name = payload_string_non_empty(payload, "tool_name")?;
     let tool_metadata = runtime_tool_metadata(payload)?;
-    let mut event = RunEvent::tool_call_completed(
+    let directive =
+        serde_json::from_value::<crate::types::ToolDirective>(payload.get("directive")?.clone())
+            .ok()?;
+    let error_code = match payload.get("error_code")? {
+        Value::Null => None,
+        Value::String(value) => Some(value.clone()),
+        _ => return None,
+    };
+    let execution_started = payload.get("execution_started")?.as_bool()?;
+    let duration_ms = match payload.get("duration_ms")? {
+        Value::Null => None,
+        value => Some(
+            value
+                .as_u64()
+                .filter(|value| *value <= JSON_SAFE_INTEGER_MAX)?,
+        ),
+    };
+    if !execution_started && duration_ms.is_some() {
+        return None;
+    }
+    let event = RunEvent::new(
         &context.run_id,
         &context.trace_id,
         &context.agent_name,
@@ -805,49 +682,22 @@ fn map_runtime_tool_completion(
             .get("cycle")
             .and_then(Value::as_u64)
             .map(|cycle| cycle as u32),
-        tool_call_id,
-        tool_name,
-        status,
+        RunEventPayload::ToolCallCompleted {
+            tool_call_id: tool_call_id.to_string(),
+            tool_name: tool_name.to_string(),
+            status,
+            directive,
+            error_code,
+            execution_started,
+            duration_ms,
+        },
     )
     .with_tool_metadata(tool_metadata.as_ref());
-
-    if let Some(value) = payload.get("directive") {
-        serde_json::from_value::<crate::types::ToolDirective>(value.clone()).ok()?;
-        event = event.with_tool_completion_wire_field("directive", value.clone());
-    }
-    if let Some(value) = payload.get("error_code") {
-        if !value.is_null() && !value.is_string() {
-            return None;
-        }
-        event = event.with_tool_completion_wire_field("error_code", value.clone());
-    }
-    let execution_started = match payload.get("execution_started") {
-        Some(Value::Bool(value)) => {
-            event = event.with_tool_completion_wire_field("execution_started", Value::Bool(*value));
-            Some(*value)
-        }
-        Some(_) => return None,
-        None => None,
-    };
-    if let Some(value) = payload.get("duration_ms") {
-        let duration = match value {
-            Value::Null => None,
-            value => Some(
-                value
-                    .as_u64()
-                    .filter(|value| *value <= JSON_SAFE_INTEGER_MAX)?,
-            ),
-        };
-        if execution_started == Some(false) && duration.is_some() {
-            return None;
-        }
-        event = event.with_tool_completion_wire_field("duration_ms", value.clone());
-    }
     Some(event)
 }
 
 fn runtime_tool_status(status: &str) -> Option<ToolStatus> {
-    match status.to_ascii_lowercase().as_str() {
+    match status {
         "success" => Some(ToolStatus::Success),
         "error" => Some(ToolStatus::Error),
         "wait_response" => Some(ToolStatus::WaitResponse),
@@ -937,16 +787,6 @@ fn with_selected_payload_metadata(
         }
     }
     event
-}
-
-fn canonical_stream_fingerprint(payload: &BTreeMap<String, Value>) -> Option<String> {
-    serde_json::to_string(payload).ok()
-}
-
-fn valid_stream_receipt(marker: &str) -> bool {
-    marker.strip_prefix("stream_").is_some_and(|value| {
-        value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-    })
 }
 
 #[cfg(test)]

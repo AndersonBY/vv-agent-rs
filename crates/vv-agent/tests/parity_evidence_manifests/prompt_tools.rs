@@ -171,7 +171,7 @@ fn build_builtin_tools_manifest() -> Value {
 
 #[test]
 fn prompt_bundle_manifest_uses_real_rust_prompt_producers() {
-    let mut fixture = load_fixture("prompt_bundle_v1.json");
+    let mut fixture = load_fixture("prompt_bundle.json");
     let scenarios = fixture["scenarios"]
         .as_array_mut()
         .expect("prompt scenarios");
@@ -192,7 +192,7 @@ fn prompt_bundle_manifest_uses_real_rust_prompt_producers() {
 
 #[test]
 fn builtin_tools_manifest_uses_real_rust_default_registry() {
-    let fixture = load_fixture("builtin_tools_v1.json");
+    let fixture = load_fixture("builtin_tools.json");
     let actual = build_builtin_tools_manifest();
     assert_eq!(fixture, actual);
     let tools = fixture["tools"].as_array().expect("builtin tools");

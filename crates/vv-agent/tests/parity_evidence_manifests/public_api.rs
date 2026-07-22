@@ -110,8 +110,6 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 before_cycle_messages,
                 interruption_messages,
                 sub_task_manager,
-                runtime_log_handler,
-                runtime_stream_callback,
                 checkpoint_config,
                 checkpoint_extensions,
                 reconciliation_provider,
@@ -296,7 +294,6 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 exposure,
                 timeout,
                 approval_rule,
-                idempotency,
                 tool_metadata,
                 is_enabled,
                 as_tool_spec,
@@ -491,7 +488,7 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
 
 #[test]
 fn public_api_manifest_compiles_real_rust_exports() {
-    let fixture = load_fixture("public_api_v1.json");
+    let fixture = load_fixture("public_api.json");
     assert_eq!(fixture["contract"], "vv-agent-public-api-v1");
     assert_eq!(fixture["schema_version"], 1);
 
@@ -518,7 +515,7 @@ fn public_api_manifest_compiles_real_rust_exports() {
             );
         }
     }
-    assert_eq!(capability_ids.len(), 151);
+    assert_eq!(capability_ids.len(), 149);
 
     let surfaces = fixture["surfaces"].as_array().expect("public API surfaces");
     let surface_map = surfaces

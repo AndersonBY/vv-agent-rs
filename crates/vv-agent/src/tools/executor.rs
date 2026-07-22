@@ -4,7 +4,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::checkpoint::ToolIdempotency;
 use crate::context::RunContext;
 use crate::tools::{ToolContext, ToolMetadata, ToolSpec};
 use crate::types::{Metadata, ToolArguments, ToolCall, ToolExecutionResult};
@@ -197,9 +196,6 @@ pub trait ToolExecutor: Send + Sync {
     fn timeout(&self) -> Option<Duration> {
         None
     }
-    fn idempotency(&self) -> ToolIdempotency {
-        ToolIdempotency::Unknown
-    }
     fn tool_metadata(&self) -> Option<&ToolMetadata> {
         None
     }
@@ -210,6 +206,16 @@ pub trait ToolExecutor: Send + Sync {
         _ctx: &ToolRunContext<'_>,
     ) -> ApprovalRequirement {
         ApprovalRequirement::NotRequired
+    }
+    fn validate_arguments(
+        &self,
+        call: &ToolCall,
+    ) -> Result<Option<ToolExecutionResult>, ToolError> {
+        let spec = self.spec(&ToolSpecContext)?;
+        let schema = crate::tools::argument_validation::close_object_schemas(&spec.schema);
+        let validator = crate::tools::argument_validation::validator_for_tool_schema(&schema)
+            .map_err(ToolError::new)?;
+        Ok(crate::tools::argument_validation::invalid_tool_arguments_result(&validator, call))
     }
     fn run<'a>(
         &'a self,
@@ -222,12 +228,20 @@ pub trait ToolExecutor: Send + Sync {
 pub struct ToolSpecExecutor {
     spec: ToolSpec,
     exposure: ToolExposure,
+    argument_validator: Result<jsonschema::Validator, String>,
 }
 
 impl ToolSpecExecutor {
-    pub fn new(spec: ToolSpec) -> Self {
+    pub fn new(mut spec: ToolSpec) -> Self {
+        spec.schema = crate::tools::argument_validation::close_object_schemas(&spec.schema);
         let exposure = spec.exposure;
-        Self { spec, exposure }
+        let argument_validator =
+            crate::tools::argument_validation::validator_for_tool_schema(&spec.schema);
+        Self {
+            spec,
+            exposure,
+            argument_validator,
+        }
     }
 
     pub fn with_exposure(mut self, exposure: ToolExposure) -> Self {
@@ -261,10 +275,6 @@ impl ToolExecutor for ToolSpecExecutor {
         self.spec.timeout
     }
 
-    fn idempotency(&self) -> ToolIdempotency {
-        self.spec.idempotency
-    }
-
     fn tool_metadata(&self) -> Option<&ToolMetadata> {
         self.spec.tool_metadata.as_ref()
     }
@@ -281,6 +291,17 @@ impl ToolExecutor for ToolSpecExecutor {
         self.spec.approval.requirement(ctx.context, &call.arguments)
     }
 
+    fn validate_arguments(
+        &self,
+        call: &ToolCall,
+    ) -> Result<Option<ToolExecutionResult>, ToolError> {
+        let validator = self
+            .argument_validator
+            .as_ref()
+            .map_err(|error| ToolError::new(error.clone()))?;
+        Ok(crate::tools::argument_validation::invalid_tool_arguments_result(validator, call))
+    }
+
     fn run<'a>(
         &'a self,
         call: ToolCall,
@@ -288,6 +309,9 @@ impl ToolExecutor for ToolSpecExecutor {
     ) -> ToolFuture<'a, ToolExecutionResult> {
         let handler = self.spec.handler.clone();
         Box::pin(async move {
+            if let Some(result) = self.validate_arguments(&call)? {
+                return Ok(result);
+            }
             ctx.context.begin_tool_call(&call);
             if self.spec.timeout.is_none() {
                 let mut result = handler(ctx.context, &call.arguments);

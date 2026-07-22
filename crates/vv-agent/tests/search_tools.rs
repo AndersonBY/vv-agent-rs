@@ -1,36 +1,13 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use vv_agent::workspace::{MemoryWorkspaceBackend, WorkspaceBackend};
 use vv_agent::{build_default_registry, ToolCall, ToolContext, ToolResultStatus};
 
 #[cfg(unix)]
 #[path = "search_tools/sensitive_fast_path.rs"]
 mod sensitive_fast_path;
-
-#[test]
-fn old_search_tool_names_are_not_registered() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-
-    let old_grep = registry.execute(
-        &ToolCall::new(
-            "old_grep",
-            "workspace_grep",
-            BTreeMap::from([("pattern".to_string(), json!("token"))]),
-        ),
-        &mut context,
-    );
-    assert!(old_grep.is_err());
-
-    let old_list = registry.execute(
-        &ToolCall::new("old_list", "list_files", BTreeMap::new()),
-        &mut context,
-    );
-    assert!(old_list.is_err());
-}
 
 #[test]
 fn search_files_defaults_to_files_with_matches() {
@@ -206,29 +183,62 @@ fn search_files_uses_regex_patterns() {
 }
 
 #[test]
-fn search_files_coerces_scalar_pattern() {
+fn search_files_rejects_schema_invalid_arguments() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
-    std::fs::write(workspace.path().join("numbers.txt"), "123\n456").expect("file");
+    let cases = [
+        ("pattern_type", "pattern", json!(123), "/pattern", "type"),
+        ("type_type", "type", json!(123), "/type", "type"),
+        (
+            "hidden_type",
+            "include_hidden",
+            json!("false"),
+            "/include_hidden",
+            "type",
+        ),
+        ("context_type", "c", json!("1"), "/c", "type"),
+        (
+            "limit_type",
+            "head_limit",
+            json!("2"),
+            "/head_limit",
+            "type",
+        ),
+        (
+            "unknown_property",
+            "unexpected",
+            json!(true),
+            "",
+            "additionalProperties",
+        ),
+    ];
 
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "grep_scalar_pattern",
-                "search_files",
-                BTreeMap::from([
-                    ("pattern".to_string(), json!(123)),
-                    ("output_mode".to_string(), json!("content")),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("search_files scalar pattern");
+    for (id, field, value, instance_path, rule) in cases {
+        let result = registry
+            .execute(
+                &ToolCall::new(
+                    format!("grep_{id}"),
+                    "search_files",
+                    BTreeMap::from([
+                        ("pattern".to_string(), json!("hit")),
+                        (field.to_string(), value),
+                    ]),
+                ),
+                &mut context,
+            )
+            .expect("search_files validation");
+        let content: Value = serde_json::from_str(&result.content).expect("validation content");
 
-    assert_eq!(result.status, ToolResultStatus::Success);
-    assert_eq!(result.metadata["summary"]["total_matches"], 1);
-    assert_eq!(result.metadata["matches"][0]["text"], "123");
+        assert_eq!(result.status, ToolResultStatus::Error, "case {id}");
+        assert_eq!(
+            result.error_code.as_deref(),
+            Some("invalid_tool_arguments"),
+            "case {id}"
+        );
+        assert_eq!(content["issues"][0]["instance_path"], instance_path);
+        assert_eq!(content["issues"][0]["rule"], rule);
+    }
 }
 
 #[test]
@@ -409,33 +419,6 @@ fn search_files_reports_supported_types_for_unknown_type() {
 }
 
 #[test]
-fn search_files_reports_scalar_type_as_unsupported() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "grep_scalar_type",
-                "search_files",
-                BTreeMap::from([
-                    ("pattern".to_string(), json!("token")),
-                    ("type".to_string(), json!(123)),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("search_files");
-
-    assert_eq!(result.status, ToolResultStatus::Error);
-    assert!(result
-        .content
-        .contains("Unsupported file type: 123. Supported types:"));
-    assert_eq!(result.metadata["error"], result.content);
-}
-
-#[test]
 fn search_files_supports_files_and_count_modes_with_type_filter() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
@@ -591,48 +574,6 @@ fn search_files_respects_hidden_and_ignored_defaults() {
 }
 
 #[test]
-fn search_files_uses_json_truthiness_for_hidden_and_line_flags() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-    std::fs::write(workspace.path().join(".hidden.txt"), "Agent hidden").expect("hidden");
-
-    let hidden = registry
-        .execute(
-            &ToolCall::new(
-                "grep_truthy_hidden",
-                "search_files",
-                BTreeMap::from([
-                    ("pattern".to_string(), json!("Agent")),
-                    ("include_hidden".to_string(), json!("false")),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("search_files hidden");
-
-    assert_eq!(hidden.metadata["summary"]["total_matches"], 1);
-
-    let no_line_numbers = registry
-        .execute(
-            &ToolCall::new(
-                "grep_falsey_line_numbers",
-                "search_files",
-                BTreeMap::from([
-                    ("pattern".to_string(), json!("Agent")),
-                    ("path".to_string(), json!(".hidden.txt")),
-                    ("output_mode".to_string(), json!("content")),
-                    ("n".to_string(), json!("")),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("search_files line numbers");
-
-    assert!(no_line_numbers.metadata["matches"][0].get("line").is_none());
-}
-
-#[test]
 fn search_files_file_path_target_can_read_hidden_file() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
@@ -726,68 +667,6 @@ fn search_files_supports_context_lines_and_file_targets() {
     assert_eq!(lines.len(), 3);
     assert_eq!(lines[0]["is_match"], false);
     assert_eq!(lines[1]["is_match"], true);
-}
-
-#[test]
-fn search_files_accepts_string_limits_and_context() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-    std::fs::write(
-        workspace.path().join("ctx.txt"),
-        "before\nhit\nhit again\nafter",
-    )
-    .expect("file");
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "grep_string_limits",
-                "search_files",
-                BTreeMap::from([
-                    ("pattern".to_string(), json!("hit")),
-                    ("output_mode".to_string(), json!("content")),
-                    ("c".to_string(), json!("1")),
-                    ("head_limit".to_string(), json!("2")),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("search_files string limits");
-
-    assert_eq!(result.metadata["head_limit"], 2);
-    assert_eq!(result.metadata["head_limited"], true);
-    let rows = result.metadata["matches"].as_array().expect("matches");
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0]["line"], 1);
-    assert_eq!(rows[1]["line"], 2);
-}
-
-#[test]
-fn search_files_ignores_removed_max_results_alias() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-    std::fs::write(workspace.path().join("hits.txt"), "hit one\nhit two").expect("file");
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "grep_removed_max_results",
-                "search_files",
-                BTreeMap::from([
-                    ("pattern".to_string(), json!("hit")),
-                    ("output_mode".to_string(), json!("content")),
-                    ("max_results".to_string(), json!(1)),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("search_files removed max_results");
-
-    let rows = result.metadata["matches"].as_array().expect("matches");
-    assert_eq!(rows.len(), 2);
-    assert_ne!(result.metadata["head_limit"], json!(1));
 }
 
 #[test]

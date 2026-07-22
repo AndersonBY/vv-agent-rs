@@ -58,14 +58,6 @@ pub(in crate::types::dict) fn read_u32(
         .unwrap_or(default)
 }
 
-pub(in crate::types::dict) fn read_u64(
-    object: &Map<String, Value>,
-    key: &str,
-    default: u64,
-) -> u64 {
-    object.get(key).and_then(Value::as_u64).unwrap_or(default)
-}
-
 pub(in crate::types::dict) fn read_array<'a>(
     object: &'a Map<String, Value>,
     key: &str,

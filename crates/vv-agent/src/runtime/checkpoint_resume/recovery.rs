@@ -4,7 +4,7 @@ use super::*;
 
 impl CheckpointResumeController {
     pub(super) fn create_new_checkpoint(&mut self, key: String) -> CheckpointResult<()> {
-        let mut checkpoint = CheckpointV2 {
+        let mut checkpoint = Checkpoint {
             run_definition: self.run_definition.clone(),
             checkpoint_key: key.clone(),
             task_id: self.task_id.clone(),
@@ -14,7 +14,7 @@ impl CheckpointResumeController {
             messages: self.initial_messages.clone(),
             shared_state: self.initial_shared_state.clone(),
             budget_usage: self.initial_budget_usage.clone(),
-            ..CheckpointV2::default()
+            ..Checkpoint::default()
         };
         self.snapshot_extensions_into(&mut checkpoint)?;
         let created_event = self.checkpoint_event(
@@ -27,7 +27,7 @@ impl CheckpointResumeController {
         )?;
         queue_event(&mut checkpoint, created_event)?;
         checkpoint.validate()?;
-        if !self.store.create_checkpoint_v2(checkpoint.clone())? {
+        if !self.store.create_checkpoint(checkpoint.clone())? {
             return Err(CheckpointError::new(
                 "checkpoint_key_conflict",
                 format!("checkpoint key {key:?} was created concurrently"),
@@ -66,7 +66,7 @@ impl CheckpointResumeController {
             ClaimMode::Continue
         };
         let claim_token = format!("claim_{}", uuid::Uuid::new_v4().simple());
-        let claimed = self.store.claim_checkpoint_v2(
+        let claimed = self.store.claim_checkpoint(
             self.checkpoint_key()?,
             cycle_index,
             &claim_token,
@@ -250,11 +250,10 @@ impl CheckpointResumeController {
                 "checkpoint suspension requires an active claim",
             )
         })?;
-        if !self.store.suspend_checkpoint_v2(
-            checkpoint.clone(),
-            &claim_token,
-            checkpoint.revision,
-        )? {
+        if !self
+            .store
+            .suspend_checkpoint(checkpoint.clone(), &claim_token, checkpoint.revision)?
+        {
             return Err(CheckpointError::new(
                 "checkpoint_store_conflict",
                 "failed to suspend checkpoint for reconciliation",
@@ -370,7 +369,7 @@ impl CheckpointResumeController {
             (self.event_sink)(event)
                 .map_err(|error| CheckpointError::new("checkpoint_event_delivery_failed", error))?;
             let checkpoint = self.require_checkpoint()?.clone();
-            let recorded = self.store.record_event_delivery_v2(
+            let recorded = self.store.record_event_delivery(
                 &checkpoint.checkpoint_key,
                 checkpoint.claim_token.as_deref(),
                 checkpoint.revision,

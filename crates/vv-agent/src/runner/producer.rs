@@ -13,14 +13,14 @@ use super::{CheckpointAdmissionSender, NormalizedInput, RunEventStream, Runner};
 pub(crate) enum CheckpointStartOutcome {
     Started {
         handle: RunHandle,
-        checkpoint: crate::runtime::state_v2::CheckpointV2,
+        checkpoint: crate::runtime::state::Checkpoint,
     },
     ExistingOwner {
-        checkpoint: crate::runtime::state_v2::CheckpointV2,
+        checkpoint: crate::runtime::state::Checkpoint,
     },
     TerminalReplay {
         result: Box<RunResult>,
-        checkpoint: crate::runtime::state_v2::CheckpointV2,
+        checkpoint: crate::runtime::state::Checkpoint,
     },
 }
 
@@ -78,7 +78,7 @@ impl Runner {
             "checkpoint_key_required: start_checkpointed requires an explicit key".to_string()
         })?;
         if let Some(checkpoint) = store
-            .load_checkpoint_v2(&checkpoint_key)
+            .load_checkpoint(&checkpoint_key)
             .map_err(|error| error.to_string())?
         {
             if checkpoint.terminal_result.is_none()
@@ -98,7 +98,7 @@ impl Runner {
             Ok(admission) if admission.terminal_replayed => {
                 let result = handle.result().await?;
                 let checkpoint = store
-                    .load_checkpoint_v2(&checkpoint_key)
+                    .load_checkpoint(&checkpoint_key)
                     .map_err(|error| error.to_string())?
                     .ok_or_else(|| {
                         "checkpoint_not_found: terminal checkpoint disappeared".to_string()
@@ -115,7 +115,7 @@ impl Runner {
             Err(_) => {
                 let result = handle.result().await;
                 if let Some(checkpoint) = store
-                    .load_checkpoint_v2(&checkpoint_key)
+                    .load_checkpoint(&checkpoint_key)
                     .map_err(|error| error.to_string())?
                 {
                     if checkpoint.terminal_result.is_none()

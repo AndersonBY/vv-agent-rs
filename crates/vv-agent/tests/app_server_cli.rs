@@ -296,7 +296,7 @@ fn cli_app_server_timeout_defaults_to_ninety_seconds() {
 
 #[test]
 fn cli_app_server_schema_commands_reject_trailing_arguments() {
-    for command in ["generate-ts", "generate-json-schema", "schema"] {
+    for command in ["generate-ts", "schema"] {
         let error = parse_cli_command_from_with_default_settings(
             [
                 "vv-agent",
@@ -337,7 +337,7 @@ fn cli_parses_app_server_schema_generation_commands() {
         [
             "vv-agent",
             "app-server",
-            "generate-json-schema",
+            "schema",
             "--out",
             "target/app-server-schema/json",
         ],
@@ -348,24 +348,6 @@ fn cli_parses_app_server_schema_generation_commands() {
         json,
         CliCommand::AppServer(AppServerCliCommand::GenerateJsonSchema {
             out: "target/app-server-schema/json".into()
-        })
-    );
-
-    let alias = parse_cli_command_from_with_default_settings(
-        [
-            "vv-agent",
-            "app-server",
-            "schema",
-            "--out",
-            "target/app-server-schema/alias",
-        ],
-        "local_settings.json",
-    )
-    .expect("parse schema alias");
-    assert_eq!(
-        alias,
-        CliCommand::AppServer(AppServerCliCommand::GenerateJsonSchema {
-            out: "target/app-server-schema/alias".into()
         })
     );
 }
@@ -414,12 +396,10 @@ fn cli_schema_generation_writes_json_and_typescript_files() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let json_out = tempdir.path().join("json");
     let ts_out = tempdir.path().join("typescript");
-    let alias_out = tempdir.path().join("alias");
-
     let json_status = Command::new(env!("CARGO_BIN_EXE_vv-agent"))
         .args([
             "app-server",
-            "generate-json-schema",
+            "schema",
             "--out",
             json_out.to_str().expect("json path"),
         ])
@@ -443,18 +423,6 @@ fn cli_schema_generation_writes_json_and_typescript_files() {
     assert!(ts_out.join("ServerRequest.ts").exists());
     assert!(ts_out.join("TurnResumeParams.ts").exists());
     assert!(ts_out.join("TurnResumeResponse.ts").exists());
-
-    let alias_status = Command::new(env!("CARGO_BIN_EXE_vv-agent"))
-        .args([
-            "app-server",
-            "schema",
-            "--out",
-            alias_out.to_str().expect("alias path"),
-        ])
-        .status()
-        .expect("run schema alias");
-    assert!(alias_status.success());
-    assert_json_schema_file_set(&alias_out);
 
     let client_request =
         fs::read_to_string(json_out.join("json/ClientRequest.json")).expect("schema file");

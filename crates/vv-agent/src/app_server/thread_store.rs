@@ -12,6 +12,47 @@ use crate::app_server::protocol::{
     AppItem, AppThread, AppTurn, ThreadStartParams, ThreadStatus, TurnStatus, UserInput,
 };
 
+const THREAD_STORE_SCHEMA_VERSION: i64 = 1;
+const THREAD_STORE_TABLE_COLUMNS: &[(&str, &[&str])] = &[
+    (
+        "app_server_threads",
+        &[
+            "thread_id",
+            "agent_key",
+            "cwd",
+            "created_at",
+            "updated_at",
+            "archived_at",
+            "status",
+            "metadata_json",
+            "active_turn_id",
+        ],
+    ),
+    (
+        "app_server_turns",
+        &[
+            "turn_id",
+            "thread_id",
+            "run_id",
+            "status",
+            "started_at",
+            "completed_at",
+            "input_json",
+            "result_json",
+        ],
+    ),
+    (
+        "app_server_items",
+        &[
+            "item_id",
+            "thread_id",
+            "turn_id",
+            "sequence",
+            "payload_json",
+        ],
+    ),
+];
+
 #[derive(Clone)]
 pub struct SqliteThreadStore {
     connection: Arc<Mutex<Connection>>,
@@ -42,7 +83,7 @@ impl SqliteThreadStore {
             next_thread_id: Arc::new(AtomicU64::new(1)),
             next_turn_id: Arc::new(AtomicU64::new(1)),
         };
-        store.migrate()?;
+        store.initialize_schema()?;
         store.recover_interrupted_threads()?;
         store.seed_sequences()?;
         Ok(store)
@@ -366,12 +407,22 @@ impl SqliteThreadStore {
         Ok(())
     }
 
-    fn migrate(&self) -> Result<(), ThreadStoreError> {
+    fn initialize_schema(&self) -> Result<(), ThreadStoreError> {
         let connection = self.connection.lock().map_err(ThreadStoreError::poisoned)?;
-        connection
-            .execute_batch(
-                r#"
-                CREATE TABLE IF NOT EXISTS app_server_threads (
+        let version = connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .map_err(ThreadStoreError::sql)?;
+        let existing_tables = schema_objects(&connection, Some("table"))?;
+        if existing_tables.is_empty() {
+            if version != 0 {
+                return Err(ThreadStoreError::schema_version(version));
+            }
+            connection
+                .execute_batch(
+                    r#"
+                PRAGMA user_version = 1;
+
+                CREATE TABLE app_server_threads (
                     thread_id TEXT PRIMARY KEY,
                     agent_key TEXT NOT NULL,
                     cwd TEXT,
@@ -383,7 +434,7 @@ impl SqliteThreadStore {
                     active_turn_id TEXT
                 );
 
-                CREATE TABLE IF NOT EXISTS app_server_turns (
+                CREATE TABLE app_server_turns (
                     turn_id TEXT PRIMARY KEY,
                     thread_id TEXT NOT NULL,
                     run_id TEXT,
@@ -394,7 +445,7 @@ impl SqliteThreadStore {
                     result_json TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS app_server_items (
+                CREATE TABLE app_server_items (
                     item_id TEXT PRIMARY KEY,
                     thread_id TEXT NOT NULL,
                     turn_id TEXT NOT NULL,
@@ -402,20 +453,17 @@ impl SqliteThreadStore {
                     payload_json TEXT NOT NULL
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_app_server_items_thread_sequence
+                CREATE INDEX idx_app_server_items_thread_sequence
                     ON app_server_items(thread_id, sequence);
-                CREATE INDEX IF NOT EXISTS idx_app_server_turns_thread
+                CREATE INDEX idx_app_server_turns_thread
                     ON app_server_turns(thread_id);
                 "#,
-            )
-            .map_err(ThreadStoreError::sql)?;
-        ensure_column(
-            &connection,
-            "app_server_threads",
-            "status",
-            "TEXT NOT NULL DEFAULT 'idle'",
-        )?;
-        ensure_column(&connection, "app_server_threads", "active_turn_id", "TEXT")?;
+                )
+                .map_err(ThreadStoreError::sql)?;
+        } else if version != THREAD_STORE_SCHEMA_VERSION {
+            return Err(ThreadStoreError::schema_version(version));
+        }
+        validate_schema(&connection)?;
         Ok(())
     }
 
@@ -485,6 +533,20 @@ impl ThreadStoreError {
     fn item_identity_conflict(item_id: &str) -> Self {
         Self {
             message: format!("app_server_item_identity_conflict: {item_id}"),
+        }
+    }
+
+    fn schema_version(actual: i64) -> Self {
+        Self {
+            message: format!(
+                "App Server thread-store schema version {actual} does not match required version {THREAD_STORE_SCHEMA_VERSION}"
+            ),
+        }
+    }
+
+    fn schema(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
         }
     }
 }
@@ -649,28 +711,69 @@ fn normalize_timestamp(value: f64) -> f64 {
     }
 }
 
-fn ensure_column(
+fn schema_objects(
     connection: &Connection,
-    table: &str,
-    column: &str,
-    declaration: &str,
-) -> Result<(), ThreadStoreError> {
+    object_type: Option<&str>,
+) -> Result<Vec<(String, String)>, ThreadStoreError> {
+    let type_filter = object_type.map_or(String::new(), |kind| format!(" AND type = '{kind}'"));
     let mut statement = connection
-        .prepare(&format!("PRAGMA table_info({table})"))
+        .prepare(&format!(
+            "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND type IN ('table', 'index'){type_filter}"
+        ))
         .map_err(ThreadStoreError::sql)?;
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
+    let mut objects = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(ThreadStoreError::sql)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(ThreadStoreError::sql)?;
-    drop(statement);
-    if !columns.iter().any(|existing| existing == column) {
-        connection
-            .execute(
-                &format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"),
-                [],
-            )
+    objects.sort();
+    Ok(objects)
+}
+
+fn validate_schema(connection: &Connection) -> Result<(), ThreadStoreError> {
+    let actual_objects = schema_objects(connection, None)?;
+    let mut expected_objects = THREAD_STORE_TABLE_COLUMNS
+        .iter()
+        .map(|(table, _)| ("table".to_string(), (*table).to_string()))
+        .chain([
+            (
+                "index".to_string(),
+                "idx_app_server_items_thread_sequence".to_string(),
+            ),
+            (
+                "index".to_string(),
+                "idx_app_server_turns_thread".to_string(),
+            ),
+        ])
+        .collect::<Vec<_>>();
+    expected_objects.sort();
+    if actual_objects != expected_objects {
+        return Err(ThreadStoreError::schema(format!(
+            "App Server thread-store schema objects do not match the current schema: expected={expected_objects:?}, actual={actual_objects:?}"
+        )));
+    }
+
+    for (table, expected_columns) in THREAD_STORE_TABLE_COLUMNS {
+        let mut statement = connection
+            .prepare(&format!("PRAGMA table_info({table})"))
             .map_err(ThreadStoreError::sql)?;
+        let actual_columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(ThreadStoreError::sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(ThreadStoreError::sql)?;
+        if actual_columns
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            != expected_columns.to_vec()
+        {
+            return Err(ThreadStoreError::schema(format!(
+                "App Server thread-store table {table} does not match the current schema: expected={expected_columns:?}, actual={actual_columns:?}"
+            )));
+        }
     }
     Ok(())
 }
@@ -759,10 +862,10 @@ mod tests {
     }
 
     #[test]
-    fn opening_a_legacy_database_adds_thread_lifecycle_columns() {
+    fn opening_an_unversioned_database_is_rejected_without_mutation() {
         let directory = tempfile::tempdir().expect("tempdir");
-        let path = directory.path().join("legacy.sqlite");
-        let connection = Connection::open(&path).expect("legacy connection");
+        let path = directory.path().join("unversioned.sqlite");
+        let connection = Connection::open(&path).expect("unversioned connection");
         connection
             .execute_batch(
                 r#"
@@ -780,14 +883,70 @@ mod tests {
                 ) VALUES ('thread_1', 'default', NULL, 1.0, 1.0, NULL, '{}');
                 "#,
             )
-            .expect("legacy schema");
+            .expect("unversioned schema");
         drop(connection);
 
-        let store = SqliteThreadStore::open(&path).expect("migrated store");
-        let thread = store
-            .get_thread("thread_1")
-            .expect("read thread")
-            .expect("thread exists");
-        assert_eq!(thread.status, ThreadStatus::Idle);
+        let error = SqliteThreadStore::open(&path)
+            .err()
+            .expect("unversioned schema rejected");
+        assert_eq!(
+            error.to_string(),
+            "App Server thread-store schema version 0 does not match required version 1"
+        );
+        let connection = Connection::open(&path).expect("reopen unversioned connection");
+        let columns = connection
+            .prepare("PRAGMA table_info(app_server_threads)")
+            .expect("prepare columns")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query columns")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect columns");
+        assert!(!columns.iter().any(|column| column == "status"));
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .expect("user version"),
+            0
+        );
+    }
+
+    #[test]
+    fn opening_a_wrong_schema_version_is_rejected() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("wrong-version.sqlite");
+        SqliteThreadStore::open(&path).expect("current store");
+        let connection = Connection::open(&path).expect("connection");
+        connection
+            .pragma_update(None, "user_version", 2)
+            .expect("wrong version");
+        drop(connection);
+
+        let error = SqliteThreadStore::open(&path)
+            .err()
+            .expect("wrong version rejected");
+        assert_eq!(
+            error.to_string(),
+            "App Server thread-store schema version 2 does not match required version 1"
+        );
+    }
+
+    #[test]
+    fn opening_a_malformed_current_schema_is_rejected() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("malformed.sqlite");
+        let connection = Connection::open(&path).expect("connection");
+        connection
+            .execute_batch(
+                "PRAGMA user_version = 1; CREATE TABLE app_server_threads (thread_id TEXT PRIMARY KEY);",
+            )
+            .expect("malformed schema");
+        drop(connection);
+
+        let error = SqliteThreadStore::open(&path)
+            .err()
+            .expect("malformed schema rejected");
+        assert!(error
+            .to_string()
+            .contains("schema objects do not match the current schema"));
     }
 }

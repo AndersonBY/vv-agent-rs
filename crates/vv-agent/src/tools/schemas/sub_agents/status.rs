@@ -36,6 +36,7 @@ pub(in crate::tools::schemas) fn sub_task_status_schema() -> Value {
                 "properties": {
                     "task_ids": {
                         "type": "array",
+                        "minItems": 1,
                         "description": "Sub-task ids to query. Use the ids returned by `create_sub_task`; duplicate ids are deduplicated. When `message` is provided, only the first id is used as the target.",
                         "items": {"type": "string"}
                     },

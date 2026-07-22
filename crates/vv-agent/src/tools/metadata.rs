@@ -112,28 +112,6 @@ impl ToolMetadata {
     }
 }
 
-pub(crate) fn merge_tool_idempotency(
-    legacy: ToolIdempotency,
-    typed: Option<&ToolMetadata>,
-) -> Result<(ToolIdempotency, Option<ToolMetadata>), ToolMetadataError> {
-    let Some(typed) = typed else {
-        return Ok((legacy, None));
-    };
-    let mut normalized = typed.normalized()?;
-    let effective = match (legacy, normalized.idempotency) {
-        (ToolIdempotency::Unknown, typed) => typed,
-        (legacy, ToolIdempotency::Unknown) => legacy,
-        (legacy, typed) if legacy == typed => legacy,
-        _ => {
-            return Err(ToolMetadataError::new(
-                "legacy idempotency conflicts with tool_metadata.idempotency",
-            ))
-        }
-    };
-    normalized.idempotency = effective;
-    Ok((effective, Some(normalized)))
-}
-
 pub(crate) fn normalize_tool_metadata_labels(
     values: &[String],
     field_name: &str,

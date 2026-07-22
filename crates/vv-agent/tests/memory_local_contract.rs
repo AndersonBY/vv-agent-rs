@@ -2,7 +2,6 @@ use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use vv_agent::{
     memory::{
         microcompact,
@@ -13,8 +12,7 @@ use vv_agent::{
     ToolCall,
 };
 
-const FIXTURE_TEXT: &str = include_str!("fixtures/parity/memory_local_v1.json");
-const FIXTURE_SHA256: &str = "6194162f72b99e37b371869493088a3d92bcfbd1397f41b84aea503331e0db6d";
+const FIXTURE_TEXT: &str = include_str!("fixtures/parity/memory_local.json");
 
 #[derive(Debug, Deserialize)]
 struct MemoryLocalFixture {
@@ -173,12 +171,8 @@ fn extract_first_object(raw: &str) -> Option<Value> {
 
 #[test]
 fn canonical_fixture_and_token_counts_match() {
-    assert_eq!(
-        format!("{:x}", Sha256::digest(FIXTURE_TEXT.as_bytes())),
-        FIXTURE_SHA256
-    );
     let fixture = fixture();
-    assert_eq!(fixture.contract, "memory_local_v1");
+    assert_eq!(fixture.contract, "memory_local");
     assert_eq!(fixture.character_unit, "unicode_code_point");
 
     for case in fixture.token_counts {

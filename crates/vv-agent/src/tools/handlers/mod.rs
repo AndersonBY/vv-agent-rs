@@ -1,6 +1,5 @@
 pub mod background;
 pub mod bash;
-pub mod common;
 pub mod control;
 pub mod image;
 pub mod memory;

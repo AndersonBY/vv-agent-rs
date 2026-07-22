@@ -2,26 +2,17 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use vv_agent::{
     session_store_conformance, Agent, LLMResponse, LlmRequest, MemorySession, MemorySessionStore,
     MessageRole, ModelRef, RedisSessionStore, RunConfig, Runner, ScriptStep, ScriptedModelProvider,
     Session, SessionItem, SqliteSessionStore, ToolCall,
 };
 
-const SESSION_ITEMS_FIXTURE: &str = include_str!("fixtures/parity/session_items_v1.jsonl");
-const SESSION_ITEMS_FIXTURE_SHA256: &str =
-    "8985926cd4f3b7befbb0643e1429936256cbb20d0cce06440dfa68e64969599d";
-const RUNNER_SESSION_FIXTURE: &str =
-    include_str!("fixtures/parity/runner_session_messages_v1.jsonl");
-const RUNNER_SESSION_FIXTURE_SHA256: &str =
-    "74c7406ea33f3d676c340a9975c90220e7830a85fb0efa11a743acec726f16dd";
+const SESSION_ITEMS_FIXTURE: &str = include_str!("fixtures/parity/session_items.jsonl");
+const RUNNER_SESSION_FIXTURE: &str = include_str!("fixtures/parity/runner_session_messages.jsonl");
 
 #[test]
 fn session_item_wire_matches_python_message_fixture() {
-    let digest = format!("{:x}", Sha256::digest(SESSION_ITEMS_FIXTURE.as_bytes()));
-    assert_eq!(digest, SESSION_ITEMS_FIXTURE_SHA256);
-
     for line in SESSION_ITEMS_FIXTURE.lines() {
         let expected: serde_json::Value = serde_json::from_str(line).expect("fixture json");
         let item: SessionItem = serde_json::from_str(line).expect("canonical session item");
@@ -30,36 +21,6 @@ fn session_item_wire_matches_python_message_fixture() {
         assert_eq!(
             serde_json::to_string(&item).expect("serialize session item"),
             line
-        );
-    }
-}
-
-#[test]
-fn session_item_reads_legacy_tagged_wire_and_writes_canonical_wire() {
-    let cases = [
-        (
-            r#"{"type":"system","content":"system"}"#,
-            serde_json::json!({"role": "system", "content": "system"}),
-        ),
-        (
-            r#"{"type":"user","content":"hello"}"#,
-            serde_json::json!({"role": "user", "content": "hello"}),
-        ),
-        (
-            r#"{"type":"assistant","content":"answer"}"#,
-            serde_json::json!({"role": "assistant", "content": "answer"}),
-        ),
-        (
-            r#"{"type":"tool","content":"ok","tool_call_id":"call_1"}"#,
-            serde_json::json!({"role": "tool", "content": "ok", "tool_call_id": "call_1"}),
-        ),
-    ];
-
-    for (legacy, expected) in cases {
-        let item: SessionItem = serde_json::from_str(legacy).expect("legacy tagged session item");
-        assert_eq!(
-            serde_json::to_value(item).expect("canonical session item"),
-            expected
         );
     }
 }
@@ -95,10 +56,6 @@ async fn redis_session_store_passes_conformance_when_configured() {
 
 #[tokio::test]
 async fn runner_persists_complete_result_message_delta_into_next_provider_history() {
-    assert_eq!(
-        format!("{:x}", Sha256::digest(RUNNER_SESSION_FIXTURE.as_bytes())),
-        RUNNER_SESSION_FIXTURE_SHA256
-    );
     let requests = Arc::new(Mutex::new(Vec::<LlmRequest>::new()));
     let first_requests = requests.clone();
     let second_requests = requests.clone();

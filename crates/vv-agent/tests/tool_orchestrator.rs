@@ -92,6 +92,13 @@ async fn approval_predicate_receives_the_current_tool_call_context() {
     let observed = Arc::new(std::sync::Mutex::new(None));
     let observed_for_predicate = observed.clone();
     let tool = FunctionTool::builder("guarded")
+        .json_schema(json!({
+            "type": "object",
+            "properties": {
+                "scope": {"type": "string"}
+            },
+            "required": ["scope"]
+        }))
         .needs_approval_if(move |context, arguments| {
             *observed_for_predicate.lock().expect("approval context") = Some((
                 context.tool_call_id.clone(),

@@ -274,6 +274,17 @@ impl ToolOrchestrator {
             },
         );
 
+        if let Some(tool) = tool {
+            if let Some(result) = tool.validate_arguments(&call)? {
+                return Ok(deferred_without_execution(
+                    &call,
+                    result,
+                    tool_metadata,
+                    options.lifecycle_callback.as_ref(),
+                ));
+            }
+        }
+
         if let Some(allowed) = options.allowed_tools.as_ref() {
             if !allowed.iter().any(|tool| tool == &call.name) {
                 return Ok(deferred_without_execution(
@@ -549,6 +560,9 @@ fn tool_error(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
     use serde_json::{json, Value};
 
     use super::*;
@@ -580,5 +594,69 @@ mod tests {
             .expect("tool result");
 
         assert_eq!(result.status, ToolResultStatus::Success);
+    }
+
+    #[tokio::test]
+    async fn schema_invalid_arguments_fail_before_approval_or_execution() {
+        let approval_calls = Arc::new(AtomicUsize::new(0));
+        let handler_calls = Arc::new(AtomicUsize::new(0));
+        let observed_approval = approval_calls.clone();
+        let observed_handler = handler_calls.clone();
+        let tool = FunctionTool::builder("guarded")
+            .json_schema(json!({
+                "type": "object",
+                "properties": {"value": {"type": "integer"}},
+                "required": ["value"],
+                "additionalProperties": false,
+            }))
+            .needs_approval_if(move |_context, _arguments| {
+                observed_approval.fetch_add(1, Ordering::SeqCst);
+                true
+            })
+            .handler(move |_context, _arguments: Value| {
+                let observed_handler = observed_handler.clone();
+                async move {
+                    observed_handler.fetch_add(1, Ordering::SeqCst);
+                    Ok(ToolOutput::text("ran"))
+                }
+            })
+            .build()
+            .expect("guarded tool");
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let observed_events = events.clone();
+        let options = ToolRunOptions::default().lifecycle_callback(Arc::new(move |event| {
+            let name = match event {
+                ToolLifecycleEvent::Planned { .. } => "planned",
+                ToolLifecycleEvent::Started { .. } => "started",
+                ToolLifecycleEvent::Completed { .. } => "completed",
+            };
+            observed_events.lock().expect("events").push(name);
+        }));
+        let orchestrator = ToolOrchestrator::from_tools(vec![tool.to_executor()]);
+        let mut context = ToolContext::new("./workspace");
+
+        let result = orchestrator
+            .run_one(
+                ToolCall::from_raw_arguments(
+                    "guarded_call",
+                    "guarded",
+                    json!({"value": "wrong", "extra": true}),
+                ),
+                &mut context,
+                options,
+            )
+            .await
+            .expect("tool result");
+
+        assert_eq!(
+            result.error_code.as_deref(),
+            Some(crate::tools::argument_validation::INVALID_TOOL_ARGUMENTS_ERROR_CODE)
+        );
+        assert_eq!(approval_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(handler_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            events.lock().expect("events").as_slice(),
+            ["planned", "completed"]
+        );
     }
 }

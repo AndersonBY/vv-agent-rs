@@ -117,8 +117,9 @@ fn configured_async_child_panic_cleans_up_and_retained_session_can_continue() {
     let manager = SubTaskManager::default();
     let lifecycle = Arc::new(Mutex::new(Vec::new()));
     let lifecycle_for_handler = lifecycle.clone();
-    let log_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-        if matches!(name, "sub_run_started" | "sub_run_completed") {
+    let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+        let (name, payload) = typed_event_parts(run_event);
+        if matches!(name.as_str(), "sub_run_started" | "sub_run_completed") {
             lifecycle_for_handler
                 .lock()
                 .expect("panic lifecycle")
@@ -135,7 +136,7 @@ fn configured_async_child_panic_cleans_up_and_retained_session_can_continue() {
         .run_with_controls(
             parent,
             RuntimeRunControls {
-                log_handler: Some(log_handler),
+                event_handler: Some(event_handler),
                 execution_context: Some(ExecutionContext {
                     metadata: BTreeMap::from([
                         ("_vv_agent_run_id".to_string(), json!("parent-run")),
@@ -185,7 +186,7 @@ fn configured_async_child_panic_cleans_up_and_retained_session_can_continue() {
             vec!["sub_run_started", "sub_run_completed"]
         );
         assert_eq!(events.len() == 2, cleanup["completed_event_emitted_once"]);
-        assert_eq!(events[0].1["child_run_id"], events[1].1["child_run_id"]);
+        assert_eq!(events[0].1["run_id"], events[1].1["run_id"]);
         assert_eq!(events[1].1["status"], "failed");
     }
 
@@ -221,8 +222,8 @@ fn configured_async_child_panic_cleans_up_and_retained_session_can_continue() {
             "sub_run_completed"
         ]
     );
-    assert_eq!(events[2].1["child_run_id"], events[3].1["child_run_id"]);
-    assert_ne!(events[0].1["child_run_id"], events[2].1["child_run_id"]);
+    assert_eq!(events[2].1["run_id"], events[3].1["run_id"]);
+    assert_ne!(events[0].1["run_id"], events[2].1["run_id"]);
     assert!(events.iter().all(|(_, event)| {
         event["task_id"] == task_id
             && event["child_session_id"] == session_id
@@ -289,8 +290,9 @@ fn start_blocking_async_configured_child() -> RunningAsyncConfiguredChild {
     let parent_token = vv_agent::CancellationToken::default();
     let lifecycle = Arc::new(Mutex::new(Vec::new()));
     let lifecycle_for_handler = lifecycle.clone();
-    let log_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-        if matches!(name, "sub_run_started" | "sub_run_completed") {
+    let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+        let (name, payload) = typed_event_parts(run_event);
+        if matches!(name.as_str(), "sub_run_started" | "sub_run_completed") {
             lifecycle_for_handler
                 .lock()
                 .expect("async child lifecycle")
@@ -307,7 +309,7 @@ fn start_blocking_async_configured_child() -> RunningAsyncConfiguredChild {
         .run_with_controls(
             parent,
             RuntimeRunControls {
-                log_handler: Some(log_handler),
+                event_handler: Some(event_handler),
                 execution_context: Some(ExecutionContext {
                     cancellation_token: Some(parent_token.clone()),
                     metadata: BTreeMap::from([
@@ -403,10 +405,7 @@ fn real_async_configured_child_can_finish_after_parent_returns() {
             .filter_map(Value::as_str)
             .collect::<Vec<_>>()
     );
-    assert_eq!(
-        lifecycle[0].1["child_run_id"],
-        lifecycle[1].1["child_run_id"]
-    );
+    assert_eq!(lifecycle[0].1["run_id"], lifecycle[1].1["run_id"]);
     assert!(lifecycle.iter().all(|(_, payload)| {
         payload["parent_run_id"] == "parent-run" && payload["parent_tool_call_id"] == "delegate"
     }));
@@ -428,8 +427,9 @@ fn synchronous_configured_child_stays_running_and_rejects_racing_continuation() 
     let manager = SubTaskManager::default();
     let lifecycle = Arc::new(Mutex::new(Vec::<(String, BTreeMap<String, Value>)>::new()));
     let lifecycle_for_handler = lifecycle.clone();
-    let event_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-        if matches!(name, "sub_run_started" | "sub_run_completed") {
+    let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+        let (name, payload) = typed_event_parts(run_event);
+        if matches!(name.as_str(), "sub_run_started" | "sub_run_completed") {
             lifecycle_for_handler
                 .lock()
                 .expect("sync child lifecycle")
@@ -446,7 +446,7 @@ fn synchronous_configured_child_stays_running_and_rejects_racing_continuation() 
         AgentRuntime::new(llm).run_with_controls(
             parent,
             RuntimeRunControls {
-                log_handler: Some(event_handler),
+                event_handler: Some(event_handler),
                 sub_task_manager: Some(manager_for_run),
                 ..RuntimeRunControls::default()
             },
@@ -549,11 +549,9 @@ impl LlmClient for PanicAfterCompletedCycleClient {
             if child_call == 1 {
                 let mut response = LLMResponse::new("continue after a billed cycle");
                 response.token_usage = TokenUsage {
-                    prompt_tokens: 13,
-                    completion_tokens: 8,
-                    total_tokens: 21,
-                    input_tokens: 13,
-                    output_tokens: 8,
+                    input_tokens: Some(13),
+                    output_tokens: Some(8),
+                    total_tokens: Some(21),
                     ..TokenUsage::default()
                 };
                 return Ok(response);
@@ -592,8 +590,9 @@ fn panic_after_completed_cycle_preserves_cycles_and_token_usage() {
     let manager = SubTaskManager::default();
     let lifecycle = Arc::new(Mutex::new(Vec::<(String, BTreeMap<String, Value>)>::new()));
     let lifecycle_for_handler = lifecycle.clone();
-    let event_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-        if matches!(name, "sub_run_started" | "sub_run_completed") {
+    let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+        let (name, payload) = typed_event_parts(run_event);
+        if matches!(name.as_str(), "sub_run_started" | "sub_run_completed") {
             lifecycle_for_handler
                 .lock()
                 .expect("progress lifecycle")
@@ -616,7 +615,7 @@ fn panic_after_completed_cycle_preserves_cycles_and_token_usage() {
         .run_with_controls(
             parent,
             RuntimeRunControls {
-                log_handler: Some(event_handler),
+                event_handler: Some(event_handler),
                 sub_task_manager: Some(manager.clone()),
                 ..RuntimeRunControls::default()
             },
@@ -640,8 +639,8 @@ fn panic_after_completed_cycle_preserves_cycles_and_token_usage() {
     assert_eq!(outcome.cycles, 1);
     assert_eq!(completion["status"], "failed");
     assert_eq!(completion["metadata"]["cycles"], 1);
-    assert_eq!(completion["token_usage"]["prompt_tokens"], 13);
-    assert_eq!(completion["token_usage"]["completion_tokens"], 8);
+    assert_eq!(completion["token_usage"]["input_tokens"], 13);
+    assert_eq!(completion["token_usage"]["output_tokens"], 8);
     assert_eq!(completion["token_usage"]["total_tokens"], 21);
     assert_eq!(completion["token_usage"]["cycles"][0]["cycle_index"], 1);
     assert!(!snapshot.running);
@@ -723,7 +722,6 @@ fn async_batch_submission_failures_count_and_fail_the_overall_result() {
                         "tasks".to_string(),
                         json!([
                             {"task_description": "first spawn failure"},
-                            "invalid item",
                             {"task_description": "second spawn failure"}
                         ]),
                     ),
@@ -743,7 +741,7 @@ fn async_batch_submission_failures_count_and_fail_the_overall_result() {
     );
     assert_eq!(
         details["summary"],
-        json!({"total": 3, "accepted": 0, "failed": 3})
+        json!({"total": 2, "accepted": 0, "failed": 2})
     );
     assert_eq!(details["task_ids"], json!([]));
     assert_eq!(details["results"][0]["status"], "failed");
@@ -751,9 +749,8 @@ fn async_batch_submission_failures_count_and_fail_the_overall_result() {
         details["results"][0]["error_code"],
         "sub_task_submit_failed"
     );
-    assert_eq!(details["results"][1]["status"], "failed");
     assert_eq!(
-        details["results"][2]["error_code"],
+        details["results"][1]["error_code"],
         "sub_task_submit_failed"
     );
 }

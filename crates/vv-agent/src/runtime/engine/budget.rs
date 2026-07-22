@@ -430,9 +430,6 @@ fn emit_budget_log(
     snapshot: &BudgetUsageSnapshot,
     exhaustion: Option<&BudgetExhaustion>,
 ) {
-    let Some(handler) = &controls.log_handler else {
-        return;
-    };
     let mut payload = BTreeMap::from([
         (
             "enforcement_boundary".to_string(),
@@ -452,5 +449,11 @@ fn emit_budget_log(
             serde_json::to_value(exhaustion).expect("budget exhaustion serializes"),
         );
     }
-    handler(event, &payload);
+    super::logging::emit_runtime_event(
+        None,
+        controls.event_handler.as_ref(),
+        controls.execution_context.as_ref(),
+        event,
+        payload,
+    );
 }

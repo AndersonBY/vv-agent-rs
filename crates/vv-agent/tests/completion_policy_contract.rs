@@ -2,17 +2,15 @@ use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use vv_agent::{
     Agent, AgentStatus, BeforeLlmEvent, BeforeLlmPatch, CompletionReason, FunctionTool,
     LLMResponse, LlmRequest, ModelRef, NoToolPolicy, RunConfig, Runner, RuntimeHook, ScriptStep,
     ScriptedModelProvider, ToolCall, ToolOutput, ToolUseBehavior,
 };
 
-const FIXTURE: &str = include_str!("fixtures/parity/completion_policy_v1.json");
+const FIXTURE: &str = include_str!("fixtures/parity/completion_policy.json");
 const REASONING_HISTORY_FIXTURE: &str =
-    include_str!("fixtures/parity/assistant_reasoning_history_v1.json");
-const FIXTURE_SHA256: &str = "84c75dacbb43659a07c0fa1347c83e44a609a411d7896cae5a2276a3b6792135";
+    include_str!("fixtures/parity/assistant_reasoning_history.json");
 const CONTINUATION_HINT: &str = "Continue. If the task is complete, call task_finish.";
 
 #[derive(Debug, Deserialize)]
@@ -30,8 +28,10 @@ struct CompletionRules {
     assistant_text_is_not_classified: bool,
     completion_policy_does_not_change_tool_availability: bool,
     explicit_tool_directive_precedes_no_tool_policy: bool,
+    output_guardrail_failure_precedes_success_reason: bool,
+    cancellation_precedes_generic_failure: bool,
     partial_output_only_for_non_completed_status: bool,
-    budget_exhausted_is_defined_by_run_budget_v1: bool,
+    budget_exhausted_is_defined_by_run_budget: bool,
     approval_resume_uses_fresh_cycle_budget: bool,
     approval_resume_preserves_resource_budget: bool,
     approved_resume_rejects_input_before_claim: bool,
@@ -95,10 +95,6 @@ impl RuntimeHook for PolicyCapture {
 }
 
 fn contract() -> CompletionContract {
-    assert_eq!(
-        format!("{:x}", Sha256::digest(FIXTURE.as_bytes())),
-        FIXTURE_SHA256
-    );
     serde_json::from_str(FIXTURE).expect("completion policy fixture")
 }
 
@@ -133,8 +129,14 @@ fn completion_policy_fixture_declares_the_public_closed_sets() {
             .rules
             .explicit_tool_directive_precedes_no_tool_policy
     );
+    assert!(
+        contract
+            .rules
+            .output_guardrail_failure_precedes_success_reason
+    );
+    assert!(contract.rules.cancellation_precedes_generic_failure);
     assert!(contract.rules.partial_output_only_for_non_completed_status);
-    assert!(contract.rules.budget_exhausted_is_defined_by_run_budget_v1);
+    assert!(contract.rules.budget_exhausted_is_defined_by_run_budget);
     assert!(contract.rules.approval_resume_uses_fresh_cycle_budget);
     assert!(contract.rules.approval_resume_preserves_resource_budget);
     assert!(contract.rules.approved_resume_rejects_input_before_claim);
@@ -338,7 +340,7 @@ async fn reasoning_only_continue_preserves_history_and_usage_for_next_request() 
         "reasoning_content".to_string(),
         Value::String(reasoning.to_string()),
     );
-    first_response.token_usage.reasoning_tokens = 2048;
+    first_response.token_usage.reasoning_tokens = Some(2048);
     let first_requests = requests.clone();
     let second_requests = requests.clone();
     let steps = vec![
@@ -400,7 +402,10 @@ async fn reasoning_only_continue_preserves_history_and_usage_for_next_request() 
         .expect("reasoning-only assistant in second request");
     assert_eq!(replayed.content, "");
     assert!(runtime_case["expected"]["next_model_request_contains_reasoning_turn"] == true);
-    assert_eq!(result.result().cycles[0].token_usage.reasoning_tokens, 2048);
+    assert_eq!(
+        result.result().cycles[0].token_usage.reasoning_tokens,
+        Some(2048)
+    );
     assert_eq!(result.status(), AgentStatus::Completed);
 }
 

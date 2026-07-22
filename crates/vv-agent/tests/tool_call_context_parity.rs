@@ -35,6 +35,13 @@ async fn function_handler_receives_real_identity_app_state_and_mutable_shared_st
     let observed = Arc::new(Mutex::new(None));
     let observed_for_tool = observed.clone();
     let tool = FunctionTool::builder("update_state")
+        .json_schema(json!({
+            "type": "object",
+            "properties": {
+                "value": {"type": "string"}
+            },
+            "required": ["value"]
+        }))
         .handler(move |context, arguments: UpdateArguments| {
             let observed = observed_for_tool.clone();
             async move {

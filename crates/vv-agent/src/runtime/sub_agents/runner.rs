@@ -15,7 +15,7 @@ use crate::workspace::{
     INVALID_EXCLUDE_FILES_PATTERN_MESSAGE,
 };
 
-use super::events::{emit_sub_run_completed, emit_sub_run_completed_to_log, emit_sub_run_started};
+use super::events::{emit_sub_run_completed, emit_sub_run_started};
 use super::task::build_sub_agent_task;
 use super::types::{SubTaskBuildInputs, SubTaskRunContext, SubTaskRunControls};
 
@@ -59,9 +59,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             settings_file: self.settings_file.clone(),
             default_backend: self.default_backend.clone(),
             sub_agent_timeout_seconds: self.sub_agent_timeout_seconds,
-            stream_callback: controls.stream_callback,
-            parent_log_handler: controls.parent_log_handler,
-            parent_event_handler: controls.parent_event_handler,
+            event_handler: controls.event_handler,
             parent_execution_context: controls.parent_execution_context,
             model_provider: controls.model_provider,
             parent_run_context: controls.parent_run_context,
@@ -136,11 +134,7 @@ fn run_sub_task(context: SubTaskRunContext, request: SubTaskRequest) -> SubTaskO
     child_context.workspace_backend = workspace_backend.clone();
 
     lifecycle.model = sub_agent.model.trim().to_string();
-    if let Err(error) = emit_sub_run_started(
-        &context.parent_log_handler,
-        &context.parent_event_handler,
-        &lifecycle,
-    ) {
+    if let Err(error) = emit_sub_run_started(&context.event_handler, &lifecycle) {
         return complete_failed_sub_run(&child_context, &lifecycle, error, None);
     }
 
@@ -211,8 +205,7 @@ fn complete_failed_sub_run(
         error_code,
     );
     if let Err(sink_error) = emit_sub_run_completed(
-        &context.parent_log_handler,
-        &context.parent_event_handler,
+        &context.event_handler,
         lifecycle,
         &outcome,
         None,
@@ -224,14 +217,6 @@ fn complete_failed_sub_run(
             &lifecycle.agent_name,
             &lifecycle.session_id,
             sink_error,
-        );
-        emit_sub_run_completed_to_log(
-            &context.parent_log_handler,
-            lifecycle,
-            &outcome,
-            None,
-            None,
-            None,
         );
     }
     record_sub_task_outcome(
@@ -262,10 +247,10 @@ mod parity_event_tests {
 
     use super::super::types::SubTaskRunContext;
     use super::run_sub_task;
+    use crate::events::RunEventPayload;
     use crate::llm::ScriptedLlmClient;
-    use crate::runner::{map_runtime_event, RuntimeEventContext};
     use crate::runtime::sub_task_manager::SubTaskManager;
-    use crate::runtime::{ExecutionContext, RuntimeEventHandler};
+    use crate::runtime::{ExecutionContext, RunEventHandler};
     use crate::tools::{build_default_registry, FunctionTool, Tool, ToolOutput};
     use crate::types::{
         AgentStatus, AgentTask, LLMResponse, SubAgentConfig, SubTaskRequest, ToolCall,
@@ -276,7 +261,7 @@ mod parity_event_tests {
     fn event_fixture() -> Vec<Value> {
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/parity/configured_sub_agent_events_v1.jsonl"
+            "/tests/fixtures/parity/configured_sub_agent_events.jsonl"
         ))
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -287,15 +272,29 @@ mod parity_event_tests {
     fn contract_fixture() -> Value {
         serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/parity/configured_sub_agent_v1.json"
+            "/tests/fixtures/parity/configured_sub_agent.json"
         )))
         .expect("configured sub-agent contract fixture")
+    }
+
+    fn lifecycle_handler(events: Arc<Mutex<Vec<Value>>>) -> RunEventHandler {
+        Arc::new(move |event| {
+            if matches!(
+                event.payload(),
+                RunEventPayload::SubRunStarted { .. } | RunEventPayload::SubRunCompleted { .. }
+            ) {
+                events
+                    .lock()
+                    .expect("lifecycle events")
+                    .push(serde_json::to_value(event).expect("lifecycle event wire"));
+            }
+        })
     }
 
     fn context(
         llm: ScriptedLlmClient,
         parent_task: AgentTask,
-        event_handler: RuntimeEventHandler,
+        event_handler: RunEventHandler,
     ) -> SubTaskRunContext {
         SubTaskRunContext {
             llm_client: Arc::new(llm),
@@ -309,9 +308,7 @@ mod parity_event_tests {
             settings_file: None,
             default_backend: None,
             sub_agent_timeout_seconds: 30.0,
-            stream_callback: None,
-            parent_log_handler: None,
-            parent_event_handler: Some(event_handler),
+            event_handler: Some(event_handler),
             parent_execution_context: Some(ExecutionContext {
                 metadata: BTreeMap::from([
                     ("_vv_agent_run_id".to_string(), json!("parent-run")),
@@ -350,20 +347,11 @@ mod parity_event_tests {
         );
         let mapped_events = Arc::new(Mutex::new(Vec::new()));
         let mapped_events_for_handler = mapped_events.clone();
-        let event_context = RuntimeEventContext::new(
-            "parent-run",
-            "trace-parity",
-            "parent",
-            Some("parent-session".to_string()),
-            "Parent task",
-        );
-        let event_handler: RuntimeEventHandler = Arc::new(move |name, payload| {
-            if let Some(event) = map_runtime_event(name, payload, &event_context) {
-                mapped_events_for_handler
-                    .lock()
-                    .expect("mapped events")
-                    .push(event);
-            }
+        let event_handler: RunEventHandler = Arc::new(move |event| {
+            mapped_events_for_handler
+                .lock()
+                .expect("mapped events")
+                .push(event.clone());
         });
         let success_context = context(llm, parent_task, event_handler.clone());
         let mut request = SubTaskRequest::new("researcher", "Collect facts");
@@ -464,15 +452,7 @@ mod parity_event_tests {
             SubAgentConfig::new("child-model", "Research"),
         );
         let lifecycle = Arc::new(Mutex::new(Vec::new()));
-        let lifecycle_for_handler = lifecycle.clone();
-        let event_handler: RuntimeEventHandler = Arc::new(move |name, payload| {
-            if matches!(name, "sub_run_started" | "sub_run_completed") {
-                lifecycle_for_handler
-                    .lock()
-                    .expect("lifecycle events")
-                    .push((name.to_string(), payload.clone()));
-            }
-        });
+        let event_handler = lifecycle_handler(lifecycle.clone());
         let context = context(
             ScriptedLlmClient::new(Vec::new()),
             parent_task,
@@ -493,20 +473,17 @@ mod parity_event_tests {
         assert_eq!(
             lifecycle
                 .iter()
-                .map(|(name, _)| name.as_str())
+                .map(|event| event["type"].as_str().expect("event type"))
                 .collect::<Vec<_>>(),
             vec!["sub_run_started", "sub_run_completed"]
         );
-        assert_eq!(lifecycle[1].1["status"], "failed");
+        assert_eq!(lifecycle[1]["status"], "failed");
         assert_eq!(
-            lifecycle[1].1["metadata"]["error_code"],
+            lifecycle[1]["metadata"]["error_code"],
             contract_fixture()["lifecycle"]["failure_error_code_fallback"]
         );
-        assert!(!lifecycle[1].1.contains_key("token_usage"));
-        assert_eq!(
-            lifecycle[0].1["child_run_id"],
-            lifecycle[1].1["child_run_id"]
-        );
+        assert!(lifecycle[1].get("token_usage").is_none());
+        assert_eq!(lifecycle[0]["run_id"], lifecycle[1]["run_id"]);
     }
 
     #[test]
@@ -518,15 +495,7 @@ mod parity_event_tests {
             SubAgentConfig::new(" ", "Research"),
         );
         let lifecycle = Arc::new(Mutex::new(Vec::new()));
-        let lifecycle_for_handler = lifecycle.clone();
-        let event_handler: RuntimeEventHandler = Arc::new(move |name, payload| {
-            if matches!(name, "sub_run_started" | "sub_run_completed") {
-                lifecycle_for_handler
-                    .lock()
-                    .expect("lifecycle events")
-                    .push((name.to_string(), payload.clone()));
-            }
-        });
+        let event_handler = lifecycle_handler(lifecycle.clone());
         let context = context(
             ScriptedLlmClient::new(Vec::new()),
             parent_task,
@@ -550,10 +519,10 @@ mod parity_event_tests {
         let lifecycle = lifecycle.lock().expect("lifecycle events");
         assert_eq!(lifecycle.len(), 2);
         assert_eq!(
-            lifecycle[1].1["metadata"]["error_code"],
+            lifecycle[1]["metadata"]["error_code"],
             "invalid_sub_agent_model"
         );
-        assert!(!lifecycle[1].1.contains_key("token_usage"));
+        assert!(lifecycle[1].get("token_usage").is_none());
     }
 
     #[test]
@@ -565,15 +534,7 @@ mod parity_event_tests {
             SubAgentConfig::new("child-model", "Research"),
         );
         let lifecycle = Arc::new(Mutex::new(Vec::new()));
-        let lifecycle_for_handler = lifecycle.clone();
-        let event_handler: RuntimeEventHandler = Arc::new(move |name, payload| {
-            if matches!(name, "sub_run_started" | "sub_run_completed") {
-                lifecycle_for_handler
-                    .lock()
-                    .expect("lifecycle events")
-                    .push((name.to_string(), payload.clone()));
-            }
-        });
+        let event_handler = lifecycle_handler(lifecycle.clone());
         let context = context(
             ScriptedLlmClient::new(Vec::new()),
             parent_task,
@@ -598,20 +559,17 @@ mod parity_event_tests {
         assert_eq!(
             lifecycle
                 .iter()
-                .map(|(name, _)| name.as_str())
+                .map(|event| event["type"].as_str().expect("event type"))
                 .collect::<Vec<_>>(),
             vec!["sub_run_started", "sub_run_completed"]
         );
-        assert_eq!(lifecycle[1].1["status"], "failed");
+        assert_eq!(lifecycle[1]["status"], "failed");
         assert_eq!(
-            lifecycle[1].1["metadata"]["error_code"],
+            lifecycle[1]["metadata"]["error_code"],
             contract_fixture()["lifecycle"]["failure_error_code_fallback"]
         );
-        assert!(!lifecycle[1].1.contains_key("token_usage"));
-        assert_eq!(
-            lifecycle[0].1["child_run_id"],
-            lifecycle[1].1["child_run_id"]
-        );
+        assert!(lifecycle[1].get("token_usage").is_none());
+        assert_eq!(lifecycle[0]["run_id"], lifecycle[1]["run_id"]);
     }
 
     #[test]
@@ -651,19 +609,18 @@ mod parity_event_tests {
                 .sub_agents
                 .insert("researcher".to_string(), sub_agent);
             let lifecycle = Arc::new(Mutex::new(Vec::new()));
-            let lifecycle_for_handler = lifecycle.clone();
-            let event_handler: RuntimeEventHandler = Arc::new(move |name, payload| {
-                if matches!(name, "sub_run_started" | "sub_run_completed") {
-                    lifecycle_for_handler
-                        .lock()
-                        .expect("lifecycle events")
-                        .push((name.to_string(), payload.clone()));
-                }
-            });
+            let event_handler = lifecycle_handler(lifecycle.clone());
             let mut context = context(llm, parent_task, event_handler);
             if expected_status == "wait_user" {
                 let approval_tool = FunctionTool::builder("approval_action")
                     .needs_approval(true)
+                    .json_schema(json!({
+                        "type": "object",
+                        "properties": {
+                            "scope": {"type": "string"}
+                        },
+                        "required": []
+                    }))
                     .handler(|_context, _arguments: Value| async {
                         Ok(ToolOutput::text("approved"))
                     })
@@ -695,9 +652,9 @@ mod parity_event_tests {
             );
             let lifecycle = lifecycle.lock().expect("lifecycle events");
             assert_eq!(lifecycle.len(), 2);
-            assert_eq!(lifecycle[0].0, "sub_run_started");
-            assert_eq!(lifecycle[1].0, "sub_run_completed");
-            assert_eq!(lifecycle[1].1["status"], expected_status);
+            assert_eq!(lifecycle[0]["type"], "sub_run_started");
+            assert_eq!(lifecycle[1]["type"], "sub_run_completed");
+            assert_eq!(lifecycle[1]["status"], expected_status);
         }
     }
 }

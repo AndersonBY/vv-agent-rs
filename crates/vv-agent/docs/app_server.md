@@ -33,7 +33,7 @@ For every `turn/start`, the runtime reloads the persisted thread and calls both
 thread's `thread_id`, `agent_key`, `cwd`, and metadata, so tenant policy,
 workspace selection, credentials, model routing, and tools can change between
 turns without rebuilding the server. Resolution happens before a turn record
-is created. A host error returns the Python v1 internal-error shape (`-32603`)
+is created. A host error returns the canonical internal-error shape (`-32603`)
 and leaves the thread without a newly created turn.
 
 `MessageProcessor::with_runtime` and `AppServerRunAdapter::new` remain
@@ -50,7 +50,7 @@ Start the stdio server:
 vv-agent app-server --listen stdio \
   --settings local_settings.json \
   --backend moonshot \
-  --model kimi-k2.6 \
+  --model kimi-k3 \
   --timeout-seconds 90
 ```
 
@@ -66,12 +66,10 @@ Generate schemas:
 
 ```bash
 vv-agent app-server schema --out target/app-server-schema
-vv-agent app-server generate-json-schema --out target/app-server-schema
 vv-agent app-server generate-ts --out target/app-server-schema/typescript
 ```
 
-`schema` and `generate-json-schema` are aliases.
-Both JSON commands write individual schemas under `<out>/json/` plus
+The `schema` command writes individual schemas under `<out>/json/` plus
 `<out>/json/vv_agent_app_server.schemas.json`. Request params such as
 `turn/start` are represented in `ClientRequest.json`; there is no separate
 `TurnStartParams.json` file.
@@ -88,8 +86,8 @@ Clients must:
 
 - Send `initialize` before every other request.
 - Optionally send the `initialized` notification to complete the shared client
-  handshake. Python v1 compatibility allows async notifications immediately
-  after the initialize response.
+  handshake. The server is ready to emit async notifications immediately after
+  the initialize response; the notification is idempotent.
 - Keep reading notifications and server requests after `turn/start`.
 - Answer server requests by the JSON-RPC request id.
 - Treat stdout as protocol output only.
@@ -177,13 +175,14 @@ Example notifications:
 ```
 
 ```json
-{"method":"turn/completed","params":{"threadId":"thread_1","turnId":"turn_1","runId":"assistant_run","status":"completed","finalOutput":"The workspace contains...","tokenUsage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14,"cached_tokens":0,"reasoning_tokens":0,"input_tokens":10,"output_tokens":4,"cache_creation_tokens":0,"cache_usage":{"status":"provider_reported","read_tokens":0,"write_tokens":null,"uncached_input_tokens":10,"source":"provider_usage"}}}}
+{"method":"turn/completed","params":{"threadId":"thread_1","turnId":"turn_1","runId":"assistant_run","status":"completed","finalOutput":"The workspace contains...","tokenUsage":{"schema_version":"vv-agent.task-token-usage.v1","input_tokens":10,"output_tokens":4,"total_tokens":14,"reasoning_tokens":null,"cache_usage":{"status":"provider_reported","read_input_tokens":0,"write_input_tokens":null,"uncached_input_tokens":10,"source":"aggregate"},"cycles":[{"cycle_index":1,"usage":{"schema_version":"vv-agent.token-usage.v1","input_tokens":10,"output_tokens":4,"total_tokens":14,"reasoning_tokens":null,"usage_source":"provider_reported","cache_usage":{"status":"provider_reported","read_input_tokens":0,"write_input_tokens":null,"uncached_input_tokens":10,"source":"provider_usage"},"provider_usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14,"prompt_tokens_details":{"cached_tokens":0}}}}]}}}
 ```
 
 Terminal notifications preserve `finalOutput`, `error`, `tokenUsage`,
 `budgetUsage`, and `budgetExhaustion` when those values are available. The same
-objects are stored in the turn result for replay. `cache_usage.read_tokens: 0`
-is an observed zero; `null` with `status: "accounting_missing"` means the
+objects are stored in the turn result for replay.
+`cache_usage.read_input_tokens: 0` is an observed zero; `null` with
+`status: "accounting_missing"` means the
 provider did not supply enough cache accounting and must not be reported as a
 zero-percent hit.
 
@@ -228,12 +227,11 @@ does not produce `item/started`. Conversely, process loss after a started event
 may leave no completed notification; clients must not infer exactly-once tool
 execution from the item stream.
 
-The App Server protocol stays at `v1`, and all fields above are additive.
-Older clients may ignore them. When replay maps a legacy completed `RunEvent`
-that did not contain the additive outcome fields, it keeps the legacy payload
-instead of fabricating `directive`, `errorCode`, `executionStarted`, or
-`durationMs`. Omitting typed metadata also omits `toolMetadata`; generic tool
-metadata is never promoted into this field.
+The current App Server protocol discriminator is `v1`. Replay projects the
+current `RunEvent` shape and emits optional outcome fields only when the source
+event contains them; it never fabricates `directive`, `errorCode`,
+`executionStarted`, or `durationMs`. Omitting typed metadata also omits
+`toolMetadata`; generic tool metadata is never promoted into this field.
 
 ### Approval Request And Response
 
@@ -309,7 +307,7 @@ its configured catalog, which may be empty:
 ```
 
 ```json
-{"id":7,"result":{"models":[{"id":"kimi-k2.6","provider":"moonshot","displayName":"Kimi K2.6","contextLength":262144,"supportsTools":true}]}}
+{"id":7,"result":{"models":[{"id":"kimi-k3","provider":"moonshot","displayName":"Kimi K3","contextLength":1000000,"supportsTools":true}]}}
 ```
 
 Malformed JSON produces a `-32700` protocol error with `id: null`; stdio keeps

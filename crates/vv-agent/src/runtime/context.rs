@@ -5,19 +5,19 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::approval::{ApprovalBroker, ApprovalProvider};
-use crate::llm::LlmStreamCallback;
+use crate::events::RunEvent;
 use crate::memory::MemoryProvider;
 
-use super::state::StateStore;
+use super::state::CheckpointStore;
 use super::{CancellationToken, CancelledError};
 
-pub type StreamCallback = LlmStreamCallback;
+pub type RunEventHandler = Arc<dyn Fn(&RunEvent) + Send + Sync + 'static>;
 
 #[derive(Clone, Default)]
 pub struct ExecutionContext {
     pub cancellation_token: Option<CancellationToken>,
-    pub stream_callback: Option<StreamCallback>,
-    pub state_store: Option<Arc<dyn StateStore>>,
+    pub event_handler: Option<RunEventHandler>,
+    pub checkpoint_store: Option<Arc<dyn CheckpointStore>>,
     pub approval_provider: Option<Arc<dyn ApprovalProvider>>,
     pub approval_broker: Option<ApprovalBroker>,
     pub approval_timeout: Option<Duration>,
@@ -31,8 +31,8 @@ impl std::fmt::Debug for ExecutionContext {
         formatter
             .debug_struct("ExecutionContext")
             .field("has_cancellation_token", &self.cancellation_token.is_some())
-            .field("has_stream_callback", &self.stream_callback.is_some())
-            .field("has_state_store", &self.state_store.is_some())
+            .field("has_event_handler", &self.event_handler.is_some())
+            .field("has_checkpoint_store", &self.checkpoint_store.is_some())
             .field("has_approval_provider", &self.approval_provider.is_some())
             .field("has_approval_broker", &self.approval_broker.is_some())
             .field("memory_provider_count", &self.memory_providers.len())
@@ -48,13 +48,13 @@ impl ExecutionContext {
         self
     }
 
-    pub fn with_stream_callback(mut self, stream_callback: StreamCallback) -> Self {
-        self.stream_callback = Some(stream_callback);
+    pub fn with_event_handler(mut self, event_handler: RunEventHandler) -> Self {
+        self.event_handler = Some(event_handler);
         self
     }
 
-    pub fn with_state_store(mut self, state_store: Arc<dyn StateStore>) -> Self {
-        self.state_store = Some(state_store);
+    pub fn with_checkpoint_store(mut self, checkpoint_store: Arc<dyn CheckpointStore>) -> Self {
+        self.checkpoint_store = Some(checkpoint_store);
         self
     }
 

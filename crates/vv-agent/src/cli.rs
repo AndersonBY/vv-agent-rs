@@ -34,7 +34,7 @@ pub use self::args::{
     parse_cli_command_from_with_default_settings, AppServerCliCommand, CliArgs, CliCommand,
     DebugCliCommand,
 };
-use self::logging::build_cli_log_handler;
+use self::logging::build_cli_event_handler;
 pub use self::output::result_payload;
 use self::task::generate_task_id;
 pub use self::task::{build_cli_task, build_cli_task_from_resolved};
@@ -180,7 +180,7 @@ fn run_task(args: CliArgs) -> Result<(), String> {
         .with_default_backend(args.backend.clone());
     runtime.default_workspace = Some(args.workspace.clone());
     runtime.workspace_backend = Arc::new(LocalWorkspaceBackend::new(args.workspace.clone()));
-    runtime.log_handler = build_cli_log_handler(args.verbose);
+    runtime.event_handler = build_cli_event_handler(args.verbose);
 
     let task = build_cli_task_from_resolved(&args, &resolved, generate_task_id())?;
     let result = runtime.run(task).map_err(|err| err.to_string())?;

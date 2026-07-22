@@ -1,0 +1,930 @@
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use serde::Deserialize;
+use serde_json::{json, Value};
+use vv_agent::{
+    tool_request_digest, AfterCycleDecision, AfterCycleSnapshot, Agent, AgentStatus, CapabilityRef,
+    CheckpointConfig, CheckpointStatus, CheckpointStore, ClaimMode, CycleDispatchResult,
+    CycleDispatcher, DistributedBackend, DistributedCapabilities, DistributedCapabilityRegistry,
+    DistributedCycleWorker, FunctionTool, InMemoryCheckpointStore, LLMResponse, MemorySession,
+    ModelRef, NoToolPolicy, OperationJournalEntry, OperationState, ResumePolicy, RunConfig,
+    RunEventPayload, Runner, RuntimeRecipe, ScriptStep, ScriptedLlmClient, ScriptedModelProvider,
+    Session, ToolCall, ToolIdempotency, ToolMetadata, ToolOutput,
+};
+
+#[derive(Clone)]
+struct ClaimThenFailDispatcher {
+    store: InMemoryCheckpointStore,
+}
+
+impl CycleDispatcher for ClaimThenFailDispatcher {
+    fn dispatch_envelope(
+        &self,
+        envelope: &vv_agent::DistributedRunEnvelope,
+    ) -> Result<CycleDispatchResult, String> {
+        let key = &envelope.checkpoint_config.key;
+        let now_ms = u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock")
+                .as_millis(),
+        )
+        .expect("timestamp fits u64");
+        self.store
+            .claim_checkpoint(
+                key,
+                u64::from(envelope.cycle_index),
+                "external-worker-claim",
+                now_ms + 60_000,
+                now_ms,
+                ClaimMode::Continue,
+            )
+            .expect("claim checkpoint")
+            .expect("external worker claim");
+        Err("permanent transport failure after external claim".to_string())
+    }
+}
+
+#[derive(Clone)]
+struct DirectWorkerDispatcher {
+    worker: Arc<DistributedCycleWorker>,
+    fail_after_candidate_once: Option<Arc<AtomicBool>>,
+    pending_after_candidate_loss_once: Option<Arc<AtomicBool>>,
+}
+
+impl CycleDispatcher for DirectWorkerDispatcher {
+    fn dispatch_envelope(
+        &self,
+        envelope: &vv_agent::DistributedRunEnvelope,
+    ) -> Result<CycleDispatchResult, String> {
+        if self
+            .pending_after_candidate_loss_once
+            .as_ref()
+            .is_some_and(|flag| flag.swap(false, Ordering::SeqCst))
+        {
+            return Ok(CycleDispatchResult::pending());
+        }
+        let result = self.worker.run_cycle(envelope.clone())?;
+        if matches!(&result, CycleDispatchResult::TerminalCandidate { .. })
+            && self
+                .fail_after_candidate_once
+                .as_ref()
+                .is_some_and(|flag| flag.swap(false, Ordering::SeqCst))
+        {
+            if let Some(flag) = &self.pending_after_candidate_loss_once {
+                flag.store(true, Ordering::SeqCst);
+            }
+            return Err(
+                "retryable distributed delivery conflict: candidate acknowledgement lost"
+                    .to_string(),
+            );
+        }
+        Ok(result)
+    }
+}
+
+fn checkpoint_config(store: InMemoryCheckpointStore, key: &str) -> CheckpointConfig {
+    let mut config = CheckpointConfig::with_store(store);
+    config.key = Some(key.to_string());
+    config.resume_policy = ResumePolicy::ResumeIfPresent;
+    config.capability_refs.insert(
+        "before_cycle_messages".to_string(),
+        CapabilityRef::new("runner.before-cycle", "1").expect("capability ref"),
+    );
+    config.capability_refs.insert(
+        "session".to_string(),
+        CapabilityRef::new("session.runner-checkpoint", "1").expect("capability ref"),
+    );
+    config
+}
+
+#[tokio::test]
+async fn run_definition_pins_after_cycle_hook_capability_slot() {
+    let store = InMemoryCheckpointStore::new();
+    let mut checkpoint = CheckpointConfig::with_store(store.clone());
+    checkpoint.key = Some("after-cycle-definition".to_string());
+    checkpoint.capability_refs.insert(
+        "after_cycle_hook:0".to_string(),
+        CapabilityRef::new("lifecycle.policy", "1").expect("capability ref"),
+    );
+    let hook =
+        Arc::new(|_snapshot: &AfterCycleSnapshot| Ok(Some(AfterCycleDecision::continue_run())));
+    let runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "after-cycle-model",
+            vec![LLMResponse::new("done")],
+        ))
+        .workspace(".")
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("after-cycle-definition-agent")
+        .instructions("Answer.")
+        .model(ModelRef::named("after-cycle-model"))
+        .build()
+        .expect("agent");
+    let config = RunConfig::builder()
+        .max_cycles(1)
+        .no_tool_policy(NoToolPolicy::Finish)
+        .after_cycle_hook_arc(hook)
+        .checkpoint_config(checkpoint)
+        .build();
+
+    let result = runner
+        .run_with_config(&agent, "answer", config)
+        .await
+        .expect("run");
+
+    assert_eq!(result.final_output(), Some("done"));
+    let stored = store
+        .load_checkpoint("after-cycle-definition")
+        .expect("load")
+        .expect("checkpoint");
+    assert_eq!(
+        stored.run_definition["capability_refs"]["after_cycle_hook:0"],
+        json!({"id": "lifecycle.policy", "version": "1"})
+    );
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct TypedCheckpointOutput {
+    answer: String,
+}
+
+#[tokio::test]
+async fn terminal_replay_repeats_typed_output_validation_without_model_call() {
+    let model_calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_model = model_calls.clone();
+    let provider = ScriptedModelProvider::from_steps(
+        "scripted",
+        "typed-checkpoint-model",
+        vec![ScriptStep::callback(move |_request| {
+            calls_for_model.fetch_add(1, Ordering::SeqCst);
+            Ok(LLMResponse::new(r#"{"answer":42}"#))
+        })],
+    );
+    let workspace = tempfile::tempdir().expect("workspace");
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(workspace.path())
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("typed-checkpoint-agent")
+        .instructions("Return typed JSON.")
+        .model(ModelRef::named("typed-checkpoint-model"))
+        .output_type::<TypedCheckpointOutput>()
+        .build()
+        .expect("agent");
+    let store = InMemoryCheckpointStore::new();
+    let mut checkpoint = checkpoint_config(store.clone(), "typed-checkpoint");
+    checkpoint.capability_refs.insert(
+        "output_validator".to_string(),
+        CapabilityRef::new("typed-checkpoint-output", "1").expect("capability ref"),
+    );
+    let config = RunConfig::builder()
+        .max_cycles(1)
+        .no_tool_policy(NoToolPolicy::Finish)
+        .checkpoint_config(checkpoint)
+        .build();
+
+    let first_error = match runner
+        .run_with_config(&agent, "return invalid typed output", config.clone())
+        .await
+    {
+        Ok(_) => panic!("initial typed output validation must fail"),
+        Err(error) => error,
+    };
+    assert!(first_error.contains("failed to validate final output"));
+    assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+    let terminal = store
+        .load_checkpoint("typed-checkpoint")
+        .expect("load checkpoint")
+        .expect("terminal checkpoint");
+    assert_eq!(terminal.status, CheckpointStatus::Completed);
+    assert!(terminal.terminal_result.is_some());
+
+    let replay_error = match runner
+        .run_with_config(&agent, "return invalid typed output", config)
+        .await
+    {
+        Ok(_) => panic!("terminal replay must repeat typed output validation"),
+        Err(error) => error,
+    };
+    assert!(replay_error.contains("failed to validate final output"));
+    assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn distributed_worker_returns_candidate_and_runner_finalizes_once() {
+    let model_calls = Arc::new(AtomicUsize::new(0));
+    let model_calls_for_worker = model_calls.clone();
+    let worker_llm = ScriptedLlmClient::from_steps(vec![ScriptStep::callback(move |_request| {
+        model_calls_for_worker.fetch_add(1, Ordering::SeqCst);
+        Ok(LLMResponse::new("done"))
+    })]);
+    let outer_provider = ScriptedModelProvider::new(
+        "scripted",
+        "distributed-checkpoint-model",
+        vec![LLMResponse::new("outer provider must not execute")],
+    );
+    let store = InMemoryCheckpointStore::new();
+    let checkpoint_ref =
+        CapabilityRef::new("checkpoint.runner-distributed", "2").expect("checkpoint ref");
+    let llm_ref = CapabilityRef::new("llm.runner-distributed", "1").expect("llm ref");
+    let registry = DistributedCapabilityRegistry::new();
+    registry.register_checkpoint_store(checkpoint_ref.clone(), Arc::new(store.clone()));
+    registry.register_llm_client(llm_ref.clone(), Arc::new(worker_llm));
+    let worker = Arc::new(DistributedCycleWorker::new(registry));
+    let dispatcher = Arc::new(DirectWorkerDispatcher {
+        worker,
+        fail_after_candidate_once: None,
+        pending_after_candidate_loss_once: None,
+    });
+    let mut recipe = RuntimeRecipe::new(
+        "unused-settings.json",
+        "scripted",
+        "distributed-checkpoint-model",
+        ".",
+    );
+    recipe.capabilities = DistributedCapabilities {
+        llm_client_ref: Some(llm_ref),
+        checkpoint_store_ref: Some(checkpoint_ref.clone()),
+        ..DistributedCapabilities::default()
+    };
+    let backend = DistributedBackend::new(recipe, dispatcher);
+    let validator_calls = Arc::new(AtomicUsize::new(0));
+    let validator_calls_for_agent = validator_calls.clone();
+    let agent = Agent::builder("distributed-checkpoint-agent")
+        .instructions("Return done.")
+        .model(ModelRef::named("distributed-checkpoint-model"))
+        .output_validator("distributed-output", move |output| {
+            validator_calls_for_agent.fetch_add(1, Ordering::SeqCst);
+            (output == "done")
+                .then_some(())
+                .ok_or_else(|| "unexpected output".to_string())
+        })
+        .build()
+        .expect("agent");
+    let runner = Runner::builder()
+        .model_provider(outer_provider)
+        .workspace(tempfile::tempdir().expect("workspace").path())
+        .build()
+        .expect("runner");
+    let session = MemorySession::new("distributed-checkpoint-session");
+    let mut checkpoint = CheckpointConfig::with_store(store.clone());
+    checkpoint.key = Some("runner-distributed-checkpoint".to_string());
+    checkpoint.resume_policy = ResumePolicy::ResumeIfPresent;
+    checkpoint
+        .capability_refs
+        .insert("checkpoint_store".to_string(), checkpoint_ref);
+    checkpoint.capability_refs.insert(
+        "session".to_string(),
+        CapabilityRef::new("session.runner-distributed", "1").expect("session ref"),
+    );
+    checkpoint.capability_refs.insert(
+        "output_validator".to_string(),
+        CapabilityRef::new("output.runner-distributed", "1").expect("output ref"),
+    );
+    let config = RunConfig::builder()
+        .max_cycles(1)
+        .no_tool_policy(NoToolPolicy::Finish)
+        .execution_backend(backend.into())
+        .session(session.clone())
+        .checkpoint_config(checkpoint)
+        .build();
+
+    let result = runner
+        .run_with_config(&agent, "finish in the worker", config.clone())
+        .await
+        .expect("distributed run");
+
+    assert_eq!(result.status(), AgentStatus::Completed);
+    assert_eq!(result.final_output(), Some("done"));
+    assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(validator_calls.load(Ordering::SeqCst), 1);
+    let terminal = store
+        .load_checkpoint("runner-distributed-checkpoint")
+        .expect("load terminal")
+        .expect("terminal checkpoint");
+    assert_eq!(terminal.status, CheckpointStatus::Completed);
+    assert!(terminal.claim_token.is_none());
+    assert!(terminal.terminal_result.is_some());
+    assert!(terminal.terminal_acknowledged);
+    let session_items = session.get_items(None).await.expect("session items");
+    assert!(!session_items.is_empty());
+
+    let replay = runner
+        .run_with_config(&agent, "finish in the worker", config)
+        .await
+        .expect("terminal replay");
+    assert_eq!(replay.status(), AgentStatus::Completed);
+    assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(validator_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        session
+            .get_items(None)
+            .await
+            .expect("replayed session items"),
+        session_items
+    );
+}
+
+#[tokio::test]
+async fn distributed_candidate_ack_loss_recovers_from_receipt_without_second_model_call() {
+    let model_calls = Arc::new(AtomicUsize::new(0));
+    let model_calls_for_worker = model_calls.clone();
+    let worker_llm = ScriptedLlmClient::from_steps(vec![ScriptStep::callback(move |_request| {
+        model_calls_for_worker.fetch_add(1, Ordering::SeqCst);
+        Ok(LLMResponse::new("recovered"))
+    })]);
+    let outer_provider = ScriptedModelProvider::new(
+        "scripted",
+        "candidate-recovery-model",
+        vec![LLMResponse::new("outer provider must not execute")],
+    );
+    let store = InMemoryCheckpointStore::new();
+    let checkpoint_ref =
+        CapabilityRef::new("checkpoint.candidate-recovery", "2").expect("checkpoint ref");
+    let llm_ref = CapabilityRef::new("llm.candidate-recovery", "1").expect("llm ref");
+    let registry = DistributedCapabilityRegistry::new();
+    registry.register_checkpoint_store(checkpoint_ref.clone(), Arc::new(store.clone()));
+    registry.register_llm_client(llm_ref.clone(), Arc::new(worker_llm));
+    let lost_ack = Arc::new(AtomicBool::new(true));
+    let pending_after_loss = Arc::new(AtomicBool::new(false));
+    let dispatcher = Arc::new(DirectWorkerDispatcher {
+        worker: Arc::new(DistributedCycleWorker::new(registry)),
+        fail_after_candidate_once: Some(lost_ack.clone()),
+        pending_after_candidate_loss_once: Some(pending_after_loss.clone()),
+    });
+    let mut recipe = RuntimeRecipe::new(
+        "unused-settings.json",
+        "scripted",
+        "candidate-recovery-model",
+        ".",
+    );
+    recipe.capabilities = DistributedCapabilities {
+        llm_client_ref: Some(llm_ref),
+        checkpoint_store_ref: Some(checkpoint_ref.clone()),
+        ..DistributedCapabilities::default()
+    };
+    let backend = DistributedBackend::new(recipe, dispatcher)
+        .with_lease_duration(Duration::from_millis(500))
+        .with_dispatch_timeout(Duration::from_secs(5));
+    let agent = Agent::builder("candidate-recovery-agent")
+        .instructions("Return recovered.")
+        .model(ModelRef::named("candidate-recovery-model"))
+        .build()
+        .expect("agent");
+    let runner = Runner::builder()
+        .model_provider(outer_provider)
+        .workspace(tempfile::tempdir().expect("workspace").path())
+        .build()
+        .expect("runner");
+    let mut checkpoint = CheckpointConfig::with_store(store.clone());
+    checkpoint.key = Some("candidate-ack-loss".to_string());
+    checkpoint.resume_policy = ResumePolicy::ResumeIfPresent;
+    checkpoint
+        .capability_refs
+        .insert("checkpoint_store".to_string(), checkpoint_ref);
+    let config = RunConfig::builder()
+        .max_cycles(1)
+        .no_tool_policy(NoToolPolicy::Finish)
+        .execution_backend(backend.into())
+        .checkpoint_config(checkpoint)
+        .build();
+
+    let result = runner
+        .run_with_config(&agent, "recover candidate", config)
+        .await
+        .expect("recovered distributed run");
+
+    assert_eq!(result.status(), AgentStatus::Completed);
+    assert_eq!(result.final_output(), Some("recovered"));
+    assert_eq!(result.result().cycles.len(), 1);
+    assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+    assert!(!lost_ack.load(Ordering::SeqCst));
+    assert!(!pending_after_loss.load(Ordering::SeqCst));
+    let terminal = store
+        .load_checkpoint("candidate-ack-loss")
+        .expect("load checkpoint")
+        .expect("terminal checkpoint");
+    assert_eq!(terminal.resume_attempt, 2);
+    assert_eq!(terminal.status, CheckpointStatus::Completed);
+    assert!(terminal.terminal_acknowledged);
+}
+
+#[tokio::test]
+async fn distributed_dispatch_failure_preserves_root_error_and_external_claim() {
+    let store = InMemoryCheckpointStore::new();
+    let checkpoint_ref =
+        CapabilityRef::new("checkpoint.dispatch-failure", "2").expect("checkpoint ref");
+    let mut recipe = RuntimeRecipe::new(
+        "unused-settings.json",
+        "scripted",
+        "dispatch-failure-model",
+        ".",
+    );
+    recipe.capabilities = DistributedCapabilities {
+        checkpoint_store_ref: Some(checkpoint_ref.clone()),
+        ..DistributedCapabilities::default()
+    };
+    let backend = DistributedBackend::new(
+        recipe,
+        Arc::new(ClaimThenFailDispatcher {
+            store: store.clone(),
+        }),
+    );
+    let provider = ScriptedModelProvider::new(
+        "scripted",
+        "dispatch-failure-model",
+        vec![LLMResponse::new("outer provider must not execute")],
+    );
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(tempfile::tempdir().expect("workspace").path())
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("dispatch-failure-agent")
+        .instructions("Return a result.")
+        .model(ModelRef::named("dispatch-failure-model"))
+        .build()
+        .expect("agent");
+    let mut checkpoint = CheckpointConfig::with_store(store.clone());
+    checkpoint.key = Some("dispatch-failure".to_string());
+    checkpoint.resume_policy = ResumePolicy::ResumeIfPresent;
+    checkpoint
+        .capability_refs
+        .insert("checkpoint_store".to_string(), checkpoint_ref);
+    let config = RunConfig::builder()
+        .execution_backend(backend.into())
+        .checkpoint_config(checkpoint)
+        .build();
+
+    let result = runner
+        .run_with_config(&agent, "exercise dispatch failure", config)
+        .await
+        .expect("dispatch failure remains an observable run result");
+
+    assert_eq!(result.status(), AgentStatus::Failed);
+    assert_eq!(
+        result.result().error.as_deref(),
+        Some("checkpoint_dispatch_failed: permanent transport failure after external claim")
+    );
+    let persisted = store
+        .load_checkpoint("dispatch-failure")
+        .expect("load checkpoint")
+        .expect("checkpoint remains durable");
+    assert_eq!(persisted.status, CheckpointStatus::Running);
+    assert_eq!(
+        persisted.claim_token.as_deref(),
+        Some("external-worker-claim")
+    );
+    assert!(persisted.terminal_result.is_none());
+    assert!(!persisted.terminal_acknowledged);
+}
+
+#[tokio::test]
+async fn distributed_execution_commits_nonterminal_cycle_before_max_cycles_candidate() {
+    let model_calls = Arc::new(AtomicUsize::new(0));
+    let first_calls = model_calls.clone();
+    let second_calls = model_calls.clone();
+    let worker_llm = ScriptedLlmClient::from_steps(vec![
+        ScriptStep::callback(move |_request| {
+            first_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(LLMResponse::new("cycle one"))
+        }),
+        ScriptStep::callback(move |_request| {
+            second_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(LLMResponse::new("cycle two"))
+        }),
+    ]);
+    let outer_provider = ScriptedModelProvider::new(
+        "scripted",
+        "distributed-multicycle-model",
+        vec![LLMResponse::new("outer provider must not execute")],
+    );
+    let store = InMemoryCheckpointStore::new();
+    let checkpoint_ref = CapabilityRef::new("checkpoint.distributed-multicycle", "2").unwrap();
+    let llm_ref = CapabilityRef::new("llm.distributed-multicycle", "1").unwrap();
+    let registry = DistributedCapabilityRegistry::new();
+    registry.register_checkpoint_store(checkpoint_ref.clone(), Arc::new(store.clone()));
+    registry.register_llm_client(llm_ref.clone(), Arc::new(worker_llm));
+    let dispatcher = Arc::new(DirectWorkerDispatcher {
+        worker: Arc::new(DistributedCycleWorker::new(registry)),
+        fail_after_candidate_once: None,
+        pending_after_candidate_loss_once: None,
+    });
+    let mut recipe = RuntimeRecipe::new(
+        "unused-settings.json",
+        "scripted",
+        "distributed-multicycle-model",
+        ".",
+    );
+    recipe.capabilities = DistributedCapabilities {
+        llm_client_ref: Some(llm_ref),
+        checkpoint_store_ref: Some(checkpoint_ref.clone()),
+        ..DistributedCapabilities::default()
+    };
+    let backend = DistributedBackend::new(recipe, dispatcher);
+    let runner = Runner::builder()
+        .model_provider(outer_provider)
+        .workspace(tempfile::tempdir().expect("workspace").path())
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("distributed-multicycle-agent")
+        .instructions("Continue until the configured cycle budget ends.")
+        .model(ModelRef::named("distributed-multicycle-model"))
+        .build()
+        .expect("agent");
+    let mut checkpoint = CheckpointConfig::with_store(store.clone());
+    checkpoint.key = Some("distributed-multicycle".to_string());
+    checkpoint.resume_policy = ResumePolicy::ResumeIfPresent;
+    checkpoint
+        .capability_refs
+        .insert("checkpoint_store".to_string(), checkpoint_ref);
+
+    let result = runner
+        .run_with_config(
+            &agent,
+            "run two cycles",
+            RunConfig::builder()
+                .max_cycles(2)
+                .no_tool_policy(NoToolPolicy::Continue)
+                .execution_backend(backend.into())
+                .checkpoint_config(checkpoint)
+                .build(),
+        )
+        .await
+        .expect("distributed multicycle run");
+
+    assert_eq!(result.status(), AgentStatus::MaxCycles);
+    assert_eq!(result.result().cycles.len(), 2);
+    assert_eq!(model_calls.load(Ordering::SeqCst), 2);
+    let terminal = store
+        .load_checkpoint("distributed-multicycle")
+        .unwrap()
+        .unwrap();
+    assert_eq!(terminal.status, CheckpointStatus::MaxCycles);
+    assert_eq!(terminal.cycle_index, 2);
+    assert_eq!(terminal.cycles.len(), 2);
+    assert!(terminal.terminal_acknowledged);
+}
+
+#[tokio::test]
+async fn runner_recovery_stops_before_ambiguous_non_idempotent_tool() {
+    let model_calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_model = model_calls.clone();
+    let provider = ScriptedModelProvider::from_steps(
+        "scripted",
+        "checkpoint-model",
+        vec![ScriptStep::callback(move |_request| {
+            calls_for_model.fetch_add(1, Ordering::SeqCst);
+            Ok(LLMResponse::new("must not run after ambiguous recovery"))
+        })],
+    );
+    let tool_effects = Arc::new(AtomicUsize::new(0));
+    let effects_for_tool = tool_effects.clone();
+    let tool = FunctionTool::builder("unsafe_write")
+        .description("A non-idempotent write used by the recovery test.")
+        .tool_metadata(ToolMetadata {
+            idempotency: ToolIdempotency::Unknown,
+            ..ToolMetadata::default()
+        })
+        .handler(move |_context, _arguments: Value| {
+            let effects = effects_for_tool.clone();
+            async move {
+                effects.fetch_add(1, Ordering::SeqCst);
+                Ok(ToolOutput::text("written"))
+            }
+        })
+        .build()
+        .expect("unsafe tool");
+    let workspace = tempfile::tempdir().expect("workspace");
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(workspace.path())
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("ambiguous-agent")
+        .instructions("Perform the write exactly once.")
+        .model(ModelRef::named("checkpoint-model"))
+        .tool(tool)
+        .build()
+        .expect("agent");
+    let store = InMemoryCheckpointStore::new();
+    let session = MemorySession::new("ambiguous-session");
+    let crash_once = Arc::new(AtomicBool::new(true));
+    let first_crash = crash_once.clone();
+    let first = runner
+        .run_with_config(
+            &agent,
+            "write item 42",
+            RunConfig::builder()
+                .max_cycles(1)
+                .no_tool_policy(NoToolPolicy::Finish)
+                .session(session.clone())
+                .checkpoint_config(checkpoint_config(store.clone(), "ambiguous-runner"))
+                .before_cycle_messages(move |cycle, _messages, _state| {
+                    if cycle == 1 && first_crash.swap(false, Ordering::SeqCst) {
+                        panic!("deterministic crash before first model call");
+                    }
+                    Vec::new()
+                })
+                .build(),
+        )
+        .await;
+    assert!(first.is_err());
+    assert_eq!(model_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(tool_effects.load(Ordering::SeqCst), 0);
+
+    let mut crashed = store
+        .load_checkpoint("ambiguous-runner")
+        .expect("load checkpoint")
+        .expect("checkpoint");
+    let arguments = serde_json::Map::from_iter([("value".to_string(), json!("42"))]);
+    let idempotency_key = "idem_ambiguous_runner";
+    let request_digest = tool_request_digest(
+        "call-unsafe",
+        "unsafe_write",
+        &Value::Object(arguments.clone()),
+        idempotency_key,
+    )
+    .expect("tool request digest");
+    let mut started = OperationJournalEntry::tool(
+        "op_tool_cycle_1_call-unsafe",
+        1,
+        1,
+        request_digest,
+        "call-unsafe",
+        "unsafe_write",
+        arguments,
+        idempotency_key,
+        ToolIdempotency::Unknown,
+    );
+    started
+        .transition_to(OperationState::Started)
+        .expect("started operation");
+    crashed.tool_journal = vec![started];
+    crashed.lease_expires_at_ms = Some(1);
+    store
+        .save_checkpoint(crashed)
+        .expect("persist ambiguous crash point");
+
+    let resumed = runner
+        .run_with_config(
+            &agent,
+            "write item 42",
+            RunConfig::builder()
+                .max_cycles(1)
+                .no_tool_policy(NoToolPolicy::Finish)
+                .session(session)
+                .checkpoint_config(checkpoint_config(store.clone(), "ambiguous-runner"))
+                .before_cycle_messages(|_cycle, _messages, _state| Vec::new())
+                .build(),
+        )
+        .await
+        .expect("reconciliation result");
+    assert_eq!(resumed.status(), AgentStatus::ReconciliationRequired);
+    assert!(resumed.completion_reason().is_none());
+    assert!(resumed.resume_observation().is_some());
+    assert!(resumed.new_items().is_empty());
+    assert_eq!(model_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(tool_effects.load(Ordering::SeqCst), 0);
+
+    let retained = store
+        .load_checkpoint("ambiguous-runner")
+        .expect("load retained checkpoint")
+        .expect("retained checkpoint");
+    assert_eq!(retained.status, CheckpointStatus::ReconciliationRequired);
+    assert_eq!(retained.tool_journal[0].state, OperationState::Ambiguous);
+    assert!(retained.claim_token.is_none());
+    assert!(retained.terminal_result.is_none());
+}
+
+fn run_config(
+    store: InMemoryCheckpointStore,
+    session: MemorySession,
+    crash_once: Arc<AtomicBool>,
+    host_request_id: &str,
+    reserved_output_tokens: u64,
+) -> RunConfig {
+    let mut checkpoint = checkpoint_config(store, "runner-checkpoint");
+    checkpoint.capability_refs.insert(
+        "behavior_affecting_run_metadata".to_string(),
+        CapabilityRef::new("metadata.request-42", "1").expect("run metadata capability ref"),
+    );
+    RunConfig::builder()
+        .max_cycles(2)
+        .no_tool_policy(NoToolPolicy::Finish)
+        .metadata("host_request_id", json!(host_request_id))
+        .metadata("reserved_output_tokens", json!(reserved_output_tokens))
+        .session(session)
+        .checkpoint_config(checkpoint)
+        .before_cycle_messages(move |cycle, _messages, _state| {
+            if cycle == 2 && crash_once.swap(false, Ordering::SeqCst) {
+                panic!("deterministic crash after committed cycle");
+            }
+            Vec::new()
+        })
+        .build()
+}
+
+#[tokio::test]
+async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free() {
+    let model_calls = Arc::new(AtomicUsize::new(0));
+    let model_metadata = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let first_calls = model_calls.clone();
+    let second_calls = model_calls.clone();
+    let first_metadata = model_metadata.clone();
+    let second_metadata = model_metadata.clone();
+    let provider = ScriptedModelProvider::from_steps(
+        "scripted",
+        "checkpoint-model",
+        vec![
+            ScriptStep::callback(move |request| {
+                first_calls.fetch_add(1, Ordering::SeqCst);
+                first_metadata
+                    .lock()
+                    .expect("first model metadata")
+                    .push(request.metadata.clone());
+                Ok(LLMResponse::with_tool_calls(
+                    "write once",
+                    vec![ToolCall::new("call-write", "write_record", BTreeMap::new())],
+                ))
+            }),
+            ScriptStep::callback(move |request| {
+                second_calls.fetch_add(1, Ordering::SeqCst);
+                second_metadata
+                    .lock()
+                    .expect("second model metadata")
+                    .push(request.metadata.clone());
+                Ok(LLMResponse::new("done"))
+            }),
+        ],
+    );
+    let observed_keys = Arc::new(Mutex::new(Vec::<String>::new()));
+    let keys_for_tool = observed_keys.clone();
+    let tool = FunctionTool::builder("write_record")
+        .description("Record one idempotent side effect.")
+        .json_schema(json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        }))
+        .tool_metadata(ToolMetadata {
+            idempotency: ToolIdempotency::Supported,
+            ..ToolMetadata::default()
+        })
+        .handler(move |context, _arguments: Value| {
+            let keys = keys_for_tool.clone();
+            async move {
+                keys.lock()
+                    .expect("idempotency keys")
+                    .push(context.idempotency_key.expect("stable idempotency key"));
+                Ok(ToolOutput::text("written"))
+            }
+        })
+        .build()
+        .expect("tool");
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(tempfile::tempdir().expect("workspace").path())
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("checkpoint-agent")
+        .instructions("Write the record, then return the final answer.")
+        .model(ModelRef::named("checkpoint-model"))
+        .tool(tool)
+        .build()
+        .expect("agent");
+    let store = InMemoryCheckpointStore::new();
+    let session = MemorySession::new("runner-checkpoint-session");
+    let crash_once = Arc::new(AtomicBool::new(true));
+
+    let first = runner
+        .run_with_config(
+            &agent,
+            "process item 42",
+            run_config(
+                store.clone(),
+                session.clone(),
+                crash_once.clone(),
+                "request-42",
+                4_096,
+            ),
+        )
+        .await;
+    let first_error = match first {
+        Ok(_) => panic!("first run must crash"),
+        Err(error) => error,
+    };
+    assert!(
+        first_error.contains("runner task failed"),
+        "spawn-blocking panic must surface to the caller"
+    );
+    assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+    let keys = observed_keys.lock().expect("idempotency keys").clone();
+    assert_eq!(keys.len(), 1);
+    assert!(keys[0].starts_with("idem_"));
+
+    let mut crashed = store
+        .load_checkpoint("runner-checkpoint")
+        .expect("load crashed checkpoint")
+        .expect("crashed checkpoint");
+    assert_eq!(crashed.cycle_index, 1);
+    assert_eq!(crashed.cycles.len(), 1);
+    assert_eq!(crashed.resume_attempt, 1);
+    assert!(crashed.claim_token.is_some());
+    assert_eq!(
+        crashed.run_definition["run_metadata"]["host_request_id"],
+        "request-42"
+    );
+    assert_eq!(
+        crashed.run_definition["run_metadata"]["reserved_output_tokens"],
+        4_096
+    );
+    let original_run_id = crashed.root_run_id.clone();
+    let original_trace_id = crashed.trace_id.clone();
+    assert!(!crashed.messages[0].metadata.is_empty());
+    crashed.messages[0].metadata.clear();
+    crashed.lease_expires_at_ms = Some(1);
+    store
+        .save_checkpoint(crashed)
+        .expect("expire crashed claim");
+
+    let resumed = runner
+        .run_with_config(
+            &agent,
+            "process item 42",
+            run_config(
+                store.clone(),
+                session.clone(),
+                crash_once.clone(),
+                "stale-request",
+                1_024,
+            ),
+        )
+        .await
+        .expect("resume");
+    assert_eq!(resumed.status(), AgentStatus::Completed);
+    assert_eq!(resumed.final_output(), Some("done"));
+    assert_eq!(resumed.run_id(), original_run_id);
+    assert_eq!(resumed.trace_id(), original_trace_id);
+    assert_eq!(resumed.result().cycles.len(), 2);
+    assert_eq!(model_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(observed_keys.lock().expect("idempotency keys").len(), 1);
+    {
+        let observed_metadata = model_metadata.lock().expect("model metadata");
+        assert_eq!(observed_metadata.len(), 2);
+        assert_eq!(observed_metadata[1]["host_request_id"], "request-42");
+        assert_eq!(observed_metadata[1]["reserved_output_tokens"], 4_096);
+    }
+
+    let terminal = store
+        .load_checkpoint("runner-checkpoint")
+        .expect("load terminal")
+        .expect("terminal checkpoint");
+    assert_eq!(terminal.resume_attempt, 2);
+    assert!(terminal.terminal_result.is_some());
+    assert!(terminal.terminal_acknowledged);
+    let persisted_items = session.get_items(None).await.expect("session items");
+    assert!(!persisted_items.is_empty());
+
+    let replay = runner
+        .run_with_config(
+            &agent,
+            "process item 42",
+            run_config(
+                store.clone(),
+                session.clone(),
+                crash_once,
+                "newer-stale-request",
+                512,
+            ),
+        )
+        .await
+        .expect("terminal replay");
+    assert_eq!(replay.status(), AgentStatus::Completed);
+    assert_eq!(replay.final_output(), Some("done"));
+    assert_eq!(replay.run_id(), original_run_id);
+    assert_eq!(replay.trace_id(), original_trace_id);
+    assert_eq!(model_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(observed_keys.lock().expect("idempotency keys").len(), 1);
+    assert_eq!(
+        session
+            .get_items(None)
+            .await
+            .expect("replayed session items"),
+        persisted_items
+    );
+    assert!(!replay.events().iter().any(|event| matches!(
+        event.payload(),
+        RunEventPayload::RunCompleted { .. }
+            | RunEventPayload::RunFailed { .. }
+            | RunEventPayload::RunCancelled { .. }
+    )));
+}

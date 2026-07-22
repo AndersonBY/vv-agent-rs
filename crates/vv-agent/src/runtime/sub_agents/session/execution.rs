@@ -1,20 +1,17 @@
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use serde_json::Value;
 
 use crate::budget::{BudgetExhaustion, BudgetUsageSnapshot};
+use crate::events::RunEventPayload;
 use crate::runtime::sub_agents::events::{
-    canonicalize_sub_agent_stream_event, emit_parent_sub_agent_event,
-    emit_parent_sub_agent_stream_event, emit_sub_agent_session_event, emit_sub_run_completed,
-    emit_sub_run_completed_to_log, emit_sub_run_started, enrich_sub_agent_payload,
+    emit_sub_agent_session_event, emit_sub_run_completed, emit_sub_run_started,
 };
 use crate::runtime::sub_task_manager::SubTaskTurnSnapshot;
-use crate::runtime::{
-    AgentRuntime, CancellationToken, ExecutionContext, RuntimeRunControls, StreamCallback,
-};
+use crate::runtime::{AgentRuntime, CancellationToken, ExecutionContext, RuntimeRunControls};
 use crate::tools::ToolPolicy;
 use crate::types::{AgentResult, AgentStatus, SubTaskOutcome, TaskTokenUsage};
 use crate::RunContext;
@@ -50,11 +47,7 @@ impl RuntimeSubAgentSession {
         let _active_run_guard = ActiveRunGuard { session: self };
         let (lifecycle, started_before_session) = self.next_lifecycle(snapshot.as_ref());
         if !started_before_session {
-            if let Err(error) = emit_sub_run_started(
-                &self.parent_log_handler,
-                &controls.event_handler,
-                &lifecycle,
-            ) {
+            if let Err(error) = emit_sub_run_started(&controls.event_handler, &lifecycle) {
                 let outcome = self.failed_outcome(error, 0);
                 return Ok(self.finish_outcome(&controls, &lifecycle, outcome, None, None, None));
             }
@@ -137,24 +130,29 @@ impl RuntimeSubAgentSession {
         crate::runtime::tool_planner::project_tool_policy(&mut task, &controls.tool_policy);
 
         let listeners = self.listeners.clone();
-        let parent_log_handler = self.parent_log_handler.clone();
         let parent_event_handler = controls.event_handler.clone();
-        let task_id = self.task_id.clone();
-        let session_id = self.session_id.clone();
-        let agent_name = self.agent_name.clone();
         let observed_progress_for_log = observed_progress.clone();
-        let log_handler = Arc::new(move |event: &str, payload: &BTreeMap<String, Value>| {
-            if event == "cycle_llm_response" {
-                observed_progress_for_log.record_completed_cycle(payload);
+        let event_handler: crate::runtime::RunEventHandler = Arc::new(move |event| {
+            if let RunEventPayload::Diagnostic { code, details, .. } = event.payload() {
+                if code == "cycle_llm_response" {
+                    observed_progress_for_log.record_completed_cycle(
+                        event.cycle_index(),
+                        &details.clone().into_iter().collect(),
+                    );
+                }
             }
-            emit_sub_agent_session_event(&listeners, event, payload);
-            let enriched = enrich_sub_agent_payload(payload, &task_id, &session_id, &agent_name);
-            emit_parent_sub_agent_event(
-                &parent_log_handler,
-                &parent_event_handler,
-                &format!("sub_agent_{event}"),
-                enriched,
-            );
+            if let Ok(Value::Object(object)) = serde_json::to_value(event) {
+                let event_name = object
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("diagnostic")
+                    .to_string();
+                let payload = object.into_iter().collect();
+                emit_sub_agent_session_event(&listeners, &event_name, &payload);
+            }
+            if let Some(parent_event_handler) = parent_event_handler.as_ref() {
+                parent_event_handler(event);
+            }
         });
         let runtime = self.build_runtime(&controls.tool_policy);
         let mut execution_context = project_execution_context(
@@ -162,37 +160,13 @@ impl RuntimeSubAgentSession {
             lifecycle,
             Some(cancellation_token.clone()),
         );
-        if controls.stream_callback.is_some()
-            || controls.event_handler.is_some()
-            || self.parent_log_handler.is_some()
-        {
-            let callback = controls.stream_callback.clone();
-            let parent_log_handler = self.parent_log_handler.clone();
-            let parent_event_handler = controls.event_handler.clone();
-            let lifecycle = lifecycle.clone();
-            let stream_sequence = AtomicU64::new(1);
-            let stream_callback: StreamCallback = Arc::new(move |event| {
-                let Some(canonical) = canonicalize_sub_agent_stream_event(event, &lifecycle) else {
-                    return;
-                };
-                emit_parent_sub_agent_stream_event_preserving_handler_panic(
-                    &parent_log_handler,
-                    &parent_event_handler,
-                    &canonical,
-                    stream_sequence.fetch_add(1, Ordering::Relaxed),
-                );
-                if let Some(callback) = callback.as_ref() {
-                    emit_inherited_stream_observer(callback, &canonical);
-                }
-            });
-            execution_context.stream_callback = Some(stream_callback);
-        }
+        execution_context.event_handler = Some(event_handler.clone());
         let child_run_context = self.child_run_context(lifecycle, &task, &execution_context);
         let result = runtime
             .run_with_controls(
                 task,
                 RuntimeRunControls {
-                    log_handler: Some(log_handler),
+                    event_handler: Some(event_handler),
                     before_cycle_messages: None,
                     interruption_messages: None,
                     steering_queue: Some(self.steering_queue.clone()),
@@ -340,15 +314,13 @@ impl RuntimeSubAgentSession {
                 EffectiveTurnControls {
                     parent_cancellation_token: snapshot.cancellation_token.clone(),
                     event_handler: snapshot.event_handler.clone(),
-                    stream_callback: snapshot.stream_callback.clone(),
                     parent_execution_context: snapshot.parent_execution_context.clone(),
                     tool_policy,
                 }
             }
             None => EffectiveTurnControls {
                 parent_cancellation_token: self.parent_cancellation_token.clone(),
-                event_handler: self.parent_event_handler.clone(),
-                stream_callback: self.stream_callback.clone(),
+                event_handler: self.event_handler.clone(),
                 parent_execution_context: self.parent_execution_context.clone(),
                 tool_policy: self.tool_policy.clone(),
             },
@@ -442,7 +414,6 @@ impl RuntimeSubAgentSession {
         budget_exhaustion: Option<&BudgetExhaustion>,
     ) -> SubTaskOutcome {
         match emit_sub_run_completed(
-            &self.parent_log_handler,
             &controls.event_handler,
             lifecycle,
             &outcome,
@@ -451,26 +422,14 @@ impl RuntimeSubAgentSession {
             budget_exhaustion,
         ) {
             Ok(()) => outcome,
-            Err(error) => {
-                let failed = self.failed_outcome(error, outcome.cycles);
-                emit_sub_run_completed_to_log(
-                    &self.parent_log_handler,
-                    lifecycle,
-                    &failed,
-                    token_usage,
-                    budget_usage,
-                    budget_exhaustion,
-                );
-                failed
-            }
+            Err(error) => self.failed_outcome(error, outcome.cycles),
         }
     }
 }
 
 struct EffectiveTurnControls {
     parent_cancellation_token: Option<CancellationToken>,
-    event_handler: Option<crate::runtime::RuntimeEventHandler>,
-    stream_callback: Option<StreamCallback>,
+    event_handler: Option<crate::runtime::RunEventHandler>,
     parent_execution_context: Option<ExecutionContext>,
     tool_policy: ToolPolicy,
 }
@@ -507,52 +466,6 @@ fn panic_payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
     "configured sub-agent panicked".to_string()
 }
 
-fn emit_parent_sub_agent_stream_event_preserving_handler_panic(
-    parent_log_handler: &Option<crate::runtime::RuntimeLogHandler>,
-    parent_event_handler: &Option<crate::runtime::RuntimeEventHandler>,
-    canonical: &BTreeMap<String, Value>,
-    sequence: u64,
-) {
-    if parent_event_handler.is_none() {
-        emit_parent_sub_agent_stream_event(
-            parent_log_handler,
-            parent_event_handler,
-            canonical,
-            sequence,
-        );
-        return;
-    }
-
-    let event = canonical
-        .get("event")
-        .and_then(Value::as_str)
-        .expect("canonical sub-agent stream event");
-    let event = format!("sub_agent_{event}");
-    let mut payload = canonical.clone();
-    payload.remove("event");
-
-    if let Some(handler) = parent_log_handler {
-        if let Ok(mut handler) = handler.lock() {
-            let _ = catch_unwind(AssertUnwindSafe(|| handler(&event, &payload)));
-        }
-    }
-    if let Some(handler) = parent_event_handler {
-        payload.insert(
-            "_vv_agent_stream_receipt".to_string(),
-            Value::String(format!("stream_{}", uuid::Uuid::new_v4().simple())),
-        );
-        payload.insert(
-            "_vv_agent_stream_sequence".to_string(),
-            Value::from(sequence),
-        );
-        handler(&event, &payload);
-    }
-}
-
-fn emit_inherited_stream_observer(callback: &StreamCallback, canonical: &BTreeMap<String, Value>) {
-    let _ = catch_unwind(AssertUnwindSafe(|| callback(canonical)));
-}
-
 #[cfg(test)]
 mod capability_projection_tests {
     use std::any::Any;
@@ -573,8 +486,8 @@ mod capability_projection_tests {
     use crate::runtime::sub_agent_sessions::SubAgentSession;
     use crate::runtime::sub_agents::types::{RuntimeSubAgentSessionParts, SubRunLifecycle};
     use crate::runtime::{
-        CancellationToken, ExecutionContext, InMemoryStateStore, RuntimeEventHandler, StateStore,
-        StreamCallback,
+        CancellationToken, CheckpointStore, ExecutionContext, InMemoryCheckpointStore,
+        RunEventHandler,
     };
     use crate::tools::{build_default_registry, ApprovalDecision};
     use crate::types::{
@@ -636,9 +549,7 @@ mod capability_projection_tests {
             settings_file: None,
             default_backend: None,
             parent_cancellation_token,
-            stream_callback: None,
-            parent_log_handler: None,
-            parent_event_handler: None,
+            event_handler: None,
             parent_execution_context: None,
             model_provider: None,
             run_model_ref: ModelRef::named("child-model"),
@@ -662,17 +573,20 @@ mod capability_projection_tests {
     fn execution_error_reports_usage_only_after_a_completed_llm_cycle() {
         let contract: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/parity/configured_sub_agent_v1.json"
+            "/tests/fixtures/parity/configured_sub_agent.json"
         )))
         .expect("configured sub-agent contract");
         let captured = Arc::new(Mutex::new(Vec::new()));
         let captured_for_handler = captured.clone();
-        let event_handler: crate::runtime::RuntimeEventHandler = Arc::new(move |event, payload| {
-            if event == "sub_run_completed" {
+        let event_handler: crate::runtime::RunEventHandler = Arc::new(move |event| {
+            if matches!(
+                event.payload(),
+                crate::events::RunEventPayload::SubRunCompleted { .. }
+            ) {
                 captured_for_handler
                     .lock()
                     .expect("captured completions")
-                    .push(payload.clone());
+                    .push(serde_json::to_value(event).expect("completion event wire"));
             }
         });
 
@@ -680,7 +594,7 @@ mod capability_projection_tests {
             Err(LlmError::Request("first request failed".to_string()))
         })]);
         let mut immediate_session = runtime_session_with_client(fail_immediately, None);
-        immediate_session.parent_event_handler = Some(event_handler.clone());
+        immediate_session.event_handler = Some(event_handler.clone());
 
         let immediate = immediate_session
             .run_prompt("first attempt", None)
@@ -688,17 +602,17 @@ mod capability_projection_tests {
 
         assert_eq!(immediate.status, AgentStatus::Failed);
         assert_eq!(
-            !captured.lock().expect("captured completions")[0].contains_key("token_usage"),
+            captured.lock().expect("captured completions")[0]
+                .get("token_usage")
+                .is_none(),
             contract["lifecycle"]["omit_token_usage_when_unavailable"]
         );
 
         let mut first_response = LLMResponse::new("continue");
         first_response.token_usage = TokenUsage {
-            prompt_tokens: 11,
-            completion_tokens: 7,
-            total_tokens: 18,
-            input_tokens: 11,
-            output_tokens: 7,
+            input_tokens: Some(11),
+            output_tokens: Some(7),
+            total_tokens: Some(18),
             ..TokenUsage::default()
         };
         let fail_after_cycle = ScriptedLlmClient::from_steps(vec![
@@ -706,7 +620,7 @@ mod capability_projection_tests {
             ScriptStep::callback(|_| Err(LlmError::Request("second request failed".to_string()))),
         ]);
         let mut partial_session = runtime_session_with_client(fail_after_cycle, None);
-        partial_session.parent_event_handler = Some(event_handler);
+        partial_session.event_handler = Some(event_handler);
 
         let partial = partial_session
             .run_prompt("second attempt", None)
@@ -719,8 +633,8 @@ mod capability_projection_tests {
         );
         let captured = captured.lock().expect("captured completions");
         assert_eq!(captured[1]["status"], "failed");
-        assert_eq!(captured[1]["token_usage"]["prompt_tokens"], json!(11));
-        assert_eq!(captured[1]["token_usage"]["completion_tokens"], json!(7));
+        assert_eq!(captured[1]["token_usage"]["input_tokens"], json!(11));
+        assert_eq!(captured[1]["token_usage"]["output_tokens"], json!(7));
         assert_eq!(captured[1]["token_usage"]["total_tokens"], json!(18));
         assert_eq!(
             captured[1]["token_usage"]["cycles"][0]["cycle_index"],
@@ -762,22 +676,21 @@ mod capability_projection_tests {
     fn child_execution_context_inherits_only_capabilities_and_derives_identity() {
         let contract: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/parity/configured_sub_agent_v1.json"
+            "/tests/fixtures/parity/configured_sub_agent.json"
         )))
         .expect("configured sub-agent contract");
-        let state_store: Arc<dyn StateStore> = Arc::new(InMemoryStateStore::new());
+        let checkpoint_store: Arc<dyn CheckpointStore> = Arc::new(InMemoryCheckpointStore::new());
         let approval_provider: Arc<dyn ApprovalProvider> = Arc::new(AllowingApprovalProvider);
         let memory_provider: Arc<dyn MemoryProvider> = Arc::new(EmptyMemoryProvider);
         let model_provider: Arc<dyn ModelProvider> = Arc::new(ScriptedModelProvider::default());
         let app_state: Arc<dyn Any + Send + Sync> = Arc::new("app-state".to_string());
-        let event_sink: RuntimeEventHandler = Arc::new(|_, _| {});
-        let stream_sink: StreamCallback = Arc::new(|_| {});
+        let event_sink: RunEventHandler = Arc::new(|_| {});
         let approval_broker = ApprovalBroker::default();
         let parent_token = CancellationToken::default();
         let child_token = parent_token.child();
         let parent = ExecutionContext {
             cancellation_token: Some(parent_token.clone()),
-            state_store: Some(state_store.clone()),
+            checkpoint_store: Some(checkpoint_store.clone()),
             approval_provider: Some(approval_provider.clone()),
             approval_broker: Some(approval_broker.clone()),
             approval_timeout: Some(Duration::from_secs(7)),
@@ -814,8 +727,7 @@ mod capability_projection_tests {
 
         let child = project_execution_context(Some(&parent), &lifecycle, Some(child_token.clone()));
         let mut session = runtime_session(None);
-        session.parent_event_handler = Some(event_sink.clone());
-        session.stream_callback = Some(stream_sink.clone());
+        session.event_handler = Some(event_sink.clone());
         session.model_provider = Some(model_provider.clone());
         let parent_run_context = crate::RunContext {
             run_id: "parent-run".to_string(),
@@ -827,8 +739,8 @@ mod capability_projection_tests {
             session.child_run_context(&lifecycle, &session.task_template, &child);
 
         assert!(Arc::ptr_eq(
-            child.state_store.as_ref().expect("state store"),
-            &state_store
+            child.checkpoint_store.as_ref().expect("state store"),
+            &checkpoint_store
         ));
         assert!(Arc::ptr_eq(
             child.approval_provider.as_ref().expect("approval provider"),
@@ -888,7 +800,7 @@ mod capability_projection_tests {
             (
                 "event_sink",
                 Arc::ptr_eq(
-                    session.parent_event_handler.as_ref().expect("event sink"),
+                    session.event_handler.as_ref().expect("event sink"),
                     &event_sink,
                 ),
             ),
@@ -904,17 +816,10 @@ mod capability_projection_tests {
                 ),
             ),
             (
-                "state_store",
+                "checkpoint_store",
                 Arc::ptr_eq(
-                    child.state_store.as_ref().expect("state store"),
-                    &state_store,
-                ),
-            ),
-            (
-                "stream_sink",
-                Arc::ptr_eq(
-                    session.stream_callback.as_ref().expect("stream sink"),
-                    &stream_sink,
+                    child.checkpoint_store.as_ref().expect("state store"),
+                    &checkpoint_store,
                 ),
             ),
             (

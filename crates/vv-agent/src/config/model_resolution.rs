@@ -14,8 +14,6 @@ use backend::backend_type_from_str;
 use endpoints::{build_endpoint_chat_clients, endpoint_options_from_vv_llm};
 use settings::normalize_llm_settings;
 
-pub use settings::build_vv_llm_settings;
-
 pub fn resolve_model_endpoint(
     settings: &Value,
     backend: &str,

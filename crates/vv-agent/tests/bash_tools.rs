@@ -67,57 +67,63 @@ fn bash_tool_executes_command_in_workspace() {
 }
 
 #[test]
-fn bash_tool_coerces_scalar_exec_dir_and_stdin() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    std::fs::create_dir_all(workspace.path().join("456")).expect("number directory");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "bash_scalar_args",
-                "bash",
-                BTreeMap::from([
-                    ("command".to_string(), json!("cat")),
-                    ("exec_dir".to_string(), json!(456)),
-                    ("stdin".to_string(), json!(123)),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("bash tool");
-
-    assert_eq!(result.status, ToolResultStatus::Success);
-    let payload: Value = serde_json::from_str(&result.content).expect("bash payload");
-    assert_eq!(payload["cwd"], json!("456"));
-    assert_eq!(payload["output"], json!("123"));
-}
-
-#[test]
-fn bash_tool_uses_json_truthiness_for_background_flag() {
+fn bash_tools_reject_schema_invalid_argument_types() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
+    let cases = [
+        (
+            "bash",
+            BTreeMap::from([
+                ("command".to_string(), json!("printf no-run")),
+                ("exec_dir".to_string(), json!(456)),
+            ]),
+            "/exec_dir",
+        ),
+        (
+            "bash",
+            BTreeMap::from([
+                ("command".to_string(), json!("printf no-run")),
+                ("stdin".to_string(), json!(123)),
+            ]),
+            "/stdin",
+        ),
+        (
+            "bash",
+            BTreeMap::from([
+                ("command".to_string(), json!("printf no-run")),
+                ("run_in_background".to_string(), json!("false")),
+            ]),
+            "/run_in_background",
+        ),
+        (
+            "bash",
+            BTreeMap::from([
+                ("command".to_string(), json!("printf no-run")),
+                ("timeout".to_string(), json!("1")),
+            ]),
+            "/timeout",
+        ),
+        (
+            "check_background_command",
+            BTreeMap::from([("session_id".to_string(), json!(123))]),
+            "/session_id",
+        ),
+    ];
 
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "bash_truthy_background",
-                "bash",
-                BTreeMap::from([
-                    ("command".to_string(), json!("printf background")),
-                    ("run_in_background".to_string(), json!("false")),
-                    ("timeout".to_string(), json!(5)),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("bash tool");
-
-    assert_eq!(result.status, ToolResultStatus::Running);
-    let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["status"], "running");
+    for (tool_name, arguments, instance_path) in cases {
+        let result = registry
+            .execute(
+                &ToolCall::new(format!("{tool_name}_invalid"), tool_name, arguments),
+                &mut context,
+            )
+            .expect("tool validation");
+        let payload: Value = serde_json::from_str(&result.content).expect("payload");
+        assert_eq!(result.status, ToolResultStatus::Error);
+        assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
+        assert_eq!(payload["issues"][0]["instance_path"], instance_path);
+        assert_eq!(payload["issues"][0]["rule"], "type");
+    }
 }
 
 #[test]
@@ -200,33 +206,6 @@ fn background_command_lifecycle_can_be_polled() {
         .expect("command")
         .contains("printf start"));
     assert_eq!(final_payload["output"], "startdone");
-}
-
-#[test]
-fn check_background_command_coerces_scalar_session_id() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "bash_bg_scalar_check",
-                "check_background_command",
-                BTreeMap::from([("session_id".to_string(), json!(123))]),
-            ),
-            &mut context,
-        )
-        .expect("check background command");
-
-    assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(
-        result.error_code.as_deref(),
-        Some("background_command_failed")
-    );
-    let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["status"], "missing");
-    assert_eq!(payload["session_id"], "123");
 }
 
 #[test]
@@ -508,35 +487,6 @@ fn foreground_timeout_moves_command_to_background() {
         .as_str()
         .expect("message")
         .contains("check_background_command"));
-    assert!(payload["output"]
-        .as_str()
-        .expect("output")
-        .contains("partial"));
-}
-
-#[test]
-fn bash_tool_accepts_string_timeout() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "bash_string_timeout",
-                "bash",
-                BTreeMap::from([
-                    ("command".to_string(), json!("printf partial; sleep 2")),
-                    ("timeout".to_string(), json!("1")),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("bash string timeout");
-
-    assert_eq!(result.status, ToolResultStatus::Running);
-    let payload: Value = serde_json::from_str(&result.content).expect("timeout payload");
-    assert_eq!(payload["transitioned_to_background"], true);
     assert!(payload["output"]
         .as_str()
         .expect("output")

@@ -4,7 +4,7 @@ use vv_agent::{
     ScriptedModelProvider, ToolCall,
 };
 
-const FIXTURE: &str = include_str!("fixtures/parity/model_ref_v1.json");
+const FIXTURE: &str = include_str!("fixtures/parity/model_ref.json");
 
 #[test]
 fn model_ref_wire_matches_the_shared_closed_contract() {

@@ -1,4 +1,4 @@
-use crate::tools::common::{coerce_truthy_arg, parse_integer_arg, stringify_tool_arg};
+use crate::tools::common::{bool_arg, integer_arg, string_arg};
 use crate::types::ToolArguments;
 
 #[derive(Debug, Clone)]
@@ -33,12 +33,12 @@ impl FindFilesRequest {
                 message: "`glob` is required for file patterns; `pattern` is not supported",
             });
         }
-        let path = stringify_tool_arg(arguments.get("path"), ".");
-        let glob = stringify_tool_arg(arguments.get("glob"), "**/*");
+        let path = string_arg(arguments.get("path"), ".");
+        let glob = string_arg(arguments.get("glob"), "**/*");
         let max_results = parse_max_results(arguments)?;
         let scan_limit = parse_scan_limit(arguments, max_results)?;
         let offset = parse_offset(arguments)?;
-        let sort = stringify_tool_arg(arguments.get("sort"), "modified_desc");
+        let sort = string_arg(arguments.get("sort"), "modified_desc");
         if !matches!(sort.as_str(), "modified_desc" | "path_asc") {
             return Err(FindFilesArgumentError {
                 message: "`sort` must be modified_desc or path_asc",
@@ -51,9 +51,9 @@ impl FindFilesRequest {
             scan_limit,
             offset,
             sort,
-            include_ignored: coerce_truthy_arg(arguments.get("include_ignored"), false),
-            include_hidden: coerce_truthy_arg(arguments.get("include_hidden"), false),
-            include_sensitive: coerce_truthy_arg(arguments.get("include_sensitive"), false),
+            include_ignored: bool_arg(arguments.get("include_ignored"), false),
+            include_hidden: bool_arg(arguments.get("include_hidden"), false),
+            include_sensitive: bool_arg(arguments.get("include_sensitive"), false),
         })
     }
 
@@ -65,7 +65,7 @@ impl FindFilesRequest {
 
 fn parse_max_results(arguments: &ToolArguments) -> Result<usize, FindFilesArgumentError> {
     match arguments.get("max_results") {
-        Some(value) => match parse_integer_arg(value) {
+        Some(value) => match integer_arg(value) {
             Ok(limit) => Ok(limit.clamp(1, 5_000) as usize),
             Err(_) => Err(integer_error()),
         },
@@ -78,7 +78,7 @@ fn parse_scan_limit(
     max_results: usize,
 ) -> Result<usize, FindFilesArgumentError> {
     match arguments.get("scan_limit") {
-        Some(value) => match parse_integer_arg(value) {
+        Some(value) => match integer_arg(value) {
             Ok(limit) => Ok(limit.max(max_results as i64) as usize),
             Err(_) => Err(integer_error()),
         },
@@ -88,7 +88,7 @@ fn parse_scan_limit(
 
 fn parse_offset(arguments: &ToolArguments) -> Result<usize, FindFilesArgumentError> {
     match arguments.get("offset") {
-        Some(value) => match parse_integer_arg(value) {
+        Some(value) => match integer_arg(value) {
             Ok(offset) => Ok(offset.max(0) as usize),
             Err(_) => Err(integer_error()),
         },

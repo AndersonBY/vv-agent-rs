@@ -225,24 +225,40 @@ pub enum TurnStatus {
     Interrupted,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct AppTokenUsage {
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub total_tokens: u64,
-    pub cached_tokens: u64,
-    pub reasoning_tokens: u64,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cache_creation_tokens: u64,
+    pub schema_version: String,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
     pub cache_usage: AppCacheUsage,
+    pub cycles: Vec<AppCycleTokenUsage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AppCycleTokenUsage {
+    pub cycle_index: u32,
+    pub usage: AppCycleUsage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AppCycleUsage {
+    pub schema_version: String,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
+    pub usage_source: String,
+    pub cache_usage: AppCacheUsage,
+    pub provider_usage: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct AppCacheUsage {
     pub status: String,
-    pub read_tokens: Option<u64>,
-    pub write_tokens: Option<u64>,
+    pub read_input_tokens: Option<u64>,
+    pub write_input_tokens: Option<u64>,
     pub uncached_input_tokens: Option<u64>,
     pub source: Option<String>,
 }

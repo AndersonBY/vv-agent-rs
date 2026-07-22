@@ -97,7 +97,7 @@ fn configured_sub_agent_inherits_limits_with_fresh_counters_and_without_parent_m
         )],
     );
     parent_delegate.token_usage = TokenUsage {
-        total_tokens: 4,
+        total_tokens: Some(4),
         usage_source: UsageSource::ProviderReported,
         ..TokenUsage::default()
     };
@@ -110,7 +110,7 @@ fn configured_sub_agent_inherits_limits_with_fresh_counters_and_without_parent_m
         )],
     );
     child_finish.token_usage = TokenUsage {
-        total_tokens: 4,
+        total_tokens: Some(4),
         usage_source: UsageSource::ProviderReported,
         ..TokenUsage::default()
     };
@@ -123,7 +123,7 @@ fn configured_sub_agent_inherits_limits_with_fresh_counters_and_without_parent_m
         )],
     );
     parent_finish.token_usage = TokenUsage {
-        total_tokens: 1,
+        total_tokens: Some(1),
         usage_source: UsageSource::ProviderReported,
         ..TokenUsage::default()
     };
@@ -137,8 +137,7 @@ fn configured_sub_agent_inherits_limits_with_fresh_counters_and_without_parent_m
         "researcher".to_string(),
         SubAgentConfig::new("demo", "research profile"),
     );
-    let child_events = Arc::new(Mutex::new(Vec::<BTreeMap<String, serde_json::Value>>::new()));
-    let child_events_for_handler = child_events.clone();
+    let (child_events, event_handler) = run_event_collector();
     let limits = RunBudgetLimits::builder()
         .max_total_tokens(5)
         .max_host_cost(HostCost::new("credits", 100).expect("host limit"))
@@ -149,14 +148,7 @@ fn configured_sub_agent_inherits_limits_with_fresh_counters_and_without_parent_m
         .run_with_controls(
             task,
             RuntimeRunControls {
-                log_handler: Some(Arc::new(move |event, payload| {
-                    if event == "sub_run_completed" {
-                        child_events_for_handler
-                            .lock()
-                            .expect("child events")
-                            .push(payload.clone());
-                    }
-                })),
+                event_handler: Some(event_handler),
                 budget_limits: Some(limits),
                 host_cost_meter: Some(Arc::new(ConstantHostCostMeter)),
                 ..RuntimeRunControls::default()
@@ -176,8 +168,12 @@ fn configured_sub_agent_inherits_limits_with_fresh_counters_and_without_parent_m
         Some(0)
     );
     let child_events = child_events.lock().expect("child events");
-    assert_eq!(child_events.len(), 1);
-    let child_usage = &child_events[0]["budget_usage"];
+    let child_completed = child_events
+        .iter()
+        .find(|event| matches!(event.payload(), RunEventPayload::SubRunCompleted { .. }))
+        .expect("child completion event");
+    let child_completed = serde_json::to_value(child_completed).expect("child completion wire");
+    let child_usage = &child_completed["budget_usage"];
     assert_eq!(child_usage["cycles"], 1);
     assert_eq!(child_usage["total_tokens"], 4);
     assert_eq!(child_usage["host_cost"], serde_json::Value::Null);
@@ -188,40 +184,20 @@ fn configured_sub_agent_inherits_limits_with_fresh_counters_and_without_parent_m
         .find(|item| item["dimension"] == "host_cost")
         .expect("host cost unavailable");
     assert_eq!(host_unavailable["reason"], "meter_missing");
-    assert!(!child_events[0].contains_key("budget_exhaustion"));
+    assert!(child_completed.get("budget_exhaustion").is_none());
 }
 
 #[test]
-fn runtime_forwards_stream_callback_to_runtime_backed_sub_agent() {
-    let contract: serde_json::Value = serde_json::from_str(include_str!(
-        "../fixtures/parity/configured_sub_agent_v1.json"
-    ))
-    .expect("configured sub-agent contract");
+fn runtime_forwards_typed_events_from_runtime_backed_sub_agent() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../fixtures/parity/configured_sub_agent.json"))
+            .expect("configured sub-agent contract");
     assert!(contract["capability_projection"]["inherited"]
         .as_array()
         .expect("inherited capabilities")
-        .contains(&json!("stream_sink")));
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let stream_callback: LlmStreamCallback = {
-        let events = Arc::clone(&events);
-        Arc::new(move |event| {
-            events.lock().expect("events").push(event.clone());
-        })
-    };
-    let log_events = Arc::new(Mutex::new(Vec::<(
-        String,
-        BTreeMap<String, serde_json::Value>,
-    )>::new()));
-    let log_sink = Arc::clone(&log_events);
-    let mut runtime = AgentRuntime::new(StreamingSubAgentLlmClient::default());
-    runtime.log_handler = Some(Arc::new(Mutex::new(Box::new(
-        move |event: &str, payload: &BTreeMap<String, serde_json::Value>| {
-            log_sink
-                .lock()
-                .expect("log events")
-                .push((event.to_string(), payload.clone()));
-        },
-    ))));
+        .contains(&json!("event_sink")));
+    let (events, event_handler) = run_event_collector();
+    let runtime = AgentRuntime::new(StreamingSubAgentLlmClient::default());
     let mut task = AgentTask::new("parent_stream", "demo", "parent system", "delegate");
     task.sub_agents.insert(
         "researcher".to_string(),
@@ -233,7 +209,7 @@ fn runtime_forwards_stream_callback_to_runtime_backed_sub_agent() {
             task,
             RuntimeRunControls {
                 execution_context: Some(
-                    ExecutionContext::default().with_stream_callback(stream_callback),
+                    ExecutionContext::default().with_event_handler(event_handler),
                 ),
                 ..RuntimeRunControls::default()
             },
@@ -241,51 +217,54 @@ fn runtime_forwards_stream_callback_to_runtime_backed_sub_agent() {
         .expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
-    assert!(events.lock().expect("events").iter().any(|event| {
-        event.get("event").and_then(serde_json::Value::as_str) == Some("assistant_delta")
-            && event
-                .get("content_delta")
-                .and_then(serde_json::Value::as_str)
-                == Some("checking")
-            && event
-                .get("sub_agent_name")
-                .and_then(serde_json::Value::as_str)
-                == Some("researcher")
-            && event.get("task_id").and_then(serde_json::Value::as_str) != Some("spoofed-task")
-            && event.get("session_id") == event.get("task_id")
-    }));
-    let log_events = log_events.lock().expect("log events");
-    let log_event_names = log_events
+    let events = events.lock().expect("events");
+    let sub_agent_delta = events
         .iter()
-        .map(|(event, _)| event.as_str())
-        .collect::<Vec<_>>();
-    assert!(log_event_names.contains(&"sub_agent_tool_call_started"));
-    assert!(log_event_names.contains(&"sub_agent_tool_call_progress"));
-    let sub_agent_delta = log_events
+        .find(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::AssistantDelta { delta, .. } if delta == "checking"
+            )
+        })
+        .expect("sub-agent assistant delta");
+    assert_eq!(sub_agent_delta.agent_name(), Some("researcher"));
+    assert_ne!(sub_agent_delta.run_id(), "spoofed-task");
+    assert_ne!(sub_agent_delta.session_id(), Some("spoofed-session"));
+    assert!(sub_agent_delta.metadata().is_empty());
+    let sub_agent_started = events
         .iter()
-        .find(|(event, _)| event == "sub_agent_assistant_delta")
-        .expect("sub-agent stream event in runtime logs");
-    assert_eq!(sub_agent_delta.1["content_delta"], json!("checking"));
-    assert_eq!(sub_agent_delta.1["sub_agent_name"], json!("researcher"));
-    assert!(sub_agent_delta.1["task_id"].as_str().is_some());
-    assert_ne!(sub_agent_delta.1["task_id"], json!("spoofed-task"));
+        .find(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::ModelToolCallStarted {
+                    tool_call_id,
+                    tool_name,
+                    ..
+                } if tool_call_id == "sub_tool_1" && tool_name == "bash"
+            )
+        })
+        .expect("sub-agent tool start");
+    assert_eq!(sub_agent_started.agent_name(), Some("researcher"));
+    let sub_agent_progress = events
+        .iter()
+        .find(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::ModelToolCallProgress {
+                    tool_call_id,
+                    tool_name,
+                    arguments_chars: Some(48),
+                    estimated_tokens: Some(12),
+                    ..
+                } if tool_call_id == "sub_tool_1" && tool_name == "bash"
+            )
+        })
+        .expect("sub-agent tool progress");
+    assert_eq!(sub_agent_progress.agent_name(), Some("researcher"));
+    assert_eq!(sub_agent_progress.run_id(), sub_agent_delta.run_id());
     assert_eq!(
-        sub_agent_delta.1["session_id"],
-        sub_agent_delta.1["task_id"]
-    );
-    let sub_agent_progress = log_events
-        .iter()
-        .find(|(event, _)| event == "sub_agent_tool_call_progress")
-        .expect("sub-agent tool progress event in runtime logs");
-    assert_eq!(sub_agent_progress.1["tool_call_id"], json!("sub_tool_1"));
-    assert_eq!(sub_agent_progress.1["function_name"], json!("bash"));
-    assert_eq!(sub_agent_progress.1["arguments_chars"], json!(48));
-    assert_eq!(sub_agent_progress.1["estimated_tokens"], json!(12));
-    assert_eq!(sub_agent_progress.1["sub_agent_name"], json!("researcher"));
-    assert!(sub_agent_progress.1["task_id"].as_str().is_some());
-    assert_eq!(
-        sub_agent_progress.1["session_id"],
-        sub_agent_progress.1["task_id"]
+        sub_agent_progress.session_id(),
+        sub_agent_delta.session_id()
     );
 }
 

@@ -18,7 +18,7 @@ fn cycle_runner_public_api_builds_assistant_message() {
         ScriptedLlmClient::new(vec![response]),
         build_default_registry(),
     );
-    let task = vv_agent::AgentTask::new("cycle_api", "demo", "system", "prompt");
+    let task = vv_agent::types::AgentTask::new("cycle_api", "demo", "system", "prompt");
     let mut memory_manager = MemoryManager::new(MemoryManagerConfig::default());
 
     let (messages, cycle) = runner
@@ -57,7 +57,7 @@ fn cycle_runner_microcompacts_before_full_compaction_when_previous_prompt_tokens
         })]),
         build_default_registry(),
     );
-    let task = vv_agent::AgentTask::new("cycle_microcompact", "demo", "system", "prompt");
+    let task = vv_agent::types::AgentTask::new("cycle_microcompact", "demo", "system", "prompt");
     let mut memory_manager = MemoryManager::new(MemoryManagerConfig {
         model: "demo".to_string(),
         model_context_window: 800,
@@ -139,7 +139,7 @@ fn cycle_runner_retries_prompt_too_long_with_forced_compaction() {
         ]),
         build_default_registry(),
     );
-    let task = vv_agent::AgentTask::new("cycle_prompt_retry", "demo", "system", "prompt");
+    let task = vv_agent::types::AgentTask::new("cycle_prompt_retry", "demo", "system", "prompt");
     let mut memory_manager = prompt_retry_memory_manager();
 
     let (messages, cycle) = runner
@@ -181,7 +181,8 @@ fn cycle_runner_retries_prompt_too_long_then_accepts_second_retry() {
         ]),
         build_default_registry(),
     );
-    let task = vv_agent::AgentTask::new("cycle_prompt_second_retry", "demo", "system", "prompt");
+    let task =
+        vv_agent::types::AgentTask::new("cycle_prompt_second_retry", "demo", "system", "prompt");
     let mut memory_manager = prompt_retry_memory_manager();
 
     let (messages, cycle) = runner
@@ -215,7 +216,8 @@ fn cycle_runner_returns_compaction_exhausted_after_prompt_too_long_retries() {
         ScriptedLlmClient::from_steps(steps),
         build_default_registry(),
     );
-    let task = vv_agent::AgentTask::new("cycle_prompt_exhausted", "demo", "system", "prompt");
+    let task =
+        vv_agent::types::AgentTask::new("cycle_prompt_exhausted", "demo", "system", "prompt");
     let mut memory_manager = prompt_retry_memory_manager();
 
     let error = runner
@@ -247,7 +249,8 @@ fn cycle_runner_propagates_non_prompt_too_long_errors() {
         })]),
         build_default_registry(),
     );
-    let task = vv_agent::AgentTask::new("cycle_prompt_other_error", "demo", "system", "prompt");
+    let task =
+        vv_agent::types::AgentTask::new("cycle_prompt_other_error", "demo", "system", "prompt");
     let mut memory_manager = prompt_retry_memory_manager();
 
     let error = runner

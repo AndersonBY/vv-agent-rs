@@ -14,29 +14,28 @@ fn memory_capacity_defaults_match_contract_without_rewriting_explicit_values() {
         expected["configured_default_threshold"].as_u64().unwrap()
     );
 
-    let mut historical = AgentTask::new("task", "model", "system", "user");
-    historical.memory_compact_threshold = 128_000;
-    let restored: AgentTask = serde_json::from_value(
-        serde_json::to_value(&historical).expect("serialize historical task"),
-    )
-    .expect("restore historical task");
+    let mut explicit = AgentTask::new("task", "model", "system", "user");
+    explicit.memory_compact_threshold = 128_000;
+    let restored: AgentTask =
+        serde_json::from_value(serde_json::to_value(&explicit).expect("serialize task"))
+            .expect("restore task");
     assert_eq!(restored.memory_compact_threshold, 128_000);
 }
 
 #[test]
-fn runtime_context_window_resolution_matches_contract_cases_and_zero_capability_fallback() {
+fn runtime_context_window_resolution_matches_contract_cases_and_zero_capability() {
     let contract = contract();
     let mut cases = contract["capacity_contract"]["context_window_resolution"]["cases"]
         .as_array()
         .expect("context resolution cases")
         .clone();
     cases.push(json!({
-        "name": "zero_resolved_capability_uses_framework_fallback",
+        "name": "zero_resolved_capability_uses_derived_planning_context",
         "input": {
             "task_metadata_model_context_window": 0,
             "resolved_model_context_window": 0
         },
-        "expected_model_context_window": contract["capacity_contract"]["context_window_fallback"]
+        "expected_model_context_window": contract["capacity_contract"]["unknown_context_window_strategy"]["default_model_context_window"]
     }));
 
     for case in &cases {
@@ -87,19 +86,22 @@ fn runtime_context_window_resolution_matches_contract_cases_and_zero_capability_
             "model_context_window".to_string(),
             input["task_metadata_model_context_window"].clone(),
         );
-        let logs = Arc::new(Mutex::new(Vec::<(String, BTreeMap<String, Value>)>::new()));
+        let logs = Arc::new(Mutex::new(Vec::<RunEvent>::new()));
         let log_sink = logs.clone();
 
         runtime
             .run_with_controls(
                 task,
                 RuntimeRunControls {
-                    log_handler: Some(Arc::new(move |event, payload| {
-                        if event == "memory_compact_started" {
+                    event_handler: Some(Arc::new(move |event| {
+                        if matches!(
+                            event.payload(),
+                            RunEventPayload::MemoryCompactStarted { .. }
+                        ) {
                             log_sink
                                 .lock()
                                 .expect("context resolution logs")
-                                .push((event.to_string(), payload.clone()));
+                                .push(event.clone());
                         }
                     })),
                     ..RuntimeRunControls::default()
@@ -110,10 +112,26 @@ fn runtime_context_window_resolution_matches_contract_cases_and_zero_capability_
         let logs = logs.lock().expect("context resolution logs");
         let started = logs
             .iter()
-            .find(|(_, payload)| payload["trigger"] == "prompt_too_long")
+            .find(|event| {
+                matches!(
+                    event.payload(),
+                    RunEventPayload::MemoryCompactStarted {
+                        trigger: MemoryCompactTrigger::PromptTooLong,
+                        ..
+                    }
+                )
+            })
             .unwrap_or_else(|| panic!("{}: prompt-too-long event", case["name"]));
+        let RunEventPayload::MemoryCompactStarted {
+            model_context_window,
+            ..
+        } = started.payload()
+        else {
+            unreachable!("matched memory compact started")
+        };
         assert_eq!(
-            started.1["model_context_window"], case["expected_model_context_window"],
+            Value::from(*model_context_window),
+            case["expected_model_context_window"],
             "{}",
             case["name"]
         );
@@ -166,18 +184,19 @@ fn runtime_capacity_resolution_matches_every_contract_case() {
             );
         }
 
-        let logs = Arc::new(Mutex::new(Vec::<(String, BTreeMap<String, Value>)>::new()));
+        let logs = Arc::new(Mutex::new(Vec::<RunEvent>::new()));
         let log_sink = logs.clone();
         AgentRuntime::new(PromptTooLongThenSuccess::new(1))
             .run_with_controls(
                 task,
                 RuntimeRunControls {
-                    log_handler: Some(Arc::new(move |event, payload| {
-                        if event.starts_with("memory_compact_") {
-                            log_sink
-                                .lock()
-                                .expect("capacity logs")
-                                .push((event.to_string(), payload.clone()));
+                    event_handler: Some(Arc::new(move |event| {
+                        if matches!(
+                            event.payload(),
+                            RunEventPayload::MemoryCompactStarted { .. }
+                                | RunEventPayload::MemoryCompactCompleted { .. }
+                        ) {
+                            log_sink.lock().expect("capacity logs").push(event.clone());
                         }
                     })),
                     ..RuntimeRunControls::default()
@@ -188,40 +207,47 @@ fn runtime_capacity_resolution_matches_every_contract_case() {
         let logs = logs.lock().expect("capacity logs");
         let started = logs
             .iter()
-            .find(|(event, payload)| {
-                event == "memory_compact_started" && payload["trigger"] == "prompt_too_long"
+            .find(|event| {
+                matches!(
+                    event.payload(),
+                    RunEventPayload::MemoryCompactStarted {
+                        trigger: MemoryCompactTrigger::PromptTooLong,
+                        ..
+                    }
+                )
             })
             .unwrap_or_else(|| panic!("{}: forced started event", case["name"]));
+        let started = serde_json::to_value(started).expect("capacity started event wire");
         assert_eq!(
-            started.1["configured_threshold"],
+            started["configured_threshold"],
             input["configured_threshold"]
         );
         assert_eq!(
-            started.1["effective_threshold"],
+            started["effective_threshold"],
             expected["effective_threshold"]
         );
         assert_eq!(
-            started.1["microcompact_threshold"],
+            started["microcompact_threshold"],
             expected["microcompact_threshold"]
         );
         assert_eq!(
-            started.1["model_context_window"],
+            started["model_context_window"],
             input["model_context_window"]
         );
         assert_eq!(
-            started.1["model_max_output_tokens"],
+            started["model_max_output_tokens"],
             input["model_max_output_tokens"]
         );
         assert_eq!(
-            started.1["reserved_output_tokens"],
+            started["reserved_output_tokens"],
             expected["reserved_output_tokens"]
         );
         assert_eq!(
-            started.1["reserved_output_source"],
+            started["reserved_output_source"],
             expected["reserved_output_source"]
         );
         assert_eq!(
-            started.1["autocompact_buffer_tokens"],
+            started["autocompact_buffer_tokens"],
             input["autocompact_buffer_tokens"]
         );
     }

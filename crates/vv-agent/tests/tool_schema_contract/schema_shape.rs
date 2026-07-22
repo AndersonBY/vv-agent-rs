@@ -7,7 +7,7 @@ use super::helpers::{
 };
 
 const CANONICAL_TOOL_SCHEMA_SHA256: &str =
-    "f85422117d41d28ffa3cdfcfd9a42892854de624808fadc2124f4ebe7a452b61";
+    "24d8f7bde18b11374820f742cfa244c83666626a315e09d4b6e1b69e899a70aa";
 
 #[test]
 fn runtime_schema_export_has_shared_canonical_hash() {

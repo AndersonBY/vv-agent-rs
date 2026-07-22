@@ -9,9 +9,7 @@ use crate::llm::LlmClient;
 use crate::model::ModelProvider;
 use crate::model::ModelRef;
 use crate::runtime::sub_task_manager::SubTaskManager;
-use crate::runtime::{
-    CancellationToken, ExecutionContext, RuntimeEventHandler, RuntimeLogHandler, StreamCallback,
-};
+use crate::runtime::{CancellationToken, ExecutionContext, RunEventHandler};
 use crate::tools::ToolPolicy;
 use crate::tools::ToolRegistry;
 use crate::types::{AgentTask, Metadata, SubAgentConfig, SubTaskRequest};
@@ -21,9 +19,7 @@ use crate::RunContext;
 #[derive(Clone, Default)]
 pub(in crate::runtime) struct SubTaskRunControls {
     pub(in crate::runtime) parent_cancellation_token: Option<CancellationToken>,
-    pub(in crate::runtime) stream_callback: Option<StreamCallback>,
-    pub(in crate::runtime) parent_log_handler: Option<RuntimeLogHandler>,
-    pub(in crate::runtime) parent_event_handler: Option<RuntimeEventHandler>,
+    pub(in crate::runtime) event_handler: Option<RunEventHandler>,
     pub(in crate::runtime) parent_execution_context: Option<ExecutionContext>,
     pub(in crate::runtime) model_provider: Option<Arc<dyn ModelProvider>>,
     pub(in crate::runtime) parent_run_context: Option<RunContext>,
@@ -44,9 +40,7 @@ pub(super) struct SubTaskRunContext {
     pub(super) settings_file: Option<PathBuf>,
     pub(super) default_backend: Option<String>,
     pub(super) sub_agent_timeout_seconds: f64,
-    pub(super) stream_callback: Option<StreamCallback>,
-    pub(super) parent_log_handler: Option<RuntimeLogHandler>,
-    pub(super) parent_event_handler: Option<RuntimeEventHandler>,
+    pub(super) event_handler: Option<RunEventHandler>,
     pub(super) parent_execution_context: Option<ExecutionContext>,
     pub(super) model_provider: Option<Arc<dyn ModelProvider>>,
     pub(super) parent_run_context: Option<RunContext>,
@@ -99,9 +93,7 @@ pub(super) struct RuntimeSubAgentSessionParts {
     pub(super) settings_file: Option<PathBuf>,
     pub(super) default_backend: Option<String>,
     pub(super) parent_cancellation_token: Option<CancellationToken>,
-    pub(super) stream_callback: Option<StreamCallback>,
-    pub(super) parent_log_handler: Option<RuntimeLogHandler>,
-    pub(super) parent_event_handler: Option<RuntimeEventHandler>,
+    pub(super) event_handler: Option<RunEventHandler>,
     pub(super) parent_execution_context: Option<ExecutionContext>,
     pub(super) model_provider: Option<Arc<dyn ModelProvider>>,
     pub(super) run_model_ref: ModelRef,

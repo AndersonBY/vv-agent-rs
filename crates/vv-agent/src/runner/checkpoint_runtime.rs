@@ -4,7 +4,7 @@ pub(super) fn prepare_checkpoint_resume(
     agent: &Agent,
     session: Option<&Arc<dyn crate::sessions::Session>>,
     config: Option<&CheckpointConfig>,
-) -> Result<(Option<CheckpointV2>, bool), String> {
+) -> Result<(Option<Checkpoint>, bool), String> {
     if config.is_some() && !agent.handoffs().is_empty() {
         return Err(
             "checkpoint_handoff_unsupported: checkpoint v2 does not yet support handoff state"
@@ -41,7 +41,7 @@ pub(super) struct CheckpointRuntimeRequest<'a> {
     pub event_collector: Option<Arc<Mutex<Vec<RunEvent>>>>,
     pub event_sender: Option<broadcast::Sender<RunEvent>>,
     pub event_store: Option<Arc<dyn crate::event_store::RunEventStore>>,
-    pub preloaded_checkpoint: Option<CheckpointV2>,
+    pub preloaded_checkpoint: Option<Checkpoint>,
     pub checkpoint_resume: bool,
     pub backend_manages_checkpoint_cycles: bool,
     pub admission_sender: &'a mut Option<CheckpointAdmissionSender>,

@@ -9,8 +9,8 @@ use crate::runtime::processes::{
 use crate::runtime::shell::prepare_shell_execution;
 use crate::tools::base::ToolContext;
 use crate::tools::common::{
-    coerce_truthy_arg, parse_integer_arg, path_escapes_workspace_error, stringify_tool_arg,
-    tool_error_with_code, tool_result_with_metadata, workspace_relative_path_or_absolute,
+    bool_arg, integer_arg, path_escapes_workspace_error, string_arg, tool_error_with_code,
+    tool_result_with_metadata, workspace_relative_path_or_absolute,
 };
 use crate::types::{Metadata, ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
 
@@ -21,9 +21,7 @@ pub(super) fn execute_bash_command(
     context: &mut ToolContext,
     arguments: &ToolArguments,
 ) -> ToolExecutionResult {
-    let command = stringify_tool_arg(arguments.get("command"), "")
-        .trim()
-        .to_string();
+    let command = string_arg(arguments.get("command"), "").trim().to_string();
     if command.is_empty() {
         return tool_error_with_code("`command` is required", "command_required");
     }
@@ -34,7 +32,7 @@ pub(super) fn execute_bash_command(
         );
     }
 
-    let exec_dir = stringify_tool_arg(arguments.get("exec_dir"), ".");
+    let exec_dir = string_arg(arguments.get("exec_dir"), ".");
     let cwd = match context.resolve_workspace_path(&exec_dir) {
         Ok(cwd) => cwd,
         Err(error) => return path_escapes_workspace_error(error),
@@ -52,9 +50,9 @@ pub(super) fn execute_bash_command(
     };
     let stdin_text = arguments
         .contains_key("stdin")
-        .then(|| stringify_tool_arg(arguments.get("stdin"), ""));
-    let auto_confirm = json_truthy_argument(arguments, "auto_confirm");
-    let run_in_background = json_truthy_argument(arguments, "run_in_background");
+        .then(|| string_arg(arguments.get("stdin"), ""));
+    let auto_confirm = bool_arg(arguments.get("auto_confirm"), false);
+    let run_in_background = bool_arg(arguments.get("run_in_background"), false);
     let (shell, windows_shell_priority, bash_env) = match read_shell_defaults(&context.metadata) {
         Ok(defaults) => defaults,
         Err(error) => return tool_error_with_code(error, "invalid_shell_config"),
@@ -224,17 +222,10 @@ fn blocked_dangerous_snippet(command: &str) -> Option<&'static str> {
 
 fn read_timeout_seconds(arguments: &ToolArguments) -> Result<u64, String> {
     match arguments.get("timeout") {
-        Some(value) => match parse_integer_arg(value) {
+        Some(value) => match integer_arg(value) {
             Ok(timeout) => Ok(timeout.clamp(1, 600) as u64),
             Err(_) => Err("`timeout` must be an integer".to_string()),
         },
         None => Ok(300),
     }
-}
-
-fn json_truthy_argument(arguments: &ToolArguments, name: &str) -> bool {
-    arguments
-        .get(name)
-        .map(|value| coerce_truthy_arg(Some(value), false))
-        .unwrap_or(false)
 }

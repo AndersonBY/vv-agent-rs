@@ -5,32 +5,29 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use apalis::prelude::{
-    Attempt, Backend, Extensions, MemoryStorage, RandomId, Status, Task, TaskBuilder, TaskId,
-    TaskResult, TaskSink, TaskSinkError, WaitForCompletion, WorkerContext,
+    Attempt, Backend, Extensions, RandomId, Status, Task, TaskBuilder, TaskId, TaskResult,
+    TaskSink, TaskSinkError, WaitForCompletion, WorkerContext,
 };
 use futures_util::stream::{self, BoxStream};
 use futures_util::StreamExt;
 use serde_json::json;
 use vv_agent::runtime::backends::distributed::{
-    apalis::{
-        run_apalis_cycle_job, run_apalis_worker_task, ApalisCycleDispatcher, ApalisCycleJob,
-        ApalisResultCycleDispatcher,
-    },
+    apalis::{run_apalis_worker_task, ApalisCycleDispatcher, ApalisCycleJob},
     CapabilityRef, CycleDispatcher, DistributedCapabilities, DistributedCapabilityRegistry,
-    DistributedCheckpointConfig, DistributedCheckpointProgress, DistributedCycleWorker,
-    DistributedRunEnvelope, DistributedV2CycleExecutor, DistributedV2CycleOutcome,
-    ResolvedDistributedCapabilities, DEFAULT_LEASE_DURATION_MS,
+    DistributedCheckpointConfig, DistributedCheckpointProgress, DistributedCycleExecutor,
+    DistributedCycleOutcome, DistributedCycleWorker, DistributedRunEnvelope,
+    ResolvedDistributedCapabilities,
 };
 use vv_agent::runtime::backends::{CycleDispatchResult, RuntimeRecipe};
-use vv_agent::runtime::checkpoint_codec_v2::checkpoint_v2_from_value;
+use vv_agent::runtime::checkpoint_codec::checkpoint_from_value;
+use vv_agent::types::AgentTask;
 use vv_agent::{
-    AgentResult, AgentTask, AmbiguousModelPolicy, AmbiguousToolPolicy, CheckpointStatus,
-    CheckpointStoreV2, ClaimMode, InMemoryCheckpointStoreV2, Message, ResumePolicy,
-    RunBudgetLimits,
+    AgentResult, AmbiguousModelPolicy, AmbiguousToolPolicy, CheckpointStore, ClaimMode,
+    InMemoryCheckpointStore, ResumePolicy, RunBudgetLimits,
 };
 
-const V2_FIXTURE: &str = include_str!("fixtures/parity/distributed_run_envelope_v2.json");
-const CODEC_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec_v2.json");
+const DISTRIBUTED_FIXTURE: &str = include_str!("fixtures/parity/distributed_run_envelope.json");
+const CODEC_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec.json");
 
 #[derive(Clone)]
 struct CompletionBackend {
@@ -183,33 +180,36 @@ impl WaitForCompletion<CycleDispatchResult> for CompletionBackend {
 }
 
 #[test]
-fn apalis_result_dispatcher_returns_worker_candidate_from_completion_backend() {
-    let payload: serde_json::Value = serde_json::from_str(V2_FIXTURE).unwrap();
+fn apalis_dispatcher_returns_worker_candidate_from_completion_backend() {
+    let payload: serde_json::Value = serde_json::from_str(DISTRIBUTED_FIXTURE).unwrap();
     let envelope = DistributedRunEnvelope::from_dict(&payload["canonical_envelope"]).unwrap();
     let candidate = CycleDispatchResult::terminal_candidate(
         AgentResult::completed(Vec::new(), Vec::new(), "done"),
         7,
-    );
-    let dispatcher = ApalisResultCycleDispatcher::new(CompletionBackend::new(candidate.clone()));
+    )
+    .unwrap();
+    let dispatcher = ApalisCycleDispatcher::new(CompletionBackend::new(candidate.clone()));
 
     let result = dispatcher.dispatch_envelope(&envelope).unwrap();
 
     assert_eq!(result, candidate);
-    assert!(result.terminal_candidate);
-    assert!(!result.terminal_replay);
+    assert!(matches!(
+        result,
+        CycleDispatchResult::TerminalCandidate { .. }
+    ));
 }
 
 struct BlockingCheckpointExecutor {
     timer_ran: Arc<AtomicBool>,
 }
 
-impl DistributedV2CycleExecutor for BlockingCheckpointExecutor {
+impl DistributedCycleExecutor for BlockingCheckpointExecutor {
     fn execute(
         &self,
         envelope: &DistributedRunEnvelope,
         _capabilities: &ResolvedDistributedCapabilities,
         progress: &mut DistributedCheckpointProgress,
-    ) -> Result<DistributedV2CycleOutcome, String> {
+    ) -> Result<DistributedCycleOutcome, String> {
         std::thread::sleep(Duration::from_millis(50));
         assert!(
             self.timer_ran.load(Ordering::SeqCst),
@@ -217,57 +217,22 @@ impl DistributedV2CycleExecutor for BlockingCheckpointExecutor {
         );
         let mut checkpoint = progress.checkpoint().clone();
         checkpoint.cycle_index = u64::from(envelope.cycle_index);
-        Ok(DistributedV2CycleOutcome::Continue(checkpoint))
+        Ok(DistributedCycleOutcome::Continue(checkpoint))
     }
 }
 
 #[tokio::test]
 async fn apalis_cycle_job_round_trips_through_apalis_task() {
-    let job = ApalisCycleJob::new(
-        AgentTask::new("apalis-cycle", "model", "system", "prompt"),
-        RuntimeRecipe::new("settings.json", "deepseek", "deepseek-v4-pro", "."),
-        "vv_agent.distributed.run_single_cycle",
-        7,
-    );
-    let mut wire = serde_json::to_value(&job).expect("serialize Apalis job");
-    wire["task"] = json!({
-        "task_id": "apalis-cycle",
-        "model": "model",
-        "system_prompt": "system",
-        "user_prompt": "prompt"
-    });
-    let decoded: ApalisCycleJob =
-        serde_json::from_value(wire).expect("deserialize sparse Apalis job");
+    let payload: serde_json::Value = serde_json::from_str(DISTRIBUTED_FIXTURE).unwrap();
+    let envelope = DistributedRunEnvelope::from_dict(&payload["canonical_envelope"]).unwrap();
+    let job = ApalisCycleJob::from_envelope(envelope);
+    let wire = serde_json::to_value(&job).expect("serialize Apalis job");
+    let decoded: ApalisCycleJob = serde_json::from_value(wire).expect("deserialize Apalis job");
 
     let task: Task<ApalisCycleJob, Extensions, RandomId> = Task::new(decoded);
     let restored = ApalisCycleJob::from_apalis_task(task);
 
     assert_eq!(restored, job);
-}
-
-#[tokio::test]
-async fn apalis_cycle_job_handler_returns_dispatch_result() {
-    let job = ApalisCycleJob::new(
-        AgentTask::new("apalis-handler", "model", "system", "prompt"),
-        RuntimeRecipe::new("settings.json", "deepseek", "deepseek-v4-pro", "."),
-        "vv_agent.distributed.run_single_cycle",
-        2,
-    );
-
-    let result = run_apalis_cycle_job(job, |job| {
-        assert_eq!(job.envelope.cycle_index, 2);
-        Ok(CycleDispatchResult::finished(
-            vv_agent::AgentResult::completed(vec![Message::assistant("done")], Vec::new(), "ok"),
-        ))
-    })
-    .await
-    .expect("apalis cycle handler");
-
-    assert!(result.finished);
-    assert_eq!(
-        result.result.and_then(|result| result.final_answer),
-        Some("ok".to_string())
-    );
 }
 
 #[test]
@@ -277,17 +242,9 @@ fn apalis_task_round_trip_preserves_distributed_budget_limits() {
         .max_tool_calls(7)
         .build()
         .expect("valid run budget");
-    let envelope = DistributedRunEnvelope::for_cycle(
-        AgentTask::new("apalis-budget", "model", "system", "prompt"),
-        RuntimeRecipe::new("settings.json", "deepseek", "deepseek-v4-pro", "."),
-        3,
-        "vv_agent.distributed.run_single_cycle",
-        None,
-        None,
-        DEFAULT_LEASE_DURATION_MS,
-        Some(limits.clone()),
-    )
-    .expect("valid distributed envelope");
+    let payload: serde_json::Value = serde_json::from_str(DISTRIBUTED_FIXTURE).unwrap();
+    let mut envelope = DistributedRunEnvelope::from_dict(&payload["canonical_envelope"]).unwrap();
+    envelope.budget_limits = Some(limits.clone());
     let task: Task<ApalisCycleJob, Extensions, RandomId> =
         Task::new(ApalisCycleJob::from_envelope(envelope));
 
@@ -298,11 +255,11 @@ fn apalis_task_round_trip_preserves_distributed_budget_limits() {
 
 #[test]
 fn apalis_task_conversion_preserves_claim_mode_and_worker_consumes_attempt() {
-    let payload: serde_json::Value = serde_json::from_str(V2_FIXTURE).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(DISTRIBUTED_FIXTURE).unwrap();
     let envelope = DistributedRunEnvelope::from_dict(&payload["canonical_envelope"]).unwrap();
-    assert_eq!(envelope.claim_mode, Some(ClaimMode::Recovery));
+    assert_eq!(envelope.claim_mode, ClaimMode::Recovery);
     let mut initial = envelope;
-    initial.claim_mode = Some(ClaimMode::Continue);
+    initial.claim_mode = ClaimMode::Continue;
     let task: Task<ApalisCycleJob, Extensions, RandomId> =
         TaskBuilder::new(ApalisCycleJob::from_envelope(initial))
             .with_attempt(Attempt::new_with_value(2))
@@ -310,38 +267,7 @@ fn apalis_task_conversion_preserves_claim_mode_and_worker_consumes_attempt() {
 
     let restored = ApalisCycleJob::from_apalis_task(task);
 
-    assert_eq!(restored.envelope.claim_mode, Some(ClaimMode::Continue));
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn apalis_cycle_handler_moves_blocking_execution_off_async_runtime() {
-    let timer_ran = Arc::new(AtomicBool::new(false));
-    let timer_ran_for_timer = timer_ran.clone();
-    let timer_ran_for_handler = timer_ran.clone();
-    let job = ApalisCycleJob::new(
-        AgentTask::new("apalis-spawn-blocking", "model", "system", "prompt"),
-        RuntimeRecipe::new("settings.json", "deepseek", "deepseek-v4-pro", "."),
-        "vv_agent.distributed.run_single_cycle",
-        1,
-    );
-
-    let timer = async move {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        timer_ran_for_timer.store(true, Ordering::SeqCst);
-    };
-    let execution = run_apalis_cycle_job(job, move |_| {
-        std::thread::sleep(Duration::from_millis(50));
-        assert!(
-            timer_ran_for_handler.load(Ordering::SeqCst),
-            "blocking cycle handler starved the current-thread Tokio runtime"
-        );
-        Ok(CycleDispatchResult::unfinished())
-    });
-
-    let (result, ()) = tokio::join!(execution, timer);
-
-    assert!(!result.unwrap().finished);
-    assert!(timer_ran.load(Ordering::SeqCst));
+    assert_eq!(restored.envelope.claim_mode, ClaimMode::Continue);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -358,9 +284,9 @@ async fn apalis_worker_task_recovers_retry_without_blocking_async_runtime() {
     payload["task_id"] = json!("apalis-v2-retry-task");
     payload["root_run_id"] = json!("apalis-v2-retry-run");
     payload["trace_id"] = json!("apalis-v2-retry-trace");
-    let checkpoint = checkpoint_v2_from_value(&payload, 262_144).unwrap();
-    let store = Arc::new(InMemoryCheckpointStoreV2::new());
-    store.create_checkpoint_v2(checkpoint.clone()).unwrap();
+    let checkpoint = checkpoint_from_value(&payload, 262_144).unwrap();
+    let store = Arc::new(InMemoryCheckpointStore::new());
+    store.create_checkpoint(checkpoint.clone()).unwrap();
 
     let checkpoint_ref = CapabilityRef::new("checkpoint.apalis-retry", "2").unwrap();
     let registry = DistributedCapabilityRegistry::new();
@@ -383,7 +309,7 @@ async fn apalis_worker_task_recovers_retry_without_blocking_async_runtime() {
         ["memory_compact_threshold"]
         .as_u64()
         .expect("frozen memory threshold");
-    let envelope = DistributedRunEnvelope::for_checkpoint_cycle(
+    let envelope = DistributedRunEnvelope::for_cycle(
         retry_task,
         recipe,
         1,
@@ -428,151 +354,12 @@ async fn apalis_worker_task_recovers_retry_without_blocking_async_runtime() {
 
     let (result, ()) = tokio::join!(run_apalis_worker_task(task, worker), timer);
 
-    assert!(!result.unwrap().finished);
+    assert!(matches!(
+        result.unwrap(),
+        CycleDispatchResult::Committed { .. }
+    ));
     assert!(timer_ran.load(Ordering::SeqCst));
-    let persisted = store
-        .load_checkpoint_v2("apalis-v2-retry")
-        .unwrap()
-        .unwrap();
+    let persisted = store.load_checkpoint("apalis-v2-retry").unwrap().unwrap();
     assert_eq!(persisted.resume_attempt, 2);
     assert_eq!(persisted.cycle_index, 1);
-}
-
-#[test]
-fn apalis_polling_dispatcher_replays_retained_terminal_without_owning_ack() {
-    let codec: serde_json::Value = serde_json::from_str(CODEC_FIXTURE).unwrap();
-    let mut payload = codec["valid_cases"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|case| case["name"] == "minimal_running")
-        .unwrap()["payload"]
-        .clone();
-    payload["checkpoint_key"] = json!("apalis-v2-terminal");
-    payload["task_id"] = json!("apalis-v2-task");
-    payload["root_run_id"] = json!("apalis-v2-run");
-    payload["trace_id"] = json!("apalis-v2-trace");
-    let mut checkpoint = checkpoint_v2_from_value(&payload, 262_144).unwrap();
-    checkpoint.cycle_index = 1;
-    checkpoint.status = CheckpointStatus::Completed;
-    checkpoint.terminal_result =
-        Some(AgentResult::completed(Vec::new(), Vec::new(), "done").to_dict());
-    checkpoint.revision = 4;
-    let store = Arc::new(InMemoryCheckpointStoreV2::new());
-    store.create_checkpoint_v2(checkpoint.clone()).unwrap();
-
-    let checkpoint_ref = CapabilityRef::new("checkpoint.apalis", "2").unwrap();
-    let mut recipe = RuntimeRecipe::new("settings.json", "test", "test-model", ".");
-    recipe.capabilities = DistributedCapabilities {
-        checkpoint_store_ref: Some(checkpoint_ref),
-        ..DistributedCapabilities::default()
-    };
-    let envelope = DistributedRunEnvelope::for_checkpoint_cycle(
-        AgentTask::new("apalis-v2-task", "test-model", "system", "prompt"),
-        recipe,
-        1,
-        "vv_agent.distributed.run_single_cycle",
-        Some("apalis-v2-run".to_string()),
-        None,
-        1_000,
-        None,
-        "apalis-v2-run",
-        "apalis-v2-trace",
-        checkpoint.run_definition_digest.clone(),
-        ClaimMode::Continue,
-        1,
-        DistributedCheckpointConfig {
-            key: "apalis-v2-terminal".to_string(),
-            resume_policy: ResumePolicy::RequireExisting,
-            ambiguous_model_policy: AmbiguousModelPolicy::RequireReconciliation,
-            ambiguous_tool_policy: AmbiguousToolPolicy::RequireReconciliation,
-            required_extension_namespaces: Vec::new(),
-            max_extension_state_bytes: 262_144,
-            credential_slots: Vec::new(),
-        },
-    )
-    .unwrap();
-    let backend: MemoryStorage<ApalisCycleJob> = MemoryStorage::new();
-    let dispatcher = ApalisCycleDispatcher::new_v2(backend, store.clone())
-        .with_poll_interval(Duration::from_millis(2));
-    let result = dispatcher.dispatch_envelope(&envelope).unwrap();
-
-    assert!(result.finished);
-    assert!(result.terminal_replay);
-    assert_eq!(result.checkpoint_revision, Some(4));
-    assert!(
-        !store
-            .load_checkpoint_v2("apalis-v2-terminal")
-            .unwrap()
-            .unwrap()
-            .terminal_acknowledged
-    );
-}
-
-#[test]
-fn apalis_polling_dispatcher_rejects_live_v2_before_enqueue() {
-    let codec: serde_json::Value = serde_json::from_str(CODEC_FIXTURE).unwrap();
-    let mut payload = codec["valid_cases"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|case| case["name"] == "minimal_running")
-        .unwrap()["payload"]
-        .clone();
-    payload["checkpoint_key"] = json!("apalis-v2-live");
-    payload["task_id"] = json!("apalis-v2-live-task");
-    payload["root_run_id"] = json!("apalis-v2-live-run");
-    payload["trace_id"] = json!("apalis-v2-live-trace");
-    let checkpoint = checkpoint_v2_from_value(&payload, 262_144).unwrap();
-    let store = Arc::new(InMemoryCheckpointStoreV2::new());
-    store.create_checkpoint_v2(checkpoint.clone()).unwrap();
-
-    let checkpoint_ref = CapabilityRef::new("checkpoint.apalis-live", "2").unwrap();
-    let mut recipe = RuntimeRecipe::new("settings.json", "test", "test-model", ".");
-    recipe.capabilities = DistributedCapabilities {
-        checkpoint_store_ref: Some(checkpoint_ref),
-        ..DistributedCapabilities::default()
-    };
-    let envelope = DistributedRunEnvelope::for_checkpoint_cycle(
-        AgentTask::new(
-            "apalis-v2-live-task",
-            "test-model",
-            "You are a careful assistant.",
-            "Summarize the status.",
-        ),
-        recipe,
-        1,
-        "vv_agent.distributed.run_single_cycle",
-        Some("apalis-v2-live-run".to_string()),
-        None,
-        1_000,
-        None,
-        "apalis-v2-live-run",
-        "apalis-v2-live-trace",
-        checkpoint.run_definition_digest.clone(),
-        ClaimMode::Continue,
-        checkpoint.resume_attempt,
-        DistributedCheckpointConfig {
-            key: "apalis-v2-live".to_string(),
-            resume_policy: ResumePolicy::RequireExisting,
-            ambiguous_model_policy: AmbiguousModelPolicy::RequireReconciliation,
-            ambiguous_tool_policy: AmbiguousToolPolicy::RequireReconciliation,
-            required_extension_namespaces: Vec::new(),
-            max_extension_state_bytes: 262_144,
-            credential_slots: Vec::new(),
-        },
-    )
-    .unwrap();
-    let backend: MemoryStorage<ApalisCycleJob> = MemoryStorage::new();
-    let dispatcher = ApalisCycleDispatcher::new_v2(backend, store.clone());
-
-    let error = dispatcher.dispatch_envelope(&envelope).unwrap_err();
-
-    assert_eq!(
-        error,
-        "Apalis checkpoint polling cannot transport checkpoint v2 terminal candidates; use ApalisResultCycleDispatcher with a durable WaitForCompletion backend"
-    );
-    let persisted = store.load_checkpoint_v2("apalis-v2-live").unwrap().unwrap();
-    assert_eq!(persisted.revision, 0);
-    assert!(persisted.claim_token.is_none());
 }

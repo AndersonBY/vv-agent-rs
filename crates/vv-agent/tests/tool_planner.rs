@@ -1,7 +1,8 @@
 use serde_json::json;
 use vv_agent::runtime::freeze_dynamic_tool_schema_hints;
 use vv_agent::runtime::tool_planner::{plan_tool_names, plan_tool_schemas};
-use vv_agent::{build_default_registry, AgentTask, SubAgentConfig};
+use vv_agent::types::AgentTask;
+use vv_agent::{build_default_registry, SubAgentConfig};
 
 #[test]
 fn planned_tool_schemas_respect_task_capability_flags() {

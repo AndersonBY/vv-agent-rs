@@ -69,7 +69,7 @@ first model call when the selected LLM client does not implement debug dumps;
 the option is never silently ignored.
 
 The shared capability manifest is
-`crates/vv-agent/tests/fixtures/parity/run_config_controls_v1.json`. Its Rust
+`crates/vv-agent/tests/fixtures/parity/run_config_controls.json`. Its Rust
 end-to-end gate is `tests/run_config_controls.rs`.
 
 ## Language Adaptations
@@ -151,9 +151,9 @@ returned to the caller.
 ## Tracing
 
 `RunConfig::trace_id()` and `RunConfig::workflow_name()` are explicit tracing
-controls. A non-empty per-run value wins over the configured Runner default;
-legacy `metadata["trace_id"]` is only a fallback after both explicit trace ID
-fields. If no trace ID is configured, Runner creates one.
+controls. A non-empty per-run value wins over the configured Runner default. If
+no trace ID is configured, Runner creates one. Arbitrary run metadata never
+acts as trace configuration.
 
 The workflow name is projected into run-span metadata. Every returned
 `RunResult` also includes the ended canonical span object at

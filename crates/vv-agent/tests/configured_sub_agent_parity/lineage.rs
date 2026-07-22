@@ -303,8 +303,9 @@ fn run_real_identity_case(
     let manager = SubTaskManager::default();
     let lifecycle = Arc::new(Mutex::new(Vec::new()));
     let lifecycle_for_handler = lifecycle.clone();
-    let log_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-        if matches!(name, "sub_run_started" | "sub_run_completed") {
+    let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+        let (name, payload) = typed_event_parts(run_event);
+        if matches!(name.as_str(), "sub_run_started" | "sub_run_completed") {
             lifecycle_for_handler
                 .lock()
                 .expect("identity lifecycle")
@@ -317,7 +318,7 @@ fn run_real_identity_case(
         .run_with_controls(
             parent,
             RuntimeRunControls {
-                log_handler: Some(log_handler),
+                event_handler: Some(event_handler),
                 execution_context: Some(ExecutionContext {
                     metadata: execution_metadata,
                     ..ExecutionContext::default()
@@ -459,8 +460,9 @@ fn real_async_initial_lineage_ignores_parent_task_runtime_identity_metadata() {
     let manager = SubTaskManager::default();
     let lifecycle = Arc::new(Mutex::new(Vec::new()));
     let lifecycle_for_handler = lifecycle.clone();
-    let log_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-        if matches!(name, "sub_run_started" | "sub_run_completed") {
+    let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+        let (name, payload) = typed_event_parts(run_event);
+        if matches!(name.as_str(), "sub_run_started" | "sub_run_completed") {
             lifecycle_for_handler
                 .lock()
                 .expect("async initial lineage lifecycle")
@@ -494,7 +496,7 @@ fn real_async_initial_lineage_ignores_parent_task_runtime_identity_metadata() {
         .run_with_controls(
             parent,
             RuntimeRunControls {
-                log_handler: Some(log_handler),
+                event_handler: Some(event_handler),
                 execution_context: Some(ExecutionContext {
                     metadata: BTreeMap::from([
                         ("_vv_agent_run_id".to_string(), json!("execution-run")),
@@ -596,7 +598,7 @@ fn real_runtime_trace_identity_follows_fixture_precedence_and_child_run_fallback
                 .as_str()
                 .expect("trace fallback source")
         {
-            events[0].1["child_run_id"].as_str().expect("child run id")
+            events[0].1["run_id"].as_str().expect("child run id")
         } else {
             expected_trace.expect("explicit trace source")
         };
@@ -637,7 +639,7 @@ fn real_child_context_uses_canonical_trace_for_fixture_non_string_metadata() {
             Some(invalid.clone()),
         );
 
-        let canonical_trace_id = events[0].1["child_run_id"]
+        let canonical_trace_id = events[0].1["run_id"]
             .as_str()
             .expect("generated child run id");
         assert!(events

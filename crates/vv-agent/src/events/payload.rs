@@ -5,7 +5,7 @@ use crate::budget::{BudgetEnforcementBoundary, BudgetExhaustion, BudgetUsageSnap
 use crate::checkpoint::{
     OperationKind, OperationState, ReconciliationDecisionKind, ResumeObservation, ToolIdempotency,
 };
-use crate::types::AgentStatus;
+use crate::types::{AgentStatus, ToolDirective};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -20,6 +20,11 @@ pub enum RunEventPayload {
     CycleStarted,
     LlmStarted {
         model: String,
+    },
+    Diagnostic {
+        level: DiagnosticLevel,
+        code: String,
+        details: serde_json::Map<String, Value>,
     },
     AssistantDelta {
         delta: String,
@@ -69,53 +74,44 @@ pub enum RunEventPayload {
         request_id: String,
         tool_call_id: String,
         tool_name: String,
-        #[serde(alias = "preview")]
         message: String,
     },
     ApprovalResolved {
         request_id: String,
         tool_name: String,
         tool_call_id: String,
-        #[serde(default)]
-        approved: bool,
+        action: ApprovalAction,
     },
     ToolCallCompleted {
         tool_call_id: String,
         tool_name: String,
         status: ToolStatus,
+        directive: ToolDirective,
+        error_code: Option<String>,
+        execution_started: bool,
+        duration_ms: Option<u64>,
     },
     MemoryCompactStarted {
         message_count: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         estimated_tokens: Option<u64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        trigger: Option<MemoryCompactTrigger>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        configured_threshold: Option<u64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        effective_threshold: Option<u64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        microcompact_threshold: Option<u64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        model_context_window: Option<u64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trigger: MemoryCompactTrigger,
+        configured_threshold: u64,
+        effective_threshold: u64,
+        microcompact_threshold: u64,
+        model_context_window: u64,
         model_max_output_tokens: Option<u64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        reserved_output_tokens: Option<u64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        reserved_output_source: Option<ReservedOutputSource>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        autocompact_buffer_tokens: Option<u64>,
+        reserved_output_tokens: u64,
+        reserved_output_source: ReservedOutputSource,
+        autocompact_buffer_tokens: u64,
     },
     MemoryCompactCompleted {
         before_count: usize,
         after_count: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         summary_tokens: Option<u64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        mode: Option<MemoryCompactMode>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        changed: Option<bool>,
+        mode: MemoryCompactMode,
+        changed: bool,
     },
     SubRunStarted {
         parent_tool_call_id: String,
@@ -129,11 +125,6 @@ pub enum RunEventPayload {
         status: AgentStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         final_output: Option<String>,
-    },
-    Handoff {
-        source_agent: String,
-        target_agent: String,
-        tool_call_id: String,
     },
     HandoffStarted {
         source_agent: String,
@@ -233,10 +224,29 @@ pub enum ReservedOutputSource {
     FrameworkFallbackCappedByModelCapability,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticLevel {
+    Debug,
+    Info,
+    Warning,
+    Error,
+}
+
+impl DiagnosticLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Debug => "debug",
+            Self::Info => "info",
+            Self::Warning => "warning",
+            Self::Error => "error",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalAction {
-    #[default]
     Allow,
     AllowSession,
     Deny,
@@ -244,14 +254,6 @@ pub enum ApprovalAction {
 }
 
 impl ApprovalAction {
-    pub fn from_approved(approved: bool) -> Self {
-        if approved {
-            Self::Allow
-        } else {
-            Self::Deny
-        }
-    }
-
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "allow" => Some(Self::Allow),

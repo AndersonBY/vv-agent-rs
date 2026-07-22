@@ -78,8 +78,9 @@ fn parent_cancellation_reaches_configured_sub_agent_continuation() {
     let manager = SubTaskManager::default();
     let lifecycle = Arc::new(Mutex::new(Vec::new()));
     let lifecycle_for_handler = lifecycle.clone();
-    let log_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-        if matches!(name, "sub_run_started" | "sub_run_completed") {
+    let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+        let (name, payload) = typed_event_parts(run_event);
+        if matches!(name.as_str(), "sub_run_started" | "sub_run_completed") {
             lifecycle_for_handler
                 .lock()
                 .expect("continuation lifecycle")
@@ -92,7 +93,7 @@ fn parent_cancellation_reaches_configured_sub_agent_continuation() {
     child.system_prompt = Some("Child prompt".to_string());
     parent.sub_agents.insert("researcher".to_string(), child);
     let controls = RuntimeRunControls {
-        log_handler: Some(log_handler),
+        event_handler: Some(event_handler),
         execution_context: Some(ExecutionContext::default().with_cancellation_token(token.clone())),
         run_context: Some(RunContext {
             run_id: "parent-run".to_string(),
@@ -153,17 +154,8 @@ fn parent_cancellation_reaches_configured_sub_agent_continuation() {
             "sub_run_completed"
         ]
     );
-    assert_eq!(
-        lifecycle[0].1["child_run_id"],
-        lifecycle[1].1["child_run_id"]
-    );
-    assert_eq!(
-        lifecycle[2].1["child_run_id"],
-        lifecycle[3].1["child_run_id"]
-    );
-    assert_ne!(
-        lifecycle[0].1["child_run_id"],
-        lifecycle[2].1["child_run_id"]
-    );
+    assert_eq!(lifecycle[0].1["run_id"], lifecycle[1].1["run_id"]);
+    assert_eq!(lifecycle[2].1["run_id"], lifecycle[3].1["run_id"]);
+    assert_ne!(lifecycle[0].1["run_id"], lifecycle[2].1["run_id"]);
     assert_eq!(lifecycle[3].1["status"], "failed");
 }

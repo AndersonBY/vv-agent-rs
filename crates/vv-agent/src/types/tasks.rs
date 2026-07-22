@@ -61,6 +61,7 @@ pub struct SubAgentConfig {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SubAgentConfigWire {
     model: String,
     #[serde(default)]
@@ -196,7 +197,6 @@ pub struct AgentTask {
     pub no_tool_policy: NoToolPolicy,
     pub allow_interruption: bool,
     pub use_workspace: bool,
-    pub has_sub_agents: bool,
     pub sub_agents: BTreeMap<String, SubAgentConfig>,
     pub agent_type: Option<String>,
     pub native_multimodal: bool,
@@ -209,6 +209,7 @@ pub struct AgentTask {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AgentTaskWire {
     task_id: String,
     model: String,
@@ -226,8 +227,6 @@ struct AgentTaskWire {
     allow_interruption: bool,
     #[serde(default = "default_true")]
     use_workspace: bool,
-    #[serde(default)]
-    has_sub_agents: bool,
     #[serde(default)]
     sub_agents: BTreeMap<String, SubAgentConfig>,
     #[serde(default)]
@@ -269,7 +268,6 @@ impl<'de> Deserialize<'de> for AgentTask {
             no_tool_policy: wire.no_tool_policy,
             allow_interruption: wire.allow_interruption,
             use_workspace: wire.use_workspace,
-            has_sub_agents: wire.has_sub_agents,
             sub_agents: wire.sub_agents,
             agent_type: wire.agent_type,
             native_multimodal: wire.native_multimodal,
@@ -401,7 +399,6 @@ impl AgentTask {
             no_tool_policy: NoToolPolicy::Continue,
             allow_interruption: true,
             use_workspace: true,
-            has_sub_agents: false,
             sub_agents: BTreeMap::new(),
             agent_type: None,
             native_multimodal: false,
@@ -415,7 +412,7 @@ impl AgentTask {
     }
 
     pub fn sub_agents_enabled(&self) -> bool {
-        self.has_sub_agents || !self.sub_agents.is_empty()
+        !self.sub_agents.is_empty()
     }
 }
 

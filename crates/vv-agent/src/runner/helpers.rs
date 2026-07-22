@@ -1,24 +1,10 @@
 use std::sync::Arc;
 
-use serde_json::Value;
-
 use crate::agent::Agent;
 use crate::events::{AgentErrorPayload, RunEvent, RunEventPayload};
 use crate::model::{ModelProvider, ModelRef};
 use crate::run_config::RunConfig;
 use crate::types::{AgentResult, AgentStatus, CompletionReason};
-
-pub(super) fn is_runtime_terminal_log(event: &str) -> bool {
-    matches!(
-        event,
-        "cycle_failed"
-            | "run_cancelled"
-            | "run_completed"
-            | "run_failed"
-            | "run_max_cycles"
-            | "run_wait_user"
-    )
-}
 
 pub(super) fn terminal_event(
     result: &AgentResult,
@@ -127,19 +113,9 @@ fn normalized_config_string(value: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-pub(super) fn effective_trace_id(
-    default_config: &RunConfig,
-    config: &RunConfig,
-    metadata: &crate::types::Metadata,
-) -> String {
+pub(super) fn effective_trace_id(default_config: &RunConfig, config: &RunConfig) -> String {
     normalized_config_string(config.trace_id.as_deref())
         .or_else(|| normalized_config_string(default_config.trace_id.as_deref()))
-        .or_else(|| {
-            metadata
-                .get("trace_id")
-                .and_then(Value::as_str)
-                .and_then(|value| normalized_config_string(Some(value)))
-        })
         .unwrap_or_else(|| format!("trace_{}", uuid::Uuid::new_v4().simple()))
 }
 

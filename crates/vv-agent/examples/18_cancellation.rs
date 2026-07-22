@@ -5,12 +5,13 @@ use common::{
     ExampleConfig,
 };
 use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
-use vv_agent::{AgentTask, CancellationToken, ExecutionContext, RuntimeRunControls, ThreadBackend};
+use vv_agent::types::AgentTask;
+use vv_agent::{CancellationToken, ExecutionContext, RuntimeRunControls, ThreadBackend};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ExampleConfig::load();
     config.ensure_workspace()?;
-    let timeout = env_f64("V_AGENT_EXAMPLE_TIMEOUT", 10.0).max(0.1);
+    let timeout = env_f64("VV_AGENT_EXAMPLE_TIMEOUT", 10.0).max(0.1);
     let (runtime, resolved) = build_direct_runtime(&config, 90.0)?;
     let runtime = runtime.with_execution_backend(ThreadBackend::new(2));
 
@@ -41,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let controls = RuntimeRunControls {
         workspace: Some(config.workspace),
-        log_handler: runtime_log_handler(config.verbose),
+        event_handler: runtime_log_handler(config.verbose),
         execution_context: Some(ExecutionContext::default().with_cancellation_token(token)),
         ..RuntimeRunControls::default()
     };

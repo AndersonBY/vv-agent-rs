@@ -5,6 +5,23 @@ use crate::types::{AgentResult, CompletionReason, CycleRecord, Message};
 use super::super::common::*;
 use super::super::token_usage::{task_token_usage_from_dict, task_token_usage_to_dict};
 
+const REQUIRED_FIELDS: [&str; 13] = [
+    "status",
+    "completion_reason",
+    "completion_tool_name",
+    "partial_output",
+    "messages",
+    "cycles",
+    "final_answer",
+    "wait_reason",
+    "error",
+    "shared_state",
+    "token_usage",
+    "checkpoint_key",
+    "resume_observation",
+];
+const OPTIONAL_FIELDS: [&str; 3] = ["budget_usage", "budget_exhaustion", "error_code"];
+
 impl AgentResult {
     pub fn to_dict(&self) -> Value {
         let mut payload = serde_json::Map::from_iter([
@@ -108,17 +125,34 @@ impl AgentResult {
 
     pub fn from_dict(data: &Value) -> Result<Self, String> {
         let object = expect_object(data, "AgentResult")?;
+        if REQUIRED_FIELDS
+            .iter()
+            .any(|field| !object.contains_key(*field))
+            || object.keys().any(|field| {
+                !REQUIRED_FIELDS.contains(&field.as_str())
+                    && !OPTIONAL_FIELDS.contains(&field.as_str())
+            })
+        {
+            return Err("AgentResult must contain exactly the current wire fields".to_string());
+        }
+        for field in OPTIONAL_FIELDS {
+            if object.get(field).is_some_and(Value::is_null) {
+                return Err(format!(
+                    "AgentResult optional field '{field}' must be omitted when absent"
+                ));
+            }
+        }
         let messages = read_array(object, "messages")
-            .unwrap_or(&[])
+            .ok_or_else(|| "AgentResult field 'messages' must be an array".to_string())?
             .iter()
             .map(Message::from_dict)
             .collect::<Result<Vec<_>, _>>()?;
         let cycles = read_array(object, "cycles")
-            .unwrap_or(&[])
+            .ok_or_else(|| "AgentResult field 'cycles' must be an array".to_string())?
             .iter()
             .map(CycleRecord::from_dict)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self {
+        let result = Self {
             status: parse_agent_status(read_required_string(object, "status")?)?,
             messages,
             cycles,
@@ -127,7 +161,6 @@ impl AgentResult {
             partial_output: strict_optional_string(object, "partial_output")?,
             budget_usage: object
                 .get("budget_usage")
-                .filter(|value| !value.is_null())
                 .map(|value| {
                     serde_json::from_value(value.clone()).map_err(|error| {
                         format!("AgentResult field 'budget_usage' must be a valid object: {error}")
@@ -136,7 +169,6 @@ impl AgentResult {
                 .transpose()?,
             budget_exhaustion: object
                 .get("budget_exhaustion")
-                .filter(|value| !value.is_null())
                 .map(|value| {
                     serde_json::from_value(value.clone()).map_err(|error| {
                         format!(
@@ -157,17 +189,20 @@ impl AgentResult {
                     })
                 })
                 .transpose()?,
-            final_answer: read_optional_string(object, "final_answer"),
-            wait_reason: read_optional_string(object, "wait_reason"),
-            error: read_optional_string(object, "error"),
+            final_answer: strict_optional_string(object, "final_answer")?,
+            wait_reason: strict_optional_string(object, "wait_reason")?,
+            error: strict_optional_string(object, "error")?,
             error_code: strict_optional_string(object, "error_code")?,
             shared_state: read_metadata(object, "shared_state")?,
             token_usage: object
                 .get("token_usage")
-                .map(task_token_usage_from_dict)
-                .transpose()?
-                .unwrap_or_default(),
-        })
+                .ok_or_else(|| "AgentResult field 'token_usage' is required".to_string())
+                .and_then(task_token_usage_from_dict)?,
+        };
+        if result.to_dict() != *data {
+            return Err("AgentResult must use the canonical current wire shape".to_string());
+        }
+        Ok(result)
     }
 }
 

@@ -11,10 +11,6 @@ pub enum ValidationMode {
 }
 
 impl ValidationMode {
-    #[allow(non_upper_case_globals)]
-    #[deprecated(note = "use ValidationMode::Compat")]
-    pub const Relaxed: Self = Self::Compat;
-
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Strict => "strict",
@@ -34,7 +30,7 @@ pub fn normalize_validation_mode(
         .as_str()
     {
         "strict" => Ok(ValidationMode::Strict),
-        "compat" | "relaxed" => Ok(ValidationMode::Compat),
+        "compat" => Ok(ValidationMode::Compat),
         "minimal" => Ok(ValidationMode::Minimal),
         other => Err(SkillValidationError::new(format!(
             "Unsupported validation mode '{other}'. Expected one of [strict, compat, minimal]."

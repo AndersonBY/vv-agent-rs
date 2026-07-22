@@ -111,8 +111,6 @@ impl BackgroundAgentTask {
             .ok_or_else(|| "background task arguments must be an object".to_string())?;
         object
             .get("task_description")
-            .or_else(|| object.get("task"))
-            .or_else(|| object.get("input"))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -587,8 +585,7 @@ mod tests {
             before_cycle_messages: Some(Arc::new(|_, _, _| Vec::new())),
             interruption_messages: Some(Arc::new(Vec::new)),
             sub_task_manager: Some(SubTaskManager::default()),
-            runtime_log_handler: Some(Arc::new(|_, _| {})),
-            runtime_stream_callback: Some(Arc::new(|_| {})),
+            stream: Some(Arc::new(|_| {})),
             ..RunConfig::default()
         };
         parent
@@ -612,8 +609,7 @@ mod tests {
         assert!(child.before_cycle_messages.is_none());
         assert!(child.interruption_messages.is_none());
         assert!(child.sub_task_manager.is_none());
-        assert!(child.runtime_log_handler.is_none());
-        assert!(child.runtime_stream_callback.is_none());
+        assert!(child.stream.is_none());
         assert_eq!(
             child.initial_shared_state.get("live"),
             Some(&json!("snapshot"))

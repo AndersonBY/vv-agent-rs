@@ -24,8 +24,6 @@ impl AgentTool {
             .ok_or_else(|| "agent tool arguments must be an object".to_string())?;
         let task_description = object
             .get("task_description")
-            .or_else(|| object.get("task"))
-            .or_else(|| object.get("input"))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())

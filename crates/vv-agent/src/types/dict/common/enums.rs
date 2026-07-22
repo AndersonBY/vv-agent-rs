@@ -61,26 +61,6 @@ pub(in crate::types::dict) fn parse_tool_result_status(
     }
 }
 
-pub(in crate::types::dict) fn parse_simple_tool_result_status(
-    value: &str,
-) -> Result<ToolResultStatus, String> {
-    match value {
-        "success" => Ok(ToolResultStatus::Success),
-        "error" => Ok(ToolResultStatus::Error),
-        _ => Ok(ToolResultStatus::Success),
-    }
-}
-
-pub(in crate::types::dict) fn tool_result_simple_status(status: ToolResultStatus) -> &'static str {
-    match status {
-        ToolResultStatus::Error => "error",
-        ToolResultStatus::Success
-        | ToolResultStatus::WaitResponse
-        | ToolResultStatus::Running
-        | ToolResultStatus::PendingCompress => "success",
-    }
-}
-
 pub(in crate::types::dict) fn no_tool_policy_value(policy: NoToolPolicy) -> &'static str {
     match policy {
         NoToolPolicy::Continue => "continue",

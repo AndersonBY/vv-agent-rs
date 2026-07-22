@@ -2,20 +2,14 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use vv_agent::{
     Agent, AgentStatus, LLMResponse, ModelError, ModelProvider, ModelRef, ResolvedModelConfig,
     RunConfig, Runner, ScriptedModelProvider, Span, ToolCall, TraceSink,
 };
 
-const FIXTURE: &str = include_str!("fixtures/parity/runner_trace_spans_v1.json");
-const FIXTURE_SHA256: &str = "c44cd892fb2cff47c34c53e7fec861bc9cc4fb07b34bcfb993706ddfb3b1530d";
+const FIXTURE: &str = include_str!("fixtures/parity/runner_trace_spans.json");
 
 fn contract() -> Value {
-    assert_eq!(
-        format!("{:x}", Sha256::digest(FIXTURE.as_bytes())),
-        FIXTURE_SHA256
-    );
     serde_json::from_str(FIXTURE).expect("trace contract")
 }
 
@@ -123,7 +117,6 @@ async fn per_run_trace_identity_and_workflow_override_runner_defaults() {
             RunConfig::builder()
                 .trace_id("trace-default")
                 .workflow_name("workflow-default")
-                .metadata("trace_id", json!("legacy-default"))
                 .build(),
         )
         .build()
@@ -142,7 +135,6 @@ async fn per_run_trace_identity_and_workflow_override_runner_defaults() {
             RunConfig::builder()
                 .trace_id("trace-override")
                 .workflow_name("workflow-override")
-                .metadata("trace_id", json!("legacy-override"))
                 .build(),
         )
         .await

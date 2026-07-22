@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 use vv_agent::{
-    Agent, AgentStatus, ApprovalPolicy, CapabilityRef, CheckpointConfig, InMemoryCheckpointStoreV2,
+    Agent, AgentStatus, ApprovalPolicy, CapabilityRef, CheckpointConfig, InMemoryCheckpointStore,
     LLMResponse, ModelRef, ModelSettings, NoToolPolicy, OutputValidationResult, ResumePolicy,
     RunConfig, RunEventPayload, RunResult, Runner, ScriptStep, ScriptedModelProvider, ToolCall,
     ToolPolicy, OUTPUT_VALIDATION_FAILED,
 };
 
-const FIXTURE: &str = include_str!("fixtures/parity/output_validation_v1.json");
+const FIXTURE: &str = include_str!("fixtures/parity/output_validation.json");
 
 fn expected(case_name: &str) -> Value {
     let fixture: Value = serde_json::from_str(FIXTURE).expect("output validation fixture");
@@ -286,7 +286,7 @@ async fn terminal_checkpoint_replay_reuses_validated_result() {
         })
         .build()
         .expect("agent");
-    let store = InMemoryCheckpointStoreV2::new();
+    let store = InMemoryCheckpointStore::new();
     let mut checkpoint = CheckpointConfig::with_store(store);
     checkpoint.key = Some("output-validation-replay".to_string());
     checkpoint.resume_policy = ResumePolicy::ResumeIfPresent;
@@ -346,7 +346,7 @@ async fn terminal_checkpoint_replay_reuses_validation_failure() {
         })
         .build()
         .expect("agent");
-    let store = InMemoryCheckpointStoreV2::new();
+    let store = InMemoryCheckpointStore::new();
     let mut checkpoint = CheckpointConfig::with_store(store);
     checkpoint.key = Some("output-validation-failure-replay".to_string());
     checkpoint.resume_policy = ResumePolicy::ResumeIfPresent;

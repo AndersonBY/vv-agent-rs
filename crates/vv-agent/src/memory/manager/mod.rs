@@ -34,7 +34,7 @@ pub struct MemoryManager {
 #[derive(Debug)]
 pub(crate) struct MemoryCompactionOutcome {
     pub(crate) messages: Vec<Message>,
-    pub(crate) legacy_changed: bool,
+    pub(crate) changed: bool,
     pub(crate) mode: MemoryCompactMode,
 }
 
@@ -147,7 +147,7 @@ impl MemoryManager {
         let cleaned = self.remove_previous_summary(messages);
         let sanitized = filter_empty_assistant_messages(&cleaned);
         let changed_by_sanitize = sanitized != messages;
-        let mut legacy_changed = changed_by_sanitize;
+        let mut changed = changed_by_sanitize;
         let mut mode = if changed_by_sanitize {
             MemoryCompactMode::Structural
         } else {
@@ -185,7 +185,7 @@ impl MemoryManager {
             if cleared > 0 {
                 working_messages = microcompacted;
                 mode = mode.max(MemoryCompactMode::Micro);
-                legacy_changed = true;
+                changed = true;
                 message_length = self.calculate_effective_length(&working_messages, None, None);
             }
         }
@@ -194,9 +194,9 @@ impl MemoryManager {
                 self.maybe_append_memory_warning(&working_messages, message_length);
             if warning_inserted {
                 mode = mode.max(MemoryCompactMode::Structural);
-                legacy_changed = true;
+                changed = true;
             }
-            return MemoryCompactionOutcome::new(messages, warned, mode, legacy_changed);
+            return MemoryCompactionOutcome::new(messages, warned, mode, changed);
         }
         let mut summary_source = self.strip_session_memory_context(&working_messages);
         if summary_source != working_messages {
@@ -223,8 +223,9 @@ impl MemoryManager {
                 summary_source = artifact_compacted;
             }
         }
-        let (compacted, changed) = self.compress_memory(&summary_source, artifact_cycle_index);
-        if changed {
+        let (compacted, summary_changed) =
+            self.compress_memory(&summary_source, artifact_cycle_index);
+        if summary_changed {
             mode = mode.max(MemoryCompactMode::Summary);
             let post_compaction_tokens = count_messages_tokens(
                 &self.apply_session_memory_context(&compacted),
@@ -234,7 +235,7 @@ impl MemoryManager {
                 session_memory.on_compaction(Some(post_compaction_tokens));
             }
         }
-        MemoryCompactionOutcome::new(messages, compacted, mode, legacy_changed || changed)
+        MemoryCompactionOutcome::new(messages, compacted, mode, changed || summary_changed)
     }
 
     fn remove_previous_summary(&self, messages: &[Message]) -> Vec<Message> {
@@ -254,7 +255,7 @@ impl MemoryCompactionOutcome {
         original: &[Message],
         messages: Vec<Message>,
         mode: MemoryCompactMode,
-        legacy_changed: bool,
+        changed: bool,
     ) -> Self {
         let content_changed = messages != original;
         let mode = if !content_changed {
@@ -266,12 +267,12 @@ impl MemoryCompactionOutcome {
         };
         Self {
             messages,
-            legacy_changed,
+            changed,
             mode,
         }
     }
 
     fn into_tuple(self) -> (Vec<Message>, bool) {
-        (self.messages, self.legacy_changed)
+        (self.messages, self.changed)
     }
 }

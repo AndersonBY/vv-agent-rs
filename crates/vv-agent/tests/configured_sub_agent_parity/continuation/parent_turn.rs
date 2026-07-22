@@ -191,37 +191,39 @@ fn current_turn_controls(
     streams: Arc<Mutex<Vec<BTreeMap<String, Value>>>>,
     session_event_invocations: Option<Arc<AtomicUsize>>,
 ) -> RuntimeRunControls {
-    let event_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-        if matches!(name, "sub_run_started" | "sub_run_completed") {
+    let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+        let (name, payload) = typed_event_parts(run_event);
+        if matches!(name.as_str(), "sub_run_started" | "sub_run_completed") {
             events
                 .lock()
                 .expect("current-turn lifecycle events")
                 .push((name.to_string(), payload.clone()));
         }
-        if matches!(
-            name,
-            "sub_agent_session_run_start" | "sub_agent_session_run_end"
-        ) {
-            if let Some(invocations) = &session_event_invocations {
-                invocations.fetch_add(1, Ordering::SeqCst);
+        if let vv_agent::RunEventPayload::Diagnostic { code, .. } = run_event.payload() {
+            if matches!(
+                code.as_str(),
+                "sub_agent_session_run_start" | "sub_agent_session_run_end"
+            ) {
+                if let Some(invocations) = &session_event_invocations {
+                    invocations.fetch_add(1, Ordering::SeqCst);
+                }
+                session_events
+                    .lock()
+                    .expect("current-turn session events")
+                    .push(code.clone());
             }
-            session_events
+        }
+        if name == "assistant_delta" {
+            streams
                 .lock()
-                .expect("current-turn session events")
-                .push(name.to_string());
+                .expect("current-turn stream events")
+                .push(payload);
         }
     });
-    let stream_callback: LlmStreamCallback = Arc::new(move |payload| {
-        streams
-            .lock()
-            .expect("current-turn stream events")
-            .push(payload.clone());
-    });
     RuntimeRunControls {
-        log_handler: Some(event_handler),
+        event_handler: Some(event_handler),
         execution_context: Some(ExecutionContext {
             cancellation_token: Some(token),
-            stream_callback: Some(stream_callback),
             metadata: BTreeMap::from([(
                 "_vv_agent_trace_id".to_string(),
                 json!(format!("trace-{turn}")),
@@ -248,7 +250,6 @@ fn real_sub_task_status_continuation_binds_controls_from_the_accepting_parent_tu
             "event_sink",
             "parent_run_id",
             "parent_tool_call_id",
-            "stream_sink",
             "tool_policy",
             "trace_id"
         ])
@@ -325,13 +326,20 @@ fn real_sub_task_status_continuation_binds_controls_from_the_accepting_parent_tu
         .expect("turn A session events")
         .len();
     let stale_sink_invocations_after_initial = stale_sink_invocations_a.load(Ordering::SeqCst);
-    assert_eq!(session_events_a_after_initial, 0);
+    assert_eq!(session_events_a_after_initial, 2);
+    assert_eq!(
+        *session_events_a.lock().expect("turn A session events"),
+        [
+            "sub_agent_session_run_start".to_string(),
+            "sub_agent_session_run_end".to_string(),
+        ]
+    );
     let initial_child_run_id = events_a
         .lock()
         .expect("turn A lifecycle events")
         .iter()
         .find(|(name, _)| name == "sub_run_started")
-        .and_then(|(_, payload)| payload["child_run_id"].as_str())
+        .and_then(|(_, payload)| payload["run_id"].as_str())
         .expect("turn A child run id")
         .to_string();
 
@@ -386,7 +394,7 @@ fn real_sub_task_status_continuation_binds_controls_from_the_accepting_parent_tu
     );
     let turn_b_streams = streams_b.lock().expect("turn B stream events");
     assert_eq!(turn_b_streams.len(), 1);
-    assert_eq!(turn_b_streams[0]["content_delta"], "turn B child delta");
+    assert_eq!(turn_b_streams[0]["delta"], "turn B child delta");
     drop(turn_b_streams);
     let turn_b_events = events_b.lock().expect("turn B lifecycle events");
     assert_eq!(
@@ -403,7 +411,7 @@ fn real_sub_task_status_continuation_binds_controls_from_the_accepting_parent_tu
         assert_eq!(payload["task_id"], task_id);
         assert_eq!(payload["child_session_id"], initial_payload["session_id"]);
     }
-    let turn_b_child_run_id = turn_b_events[0].1["child_run_id"]
+    let turn_b_child_run_id = turn_b_events[0].1["run_id"]
         .as_str()
         .expect("turn B child run id")
         .to_string();
@@ -481,7 +489,7 @@ fn real_sub_task_status_continuation_binds_controls_from_the_accepting_parent_tu
     );
     let turn_c_streams = streams_c.lock().expect("turn C stream events");
     assert_eq!(turn_c_streams.len(), 1);
-    assert_eq!(turn_c_streams[0]["content_delta"], "turn C child delta");
+    assert_eq!(turn_c_streams[0]["delta"], "turn C child delta");
     drop(turn_c_streams);
     let turn_c_events = events_c.lock().expect("turn C lifecycle events");
     assert_eq!(
@@ -496,7 +504,7 @@ fn real_sub_task_status_continuation_binds_controls_from_the_accepting_parent_tu
         assert_eq!(payload["parent_run_id"], "parent-run-C");
         assert_eq!(payload["parent_tool_call_id"], "continue-C");
     }
-    let turn_c_child_run_id = turn_c_events[0].1["child_run_id"]
+    let turn_c_child_run_id = turn_c_events[0].1["run_id"]
         .as_str()
         .expect("turn C child run id")
         .to_string();

@@ -172,7 +172,7 @@ fn real_child_run_projects_capabilities_identity_model_and_filtered_workspace() 
     let controls = RuntimeRunControls {
         cancellation_token: Some(parent_token.clone()),
         execution_context: Some(ExecutionContext {
-            state_store: Some(Arc::new(InMemoryStateStore::new())),
+            checkpoint_store: Some(Arc::new(InMemoryCheckpointStore::new())),
             app_state: Some(Arc::new(AppMarker("inherited"))),
             metadata: BTreeMap::from([
                 ("_vv_agent_run_id".to_string(), json!("parent-run")),
@@ -213,7 +213,6 @@ fn real_child_run_projects_capabilities_identity_model_and_filtered_workspace() 
         child_request.model_settings,
         Some(ModelSettings {
             temperature: Some(0.25),
-            max_tokens: Some(512),
             ..ModelSettings::default()
         })
     );
@@ -334,8 +333,9 @@ fn runtime_boundary_reports_fixture_validation_errors_and_pairs_lifecycle() {
             .insert("researcher".to_string(), sub_agent);
         let lifecycle = Arc::new(Mutex::new(Vec::new()));
         let lifecycle_for_handler = lifecycle.clone();
-        let log_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-            if matches!(name, "sub_run_started" | "sub_run_completed") {
+        let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+            let (name, payload) = typed_event_parts(run_event);
+            if matches!(name.as_str(), "sub_run_started" | "sub_run_completed") {
                 lifecycle_for_handler
                     .lock()
                     .expect("lifecycle")
@@ -343,7 +343,7 @@ fn runtime_boundary_reports_fixture_validation_errors_and_pairs_lifecycle() {
             }
         });
         let controls = RuntimeRunControls {
-            log_handler: Some(log_handler),
+            event_handler: Some(event_handler),
             execution_context: Some(ExecutionContext {
                 metadata: BTreeMap::from([
                     ("_vv_agent_run_id".to_string(), json!("parent-run")),

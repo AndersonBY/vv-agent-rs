@@ -10,7 +10,6 @@ Protocol:
 - Items omitted from the new array are removed.
 - Missing `id` values are generated automatically as short stable ids.
 - Each item must include `title`, `status`, and `priority`.
-- Missing status defaults to `pending`; missing priority defaults to `medium` at runtime for runtime tolerance.
 - Only one item may have `status=in_progress`.
 
 When to use:
@@ -18,7 +17,7 @@ When to use:
 - Make progress state explicit before delegating, running long commands, or switching from investigation to edits.
 
 Returns:
-- The normalized TODO list with generated ids/defaults and validation errors when statuses conflict.
+- The current TODO list with generated ids, timestamps, and validation errors when statuses conflict.
 
 Use this tool to keep task planning explicit and machine-readable."#;
 

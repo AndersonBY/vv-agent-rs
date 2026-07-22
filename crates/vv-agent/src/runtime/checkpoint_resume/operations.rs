@@ -53,7 +53,7 @@ impl CheckpointResumeController {
         Ok(&self.require_checkpoint()?.checkpoint_key)
     }
 
-    pub(crate) fn checkpoint(&self) -> CheckpointResult<&CheckpointV2> {
+    pub(crate) fn checkpoint(&self) -> CheckpointResult<&Checkpoint> {
         self.require_checkpoint()
     }
 
@@ -84,7 +84,7 @@ impl CheckpointResumeController {
         Ok(())
     }
 
-    pub(crate) fn refresh_authoritative(&mut self) -> CheckpointResult<CheckpointV2> {
+    pub(crate) fn refresh_authoritative(&mut self) -> CheckpointResult<Checkpoint> {
         self.reload()?;
         self.validate_existing_definition(self.require_checkpoint()?)?;
         Ok(self.require_checkpoint()?.clone())
@@ -154,7 +154,7 @@ impl CheckpointResumeController {
             ));
         }
         if existing.is_none() {
-            existing = self.store.load_checkpoint_v2(&key)?;
+            existing = self.store.load_checkpoint(&key)?;
         }
 
         if self.config.resume_policy == ResumePolicy::New {
@@ -178,7 +178,7 @@ impl CheckpointResumeController {
             if self.create_new_checkpoint(key.clone()).is_ok() {
                 return Ok(None);
             }
-            existing = self.store.load_checkpoint_v2(&key)?;
+            existing = self.store.load_checkpoint(&key)?;
         }
 
         let existing = existing.ok_or_else(|| {
@@ -656,7 +656,7 @@ impl CheckpointResumeController {
             .claim_token
             .clone()
             .expect("active claim checked above");
-        if !self.store.commit_checkpoint_v2(
+        if !self.store.commit_checkpoint(
             self.require_checkpoint()?.clone(),
             &claim_token,
             revision,
@@ -666,7 +666,7 @@ impl CheckpointResumeController {
                 "checkpoint cycle commit lost its claim",
             ));
         }
-        self.checkpoint = self.store.load_checkpoint_v2(self.checkpoint_key()?)?;
+        self.checkpoint = self.store.load_checkpoint(self.checkpoint_key()?)?;
         self.first_claim_is_recovery = false;
         self.owned_claim_token = None;
         self.stop_heartbeat();
@@ -817,9 +817,9 @@ impl CheckpointResumeController {
         let finalized = match claim_token.as_deref() {
             Some(claim_token) => {
                 self.store
-                    .finalize_claimed_v2(checkpoint, claim_token, revision)?
+                    .finalize_claimed_checkpoint(checkpoint, claim_token, revision)?
             }
-            None => self.store.finalize_checkpoint_v2(checkpoint, revision)?,
+            None => self.store.finalize_checkpoint(checkpoint, revision)?,
         };
         if !finalized {
             self.reload()?;

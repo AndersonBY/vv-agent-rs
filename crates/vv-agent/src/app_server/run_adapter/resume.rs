@@ -28,7 +28,7 @@ impl AppServerRunAdapter {
             )
         })?;
         let checkpoint = checkpoint_store
-            .load_checkpoint_v2(&request.checkpoint_key)
+            .load_checkpoint(&request.checkpoint_key)
             .map_err(|error| AppServerError::internal(error.to_string()))?
             .ok_or_else(|| AppServerError::invalid_params("Checkpoint not found"))?;
 
@@ -116,7 +116,7 @@ impl AppServerRunAdapter {
                 let completion: DurableTurnCompletionFuture = Box::pin(async move {
                     let run_result = handle.result().await;
                     let checkpoint = completion_store
-                        .load_checkpoint_v2(&completion_request.checkpoint_key)
+                        .load_checkpoint(&completion_request.checkpoint_key)
                         .map_err(|error| AppServerError::internal(error.to_string()))?
                         .ok_or_else(|| {
                             AppServerError::internal(
@@ -416,7 +416,7 @@ impl AppServerRunAdapter {
     }
 }
 
-fn checkpoint_summary(checkpoint: &CheckpointV2) -> CheckpointSummary {
+fn checkpoint_summary(checkpoint: &Checkpoint) -> CheckpointSummary {
     CheckpointSummary {
         key: checkpoint.checkpoint_key.clone(),
         resume_attempt: checkpoint.resume_attempt,
@@ -438,7 +438,7 @@ fn checkpoint_summary(checkpoint: &CheckpointV2) -> CheckpointSummary {
 
 pub(super) fn checkpoint_projection(
     result: &RunResult,
-    store: Option<&Arc<dyn CheckpointStoreV2>>,
+    store: Option<&Arc<dyn CheckpointStore>>,
 ) -> Result<(Option<CheckpointSummary>, Option<InterruptionSummary>), String> {
     let Some(checkpoint_key) = result.checkpoint_key() else {
         return Ok((None, None));
@@ -447,7 +447,7 @@ pub(super) fn checkpoint_projection(
         "checkpoint_store_unavailable: App Server turn lost its checkpoint store".to_string()
     })?;
     let checkpoint = store
-        .load_checkpoint_v2(checkpoint_key)
+        .load_checkpoint(checkpoint_key)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| {
             format!(
@@ -485,7 +485,7 @@ fn interruption_summary(observation: &ResumeObservation) -> InterruptionSummary 
 
 fn running_resume_response(
     request: &DurableTurnResumeRequest,
-    checkpoint: &CheckpointV2,
+    checkpoint: &Checkpoint,
     include_checkpoint: bool,
 ) -> TurnResumeResponse {
     TurnResumeResponse {
@@ -506,7 +506,7 @@ fn running_resume_response(
 fn resume_response_from_result(
     request: &DurableTurnResumeRequest,
     result: &crate::types::AgentResult,
-    checkpoint: &CheckpointV2,
+    checkpoint: &Checkpoint,
 ) -> TurnResumeResponse {
     TurnResumeResponse {
         thread_id: request.thread_id.clone(),
@@ -534,7 +534,7 @@ fn resume_response_from_result(
 fn completion_from_agent_result(
     request: &DurableTurnResumeRequest,
     result: &crate::types::AgentResult,
-    checkpoint: &CheckpointV2,
+    checkpoint: &Checkpoint,
 ) -> TurnCompletedParams {
     let response = resume_response_from_result(request, result, checkpoint);
     TurnCompletedParams {

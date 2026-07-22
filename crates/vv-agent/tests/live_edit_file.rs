@@ -267,7 +267,6 @@ fn live_agent(name: &str, model: &ModelRef) -> Agent {
         .model_settings(
             ModelSettings::builder()
                 .temperature(0.0)
-                .max_output_tokens(2048)
                 .parallel_tool_calls(false)
                 .tool_choice(ToolChoice::Required)
                 .timeout(Duration::from_secs(180))
@@ -295,7 +294,6 @@ fn live_run_config_with_hook(hook: Arc<dyn RuntimeHook>) -> RunConfig {
 fn live_model_settings() -> ModelSettings {
     ModelSettings::builder()
         .temperature(0.0)
-        .max_output_tokens(2048)
         .parallel_tool_calls(false)
         .tool_choice(ToolChoice::Required)
         .timeout(Duration::from_secs(180))
@@ -309,7 +307,7 @@ fn live_backend() -> String {
 fn live_model(backend: &str) -> String {
     env::var("VV_AGENT_LIVE_MODEL").unwrap_or_else(|_| match backend {
         "deepseek" => "deepseek-v4-pro".to_string(),
-        "moonshot" => "kimi-k2.6".to_string(),
+        "moonshot" => "kimi-k3".to_string(),
         _ => panic!(
             "set VV_AGENT_LIVE_MODEL for unsupported live backend default: {}",
             backend

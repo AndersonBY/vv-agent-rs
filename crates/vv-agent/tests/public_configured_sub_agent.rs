@@ -8,7 +8,7 @@ use vv_agent::{
     RuntimeHook, ScriptStep, ScriptedModelProvider, SubAgentConfig, ToolCall,
 };
 
-const CONTRACT_JSON: &str = include_str!("fixtures/parity/public_configured_sub_agent_v1.json");
+const CONTRACT_JSON: &str = include_str!("fixtures/parity/public_configured_sub_agent.json");
 
 fn contract() -> Value {
     serde_json::from_str(CONTRACT_JSON).expect("public configured sub-agent fixture")
@@ -157,7 +157,6 @@ fn configured_sub_agent_fragment_matches_the_shared_projection_fixture() {
 
 #[derive(Clone)]
 struct TaskProjection {
-    has_sub_agents: bool,
     sub_agents_enabled: bool,
     sub_agents: BTreeMap<String, SubAgentConfig>,
 }
@@ -173,7 +172,6 @@ impl RuntimeHook for TaskProjectionCapture {
             .lock()
             .expect("task projections")
             .push(TaskProjection {
-                has_sub_agents: event.task.has_sub_agents,
                 sub_agents_enabled: event.task.sub_agents_enabled(),
                 sub_agents: event.task.sub_agents.clone(),
             });
@@ -278,10 +276,6 @@ async fn public_runner_projects_and_executes_a_configured_child() {
 
     let projections = task_capture.projections.lock().expect("task projections");
     let parent_projection = projections.first().expect("parent task projection");
-    assert_eq!(
-        parent_projection.has_sub_agents,
-        contract["projection"]["has_sub_agents"]
-    );
     assert_eq!(
         parent_projection.sub_agents_enabled,
         contract["projection"]["sub_agents_enabled"]

@@ -66,7 +66,6 @@ where
 
 fn default_settings_file_from_environment() -> String {
     non_blank_environment_value("VV_AGENT_LOCAL_SETTINGS")
-        .or_else(|| non_blank_environment_value("V_AGENT_LOCAL_SETTINGS"))
         .unwrap_or_else(|| "local_settings.json".to_string())
 }
 
@@ -120,8 +119,8 @@ fn parse_app_server_command(values: &[String]) -> Result<AppServerCliCommand, St
         Some("generate-ts") => Ok(AppServerCliCommand::GenerateTs {
             out: parse_out_dir(&values[1..], "app-server generate-ts")?,
         }),
-        Some("generate-json-schema" | "schema") => Ok(AppServerCliCommand::GenerateJsonSchema {
-            out: parse_out_dir(&values[1..], "app-server generate-json-schema")?,
+        Some("schema") => Ok(AppServerCliCommand::GenerateJsonSchema {
+            out: parse_out_dir(&values[1..], "app-server schema")?,
         }),
         _ => parse_app_server_listener(values),
     }
@@ -273,7 +272,7 @@ impl ParsedCliArgs {
         Self {
             prompt: None,
             backend: "moonshot".to_string(),
-            model: "kimi-k2.6".to_string(),
+            model: "kimi-k3".to_string(),
             settings_file: PathBuf::from(default_settings),
             workspace: PathBuf::from("./workspace"),
             max_cycles: 80,
@@ -486,8 +485,8 @@ pub(crate) fn help_text() -> String {
         "",
         "Options:",
         "  --backend <key>        Provider backend key in LLM_SETTINGS (default: moonshot)",
-        "  --model <key>          Model key in provider models (default: kimi-k2.6)",
-        "  --settings-file <path> Path to local settings (default: VV_AGENT_LOCAL_SETTINGS, V_AGENT_LOCAL_SETTINGS, or local_settings.json)",
+        "  --model <key>          Model key in provider models (default: kimi-k3)",
+        "  --settings-file <path> Path to local settings (default: VV_AGENT_LOCAL_SETTINGS or local_settings.json)",
         "  --workspace <path>     Workspace directory (default: ./workspace)",
         "  --max-cycles <n>       Max runtime cycles (default: 80)",
         "  --language <locale>    System prompt language (default: zh-CN)",
@@ -500,7 +499,6 @@ pub(crate) fn help_text() -> String {
         "App Server:",
         "  app-server --listen stdio --settings <path> --backend <key> --model <key>",
         "    [--timeout-seconds <seconds>]",
-        "  app-server generate-json-schema --out <dir>",
         "  app-server schema --out <dir>",
         "  app-server generate-ts --out <dir>",
     ]

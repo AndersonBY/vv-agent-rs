@@ -14,6 +14,7 @@ pub use defaults::build_default_registry;
 pub struct ToolRegistry {
     tools: BTreeMap<String, ToolSpec>,
     schemas: BTreeMap<String, Value>,
+    argument_validators: BTreeMap<String, jsonschema::Validator>,
     tool_order: Vec<String>,
     planner_extra_tool_names: Vec<String>,
 }
@@ -27,17 +28,25 @@ impl ToolRegistry {
         if self.tools.contains_key(&spec.name) {
             return Err(format!("tool already registered: {}", spec.name));
         }
-        if let Some(schema) = super::schemas::schema_for(&spec.name) {
+        if let Some(schema) = self.schemas.get(&spec.name) {
+            spec.schema = schema.clone();
+        } else if let Some(schema) = super::schemas::schema_for(&spec.name) {
             spec.schema = schema;
         }
-        let (idempotency, tool_metadata) =
-            super::metadata::merge_tool_idempotency(spec.idempotency, spec.tool_metadata.as_ref())
-                .map_err(|error| error.to_string())?;
-        spec.idempotency = idempotency;
-        spec.tool_metadata = tool_metadata;
-        self.schemas
-            .entry(spec.name.clone())
-            .or_insert_with(|| spec.schema.clone());
+        spec.schema = super::argument_validation::close_object_schemas(&spec.schema);
+        let validator = super::argument_validation::validator_for_tool_schema(&spec.schema)?;
+        if let Some(description) = spec.schema["function"]["description"].as_str() {
+            spec.description = description.to_string();
+        }
+        spec.tool_metadata = spec
+            .tool_metadata
+            .as_ref()
+            .map(super::metadata::ToolMetadata::normalized)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        self.schemas.insert(spec.name.clone(), spec.schema.clone());
+        self.argument_validators
+            .insert(spec.name.clone(), validator);
         self.tool_order.push(spec.name.clone());
         self.tools.insert(spec.name.clone(), spec);
         Ok(())
@@ -50,14 +59,32 @@ impl ToolRegistry {
         Ok(())
     }
 
-    pub fn register_schema(&mut self, tool_name: impl Into<String>, schema: Value) {
-        self.schemas.insert(tool_name.into(), schema);
+    pub fn register_schema(
+        &mut self,
+        tool_name: impl Into<String>,
+        schema: Value,
+    ) -> Result<(), String> {
+        let tool_name = tool_name.into();
+        let schema = super::argument_validation::close_object_schemas(&schema);
+        let validator = super::argument_validation::validator_for_tool_schema(&schema)?;
+        if let Some(spec) = self.tools.get_mut(&tool_name) {
+            spec.schema = schema.clone();
+            if let Some(description) = schema["function"]["description"].as_str() {
+                spec.description = description.to_string();
+            }
+        }
+        self.schemas.insert(tool_name.clone(), schema);
+        self.argument_validators.insert(tool_name, validator);
+        Ok(())
     }
 
-    pub fn register_schemas(&mut self, schemas: BTreeMap<String, Value>) {
-        for (tool_name, schema) in schemas {
-            self.register_schema(tool_name, schema);
+    pub fn register_schemas(&mut self, schemas: BTreeMap<String, Value>) -> Result<(), String> {
+        for (tool_name, schema) in
+            super::argument_validation::schema_map_with_closed_objects(schemas)
+        {
+            self.register_schema(tool_name, schema)?;
         }
+        Ok(())
     }
 
     pub fn get(&self, name: &str) -> Result<&ToolSpec, ToolNotFoundError> {
@@ -169,6 +196,13 @@ impl ToolRegistry {
         context: &mut ToolContext,
     ) -> Result<ToolExecutionResult, ToolNotFoundError> {
         let tool = self.get(&call.name)?;
+        if let Some(validator) = self.argument_validators.get(&call.name) {
+            if let Some(result) =
+                super::argument_validation::invalid_tool_arguments_result(validator, call)
+            {
+                return Ok(result);
+            }
+        }
         context.begin_tool_call(call);
         Ok((tool.handler)(context, &call.arguments))
     }

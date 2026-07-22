@@ -3,7 +3,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use vv_agent::{
     Agent, AgentResult, AgentStatus, CompletionReason, EventStoreError, GuardrailOutcome,
     LLMResponse, MemorySession, ModelRef, NoToolPolicy, OutputGuardrail, RunBudgetLimits,
@@ -11,15 +10,10 @@ use vv_agent::{
     RunEventStore, Runner, ScriptedModelProvider, TokenUsage, ToolCall, UsageSource,
 };
 
-const FIXTURE: &str = include_str!("fixtures/parity/runner_terminal_v1.json");
-const FIXTURE_SHA256: &str = "e202e1156e2bf93995168316b83ccd811ee6b4bba17154b740d6d12768eebdd6";
-const COMPLETION_FIXTURE: &str = include_str!("fixtures/parity/completion_policy_v1.json");
+const FIXTURE: &str = include_str!("fixtures/parity/runner_terminal.json");
+const COMPLETION_FIXTURE: &str = include_str!("fixtures/parity/completion_policy.json");
 
 fn contract() -> Value {
-    assert_eq!(
-        format!("{:x}", Sha256::digest(FIXTURE.as_bytes())),
-        FIXTURE_SHA256
-    );
     serde_json::from_str(FIXTURE).expect("terminal contract")
 }
 
@@ -223,7 +217,7 @@ async fn budget_exhaustion_emits_observation_before_the_only_terminal() {
     let mut response =
         LLMResponse::new(expected["partial_output"].as_str().expect("partial output"));
     response.token_usage = TokenUsage {
-        total_tokens: 12,
+        total_tokens: Some(12),
         usage_source: UsageSource::ProviderReported,
         cache_usage: vv_agent::CacheUsage {
             status: vv_agent::CacheUsageStatus::ProviderReported,

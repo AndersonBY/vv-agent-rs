@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::budget::RunBudgetLimits;
-use crate::llm::{LlmClient, LlmStreamCallback};
+use crate::llm::LlmClient;
 use crate::runtime::cancellation::CancellationToken;
 use crate::runtime::sub_agents::SubTaskRunControls;
 use crate::runtime::sub_task_manager::{SubTaskManager, SubTaskTurnSnapshot};
@@ -26,7 +26,6 @@ pub(super) struct ToolBatchSetup<'a> {
     pub(super) sub_task_manager: &'a SubTaskManager,
     pub(super) cycle_index: u32,
     pub(super) cancellation_token: Option<&'a CancellationToken>,
-    pub(super) stream_callback: &'a Option<LlmStreamCallback>,
     pub(super) child_budget_limits: &'a Option<RunBudgetLimits>,
     pub(super) request_tool_schemas: &'a [Value],
     pub(super) after_cycle_disallowed_tools: &'a [String],
@@ -49,7 +48,6 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             sub_task_manager,
             cycle_index,
             cancellation_token,
-            stream_callback,
             child_budget_limits,
             request_tool_schemas,
             after_cycle_disallowed_tools,
@@ -62,9 +60,9 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             sub_task_manager.clone(),
             SubTaskRunControls {
                 parent_cancellation_token: cancellation_token.cloned(),
-                stream_callback: stream_callback.clone(),
-                parent_log_handler: self.log_handler.clone(),
-                parent_event_handler: controls.log_handler.clone(),
+                event_handler: controls
+                    .effective_event_handler()
+                    .or_else(|| self.event_handler.clone()),
                 parent_execution_context: controls.execution_context.clone(),
                 model_provider: controls.model_provider.clone(),
                 parent_run_context: controls.run_context.clone(),
@@ -166,8 +164,9 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             sub_task_manager: Some(sub_task_manager.clone()),
             sub_task_turn_snapshot: Some(SubTaskTurnSnapshot {
                 cancellation_token: cancellation_token.cloned(),
-                event_handler: controls.log_handler.clone(),
-                stream_callback: stream_callback.clone(),
+                event_handler: controls
+                    .effective_event_handler()
+                    .or_else(|| self.event_handler.clone()),
                 trace_id,
                 parent_run_id,
                 parent_tool_call_id: None,
@@ -192,8 +191,8 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         for tool_name in after_cycle_disallowed_tools {
             options = options.disallow(tool_name.clone());
         }
-        let runtime_handler = self.log_handler.clone();
-        let event_handler = controls.log_handler.clone();
+        let runtime_handler = self.event_handler.clone();
+        let event_handler = controls.effective_event_handler();
         let execution_context = controls.execution_context.clone();
         let task_id = task.task_id.clone();
         let agent_name = task
@@ -227,7 +226,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             let (event_name, mut payload) = lifecycle_log_payload(event, cycle_index);
             payload.insert("task_id".to_string(), Value::String(task_id.clone()));
             payload.insert("agent_name".to_string(), Value::String(agent_name.clone()));
-            super::logging::emit_runtime_log(
+            super::logging::emit_runtime_event(
                 runtime_handler.as_ref(),
                 event_handler.as_ref(),
                 execution_context.as_ref(),
@@ -235,7 +234,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 payload,
             );
             if let Some(tool_call_id) = sub_run_call_id {
-                super::logging::emit_runtime_log(
+                super::logging::emit_runtime_event(
                     runtime_handler.as_ref(),
                     event_handler.as_ref(),
                     execution_context.as_ref(),

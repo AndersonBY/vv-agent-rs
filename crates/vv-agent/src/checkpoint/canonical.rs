@@ -135,36 +135,6 @@ pub fn run_definition_digest(definition: &Value) -> CheckpointResult<String> {
     sha256_canonical(definition, "run_definition")
 }
 
-pub fn run_definition_comparison_copy(definition: &Value) -> Value {
-    let mut comparison = definition.clone();
-    if let Some(tools) = comparison.get_mut("tools").and_then(Value::as_array_mut) {
-        for tool in tools {
-            if let Some(tool) = tool.as_object_mut() {
-                tool.entry("tool_metadata".to_string())
-                    .or_insert(Value::Null);
-            }
-        }
-    }
-    if let Some(policy) = comparison
-        .get_mut("tool_policy")
-        .and_then(Value::as_object_mut)
-    {
-        policy
-            .entry("denied_side_effects".to_string())
-            .or_insert_with(|| Value::Array(Vec::new()));
-        policy
-            .entry("denied_capability_tags".to_string())
-            .or_insert_with(|| Value::Array(Vec::new()));
-        policy
-            .entry("deny_terminal_tools".to_string())
-            .or_insert(Value::Bool(false));
-        policy
-            .entry("denied_cost_dimensions".to_string())
-            .or_insert_with(|| Value::Array(Vec::new()));
-    }
-    comparison
-}
-
 pub fn canonical_run_definition_bytes(definition: &Value) -> CheckpointResult<Vec<u8>> {
     validate_run_definition(definition)?;
     canonical_json_bytes(definition, "run_definition")
@@ -511,23 +481,23 @@ fn validate_tool_definitions(value: Option<&Value>) -> CheckpointResult<()> {
     let tools = require_array(value, "run_definition.tools")?;
     for tool in tools {
         let object = require_object(Some(tool), "run_definition tool")?;
-        let idempotency = object.get("idempotency").ok_or_else(|| {
+        let required = ["schema", "tool_metadata", "timeout_seconds", "approval"];
+        if object.len() != required.len()
+            || required.iter().any(|field| !object.contains_key(*field))
+        {
+            return Err(CheckpointError::new(
+                "checkpoint_definition_invalid",
+                "run_definition tool has missing or unknown fields",
+            ));
+        }
+        require_object(object.get("schema"), "run_definition tool schema")?;
+        let metadata = object.get("tool_metadata").ok_or_else(|| {
             CheckpointError::new(
                 "checkpoint_definition_invalid",
-                "run_definition tool idempotency is required",
+                "run_definition tool metadata is required",
             )
         })?;
-        let legacy =
-            serde_json::from_value::<ToolIdempotency>(idempotency.clone()).map_err(|_| {
-                CheckpointError::new(
-                    "checkpoint_definition_invalid",
-                    "run_definition tool idempotency is invalid",
-                )
-            })?;
-        let Some(metadata) = object.get("tool_metadata") else {
-            continue;
-        };
-        let typed = if metadata.is_null() {
+        let normalized = if metadata.is_null() {
             None
         } else {
             Some(
@@ -541,16 +511,11 @@ fn validate_tool_definitions(value: Option<&Value>) -> CheckpointResult<()> {
                 )?,
             )
         };
-        let (effective, normalized) =
-            crate::tools::metadata::merge_tool_idempotency(legacy, typed.as_ref()).map_err(
-                |error| CheckpointError::new("checkpoint_definition_invalid", error.to_string()),
-            )?;
-        if effective != legacy
-            || normalized
-                .as_ref()
-                .map(|value| serde_json::to_value(value).expect("tool metadata serializes"))
-                .unwrap_or(Value::Null)
-                != *metadata
+        if normalized
+            .as_ref()
+            .map(|value| serde_json::to_value(value).expect("tool metadata serializes"))
+            .unwrap_or(Value::Null)
+            != *metadata
         {
             return Err(CheckpointError::new(
                 "checkpoint_definition_invalid",
@@ -736,27 +701,13 @@ fn normalize_tool_definitions(tools: Option<&mut Value>) -> CheckpointResult<()>
                 "run_definition tools must contain objects",
             )
         })?;
-        let legacy = object
-            .get("idempotency")
-            .cloned()
-            .ok_or_else(|| {
-                CheckpointError::new(
-                    "checkpoint_definition_invalid",
-                    "run_definition tool idempotency is required",
-                )
-            })
-            .and_then(|value| {
-                serde_json::from_value::<ToolIdempotency>(value).map_err(|_| {
-                    CheckpointError::new(
-                        "checkpoint_definition_invalid",
-                        "run_definition tool idempotency is invalid",
-                    )
-                })
-            })?;
-        let Some(metadata_value) = object.get("tool_metadata").cloned() else {
-            continue;
-        };
-        let typed = if metadata_value.is_null() {
+        let metadata_value = object.get("tool_metadata").cloned().ok_or_else(|| {
+            CheckpointError::new(
+                "checkpoint_definition_invalid",
+                "run_definition tool metadata is required",
+            )
+        })?;
+        let normalized = if metadata_value.is_null() {
             None
         } else {
             Some(
@@ -770,14 +721,6 @@ fn normalize_tool_definitions(tools: Option<&mut Value>) -> CheckpointResult<()>
                 )?,
             )
         };
-        let (effective, normalized) =
-            crate::tools::metadata::merge_tool_idempotency(legacy, typed.as_ref()).map_err(
-                |error| CheckpointError::new("checkpoint_definition_invalid", error.to_string()),
-            )?;
-        object.insert(
-            "idempotency".to_string(),
-            serde_json::to_value(effective).expect("tool idempotency serializes"),
-        );
         object.insert(
             "tool_metadata".to_string(),
             normalized

@@ -290,7 +290,10 @@ fn sub_task_status_reports_missing_and_invalid_task_ids() {
         )
         .expect("sub_task_status invalid");
     assert_eq!(invalid.status, ToolResultStatus::Error);
-    assert_eq!(invalid.error_code.as_deref(), Some("invalid_task_ids"));
+    assert_eq!(
+        invalid.error_code.as_deref(),
+        Some("invalid_tool_arguments")
+    );
 
     let missing = registry
         .execute(
@@ -357,7 +360,7 @@ fn sub_task_status_rejects_non_string_task_ids_and_message() {
     let result = registry
         .execute(
             &ToolCall::new(
-                "sub_status_coerce",
+                "sub_status_invalid_types",
                 "sub_task_status",
                 BTreeMap::from([
                     ("task_ids".to_string(), json!([42, 42, ""])),
@@ -368,18 +371,18 @@ fn sub_task_status_rejects_non_string_task_ids_and_message() {
             ),
             &mut context,
         )
-        .expect("sub_task_status argument normalization");
+        .expect("sub_task_status argument validation");
 
     unregister_sub_agent_session("session-42");
     assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.error_code.as_deref(), Some("invalid_task_ids"));
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
     assert!(received.lock().expect("received").is_empty());
     let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["error_code"], "invalid_task_ids");
+    assert_eq!(payload["error_code"], "invalid_tool_arguments");
 }
 
 #[test]
-fn sub_task_status_rejects_json_truthiness_for_ids() {
+fn sub_task_status_rejects_non_schema_types() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -388,7 +391,7 @@ fn sub_task_status_rejects_json_truthiness_for_ids() {
     let result = registry
         .execute(
             &ToolCall::new(
-                "sub_status_truthy",
+                "sub_status_invalid_schema_types",
                 "sub_task_status",
                 BTreeMap::from([
                     ("task_ids".to_string(), json!([0, false, "known", "known"])),
@@ -397,12 +400,12 @@ fn sub_task_status_rejects_json_truthiness_for_ids() {
             ),
             &mut context,
         )
-        .expect("sub_task_status truthiness");
+        .expect("sub_task_status schema validation");
 
     assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.error_code.as_deref(), Some("invalid_task_ids"));
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
     let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["error_code"], "invalid_task_ids");
+    assert_eq!(payload["error_code"], "invalid_tool_arguments");
 }
 
 #[test]

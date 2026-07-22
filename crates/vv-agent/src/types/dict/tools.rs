@@ -14,10 +14,6 @@ impl ToolExecutionResult {
                 Value::String(tool_directive_value(self.directive).to_string()),
             ),
             (
-                "status".to_string(),
-                Value::String(tool_result_simple_status(self.status).to_string()),
-            ),
-            (
                 "status_code".to_string(),
                 Value::String(tool_result_status_value(self.status).to_string()),
             ),
@@ -33,28 +29,62 @@ impl ToolExecutionResult {
 
     pub fn from_dict(data: &Value) -> Result<Self, String> {
         let object = expect_object(data, "ToolExecutionResult")?;
-        let status = match read_optional_string(object, "status_code").as_deref() {
-            Some(status_code) => parse_tool_result_status(status_code)?,
-            None => {
-                let status =
-                    read_optional_string(object, "status").unwrap_or_else(|| "success".to_string());
-                parse_tool_result_status(&status)
-                    .or_else(|_| parse_simple_tool_result_status(&status))?
-            }
+        let required = ["tool_call_id", "content", "status_code", "directive"];
+        let allowed = [
+            "tool_call_id",
+            "content",
+            "status_code",
+            "directive",
+            "error_code",
+            "metadata",
+            "image_url",
+            "image_path",
+        ];
+        let mut missing = required
+            .iter()
+            .filter(|field| !object.contains_key(**field))
+            .copied()
+            .collect::<Vec<_>>();
+        let mut unknown = object
+            .keys()
+            .filter(|field| !allowed.contains(&field.as_str()))
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        missing.sort_unstable();
+        unknown.sort_unstable();
+        if !missing.is_empty() || !unknown.is_empty() {
+            return Err(format!(
+                "ToolExecutionResult fields do not match the current wire: missing={missing:?}, unknown={unknown:?}"
+            ));
+        }
+
+        let metadata = match object.get("metadata") {
+            None => Metadata::new(),
+            Some(Value::Object(metadata)) => metadata.clone().into_iter().collect(),
+            Some(_) => return Err("ToolExecutionResult metadata must be an object".to_string()),
         };
         Ok(Self {
-            tool_call_id: read_string(object, "tool_call_id").unwrap_or_default(),
-            content: read_string(object, "content").unwrap_or_default(),
-            status,
-            directive: parse_tool_directive(
-                read_optional_string(object, "directive")
-                    .as_deref()
-                    .unwrap_or("continue"),
-            )?,
-            error_code: read_optional_string(object, "error_code"),
-            metadata: read_metadata(object, "metadata")?,
-            image_url: read_optional_string(object, "image_url"),
-            image_path: read_optional_string(object, "image_path"),
+            tool_call_id: read_required_string(object, "tool_call_id")?.to_string(),
+            content: read_required_string(object, "content")?.to_string(),
+            status: parse_tool_result_status(read_required_string(object, "status_code")?)?,
+            directive: parse_tool_directive(read_required_string(object, "directive")?)?,
+            error_code: strict_optional_string(object, "error_code")?,
+            metadata,
+            image_url: strict_optional_string(object, "image_url")?,
+            image_path: strict_optional_string(object, "image_path")?,
         })
+    }
+}
+
+fn strict_optional_string(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<String>, String> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(format!(
+            "ToolExecutionResult {key} must be a string or null"
+        )),
     }
 }

@@ -92,7 +92,10 @@ fn resolve_model_token_limits_reads_vv_llm_settings_model_config() {
 
 #[test]
 fn resolve_model_token_limits_from_file_accepts_json_settings_loader() {
-    let settings = tempfile::NamedTempFile::new().expect("settings file");
+    let settings = tempfile::Builder::new()
+        .suffix(".json")
+        .tempfile()
+        .expect("settings file");
     std::fs::write(
         settings.path(),
         r#"{

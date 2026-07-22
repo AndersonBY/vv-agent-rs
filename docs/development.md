@@ -39,19 +39,18 @@ Use targeted checks while iterating:
 cargo test -p vv-agent --test vv_llm_integration
 cargo test -p vv-agent --test runtime_cycle
 cargo test -p vv-agent --test public_sdk_redesign
-cargo test -p vv-agent --test run_events_v1
+cargo test -p vv-agent --test run_events_contract
 cargo test -p vv-agent --test event_store
 cargo test -p vv-agent --test run_handle
 cargo test -p vv-agent --test approval_provider
 cargo test -p vv-agent --test tool_orchestrator
 cargo test -p vv-agent --test tool_metadata_contract
 cargo test -p vv-agent --test output_validation_contract
-cargo test -p vv-agent --test checkpoint_v2_core
+cargo test -p vv-agent --test checkpoint_core
 cargo test -p vv-agent --test app_server_contract_parity
 cargo test -p vv-agent --test context_providers
 cargo test -p vv-agent --test memory_provider
 cargo test -p vv-agent --test session_graph_events
-cargo test -p vv-agent --test no_legacy_sdk
 cargo test -p vv-agent --test workspace_tools
 cargo test -p vv-agent --test examples_coverage
 ```
@@ -61,7 +60,7 @@ Run broad checks before reporting a shared behavior change:
 ```bash
 cargo fmt --check
 cargo check --examples
-cargo test -p vv-agent
+cargo test -p vv-agent -- --test-threads=1
 ```
 
 Run clippy before release-style cleanup or when touching shared abstractions:
@@ -93,24 +92,24 @@ Common environment variables:
 | Change area | Primary tests |
 | --- | --- |
 | Shared contract and canonical producers | `tests/tool_metadata_contract.rs`, `tests/parity_evidence_manifests.rs`, `tests/tool_schema_contract.rs`, `tests/app_server_contract_parity.rs`, `tests/runner_producer_parity.rs` |
-| Tool metadata, legacy comparison defaults, and App Server lifecycle projection | `tests/tool_metadata_contract.rs`, `tests/checkpoint_v2_core.rs`, `tests/app_server_contract_parity.rs` |
-| Optional output validation and tools-free repair | `tests/output_validation_contract.rs`, `tests/runner_checkpoint_v2.rs`, `tests/approval_resume_completion.rs` |
+| Tool metadata, checkpoint policy, and App Server lifecycle projection | `tests/tool_metadata_contract.rs`, `tests/checkpoint_core.rs`, `tests/app_server_contract_parity.rs` |
+| Optional output validation and tools-free repair | `tests/output_validation_contract.rs`, `tests/runner_checkpoint.rs`, `tests/approval_resume_completion.rs` |
 | Settings and model resolution | `tests/vv_llm_integration.rs` |
 | CLI | `tests/cli.rs` |
 | Runtime loop and terminal states | `tests/runtime_cycle.rs`, `tests/cycle_runner.rs` |
-| LLM/tool hooks and after-cycle lifecycle hooks | `tests/runtime_cycle/hooks.rs`, `tests/runtime_cycle/after_cycle.rs`, `tests/distributed_checkpoint_v2.rs` |
-| Execution backends and state stores | `tests/runtime_backends.rs`, `tests/state_store.rs` |
+| LLM/tool hooks and after-cycle lifecycle hooks | `tests/runtime_cycle/hooks.rs`, `tests/runtime_cycle/after_cycle.rs`, `tests/distributed_checkpoint.rs` |
+| Execution backends and checkpoint stores | `tests/runtime_backends.rs`, `tests/checkpoint_core.rs` |
 | Tools and schemas | `tests/tool_metadata_contract.rs`, `tests/tools_dispatcher.rs`, `tests/tool_schema_contract.rs`, `tests/tool_planner.rs` |
 | Workspace tools/backends | `tests/workspace_tools.rs`, `tests/search_tools.rs`, `tests/live_edit_file.rs` |
 | Memory and compaction | `tests/memory_tools.rs`, `tests/microcompact.rs`, `tests/post_compact_restore.rs` |
 | External memory provider contract | `tests/memory_provider.rs` |
-| Run events and replay | `tests/run_events_v1.rs`, `tests/event_store.rs`, `tests/session_graph_events.rs` |
+| Run events and replay | `tests/run_events_contract.rs`, `tests/event_store.rs`, `tests/session_graph_events.rs` |
 | Live run handle and streaming | `tests/run_handle.rs`, `tests/public_sdk_redesign.rs`, `tests/sdk_smoke.rs` |
 | Embedded interactive sessions and typed final output | `tests/interactive_session.rs`, `tests/typed_final_output.rs` |
 | Live approval provider | `tests/approval_provider.rs` |
 | Tool orchestrator | `tests/tool_orchestrator.rs`, `tests/tools_dispatcher.rs` |
 | Context providers | `tests/context_providers.rs` |
-| Agent/Runner API | `tests/public_sdk_redesign.rs`, `tests/sdk_smoke.rs`, `tests/no_legacy_sdk.rs` |
+| Agent/Runner API | `tests/public_sdk_redesign.rs`, `tests/sdk_smoke.rs` |
 | LLM bridge/streaming/failover | `tests/llm_streaming.rs`, `tests/vv_llm_integration.rs` |
 | Skills | `tests/skills_public_api.rs` |
 | Examples | `tests/examples_coverage.rs`, `cargo check --examples` |

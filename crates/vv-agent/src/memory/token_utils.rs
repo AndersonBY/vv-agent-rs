@@ -1,6 +1,5 @@
 use serde_json::Value;
 use std::path::Path;
-use std::sync::OnceLock;
 
 use crate::types::Message;
 
@@ -100,14 +99,7 @@ pub fn count_tokens<T: TokenCountPayload + ?Sized>(payload: &T, model: &str) -> 
     if text.is_empty() {
         return 0;
     }
-    let direct_count = vv_llm::utilities::count_tokens(&text, model);
-    if vv_llm_has_universal_model_dispatch() {
-        if let Ok(count) = direct_count {
-            if count > 0 {
-                return count as u64;
-            }
-        }
-    } else if let Some(count) = count_tokens_with_legacy_vv_llm(&text, model) {
+    if let Ok(count) = vv_llm::utilities::count_tokens(&text, model) {
         if count > 0 {
             return count as u64;
         }
@@ -139,40 +131,6 @@ fn default_image_tokens(model: &str) -> u64 {
     } else {
         765
     }
-}
-
-fn vv_llm_has_universal_model_dispatch() -> bool {
-    static SUPPORTED: OnceLock<bool> = OnceLock::new();
-    *SUPPORTED.get_or_init(|| {
-        matches!(
-            vv_llm::utilities::count_tokens(
-                "antidisestablishmentarianism",
-                "unknown-provider-model",
-            ),
-            Ok(6)
-        )
-    })
-}
-
-fn count_tokens_with_legacy_vv_llm(text: &str, model: &str) -> Option<usize> {
-    let normalized_model = model.to_ascii_lowercase();
-    if normalized_model.starts_with("abab") || normalized_model.starts_with("minimax") {
-        return Some((text.chars().count() as f64 / 1.33) as usize);
-    }
-
-    // vv-llm 0.2.x exposes both BPEs but only dispatches a few model names.
-    let tokenizer_model = if normalized_model == "gpt-3.5-turbo"
-        || normalized_model.starts_with("moonshot")
-        || normalized_model.starts_with("kimi")
-        || normalized_model.starts_with("gemini")
-        || normalized_model.starts_with("stepfun")
-        || normalized_model.starts_with("glm")
-    {
-        "gpt-3.5-turbo"
-    } else {
-        "gpt-4o"
-    };
-    vv_llm::utilities::count_tokens(text, tokenizer_model).ok()
 }
 
 fn is_cjk(ch: char) -> bool {

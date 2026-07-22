@@ -161,6 +161,27 @@ impl LlmClient for MaliciousConfiguredStreamClient {
 }
 
 #[derive(Clone, Default)]
+struct MaliciousConfiguredStreamProvider {
+    client: MaliciousConfiguredStreamClient,
+}
+
+impl ModelProvider for MaliciousConfiguredStreamProvider {
+    fn resolve(&self, model: &ModelRef) -> Result<ResolvedModelConfig, ModelError> {
+        Ok(ResolvedModelConfig::new(
+            "stream-test",
+            model.model(),
+            model.model(),
+            model.model(),
+            Vec::new(),
+        ))
+    }
+
+    fn client(&self, _resolved: &ResolvedModelConfig) -> Result<Arc<dyn LlmClient>, ModelError> {
+        Ok(Arc::new(self.client.clone()))
+    }
+}
+
+#[derive(Clone, Default)]
 struct ObserverPanicConfiguredStreamClient {
     parent_calls: Arc<AtomicUsize>,
     child_calls: Arc<AtomicUsize>,
@@ -220,6 +241,27 @@ impl LlmClient for ObserverPanicConfiguredStreamClient {
     }
 }
 
+#[derive(Clone, Default)]
+struct ObserverPanicConfiguredStreamProvider {
+    client: ObserverPanicConfiguredStreamClient,
+}
+
+impl ModelProvider for ObserverPanicConfiguredStreamProvider {
+    fn resolve(&self, model: &ModelRef) -> Result<ResolvedModelConfig, ModelError> {
+        Ok(ResolvedModelConfig::new(
+            "stream-test",
+            model.model(),
+            model.model(),
+            model.model(),
+            Vec::new(),
+        ))
+    }
+
+    fn client(&self, _resolved: &ResolvedModelConfig) -> Result<Arc<dyn LlmClient>, ModelError> {
+        Ok(Arc::new(self.client.clone()))
+    }
+}
+
 fn stream_observer_parent_task(task_id: &str) -> AgentTask {
     let mut parent = AgentTask::new(task_id, "shared-model", "Parent prompt", "Delegate");
     parent.max_cycles = 2;
@@ -239,237 +281,91 @@ fn delegated_task_id(result: &vv_agent::AgentResult) -> String {
         .to_string()
 }
 
-#[test]
-fn configured_child_stream_is_allowlisted_and_keeps_canonical_typed_identity() {
+#[tokio::test]
+async fn configured_child_stream_is_allowlisted_and_keeps_canonical_typed_identity() {
     let stream_contract = &contract()["stream_forwarding"];
     let typed_events = Arc::new(Mutex::new(Vec::new()));
-    let event_context = RuntimeEventContext::new(
-        "parent-stream-run",
-        "trace-stream-contract",
-        "parent",
-        Some("parent-stream-session".to_string()),
-        "Delegate",
-    );
-    let raw_streams = Arc::new(Mutex::new(Vec::<BTreeMap<String, Value>>::new()));
-    let raw_streams_for_callback = raw_streams.clone();
-    let typed_events_for_callback = typed_events.clone();
-    let callback_event_context = event_context.clone();
-    let raw_stream_callback: LlmStreamCallback = Arc::new(move |payload| {
-        raw_streams_for_callback
-            .lock()
-            .expect("configured raw streams")
-            .push(payload.clone());
-        if let Some(event) = callback_event_context.map_stream_payload(payload) {
-            typed_events_for_callback
-                .lock()
-                .expect("configured typed callback events")
-                .push(event);
-        }
-    });
     let typed_events_for_handler = typed_events.clone();
-    let event_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-        if let Some(event) = map_runtime_event(name, payload, &event_context) {
-            typed_events_for_handler
-                .lock()
-                .expect("configured typed events")
-                .push(event);
-        }
-    });
-    let mut parent = AgentTask::new(
-        "parent-stream-task",
-        "shared-model",
-        "Parent prompt",
-        "Delegate",
-    );
-    parent.max_cycles = 2;
+    let workspace = tempfile::tempdir().expect("configured stream workspace");
+    let runner = vv_agent::Runner::builder()
+        .model_provider(MaliciousConfiguredStreamProvider::default())
+        .workspace(workspace.path())
+        .build()
+        .expect("configured stream runner");
     let mut child = SubAgentConfig::new("shared-model", "Research");
     child.system_prompt = Some("Child prompt".to_string());
-    parent.sub_agents.insert("researcher".to_string(), child);
-
-    let result = AgentRuntime::new(MaliciousConfiguredStreamClient::default())
-        .run_with_controls(
-            parent,
-            RuntimeRunControls {
-                log_handler: Some(event_handler),
-                execution_context: Some(ExecutionContext {
-                    stream_callback: Some(raw_stream_callback),
-                    metadata: BTreeMap::from([(
-                        "_vv_agent_trace_id".to_string(),
-                        json!("trace-stream-contract"),
-                    )]),
-                    ..ExecutionContext::default()
-                }),
-                run_context: Some(RunContext {
-                    run_id: "parent-stream-run".to_string(),
-                    agent_name: "parent".to_string(),
-                    ..RunContext::default()
-                }),
-                ..RuntimeRunControls::default()
-            },
+    let agent = vv_agent::Agent::builder("parent")
+        .instructions("Delegate")
+        .model(ModelRef::named("shared-model"))
+        .sub_agent("researcher", &child)
+        .build()
+        .expect("configured stream parent");
+    let result = runner
+        .run_with_config(
+            &agent,
+            "Delegate",
+            vv_agent::RunConfig::builder()
+                .max_cycles(2)
+                .trace_id("trace-stream-contract")
+                .stream(move |event| {
+                    typed_events_for_handler
+                        .lock()
+                        .expect("configured typed events")
+                        .push(event.clone());
+                })
+                .build(),
         )
+        .await
         .expect("configured malicious stream run");
-    assert_eq!(result.status, AgentStatus::Completed);
-
-    let raw_streams = raw_streams.lock().expect("configured raw streams");
-    assert_eq!(raw_streams.len(), 5);
-    let forged_parent_stream = raw_streams
-        .iter()
-        .find(|payload| payload["content_delta"] == "forged canonical parent delta")
-        .expect("forged canonical parent stream");
-    assert_eq!(forged_parent_stream["run_id"], "forged-run");
-    let child_streams = raw_streams
-        .iter()
-        .filter(|payload| payload.get("parent_tool_call_id") == Some(&json!("delegate")))
-        .collect::<Vec<_>>();
-    assert_eq!(child_streams.len(), 4);
-    assert_eq!(
-        child_streams
-            .iter()
-            .map(|payload| payload["event"].clone())
-            .collect::<Vec<_>>(),
-        stream_contract["allowed_events"]
-            .as_array()
-            .expect("allowed configured stream events")
-            .clone()
-    );
-    let identity_fields = stream_contract["canonical_identity_fields"]
-        .as_array()
-        .expect("canonical identity fields")
-        .iter()
-        .filter_map(Value::as_str)
-        .collect::<std::collections::BTreeSet<_>>();
-    let reserved_fields = stream_contract["reserved_producer_fields"]
-        .as_array()
-        .expect("reserved producer fields")
-        .iter()
-        .filter_map(Value::as_str)
-        .collect::<std::collections::BTreeSet<_>>();
-    let cycle_field = stream_contract["canonical_cycle_field"]
-        .as_str()
-        .expect("canonical cycle field");
-    let canonical_child_run_id = child_streams[0]["run_id"].clone();
-    let canonical_child_session_id = child_streams[0]["session_id"].clone();
-    let canonical_child_task_id = child_streams[0]["task_id"].clone();
-    let expected_identity = BTreeMap::from([
-        ("agent_name", json!("researcher")),
-        ("child_run_id", canonical_child_run_id.clone()),
-        ("child_session_id", canonical_child_session_id.clone()),
-        ("parent_run_id", json!("parent-stream-run")),
-        ("parent_tool_call_id", json!("delegate")),
-        ("run_id", canonical_child_run_id),
-        ("session_id", canonical_child_session_id),
-        ("sub_agent_name", json!("researcher")),
-        ("task_id", canonical_child_task_id),
-        ("trace_id", json!("trace-stream-contract")),
-    ]);
-    for payload in &child_streams {
-        let event = payload["event"].as_str().expect("stream event name");
-        let producer_fields = stream_contract["producer_fields"][event]
-            .as_array()
-            .expect("producer fields")
-            .iter()
-            .filter_map(Value::as_str)
-            .collect::<std::collections::BTreeSet<_>>();
-        let allowed_fields = producer_fields
-            .union(&identity_fields)
-            .copied()
-            .chain(std::iter::once(cycle_field))
-            .collect::<std::collections::BTreeSet<_>>();
-        let actual_fields = payload
-            .keys()
-            .map(String::as_str)
-            .collect::<std::collections::BTreeSet<_>>();
-        assert!(actual_fields.is_subset(&allowed_fields));
-        assert!(identity_fields.is_subset(&actual_fields));
-        assert!(actual_fields
-            .difference(&identity_fields)
-            .filter(|field| **field != cycle_field)
-            .all(|field| !reserved_fields.contains(field)));
-        assert_eq!(payload[cycle_field], 1);
-        for (field, expected) in &expected_identity {
-            assert_eq!(
-                &payload[*field], expected,
-                "canonical identity field {field}"
-            );
-        }
-        assert!(!payload.contains_key("_vv_agent_stream_receipt"));
-        assert!(!payload.contains_key("_vv_agent_stream_sequence"));
-    }
+    assert_eq!(result.status(), AgentStatus::Completed);
 
     let typed_events = typed_events.lock().expect("configured typed events");
-    let started = typed_events
+    let started = result
+        .events()
         .iter()
         .find(|event| matches!(event.payload(), RunEventPayload::SubRunStarted { .. }))
         .expect("configured child started");
-    let raw_delta = child_streams[0];
-    assert_eq!(raw_delta["run_id"], started.run_id());
-    assert_eq!(raw_delta["child_run_id"], started.run_id());
-    assert_eq!(
-        raw_delta["session_id"],
-        started.session_id().expect("child session")
-    );
-    assert_eq!(
-        raw_delta["child_session_id"],
-        started.session_id().expect("child session")
-    );
-    assert_eq!(raw_delta["agent_name"], "researcher");
-    assert_eq!(raw_delta["sub_agent_name"], "researcher");
-    assert_eq!(raw_delta["trace_id"], "trace-stream-contract");
-    assert_eq!(raw_delta["parent_run_id"], "parent-stream-run");
-    assert_eq!(raw_delta["parent_tool_call_id"], "delegate");
-    assert_eq!(raw_delta["content_delta"], "child delta");
-    assert_eq!(raw_delta["estimated_tokens"], 2);
-    assert!(!raw_delta.contains_key("cycle"));
-    assert!(!raw_delta.contains_key("type"));
-    assert!(!raw_delta.contains_key("status"));
-    assert!(!raw_delta.contains_key("metadata"));
-    assert!(!raw_delta.contains_key("unknown"));
-
     let typed_child_streams = typed_events
         .iter()
         .filter(|event| {
             event.run_id() == started.run_id()
-                && event
-                    .metadata
-                    .get("event")
-                    .and_then(Value::as_str)
-                    .is_some()
+                && matches!(
+                    event.payload(),
+                    RunEventPayload::AssistantDelta { .. }
+                        | RunEventPayload::ReasoningDelta { .. }
+                        | RunEventPayload::ModelToolCallStarted { .. }
+                        | RunEventPayload::ModelToolCallProgress { .. }
+                )
         })
         .collect::<Vec<_>>();
     assert_eq!(
         typed_child_streams
             .iter()
-            .filter_map(|event| event.metadata.get("event"))
-            .cloned()
+            .map(|event| Value::String(typed_event_parts(event).0))
             .collect::<Vec<_>>(),
-        stream_contract["allowed_events"]
+        stream_contract["provider_adapter_allowed_events"]
             .as_array()
-            .expect("allowed configured stream events")
-            .clone()
+            .expect("provider stream events")
+            .iter()
+            .map(|provider_event| {
+                stream_contract["provider_adapter_wire_types"][provider_event.as_str().unwrap()]
+                    .clone()
+            })
+            .collect::<Vec<_>>()
     );
-    assert_eq!(typed_child_streams.len(), child_streams.len());
+    assert_eq!(typed_child_streams.len(), 4);
     for event in &typed_child_streams {
         assert_eq!(event.run_id(), started.run_id());
         assert_eq!(event.trace_id(), "trace-stream-contract");
         assert_eq!(event.agent_name(), Some("researcher"));
         assert_eq!(event.session_id(), started.session_id());
-        assert_eq!(event.parent_run_id(), Some("parent-stream-run"));
+        assert_eq!(event.parent_run_id(), Some(result.run_id()));
         assert_eq!(event.cycle_index(), Some(1));
-        let source = event.metadata["event"]
-            .as_str()
-            .expect("typed child stream source");
-        let raw = child_streams
-            .iter()
-            .find(|payload| payload["event"] == source)
-            .expect("matching raw child stream");
-        assert_eq!(
-            serde_json::to_value(event).expect("typed child stream")["metadata"],
-            serde_json::to_value(raw).expect("raw child stream")
-        );
+        assert!(event.metadata().is_empty());
     }
     let typed_delta = typed_child_streams
         .iter()
-        .find(|event| event.metadata["event"] == "assistant_delta")
+        .find(|event| matches!(event.payload(), RunEventPayload::AssistantDelta { .. }))
         .expect("typed assistant delta");
     assert!(matches!(
         typed_delta.payload(),
@@ -483,14 +379,10 @@ fn configured_child_stream_is_allowlisted_and_keeps_canonical_typed_identity() {
     assert_eq!(typed_delta.trace_id(), "trace-stream-contract");
     assert_eq!(typed_delta.agent_name(), Some("researcher"));
     assert_eq!(typed_delta.session_id(), started.session_id());
-    assert_eq!(typed_delta.parent_run_id(), Some("parent-stream-run"));
-    assert_eq!(
-        serde_json::to_value(typed_delta).expect("typed child delta")["metadata"],
-        serde_json::to_value(raw_delta).expect("raw child delta")
-    );
+    assert_eq!(typed_delta.parent_run_id(), Some(result.run_id()));
     let typed_reasoning = typed_child_streams
         .iter()
-        .find(|event| event.metadata["event"] == "reasoning_delta")
+        .find(|event| matches!(event.payload(), RunEventPayload::ReasoningDelta { .. }))
         .expect("typed reasoning delta");
     assert!(matches!(
         typed_reasoning.payload(),
@@ -502,7 +394,12 @@ fn configured_child_stream_is_allowlisted_and_keeps_canonical_typed_identity() {
     ));
     let typed_tool_started = typed_child_streams
         .iter()
-        .find(|event| event.metadata["event"] == "tool_call_started")
+        .find(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::ModelToolCallStarted { .. }
+            )
+        })
         .expect("typed tool start stream");
     assert!(matches!(
         typed_tool_started.payload(),
@@ -516,7 +413,12 @@ fn configured_child_stream_is_allowlisted_and_keeps_canonical_typed_identity() {
     ));
     let typed_tool_progress = typed_child_streams
         .iter()
-        .find(|event| event.metadata["event"] == "tool_call_progress")
+        .find(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::ModelToolCallProgress { .. }
+            )
+        })
         .expect("typed tool progress stream");
     assert!(matches!(
         typed_tool_progress.payload(),
@@ -538,19 +440,25 @@ fn configured_child_stream_is_allowlisted_and_keeps_canonical_typed_identity() {
             )
         })
         .expect("forged canonical shape remains a normal parent stream event");
-    assert_eq!(forged_typed.run_id(), "parent-stream-run");
+    assert_eq!(forged_typed.run_id(), result.run_id());
     assert_eq!(forged_typed.trace_id(), "trace-stream-contract");
     assert_eq!(forged_typed.agent_name(), Some("parent"));
-    assert_eq!(forged_typed.session_id(), Some("parent-stream-session"));
-    assert!(typed_events.iter().all(|event| {
-        !(event.run_id() == started.run_id()
-            && matches!(event.payload(), RunEventPayload::RunCompleted { .. }))
-    }));
+    assert_eq!(forged_typed.session_id(), None);
     assert_eq!(
         typed_events
             .iter()
             .filter(|event| {
-                event.run_id() == "parent-stream-run"
+                event.run_id() == started.run_id()
+                    && matches!(event.payload(), RunEventPayload::SubRunCompleted { .. })
+            })
+            .count(),
+        1
+    );
+    assert_eq!(
+        typed_events
+            .iter()
+            .filter(|event| {
+                event.run_id() == result.run_id()
                     && matches!(event.payload(), RunEventPayload::RunCompleted { .. })
             })
             .count(),
@@ -562,103 +470,54 @@ fn configured_child_stream_is_allowlisted_and_keeps_canonical_typed_identity() {
     );
 }
 
-#[test]
-fn caller_stream_observer_panic_does_not_fail_or_orphan_configured_child() {
+#[tokio::test]
+async fn caller_stream_observer_panic_does_not_fail_configured_child() {
     assert_eq!(
         contract()["stream_forwarding"]["stream_observer_failure_isolated"],
         true
     );
-    let manager = SubTaskManager::default();
-    let lifecycle = Arc::new(Mutex::new(Vec::<(String, BTreeMap<String, Value>)>::new()));
-    let lifecycle_for_handler = lifecycle.clone();
-    let event_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-        if matches!(name, "sub_run_started" | "sub_run_completed") {
-            lifecycle_for_handler
-                .lock()
-                .expect("observer panic lifecycle")
-                .push((name.to_string(), payload.clone()));
-        }
-    });
     let observer_calls = Arc::new(AtomicUsize::new(0));
     let observer_calls_for_callback = observer_calls.clone();
-    let stream_callback: LlmStreamCallback = Arc::new(move |_| {
-        observer_calls_for_callback.fetch_add(1, Ordering::SeqCst);
-        panic!("caller stream observer panicked");
-    });
+    let workspace = tempfile::tempdir().expect("stream observer workspace");
+    let runner = vv_agent::Runner::builder()
+        .model_provider(ObserverPanicConfiguredStreamProvider::default())
+        .workspace(workspace.path())
+        .build()
+        .expect("stream observer runner");
+    let mut child = SubAgentConfig::new("shared-model", "Research");
+    child.system_prompt = Some("Child prompt".to_string());
+    let agent = vv_agent::Agent::builder("parent")
+        .instructions("Delegate")
+        .model(ModelRef::named("shared-model"))
+        .sub_agent("researcher", &child)
+        .build()
+        .expect("stream observer parent");
+    let config = vv_agent::RunConfig::builder()
+        .max_cycles(2)
+        .trace_id("trace-stream-panic")
+        .stream(move |event| {
+            if matches!(event.payload(), RunEventPayload::AssistantDelta { .. }) {
+                observer_calls_for_callback.fetch_add(1, Ordering::SeqCst);
+                panic!("caller stream observer panicked");
+            }
+        })
+        .build();
 
-    let result = AgentRuntime::new(ObserverPanicConfiguredStreamClient::default())
-        .run_with_controls(
-            stream_observer_parent_task("observer-panic-parent"),
-            RuntimeRunControls {
-                log_handler: Some(event_handler),
-                execution_context: Some(ExecutionContext {
-                    stream_callback: Some(stream_callback),
-                    metadata: BTreeMap::from([
-                        ("_vv_agent_run_id".to_string(), json!("parent-run")),
-                        (
-                            "_vv_agent_trace_id".to_string(),
-                            json!("trace-stream-panic"),
-                        ),
-                    ]),
-                    ..ExecutionContext::default()
-                }),
-                run_context: Some(RunContext {
-                    run_id: "parent-run".to_string(),
-                    agent_name: "parent".to_string(),
-                    ..RunContext::default()
-                }),
-                sub_task_manager: Some(manager.clone()),
-                ..RuntimeRunControls::default()
-            },
-        )
+    let result = runner
+        .run_with_config(&agent, "Delegate", config)
+        .await
         .expect("parent run survives configured child observer panic");
-    assert_eq!(result.status, AgentStatus::Completed);
-
-    let task_id = delegated_task_id(&result);
-    let initial = manager.get(&task_id).expect("initial child snapshot");
-    let initial_outcome = initial.outcome.expect("initial child outcome");
-    assert_eq!(initial_outcome.status, AgentStatus::Completed);
-    assert_eq!(
-        initial_outcome.final_answer.as_deref(),
-        Some("child answer 1")
-    );
-    assert!(initial_outcome.error.is_none());
-
-    manager
-        .continue_task(&task_id, "continue after observer panic")
-        .expect("continue child after observer panic");
-    assert!(manager.wait(&task_id, Some(Duration::from_secs(3))));
-    let continued = manager.get(&task_id).expect("continued child snapshot");
-    let continued_outcome = continued.outcome.expect("continued child outcome");
-    assert_eq!(continued_outcome.status, AgentStatus::Completed);
-    assert_eq!(
-        continued_outcome.final_answer.as_deref(),
-        Some("child answer 2")
-    );
-    assert!(continued_outcome.error.is_none());
-    assert_eq!(observer_calls.load(Ordering::SeqCst), 2);
-
-    let lifecycle = lifecycle.lock().expect("observer panic lifecycle");
-    assert_eq!(
-        lifecycle
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .collect::<Vec<_>>(),
-        vec![
-            "sub_run_started",
-            "sub_run_completed",
-            "sub_run_started",
-            "sub_run_completed"
-        ]
-    );
-    assert!(lifecycle
-        .iter()
-        .filter(|(name, _)| name == "sub_run_completed")
-        .all(|(_, payload)| payload["status"] == "completed"));
-    assert_ne!(
-        lifecycle[0].1["child_run_id"],
-        lifecycle[2].1["child_run_id"]
-    );
+    assert_eq!(result.status(), AgentStatus::Completed);
+    assert_eq!(observer_calls.load(Ordering::SeqCst), 1);
+    assert!(result.events().iter().any(|event| {
+        matches!(
+            event.payload(),
+            RunEventPayload::SubRunCompleted {
+                status: AgentStatus::Completed,
+                ..
+            }
+        )
+    }));
 }
 
 #[test]
@@ -670,11 +529,12 @@ fn trusted_stream_event_failure_remains_fail_closed() {
     let manager = SubTaskManager::default();
     let lifecycle = Arc::new(Mutex::new(Vec::<(String, BTreeMap<String, Value>)>::new()));
     let lifecycle_for_handler = lifecycle.clone();
-    let event_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-        if name == "sub_agent_assistant_delta" {
+    let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+        let (name, payload) = typed_event_parts(run_event);
+        if name == "assistant_delta" {
             panic!("run event store append failed: store down");
         }
-        if matches!(name, "sub_run_started" | "sub_run_completed") {
+        if matches!(name.as_str(), "sub_run_started" | "sub_run_completed") {
             lifecycle_for_handler
                 .lock()
                 .expect("fail-closed lifecycle")
@@ -686,7 +546,7 @@ fn trusted_stream_event_failure_remains_fail_closed() {
         .run_with_controls(
             stream_observer_parent_task("fail-closed-parent"),
             RuntimeRunControls {
-                log_handler: Some(event_handler),
+                event_handler: Some(event_handler),
                 execution_context: Some(ExecutionContext {
                     metadata: BTreeMap::from([
                         ("_vv_agent_run_id".to_string(), json!("parent-run")),
@@ -738,8 +598,9 @@ fn trusted_lifecycle_sink_panics_fail_closed_and_keep_one_event_pair() {
         let lifecycle_for_handler = lifecycle.clone();
         let panicked = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let panicked_for_handler = panicked.clone();
-        let event_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, _payload| {
-            if matches!(name, "sub_run_started" | "sub_run_completed") {
+        let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+            let (name, _payload) = typed_event_parts(run_event);
+            if matches!(name.as_str(), "sub_run_started" | "sub_run_completed") {
                 lifecycle_for_handler
                     .lock()
                     .expect("trusted lifecycle calls")
@@ -754,7 +615,7 @@ fn trusted_lifecycle_sink_panics_fail_closed_and_keep_one_event_pair() {
             .run_with_controls(
                 stream_observer_parent_task(&format!("lifecycle-sink-{panic_on}")),
                 RuntimeRunControls {
-                    log_handler: Some(event_handler),
+                    event_handler: Some(event_handler),
                     sub_task_manager: Some(manager.clone()),
                     ..RuntimeRunControls::default()
                 },

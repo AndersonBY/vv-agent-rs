@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::tools::base::{ToolContext, ToolSpec};
-use crate::tools::common::{coerce_truthy_arg, path_escapes_workspace_error, stringify_tool_arg};
+use crate::tools::common::{bool_arg, path_escapes_workspace_error, string_arg};
 use crate::types::{Metadata, ToolArguments, ToolExecutionResult};
 
 use super::super::edit::{
@@ -29,17 +29,15 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                     Metadata::from([("missing_arguments".to_string(), json!(["path"]))]),
                 );
             }
-            let path = stringify_tool_arg(arguments.get("path"), "");
+            let path = string_arg(arguments.get("path"), "");
             if let Err(error) = context.resolve_workspace_path(&path) {
                 return path_escapes_workspace_error(error);
             }
             let backend = context.effective_workspace_backend();
-            let content = stringify_tool_arg(arguments.get("content"), "");
-            let append = coerce_truthy_arg(arguments.get("append"), false);
-            let leading_newline =
-                append && coerce_truthy_arg(arguments.get("leading_newline"), false);
-            let trailing_newline =
-                append && coerce_truthy_arg(arguments.get("trailing_newline"), false);
+            let content = string_arg(arguments.get("content"), "");
+            let append = bool_arg(arguments.get("append"), false);
+            let leading_newline = append && bool_arg(arguments.get("leading_newline"), false);
+            let trailing_newline = append && bool_arg(arguments.get("trailing_newline"), false);
             let existing_file = match backend.file_info(&path) {
                 Ok(Some(info)) if info.is_file => true,
                 Ok(_) => false,
@@ -99,7 +97,7 @@ pub(crate) fn write_file_tool() -> ToolSpec {
                         append && existing_file && !known_full_before_write,
                         WRITE_FILE_BASELINE_SOURCE,
                     );
-                    // Compatibility field: written_chars counts Unicode code points, not bytes.
+                    // The canonical written_chars field counts Unicode code points, not bytes.
                     let written_chars = write_content.chars().count();
                     let mut result = ToolExecutionResult::success(
                         "",

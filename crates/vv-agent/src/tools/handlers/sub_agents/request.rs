@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use crate::tools::base::ToolContext;
-use crate::tools::common::{coerce_bool, trim_portable_whitespace};
+use crate::tools::common::{bool_arg, trim_portable_whitespace};
 use crate::types::{Metadata, SubTaskRequest, ToolArguments, ToolExecutionResult};
 
 pub(super) struct SubTaskArgumentError {
@@ -32,8 +32,7 @@ pub(super) struct SharedSubTaskOptions {
 
 pub(super) struct BatchRequestEntry {
     pub(super) index: usize,
-    pub(super) request: Option<SubTaskRequest>,
-    pub(super) error: Option<String>,
+    pub(super) request: SubTaskRequest,
 }
 
 pub(super) enum SubTaskPayload {
@@ -49,11 +48,8 @@ impl SubTaskPayload {
         match self {
             Self::Single(request) => request.metadata.extend(metadata.clone()),
             Self::Batch { entries, .. } => {
-                for request in entries
-                    .iter_mut()
-                    .filter_map(|entry| entry.request.as_mut())
-                {
-                    request.metadata.extend(metadata.clone());
+                for entry in entries.iter_mut() {
+                    entry.request.metadata.extend(metadata.clone());
                 }
             }
         }
@@ -132,11 +128,11 @@ pub(super) fn shared_sub_task_options(
     Ok(SharedSubTaskOptions {
         include_main_summary: arguments
             .get("include_main_summary")
-            .is_some_and(|value| coerce_bool(Some(value), false)),
+            .is_some_and(|value| bool_arg(Some(value), false)),
         exclude_files_pattern,
         wait_for_completion: arguments
             .get("wait_for_completion")
-            .is_none_or(|value| coerce_bool(Some(value), true)),
+            .is_none_or(|value| bool_arg(Some(value), true)),
     })
 }
 
@@ -195,7 +191,7 @@ pub(super) fn parse_sub_task_payload(
     }
 
     Ok(SubTaskPayload::Batch {
-        entries: build_batch_requests(tasks, agent_name, options),
+        entries: build_batch_requests(tasks, agent_name, options)?,
         total: tasks.len(),
     })
 }
@@ -204,50 +200,43 @@ fn build_batch_requests(
     tasks: &[Value],
     agent_name: &str,
     options: &SharedSubTaskOptions,
-) -> Vec<BatchRequestEntry> {
+) -> Result<Vec<BatchRequestEntry>, SubTaskArgumentError> {
     tasks
         .iter()
         .enumerate()
         .map(|(index, item)| {
-            let Some(item) = item.as_object() else {
-                return BatchRequestEntry {
-                    index,
-                    request: None,
-                    error: Some("Task item must be an object".to_string()),
-                };
-            };
+            let item = item.as_object().ok_or_else(|| {
+                SubTaskArgumentError::new("Task item must be an object", "invalid_tasks_payload")
+            })?;
             let task_description = match item.get("task_description") {
                 Some(Value::String(value)) => trim_portable_whitespace(value).to_string(),
                 Some(_) => {
-                    return BatchRequestEntry {
-                        index,
-                        request: None,
-                        error: Some("`task_description` must be a string".to_string()),
-                    };
+                    return Err(SubTaskArgumentError::new(
+                        "`task_description` must be a string",
+                        "invalid_tasks_payload",
+                    ));
                 }
                 None => String::new(),
             };
             if task_description.is_empty() {
-                return BatchRequestEntry {
-                    index,
-                    request: None,
-                    error: Some("`task_description` is required".to_string()),
-                };
+                return Err(SubTaskArgumentError::new(
+                    format!("`tasks[{index}].task_description` is required"),
+                    "invalid_tasks_payload",
+                ));
             }
-            BatchRequestEntry {
+            Ok(BatchRequestEntry {
                 index,
-                request: Some(SubTaskRequest {
+                request: SubTaskRequest {
                     agent_name: agent_name.to_string(),
                     task_description,
                     output_requirements: match item.get("output_requirements") {
                         None => String::new(),
                         Some(Value::String(value)) => trim_portable_whitespace(value).to_string(),
                         Some(_) => {
-                            return BatchRequestEntry {
-                                index,
-                                request: None,
-                                error: Some("`output_requirements` must be a string".to_string()),
-                            };
+                            return Err(SubTaskArgumentError::new(
+                                "`output_requirements` must be a string",
+                                "invalid_tasks_payload",
+                            ));
                         }
                     },
                     include_main_summary: options.include_main_summary,
@@ -256,9 +245,8 @@ fn build_batch_requests(
                         "batch_index".to_string(),
                         Value::Number((index as u64).into()),
                     )]),
-                }),
-                error: None,
-            }
+                },
+            })
         })
         .collect()
 }

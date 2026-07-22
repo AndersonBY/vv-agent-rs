@@ -65,7 +65,7 @@ async fn run_config_overrides_agent_model_settings_and_workspace() {
         .model_settings(
             ModelSettings::builder()
                 .temperature(0.1)
-                .max_output_tokens(512)
+                .max_tokens(512)
                 .extra_body("reasoning", json!({"effort": "low"}))
                 .build(),
         )
@@ -575,6 +575,13 @@ fn agent_as_tool_builds_public_tool_contract() {
     assert_eq!(request.agent_name, "researcher");
     assert_eq!(request.task_description, "summarize README");
     let _: SubTaskRequest = request;
+
+    for legacy_field in ["task", "input"] {
+        let error = tool
+            .request_from_arguments(json!({(legacy_field): "summarize README"}))
+            .expect_err("removed task-description alias must be rejected");
+        assert!(error.contains("requires task_description"));
+    }
 }
 
 #[tokio::test]
@@ -678,6 +685,20 @@ async fn agent_background_task_returns_pollable_task_handle() {
     );
 
     let context = ToolContext::new("./workspace");
+    for legacy_field in ["task", "input"] {
+        let result = background_tool.start(
+            &runner,
+            &context,
+            json!({(legacy_field): "draft the sdk redesign report"}),
+            None,
+        );
+        let error = match result {
+            Ok(_) => panic!("removed task-description alias must be rejected"),
+            Err(error) => error,
+        };
+        assert!(error.contains("requires task_description"));
+    }
+
     let start = background_tool
         .start(
             &runner,

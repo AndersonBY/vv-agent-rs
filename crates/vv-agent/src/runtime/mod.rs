@@ -1,8 +1,7 @@
 pub mod backends;
 pub mod background_sessions;
 pub mod cancellation;
-pub(crate) mod checkpoint_codec;
-pub mod checkpoint_codec_v2;
+pub mod checkpoint_codec;
 pub(crate) mod checkpoint_resume;
 pub mod context;
 pub mod cycle_runner;
@@ -11,10 +10,9 @@ pub mod hooks;
 pub mod lifecycle;
 pub mod processes;
 mod results;
-pub(crate) mod run_definition_v2;
+pub(crate) mod run_definition;
 pub mod shell;
 pub mod state;
-pub mod state_v2;
 pub mod stores;
 mod sub_agent_sessions;
 mod sub_agents;
@@ -29,15 +27,13 @@ pub use background_sessions::{
     BackgroundSessionManager, BackgroundSessionStartOptions, BackgroundSessionSubscription,
 };
 pub use cancellation::{CancellationToken, CancelledError};
-pub use context::{ExecutionContext, StreamCallback};
+pub use context::ExecutionContext;
 pub use cycle_runner::{
     is_prompt_too_long_error, CycleRunRequest, CycleRunner, MAX_PROMPT_TOO_LONG_RETRIES,
-    MAX_PTL_RETRIES,
 };
 pub use engine::{
     AgentRuntime, BeforeCycleMessageProvider, CheckpointRuntimeControl,
-    InterruptionMessageProvider, RuntimeEventHandler, RuntimeLogCallback, RuntimeLogHandler,
-    RuntimeRunControls,
+    InterruptionMessageProvider, RunEventHandler, RuntimeRunControls,
 };
 pub use hooks::{
     AfterLlmEvent, AfterToolCallEvent, BeforeLlmEvent, BeforeLlmPatch, BeforeMemoryCompactEvent,
@@ -52,7 +48,8 @@ pub use processes::{
     start_captured_process_with_env, wait_for_child, CapturedProcess,
 };
 pub(crate) use results::{extract_final_message, extract_wait_reason};
-pub use state::{Checkpoint, InMemoryStateStore, StateStore};
+pub use state::{Checkpoint, CheckpointStore, OperationJournalEntry};
+pub use stores::memory::InMemoryCheckpointStore;
 pub use sub_agent_sessions::{
     _register_sub_agent_session, _unregister_sub_agent_session, continue_sub_agent_session,
     get_sub_agent_session, register_sub_agent_session, steer_sub_agent_session,

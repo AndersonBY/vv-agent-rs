@@ -89,23 +89,26 @@ fn read_file_validation_and_not_found_errors_are_structured() {
     assert_eq!(missing_path.directive, vv_agent::ToolDirective::Continue);
     assert_eq!(
         missing_path.error_code.as_deref(),
-        Some("invalid_arguments")
+        Some("invalid_tool_arguments")
     );
     assert_eq!(
         missing_path.metadata,
         BTreeMap::from([
-            ("error_code".to_string(), json!("invalid_arguments")),
-            ("missing_arguments".to_string(), json!(["path"])),
+            ("error_code".to_string(), json!("invalid_tool_arguments"),),
+            ("issue_count".to_string(), json!(1)),
         ])
     );
     assert_eq!(
         missing_payload,
         json!({
             "ok": false,
-            "error": "`path` is required.",
-            "error_code": "invalid_arguments",
-            "message": "`path` is required.",
-            "missing_arguments": ["path"],
+            "error": "Tool arguments do not match the declared schema",
+            "error_code": "invalid_tool_arguments",
+            "issues": [{
+                "instance_path": "",
+                "schema_path": "/required",
+                "rule": "required",
+            }],
         })
     );
 
@@ -239,32 +242,51 @@ fn read_file_returns_file_info_when_char_limit_exceeded() {
 }
 
 #[test]
-fn read_file_accepts_string_line_numbers() {
+fn read_and_write_reject_schema_invalid_types() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
-    std::fs::write(workspace.path().join("notes.txt"), "alpha\nbeta\ngamma").expect("file");
+    let cases = [
+        (
+            "read_file",
+            BTreeMap::from([
+                ("path".to_string(), json!("notes.txt")),
+                ("start_line".to_string(), json!("2")),
+            ]),
+            "/start_line",
+        ),
+        (
+            "read_file",
+            BTreeMap::from([
+                ("path".to_string(), json!("notes.txt")),
+                ("show_line_numbers".to_string(), json!("false")),
+            ]),
+            "/show_line_numbers",
+        ),
+        (
+            "write_file",
+            BTreeMap::from([
+                ("path".to_string(), json!("notes.txt")),
+                ("content".to_string(), json!("beta")),
+                ("append".to_string(), json!("false")),
+            ]),
+            "/append",
+        ),
+    ];
 
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "read_string_lines",
-                "read_file",
-                BTreeMap::from([
-                    ("path".to_string(), json!("notes.txt")),
-                    ("start_line".to_string(), json!("2")),
-                    ("end_line".to_string(), json!("2")),
-                    ("show_line_numbers".to_string(), json!(true)),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("read tool");
-
-    let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["start_line"], 2);
-    assert_eq!(payload["end_line"], 2);
-    assert_eq!(payload["content"], "2: beta");
+    for (tool_name, arguments, instance_path) in cases {
+        let result = registry
+            .execute(
+                &ToolCall::new(format!("{tool_name}_invalid_type"), tool_name, arguments),
+                &mut context,
+            )
+            .expect("tool validation");
+        let payload: Value = serde_json::from_str(&result.content).expect("payload");
+        assert_eq!(result.status, ToolResultStatus::Error);
+        assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
+        assert_eq!(payload["issues"][0]["instance_path"], instance_path);
+        assert_eq!(payload["issues"][0]["rule"], "type");
+    }
 }
 
 #[test]
@@ -293,66 +315,6 @@ fn read_file_preserves_requested_start_line_for_empty_out_of_range_slice() {
     assert_eq!(payload["start_line"], 10);
     assert_eq!(payload["end_line"], 9);
     assert_eq!(payload["content"], "");
-}
-
-#[test]
-fn read_file_uses_json_truthiness_for_show_line_numbers() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-    std::fs::write(workspace.path().join("notes.txt"), "alpha\nbeta").expect("file");
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "read_truthy_show_lines",
-                "read_file",
-                BTreeMap::from([
-                    ("path".to_string(), json!("notes.txt")),
-                    ("show_line_numbers".to_string(), json!("false")),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("read tool");
-
-    let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["show_line_numbers"], true);
-    assert_eq!(payload["content"], "1: alpha\n2: beta");
-}
-
-#[test]
-fn write_file_uses_json_truthiness_for_append_flags() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-    std::fs::write(workspace.path().join("notes.txt"), "alpha").expect("file");
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "write_truthy_append",
-                "write_file",
-                BTreeMap::from([
-                    ("path".to_string(), json!("notes.txt")),
-                    ("content".to_string(), json!("beta")),
-                    ("append".to_string(), json!("false")),
-                    ("leading_newline".to_string(), json!("false")),
-                    ("trailing_newline".to_string(), json!("false")),
-                ]),
-            ),
-            &mut context,
-        )
-        .expect("write tool");
-
-    let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["append"], true);
-    assert_eq!(payload["leading_newline"], true);
-    assert_eq!(payload["trailing_newline"], true);
-    assert_eq!(
-        std::fs::read_to_string(workspace.path().join("notes.txt")).expect("notes"),
-        "alpha\nbeta\n"
-    );
 }
 
 #[test]

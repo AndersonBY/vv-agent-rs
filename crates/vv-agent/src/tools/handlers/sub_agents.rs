@@ -60,14 +60,6 @@ fn handle_create_sub_task(
         Ok(payload) => payload,
         Err(error) => return error.into_tool_result(),
     };
-    if let SubTaskPayload::Batch { entries, total } = &payload {
-        if !entries
-            .iter()
-            .any(|entry| entry.request.is_some() && entry.error.is_none())
-        {
-            return response::invalid_batch_payload(*total, entries, options.wait_for_completion);
-        }
-    }
     if let Some(pattern) = options.exclude_files_pattern.as_deref() {
         if validate_portable_exclude_pattern(pattern).is_err() {
             return response::error_message(

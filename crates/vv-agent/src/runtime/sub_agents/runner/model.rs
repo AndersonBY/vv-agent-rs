@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn portable_blank_backend_uses_default_backend_for_settings_resolution() {
         let contract: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../tests/fixtures/parity/configured_sub_agent_v1.json"
+            "../../../../tests/fixtures/parity/configured_sub_agent.json"
         ))
         .expect("configured sub-agent contract");
         let workspace = tempfile::tempdir().expect("workspace");
@@ -190,9 +190,7 @@ mod tests {
             settings_file: Some(settings_file),
             default_backend: Some("moonshot".to_string()),
             sub_agent_timeout_seconds: 30.0,
-            stream_callback: None,
-            parent_log_handler: None,
-            parent_event_handler: None,
+            event_handler: None,
             parent_execution_context: None,
             model_provider: None,
             parent_run_context: None,

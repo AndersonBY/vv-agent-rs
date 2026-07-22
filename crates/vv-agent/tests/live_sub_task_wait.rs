@@ -4,8 +4,9 @@ use std::path::PathBuf;
 
 use serde_json::{json, Value};
 use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
+use vv_agent::types::AgentTask;
 use vv_agent::{
-    build_default_registry, build_vv_llm_from_local_settings, AgentRuntime, AgentStatus, AgentTask,
+    build_default_registry, build_vv_llm_from_local_settings, AgentRuntime, AgentStatus,
     SubAgentConfig,
 };
 
@@ -24,7 +25,7 @@ fn live_agent_waits_for_background_sub_task_completion() {
         settings_file.display()
     );
     let backend = env::var("VV_AGENT_LIVE_BACKEND").unwrap_or_else(|_| "moonshot".to_string());
-    let model = env::var("VV_AGENT_LIVE_MODEL").unwrap_or_else(|_| "kimi-k2.6".to_string());
+    let model = env::var("VV_AGENT_LIVE_MODEL").unwrap_or_else(|_| "kimi-k3".to_string());
     let workspace = env::temp_dir().join("vv-agent-rs-live-sub-task-wait");
     std::fs::create_dir_all(&workspace).expect("workspace");
     let (llm, resolved) = build_vv_llm_from_local_settings(&settings_file, &backend, &model, 90.0)

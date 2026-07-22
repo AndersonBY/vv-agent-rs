@@ -102,7 +102,7 @@ impl Default for MemoryManagerConfig {
             compact_threshold: 250_000,
             keep_recent_messages: 10,
             model: String::new(),
-            model_context_window: 200_000,
+            model_context_window: 279_000,
             reserved_output_tokens: 16_000,
             autocompact_buffer_tokens: 13_000,
             language: "zh-CN".to_string(),

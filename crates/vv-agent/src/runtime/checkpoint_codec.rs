@@ -1,412 +1,614 @@
-use std::io::{Error, ErrorKind, Result};
+//! Strict codec for the current checkpoint wire format.
 
-use serde_json::Value;
+use std::collections::BTreeMap;
+
+use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde::Deserialize;
+use serde_json::{Map, Number, Value};
 
 use crate::budget::BudgetUsageSnapshot;
-use crate::runtime::state::{checkpoint_status_from_value, checkpoint_status_value, Checkpoint};
-use crate::types::{CycleRecord, Message, MessageRole};
+use crate::checkpoint::{
+    canonical_json_bytes, CheckpointError, CheckpointResult, CheckpointStatus, CHECKPOINT_SCHEMA,
+    RUN_DEFINITION_SCHEMA,
+};
+use crate::runtime::state::{
+    validate_checkpoint, validate_extension_state_size, Checkpoint, EventOutboxEntry,
+    ExtensionStateEntry, OperationJournalEntry,
+};
+use crate::types::{CycleRecord, Message};
 
-pub(crate) fn checkpoint_to_json(checkpoint: &Checkpoint) -> Result<String> {
+const KNOWN_FIELDS: &[&str] = &[
+    "schema_version",
+    "run_definition_schema",
+    "run_definition",
+    "checkpoint_key",
+    "task_id",
+    "root_run_id",
+    "trace_id",
+    "run_definition_digest",
+    "resume_attempt",
+    "cycle_index",
+    "status",
+    "messages",
+    "cycles",
+    "shared_state",
+    "budget_usage",
+    "event_cursor",
+    "event_outbox",
+    "extension_state",
+    "model_call_journal",
+    "tool_journal",
+    "revision",
+    "claim_token",
+    "claimed_cycle",
+    "lease_expires_at_ms",
+    "terminal_result",
+    "terminal_acknowledged",
+];
+
+pub fn checkpoint_to_value(
+    checkpoint: &Checkpoint,
+    max_extension_state_bytes: u64,
+) -> CheckpointResult<Value> {
     validate_checkpoint(checkpoint)?;
-    let mut payload = serde_json::Map::from_iter([
-        (
-            "task_id".to_string(),
-            Value::String(checkpoint.task_id.clone()),
+    let extension_bytes =
+        validate_extension_state_size(&checkpoint.extension_state, max_extension_state_bytes);
+    extension_bytes?;
+
+    let mut object = Map::new();
+    object.insert(
+        "schema_version".to_string(),
+        Value::String(CHECKPOINT_SCHEMA.to_string()),
+    );
+    object.insert(
+        "run_definition_schema".to_string(),
+        Value::String(RUN_DEFINITION_SCHEMA.to_string()),
+    );
+    object.insert(
+        "run_definition".to_string(),
+        checkpoint.run_definition.clone(),
+    );
+    object.insert(
+        "checkpoint_key".to_string(),
+        Value::String(checkpoint.checkpoint_key.clone()),
+    );
+    object.insert(
+        "task_id".to_string(),
+        Value::String(checkpoint.task_id.clone()),
+    );
+    object.insert(
+        "root_run_id".to_string(),
+        Value::String(checkpoint.root_run_id.clone()),
+    );
+    object.insert(
+        "trace_id".to_string(),
+        Value::String(checkpoint.trace_id.clone()),
+    );
+    object.insert(
+        "run_definition_digest".to_string(),
+        Value::String(checkpoint.run_definition_digest.clone()),
+    );
+    object.insert(
+        "resume_attempt".to_string(),
+        Value::from(checkpoint.resume_attempt),
+    );
+    object.insert(
+        "cycle_index".to_string(),
+        Value::from(checkpoint.cycle_index),
+    );
+    object.insert(
+        "status".to_string(),
+        Value::String(checkpoint.status.as_str().to_string()),
+    );
+    object.insert(
+        "messages".to_string(),
+        Value::Array(checkpoint.messages.iter().map(Message::to_dict).collect()),
+    );
+    object.insert(
+        "cycles".to_string(),
+        Value::Array(
+            checkpoint
+                .cycles
+                .iter()
+                .map(checkpoint_cycle_to_value)
+                .collect(),
         ),
-        (
-            "cycle_index".to_string(),
-            Value::from(checkpoint.cycle_index),
+    );
+    object.insert(
+        "shared_state".to_string(),
+        Value::Object(checkpoint.shared_state.clone().into_iter().collect()),
+    );
+    object.insert(
+        "budget_usage".to_string(),
+        checkpoint
+            .budget_usage
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|error| CheckpointError::new("checkpoint_json_invalid", error.to_string()))?
+            .unwrap_or(Value::Null),
+    );
+    object.insert(
+        "event_cursor".to_string(),
+        checkpoint
+            .event_cursor
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|error| CheckpointError::new("checkpoint_json_invalid", error.to_string()))?
+            .unwrap_or(Value::Null),
+    );
+    object.insert(
+        "event_outbox".to_string(),
+        Value::Array(
+            checkpoint
+                .event_outbox
+                .iter()
+                .map(EventOutboxEntry::to_value)
+                .collect(),
         ),
-        (
-            "status".to_string(),
-            Value::String(checkpoint_status_value(checkpoint.status).to_string()),
+    );
+    object.insert(
+        "extension_state".to_string(),
+        Value::Object(
+            checkpoint
+                .extension_state
+                .iter()
+                .map(|(namespace, entry)| (namespace.clone(), entry.to_value()))
+                .collect(),
         ),
-        (
-            "messages".to_string(),
-            Value::Array(checkpoint.messages.iter().map(Message::to_dict).collect()),
+    );
+    object.insert(
+        "model_call_journal".to_string(),
+        Value::Array(
+            checkpoint
+                .model_call_journal
+                .iter()
+                .map(OperationJournalEntry::to_value)
+                .collect(),
         ),
-        (
-            "cycles".to_string(),
-            Value::Array(checkpoint.cycles.iter().map(CycleRecord::to_dict).collect()),
+    );
+    object.insert(
+        "tool_journal".to_string(),
+        Value::Array(
+            checkpoint
+                .tool_journal
+                .iter()
+                .map(OperationJournalEntry::to_value)
+                .collect(),
         ),
-        (
-            "shared_state".to_string(),
-            Value::Object(checkpoint.shared_state.clone().into_iter().collect()),
-        ),
-    ]);
-    if checkpoint.revision != 0 {
-        payload.insert("revision".to_string(), Value::from(checkpoint.revision));
-    }
-    if let Some(claim_token) = &checkpoint.claim_token {
-        payload.insert(
-            "claim_token".to_string(),
-            Value::String(claim_token.clone()),
-        );
-    }
-    if let Some(claimed_cycle) = checkpoint.claimed_cycle {
-        payload.insert("claimed_cycle".to_string(), Value::from(claimed_cycle));
-    }
-    if let Some(lease_expires_at_ms) = checkpoint.lease_expires_at_ms {
-        payload.insert(
-            "lease_expires_at_ms".to_string(),
-            Value::from(lease_expires_at_ms),
-        );
-    }
-    if let Some(terminal_result) = &checkpoint.terminal_result {
-        let mut terminal_payload = terminal_result.to_dict();
-        if let Some(terminal_payload) = terminal_payload.as_object_mut() {
-            terminal_payload.remove("checkpoint_key");
-            terminal_payload.remove("resume_observation");
-        }
-        payload.insert("terminal_result".to_string(), terminal_payload);
-    }
-    if let Some(budget_usage) = &checkpoint.budget_usage {
-        payload.insert(
-            "budget_usage".to_string(),
-            serde_json::to_value(budget_usage).map_err(json_to_io)?,
-        );
-    }
-    serde_json::to_string(&Value::Object(payload)).map_err(json_to_io)
+    );
+    object.insert("revision".to_string(), Value::from(checkpoint.revision));
+    object.insert(
+        "claim_token".to_string(),
+        checkpoint
+            .claim_token
+            .clone()
+            .map_or(Value::Null, Value::String),
+    );
+    object.insert(
+        "claimed_cycle".to_string(),
+        checkpoint.claimed_cycle.map_or(Value::Null, Value::from),
+    );
+    object.insert(
+        "lease_expires_at_ms".to_string(),
+        checkpoint
+            .lease_expires_at_ms
+            .map_or(Value::Null, Value::from),
+    );
+    object.insert(
+        "terminal_result".to_string(),
+        checkpoint.terminal_result.clone().unwrap_or(Value::Null),
+    );
+    object.insert(
+        "terminal_acknowledged".to_string(),
+        Value::Bool(checkpoint.terminal_acknowledged),
+    );
+    Ok(Value::Object(object))
 }
 
-pub(crate) fn checkpoint_from_json(raw: &str) -> Result<Checkpoint> {
-    let payload = serde_json::from_str::<Value>(raw).map_err(json_to_io)?;
+pub fn checkpoint_from_value(
+    payload: &Value,
+    max_extension_state_bytes: u64,
+) -> CheckpointResult<Checkpoint> {
     let object = payload.as_object().ok_or_else(|| {
-        Error::new(
-            ErrorKind::InvalidData,
-            "checkpoint payload must be an object",
+        CheckpointError::new(
+            "checkpoint_payload_invalid",
+            "checkpoint v2 payload must be an object",
         )
     })?;
-    let task_id = required_non_empty_string(object, "task_id")?.to_string();
-    let cycle_index = required_u32(object, "cycle_index")?;
-    let status = checkpoint_status_from_value(required_string(object, "status")?)?;
-    let messages = required_array(object, "messages")?
+    if let Some(field) = object
+        .keys()
+        .find(|field| !KNOWN_FIELDS.contains(&field.as_str()))
+    {
+        return Err(CheckpointError::new(
+            "checkpoint_unknown_field",
+            format!("checkpoint contains unknown field: {field}"),
+        ));
+    }
+    if object.get("schema_version").and_then(Value::as_str) != Some(CHECKPOINT_SCHEMA) {
+        return Err(CheckpointError::new(
+            "checkpoint_schema_unsupported",
+            "checkpoint schema_version is not vv-agent.checkpoint.v2",
+        ));
+    }
+    let run_definition_schema = required_string(
+        object,
+        "run_definition_schema",
+        "checkpoint_definition_schema_unsupported",
+    )?;
+    if run_definition_schema != RUN_DEFINITION_SCHEMA {
+        return Err(CheckpointError::new(
+            "checkpoint_definition_schema_unsupported",
+            "run_definition_schema is unsupported",
+        ));
+    }
+    let run_definition = object.get("run_definition").cloned().ok_or_else(|| {
+        CheckpointError::new(
+            "checkpoint_definition_invalid",
+            "run_definition is required",
+        )
+    })?;
+    if let Some(field) = KNOWN_FIELDS
         .iter()
-        .enumerate()
-        .map(|(index, value)| strict_message_from_dict(value, index))
-        .collect::<Result<Vec<_>>>()?;
-    let cycles = required_array(object, "cycles")?
-        .iter()
-        .enumerate()
-        .map(|(index, value)| strict_cycle_from_dict(value, index))
-        .collect::<Result<Vec<_>>>()?;
-    let shared_state = object
-        .get("shared_state")
-        .and_then(Value::as_object)
-        .ok_or_else(|| {
-            Error::new(
-                ErrorKind::InvalidData,
-                "checkpoint shared_state must be an object",
-            )
-        })?
-        .clone()
-        .into_iter()
-        .collect();
-    let revision = default_u64(object, "revision", 0)?;
-    let claim_token = optional_non_empty_string(object, "claim_token")?;
-    let claimed_cycle = optional_u32(object, "claimed_cycle")?;
-    let lease_expires_at_ms = optional_u64(object, "lease_expires_at_ms")?;
-    let terminal_result = object
-        .get("terminal_result")
-        .filter(|value| !value.is_null())
-        .map(crate::types::AgentResult::from_dict)
-        .transpose()
-        .map_err(|error| {
-            Error::new(
-                ErrorKind::InvalidData,
-                format!("invalid checkpoint terminal_result: {error}"),
-            )
-        })?;
-    let budget_usage = object
-        .get("budget_usage")
-        .filter(|value| !value.is_null())
-        .map(|value| serde_json::from_value::<BudgetUsageSnapshot>(value.clone()))
-        .transpose()
-        .map_err(|error| {
-            Error::new(
-                ErrorKind::InvalidData,
-                format!("invalid checkpoint budget_usage: {error}"),
-            )
-        })?;
+        .find(|field| !object.contains_key(**field))
+    {
+        return Err(CheckpointError::new(
+            "checkpoint_field_invalid",
+            format!("required checkpoint field {field} is missing"),
+        ));
+    }
     let checkpoint = Checkpoint {
-        task_id,
-        cycle_index,
-        status,
-        messages,
-        cycles,
-        shared_state,
-        revision,
-        claim_token,
-        claimed_cycle,
-        lease_expires_at_ms,
-        terminal_result,
-        budget_usage,
+        schema_version: CHECKPOINT_SCHEMA.to_string(),
+        run_definition_schema: run_definition_schema.to_string(),
+        run_definition,
+        checkpoint_key: required_string(object, "checkpoint_key", "checkpoint_key_invalid")?
+            .to_string(),
+        task_id: required_string(object, "task_id", "checkpoint_value_invalid")?.to_string(),
+        root_run_id: required_string(object, "root_run_id", "checkpoint_value_invalid")?
+            .to_string(),
+        trace_id: required_string(object, "trace_id", "checkpoint_value_invalid")?.to_string(),
+        run_definition_digest: required_string(
+            object,
+            "run_definition_digest",
+            "checkpoint_digest_invalid",
+        )?
+        .to_string(),
+        resume_attempt: required_u64(
+            object,
+            "resume_attempt",
+            "checkpoint_resume_attempt_invalid",
+        )?,
+        cycle_index: required_u64(object, "cycle_index", "checkpoint_cycle_invalid")?,
+        status: parse_status(object, "status")?,
+        messages: parse_messages(object.get("messages"))?,
+        cycles: parse_cycles(object.get("cycles"))?,
+        shared_state: parse_object_map(object, "shared_state", "checkpoint_shared_state_invalid")?,
+        budget_usage: parse_optional_budget(object.get("budget_usage"))?,
+        event_cursor: parse_optional(object.get("event_cursor"), "event_cursor")?,
+        event_outbox: parse_array(object, "event_outbox")?
+            .iter()
+            .map(EventOutboxEntry::from_value)
+            .collect::<CheckpointResult<Vec<_>>>()?,
+        extension_state: parse_extensions(object.get("extension_state"))?,
+        model_call_journal: parse_array(object, "model_call_journal")?
+            .iter()
+            .map(OperationJournalEntry::from_value)
+            .collect::<CheckpointResult<Vec<_>>>()?,
+        tool_journal: parse_array(object, "tool_journal")?
+            .iter()
+            .map(OperationJournalEntry::from_value)
+            .collect::<CheckpointResult<Vec<_>>>()?,
+        revision: required_u64(object, "revision", "checkpoint_revision_invalid")?,
+        claim_token: parse_optional_string(object, "claim_token")?,
+        claimed_cycle: parse_optional_u64(object, "claimed_cycle")?,
+        lease_expires_at_ms: parse_optional_u64(object, "lease_expires_at_ms")?,
+        terminal_result: parse_optional_value(object, "terminal_result")?,
+        terminal_acknowledged: object
+            .get("terminal_acknowledged")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| {
+                CheckpointError::new(
+                    "checkpoint_status_invalid",
+                    "terminal_acknowledged must be a boolean",
+                )
+            })?,
     };
     validate_checkpoint(&checkpoint)?;
+    crate::runtime::state::validate_extension_state_size(
+        &checkpoint.extension_state,
+        max_extension_state_bytes,
+    )?;
     Ok(checkpoint)
 }
 
-pub(crate) fn validate_checkpoint(checkpoint: &Checkpoint) -> Result<()> {
-    if checkpoint.task_id.trim().is_empty() {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "checkpoint task_id must be a non-empty string",
-        ));
-    }
-    serde_json::to_value(&checkpoint.shared_state).map_err(json_to_io)?;
-    for (index, message) in checkpoint.messages.iter().enumerate() {
-        validate_message(message, index)?;
-    }
-    for (index, cycle) in checkpoint.cycles.iter().enumerate() {
-        validate_cycle(cycle, index)?;
-    }
-    let claim_fields = [
-        checkpoint.claim_token.is_some(),
-        checkpoint.claimed_cycle.is_some(),
-        checkpoint.lease_expires_at_ms.is_some(),
-    ];
-    if claim_fields.iter().any(|value| *value) && !claim_fields.iter().all(|value| *value) {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "checkpoint claim_token, claimed_cycle, and lease_expires_at_ms must be set together",
-        ));
-    }
-    if checkpoint.terminal_result.is_some() && checkpoint.claim_token.is_some() {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "checkpoint terminal_result cannot have an active claim",
-        ));
-    }
-    if let Some(claimed_cycle) = checkpoint.claimed_cycle {
-        if claimed_cycle == 0 || claimed_cycle != checkpoint.cycle_index.saturating_add(1) {
-            return Err(Error::new(
-                ErrorKind::InvalidData,
-                "checkpoint claimed_cycle must be exactly cycle_index + 1",
-            ));
-        }
-    }
-    if checkpoint
-        .terminal_result
-        .as_ref()
-        .is_some_and(|result| result.status != checkpoint.status)
-    {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "checkpoint terminal_result status must match checkpoint status",
-        ));
-    }
-    if let Some(budget_usage) = &checkpoint.budget_usage {
-        budget_usage
-            .validate()
-            .map_err(|error| Error::new(ErrorKind::InvalidData, error))?;
-    }
-    Ok(())
-}
-
-fn strict_message_from_dict(value: &Value, index: usize) -> Result<Message> {
-    let object = value.as_object().ok_or_else(|| {
-        Error::new(
-            ErrorKind::InvalidData,
-            format!("checkpoint messages[{index}] must be an object"),
-        )
-    })?;
-    required_string(object, "role")?;
-    required_string(object, "content")?;
-    if object
-        .get("tool_calls")
-        .is_some_and(|value| !value.is_array())
-    {
-        return invalid(format!(
-            "checkpoint messages[{index}].tool_calls must be an array"
-        ));
-    }
-    if object
-        .get("metadata")
-        .is_some_and(|value| !value.is_object())
-    {
-        return invalid(format!(
-            "checkpoint messages[{index}].metadata must be an object"
-        ));
-    }
-    for key in ["name", "tool_call_id", "reasoning_content", "image_url"] {
-        if object
-            .get(key)
-            .is_some_and(|value| !value.is_null() && !value.is_string())
-        {
-            return invalid(format!(
-                "checkpoint messages[{index}].{key} must be a string or null"
-            ));
-        }
-    }
-    let message = Message::from_dict(value).map_err(|error| {
-        Error::new(
-            ErrorKind::InvalidData,
-            format!("invalid checkpoint messages[{index}]: {error}"),
-        )
-    })?;
-    validate_message(&message, index)?;
-    Ok(message)
-}
-
-fn strict_cycle_from_dict(value: &Value, index: usize) -> Result<CycleRecord> {
-    let object = value.as_object().ok_or_else(|| {
-        Error::new(
-            ErrorKind::InvalidData,
-            format!("checkpoint cycles[{index}] must be an object"),
-        )
-    })?;
-    required_u32(object, "index")?;
-    required_string(object, "assistant_message")?;
-    required_array(object, "tool_calls")?;
-    required_array(object, "tool_results")?;
-    if !object
-        .get("memory_compacted")
-        .is_some_and(Value::is_boolean)
-    {
-        return invalid(format!(
-            "checkpoint cycles[{index}].memory_compacted must be a boolean"
-        ));
-    }
-    if !object.get("token_usage").is_some_and(Value::is_object) {
-        return invalid(format!(
-            "checkpoint cycles[{index}].token_usage must be an object"
-        ));
-    }
-    let cycle = CycleRecord::from_dict(value).map_err(|error| {
-        Error::new(
-            ErrorKind::InvalidData,
-            format!("invalid checkpoint cycles[{index}]: {error}"),
-        )
-    })?;
-    validate_cycle(&cycle, index)?;
-    Ok(cycle)
-}
-
-fn validate_message(message: &Message, index: usize) -> Result<()> {
-    match message.role {
-        MessageRole::System | MessageRole::User | MessageRole::Assistant | MessageRole::Tool => {}
-    }
-    serde_json::to_value(message.to_dict()).map_err(|error| {
-        Error::new(
-            ErrorKind::InvalidData,
-            format!("invalid checkpoint messages[{index}]: {error}"),
-        )
-    })?;
-    Ok(())
-}
-
-fn validate_cycle(cycle: &CycleRecord, index: usize) -> Result<()> {
-    serde_json::to_value(cycle.to_dict()).map_err(|error| {
-        Error::new(
-            ErrorKind::InvalidData,
-            format!("invalid checkpoint cycles[{index}]: {error}"),
-        )
-    })?;
-    Ok(())
-}
-
-fn required_string<'a>(object: &'a serde_json::Map<String, Value>, key: &str) -> Result<&'a str> {
-    object.get(key).and_then(Value::as_str).ok_or_else(|| {
-        Error::new(
-            ErrorKind::InvalidData,
-            format!("checkpoint {key} must be a string"),
+pub fn checkpoint_to_json(
+    checkpoint: &Checkpoint,
+    max_extension_state_bytes: u64,
+) -> CheckpointResult<String> {
+    let value = checkpoint_to_value(checkpoint, max_extension_state_bytes)?;
+    let bytes = canonical_json_bytes(&value, "checkpoint v2")?;
+    String::from_utf8(bytes).map_err(|error| {
+        CheckpointError::new(
+            "checkpoint_canonicalization_invalid",
+            format!("checkpoint canonical JSON is not UTF-8: {error}"),
         )
     })
 }
 
-fn required_non_empty_string<'a>(
-    object: &'a serde_json::Map<String, Value>,
-    key: &str,
-) -> Result<&'a str> {
-    let value = required_string(object, key)?;
-    if value.trim().is_empty() {
-        return invalid(format!("checkpoint {key} must be a non-empty string"));
-    }
-    Ok(value)
+pub fn checkpoint_from_json(
+    payload: &str,
+    max_extension_state_bytes: u64,
+) -> CheckpointResult<Checkpoint> {
+    let value = strict_json_value(payload)?;
+    checkpoint_from_value(&value, max_extension_state_bytes)
 }
 
-fn required_u32(object: &serde_json::Map<String, Value>, key: &str) -> Result<u32> {
-    object
-        .get(key)
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-        .ok_or_else(|| {
-            Error::new(
-                ErrorKind::InvalidData,
-                format!("checkpoint {key} must be an unsigned 32-bit integer"),
-            )
+fn parse_status(object: &Map<String, Value>, field: &str) -> CheckpointResult<CheckpointStatus> {
+    let value = required_string(object, field, "checkpoint_status_invalid")?;
+    serde_json::from_value(Value::String(value.to_string())).map_err(|_| {
+        CheckpointError::new(
+            "checkpoint_status_invalid",
+            format!("unknown checkpoint status {value}"),
+        )
+    })
+}
+
+fn parse_messages(value: Option<&Value>) -> CheckpointResult<Vec<Message>> {
+    let values = value.and_then(Value::as_array).ok_or_else(|| {
+        CheckpointError::new("checkpoint_messages_invalid", "messages must be an array")
+    })?;
+    values
+        .iter()
+        .map(|value| {
+            Message::from_dict(value)
+                .map_err(|error| CheckpointError::new("checkpoint_messages_invalid", error))
         })
+        .collect()
 }
 
-fn optional_u32(object: &serde_json::Map<String, Value>, key: &str) -> Result<Option<u32>> {
-    match object.get(key) {
+fn parse_cycles(value: Option<&Value>) -> CheckpointResult<Vec<CycleRecord>> {
+    let values = value.and_then(Value::as_array).ok_or_else(|| {
+        CheckpointError::new("checkpoint_cycles_invalid", "cycles must be an array")
+    })?;
+    values
+        .iter()
+        .map(|value| {
+            CycleRecord::from_dict(value)
+                .map_err(|error| CheckpointError::new("checkpoint_cycles_invalid", error))
+        })
+        .collect()
+}
+
+fn checkpoint_cycle_to_value(cycle: &CycleRecord) -> Value {
+    let mut value = cycle.to_dict();
+    if let Some(token_usage) = value
+        .as_object_mut()
+        .and_then(|cycle| cycle.get_mut("token_usage"))
+        .and_then(Value::as_object_mut)
+    {
+        if token_usage
+            .get("raw")
+            .is_some_and(|raw| raw.as_object().is_some_and(serde_json::Map::is_empty))
+        {
+            token_usage.remove("raw");
+        }
+    }
+    value
+}
+
+fn parse_object_map(
+    object: &Map<String, Value>,
+    field: &str,
+    code: &str,
+) -> CheckpointResult<BTreeMap<String, Value>> {
+    object
+        .get(field)
+        .and_then(Value::as_object)
+        .cloned()
+        .map(|map| map.into_iter().collect())
+        .ok_or_else(|| CheckpointError::new(code, format!("{field} must be an object")))
+}
+
+fn parse_optional_budget(value: Option<&Value>) -> CheckpointResult<Option<BudgetUsageSnapshot>> {
+    match value {
         None | Some(Value::Null) => Ok(None),
-        Some(value) => value
-            .as_u64()
-            .and_then(|value| u32::try_from(value).ok())
+        Some(value) => serde_json::from_value(value.clone())
             .map(Some)
-            .ok_or_else(|| {
-                Error::new(
-                    ErrorKind::InvalidData,
-                    format!("checkpoint {key} must be an unsigned 32-bit integer or null"),
-                )
+            .map_err(|error| {
+                CheckpointError::new("checkpoint_budget_usage_invalid", error.to_string())
             }),
     }
 }
 
-fn optional_u64(object: &serde_json::Map<String, Value>, key: &str) -> Result<Option<u64>> {
-    match object.get(key) {
+fn parse_optional<T>(value: Option<&Value>, field: &str) -> CheckpointResult<Option<T>>
+where
+    T: serde::de::DeserializeOwned,
+{
+    match value {
         None | Some(Value::Null) => Ok(None),
-        Some(value) => value.as_u64().map(Some).ok_or_else(|| {
-            Error::new(
-                ErrorKind::InvalidData,
-                format!("checkpoint {key} must be an unsigned 64-bit integer or null"),
-            )
-        }),
+        Some(value) => serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|error| {
+                CheckpointError::new("checkpoint_field_invalid", format!("{field}: {error}"))
+            }),
     }
 }
 
-fn default_u64(object: &serde_json::Map<String, Value>, key: &str, default: u64) -> Result<u64> {
-    match object.get(key) {
-        None => Ok(default),
-        Some(value) => value.as_u64().ok_or_else(|| {
-            Error::new(
-                ErrorKind::InvalidData,
-                format!("checkpoint {key} must be an unsigned 64-bit integer"),
-            )
-        }),
-    }
+fn parse_extensions(
+    value: Option<&Value>,
+) -> CheckpointResult<BTreeMap<String, ExtensionStateEntry>> {
+    let object = value.and_then(Value::as_object).ok_or_else(|| {
+        CheckpointError::new(
+            "checkpoint_extension_state_invalid",
+            "extension_state must be an object",
+        )
+    })?;
+    object
+        .iter()
+        .map(|(namespace, value)| Ok((namespace.clone(), ExtensionStateEntry::from_value(value)?)))
+        .collect()
 }
 
-fn optional_non_empty_string(
-    object: &serde_json::Map<String, Value>,
-    key: &str,
-) -> Result<Option<String>> {
-    match object.get(key) {
+fn parse_optional_string(
+    object: &Map<String, Value>,
+    field: &str,
+) -> CheckpointResult<Option<String>> {
+    match object.get(field) {
         None | Some(Value::Null) => Ok(None),
-        Some(Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
-        Some(_) => invalid(format!(
-            "checkpoint {key} must be a non-empty string or null"
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(CheckpointError::new(
+            "checkpoint_claim_invalid",
+            format!("{field} must be a string or null"),
         )),
     }
 }
 
-fn required_array<'a>(
-    object: &'a serde_json::Map<String, Value>,
-    key: &str,
-) -> Result<&'a Vec<Value>> {
-    object.get(key).and_then(Value::as_array).ok_or_else(|| {
-        Error::new(
-            ErrorKind::InvalidData,
-            format!("checkpoint {key} must be an array"),
+fn parse_optional_u64(object: &Map<String, Value>, field: &str) -> CheckpointResult<Option<u64>> {
+    match object.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(number)) => number.as_u64().map(Some).ok_or_else(|| {
+            CheckpointError::new(
+                "checkpoint_integer_invalid",
+                format!("{field} must be a non-negative integer"),
+            )
+        }),
+        Some(_) => Err(CheckpointError::new(
+            "checkpoint_integer_invalid",
+            format!("{field} must be an integer or null"),
+        )),
+    }
+}
+
+fn parse_optional_value(
+    object: &Map<String, Value>,
+    field: &str,
+) -> CheckpointResult<Option<Value>> {
+    Ok(object.get(field).filter(|value| !value.is_null()).cloned())
+}
+
+fn parse_array<'a>(
+    object: &'a Map<String, Value>,
+    field: &str,
+) -> CheckpointResult<&'a Vec<Value>> {
+    object.get(field).and_then(Value::as_array).ok_or_else(|| {
+        CheckpointError::new(
+            "checkpoint_field_invalid",
+            format!("{field} must be an array"),
         )
     })
 }
 
-fn invalid<T>(message: String) -> Result<T> {
-    Err(Error::new(ErrorKind::InvalidData, message))
+fn required_string<'a>(
+    object: &'a Map<String, Value>,
+    field: &str,
+    code: &str,
+) -> CheckpointResult<&'a str> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| CheckpointError::new(code, format!("{field} must be a string")))
 }
 
-fn json_to_io(error: serde_json::Error) -> Error {
-    Error::new(ErrorKind::InvalidData, error)
+fn required_u64(object: &Map<String, Value>, field: &str, code: &str) -> CheckpointResult<u64> {
+    object.get(field).and_then(Value::as_u64).ok_or_else(|| {
+        CheckpointError::new(code, format!("{field} must be a non-negative integer"))
+    })
+}
+
+fn strict_json_value(payload: &str) -> CheckpointResult<Value> {
+    let mut deserializer = serde_json::Deserializer::from_str(payload);
+    let StrictValue(value) = StrictValue::deserialize(&mut deserializer)
+        .map_err(|error| CheckpointError::new("checkpoint_json_invalid", error.to_string()))?;
+    deserializer
+        .end()
+        .map_err(|error| CheckpointError::new("checkpoint_json_invalid", error.to_string()))?;
+    Ok(value)
+}
+
+struct StrictValue(Value);
+
+impl<'de> Deserialize<'de> for StrictValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(StrictValueVisitor)
+    }
+}
+
+struct StrictValueVisitor;
+
+impl<'de> Visitor<'de> for StrictValueVisitor {
+    type Value = StrictValue;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a JSON value without duplicate object keys")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+        Ok(StrictValue(Value::Bool(value)))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+        Ok(StrictValue(Value::Number(Number::from(value))))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+        Ok(StrictValue(Value::Number(Number::from(value))))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Number::from_f64(value)
+            .map(Value::Number)
+            .map(StrictValue)
+            .ok_or_else(|| E::custom("non-finite JSON number"))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
+        Ok(StrictValue(Value::String(value.to_string())))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+        Ok(StrictValue(Value::String(value)))
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E> {
+        Ok(StrictValue(Value::Null))
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(StrictValue(Value::Null))
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::with_capacity(sequence.size_hint().unwrap_or(0));
+        while let Some(StrictValue(value)) = sequence.next_element()? {
+            values.push(value);
+        }
+        Ok(StrictValue(Value::Array(values)))
+    }
+
+    fn visit_map<A>(self, mut object: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut values = Map::new();
+        while let Some(key) = object.next_key::<String>()? {
+            if values.contains_key(&key) {
+                return Err(de::Error::custom(format!(
+                    "duplicate JSON object key {key}"
+                )));
+            }
+            let StrictValue(value) = object.next_value()?;
+            values.insert(key, value);
+        }
+        Ok(StrictValue(Value::Object(values)))
+    }
 }

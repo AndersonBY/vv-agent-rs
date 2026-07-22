@@ -20,8 +20,8 @@ use vv_agent::{
     RunConfig, RunEvent, Runner, ScriptedModelProvider, TokenUsage, ToolCall, UsageSource,
 };
 
-const CONTRACT_SOURCE: &str = include_str!("fixtures/parity/app_server_observable_v1.json");
-const TOOL_METADATA_CONTRACT_SOURCE: &str = include_str!("fixtures/parity/tool_metadata_v1.json");
+const CONTRACT_SOURCE: &str = include_str!("fixtures/parity/app_server_observable.json");
+const TOOL_METADATA_CONTRACT_SOURCE: &str = include_str!("fixtures/parity/tool_metadata.json");
 
 fn contract() -> Value {
     serde_json::from_str(CONTRACT_SOURCE).expect("valid App Server parity fixture")
@@ -157,7 +157,7 @@ fn shared_fixture_live_and_replay_payloads_use_epoch_seconds() {
 }
 
 #[test]
-fn shared_fixture_tool_lifecycle_uses_additive_app_server_projection() {
+fn shared_fixture_tool_lifecycle_uses_current_app_server_projection() {
     let contract = contract();
     let tool_metadata_contract: Value = serde_json::from_str(TOOL_METADATA_CONTRACT_SOURCE)
         .expect("valid tool metadata contract fixture");
@@ -240,7 +240,7 @@ fn shared_fixture_tool_lifecycle_uses_additive_app_server_projection() {
             completed_actual[0]["params"]["payload"]
                 .get(field)
                 .is_some(),
-            "missing additive completed field {field}"
+            "missing completed field {field}"
         );
     }
 
@@ -268,20 +268,6 @@ fn shared_fixture_tool_lifecycle_uses_additive_app_server_projection() {
     assert_eq!(
         mapped_notifications(&denied),
         expected_notifications(denied_expected)
-    );
-
-    let legacy_expected = &lifecycle["legacyCompleted"]["notification"];
-    let legacy = run_event_from_fixture(json!({
-        "type": "tool_call_completed",
-        "event_id": "evt_tool_legacy",
-        "created_at": 99,
-        "tool_name": "lookup",
-        "tool_call_id": "call_legacy",
-        "status": "success",
-    }));
-    assert_eq!(
-        mapped_notifications(&legacy),
-        expected_notifications(&Value::Array(vec![legacy_expected.clone()]))
     );
 }
 
@@ -365,8 +351,8 @@ async fn budget_exhaustion_projects_typed_usage_to_turn_and_store() {
         .clone();
     let mut response = LLMResponse::new("draft over budget");
     response.token_usage = TokenUsage {
-        prompt_tokens: 12,
-        total_tokens: 12,
+        input_tokens: Some(12),
+        total_tokens: Some(12),
         usage_source: UsageSource::ProviderReported,
         cache_usage: CacheUsage {
             status: CacheUsageStatus::ProviderReported,

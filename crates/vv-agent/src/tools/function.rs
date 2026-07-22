@@ -8,7 +8,6 @@ use std::time::Duration;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::checkpoint::ToolIdempotency;
 use crate::context::{RunContext, ToolCallContext};
 use crate::tools::{
     Tool, ToolApprovalRule, ToolContext, ToolEnablementContext, ToolEnablementRule, ToolExposure,
@@ -29,7 +28,6 @@ pub struct FunctionTool<Args = Value> {
     exposure: ToolExposure,
     timeout: Option<Duration>,
     approval: ToolApprovalRule,
-    idempotency: ToolIdempotency,
     tool_metadata: Option<ToolMetadata>,
     enablement: ToolEnablementRule,
     error_mapper: Option<ToolErrorMapper>,
@@ -52,7 +50,6 @@ impl FunctionTool<Value> {
             exposure: ToolExposure::Direct,
             timeout: None,
             approval: ToolApprovalRule::default(),
-            idempotency: ToolIdempotency::Unknown,
             tool_metadata: None,
             enablement: ToolEnablementRule::default(),
             error_mapper: None,
@@ -73,7 +70,6 @@ impl<Args> Clone for FunctionTool<Args> {
             exposure: self.exposure,
             timeout: self.timeout,
             approval: self.approval.clone(),
-            idempotency: self.idempotency,
             tool_metadata: self.tool_metadata.clone(),
             enablement: self.enablement.clone(),
             error_mapper: self.error_mapper.clone(),
@@ -128,10 +124,6 @@ where
 
     fn approval_rule(&self) -> ToolApprovalRule {
         self.approval.clone()
-    }
-
-    fn idempotency(&self) -> ToolIdempotency {
-        self.idempotency
     }
 
     fn tool_metadata(&self) -> Option<&ToolMetadata> {
@@ -215,7 +207,6 @@ where
         spec.exposure = self.exposure;
         spec.timeout = self.timeout;
         spec.approval = self.approval.clone();
-        spec.idempotency = self.idempotency;
         spec.tool_metadata = self.tool_metadata.clone();
         spec.metadata = self.metadata.clone();
         spec
@@ -231,7 +222,6 @@ pub struct FunctionToolBuilder<Args = Value> {
     exposure: ToolExposure,
     timeout: Option<Duration>,
     approval: ToolApprovalRule,
-    idempotency: ToolIdempotency,
     tool_metadata: Option<ToolMetadata>,
     enablement: ToolEnablementRule,
     error_mapper: Option<ToolErrorMapper>,
@@ -275,11 +265,6 @@ impl<Args> FunctionToolBuilder<Args> {
         F: Fn(&ToolContext, &ToolArguments) -> bool + Send + Sync + 'static,
     {
         self.approval = ToolApprovalRule::predicate(predicate);
-        self
-    }
-
-    pub fn idempotency(mut self, idempotency: ToolIdempotency) -> Self {
-        self.idempotency = idempotency;
         self
     }
 
@@ -334,7 +319,6 @@ impl<Args> FunctionToolBuilder<Args> {
             exposure: self.exposure,
             timeout: self.timeout,
             approval: self.approval,
-            idempotency: self.idempotency,
             tool_metadata: self.tool_metadata,
             enablement: self.enablement,
             error_mapper: self.error_mapper,
@@ -353,21 +337,24 @@ impl<Args> FunctionToolBuilder<Args> {
         let Some(handler) = self.handler else {
             return Err("tool handler is required".to_string());
         };
-        let (idempotency, tool_metadata) = crate::tools::metadata::merge_tool_idempotency(
-            self.idempotency,
-            self.tool_metadata.as_ref(),
-        )
-        .map_err(|error| error.to_string())?;
+        let tool_metadata = self
+            .tool_metadata
+            .as_ref()
+            .map(ToolMetadata::normalized)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        let parameters_schema =
+            crate::tools::argument_validation::close_object_schemas(&self.parameters_schema);
+        crate::tools::argument_validation::validator_for_parameters(&parameters_schema)?;
         Ok(FunctionTool {
             name: self.name,
             description: self.description,
-            parameters_schema: self.parameters_schema,
+            parameters_schema,
             handler,
             strict_schema: self.strict_schema,
             exposure: self.exposure,
             timeout: self.timeout,
             approval: self.approval,
-            idempotency,
             tool_metadata,
             enablement: self.enablement,
             error_mapper: self.error_mapper,

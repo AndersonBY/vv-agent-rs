@@ -130,9 +130,7 @@ impl Runner {
             .as_ref()
             .filter(|_| checkpoint_resume)
             .map(|checkpoint| checkpoint.trace_id.clone())
-            .unwrap_or_else(|| {
-                effective_trace_id(&self.default_run_config, &config, &run_metadata)
-            });
+            .unwrap_or_else(|| effective_trace_id(&self.default_run_config, &config));
         let workflow_name = effective_workflow_name(&self.default_run_config, &config);
         run_metadata.insert("trace_id".to_string(), Value::String(trace_id.clone()));
         let app_state = config
@@ -283,13 +281,6 @@ impl Runner {
         } else {
             Vec::new()
         };
-        let event_context = RuntimeEventContext::new(
-            &run_context.run_id,
-            &trace_id,
-            agent.name(),
-            event_session_id.clone(),
-            &input_text,
-        );
         let (mut task, definition_initial_messages) = if checkpoint_resume {
             let checkpoint = preloaded_checkpoint.as_ref().ok_or_else(|| {
                 "checkpoint_not_found: resume checkpoint disappeared before task restoration"
@@ -320,7 +311,6 @@ impl Runner {
             );
             task.max_cycles = max_cycles;
             task.no_tool_policy = no_tool_policy;
-            task.has_sub_agents = false;
             task.sub_agents = agent.sub_agents().clone();
             task.metadata = agent.metadata().clone();
             task.metadata
@@ -478,97 +468,54 @@ impl Runner {
         runtime
             .hooks
             .push(Arc::new(ApprovalHook::new(tool_policy.clone())));
+        let stream_observer = config
+            .stream
+            .clone()
+            .or_else(|| self.default_run_config.stream.clone());
         let has_event_sink = event_collector.is_some()
             || event_sender.is_some()
             || event_store.is_some()
-            || trace.is_enabled();
+            || trace.is_enabled()
+            || stream_observer.is_some();
         let event_store_error = Arc::new(Mutex::new(None::<String>));
-        let runtime_log_handler = config
-            .runtime_log_handler
-            .clone()
-            .or_else(|| self.default_run_config.runtime_log_handler.clone());
-        let log_handler = if has_event_sink || runtime_log_handler.is_some() {
+        let event_handler = if has_event_sink {
             let collector = event_collector.clone();
             let event_sender = event_sender.clone();
             let event_store = event_store.clone();
-            let event_context = event_context.clone();
             let event_store_error = event_store_error.clone();
             let trace_observer = trace.observer();
-            let configured_runtime_log_handler = runtime_log_handler.clone();
-            Some(Arc::new(
-                move |event: &str, payload: &std::collections::BTreeMap<String, Value>| {
-                    if has_event_sink {
-                        trace_observer.on_event(event, payload);
-                        if !is_runtime_terminal_log(event)
-                            && event_store_error
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .is_none()
-                        {
-                            if let Some(mapped) = map_runtime_event(event, payload, &event_context)
-                            {
-                                if let Err(error) = capture_event(
-                                    collector.as_ref(),
-                                    event_sender.as_ref(),
-                                    event_store.as_ref(),
-                                    event_store_fail_closed,
-                                    mapped,
-                                ) {
-                                    *event_store_error
-                                        .lock()
-                                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                                        Some(error);
-                                }
-                            }
-                        }
-                    }
-                    if let Some(handler) = configured_runtime_log_handler.as_ref() {
-                        let _ = catch_unwind(AssertUnwindSafe(|| handler(event, payload)));
-                    }
-                },
-            ) as crate::runtime::RuntimeEventHandler)
-        } else {
-            None
-        };
-        let runtime_stream_callback = config
-            .runtime_stream_callback
-            .clone()
-            .or_else(|| self.default_run_config.runtime_stream_callback.clone());
-        let stream_callback = if has_event_sink || runtime_stream_callback.is_some() {
-            let collector = event_collector.clone();
-            let event_sender = event_sender.clone();
-            let event_store = event_store.clone();
-            let event_context = event_context.clone();
-            let event_store_error = event_store_error.clone();
-            let configured_runtime_stream_callback = runtime_stream_callback.clone();
-            Some(
-                Arc::new(move |payload: &std::collections::BTreeMap<String, Value>| {
-                    if has_event_sink
-                        && event_store_error
+            let stream_observer = stream_observer.clone();
+            Some(Arc::new(move |event: &RunEvent| {
+                if let Ok(Value::Object(object)) = serde_json::to_value(event) {
+                    let event_type = object
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("diagnostic")
+                        .to_string();
+                    let payload = object.into_iter().collect();
+                    trace_observer.on_event(&event_type, &payload);
+                }
+                if event_store_error
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_none()
+                {
+                    if let Err(error) = capture_event(
+                        collector.as_ref(),
+                        event_sender.as_ref(),
+                        event_store.as_ref(),
+                        event_store_fail_closed,
+                        event.clone(),
+                    ) {
+                        *event_store_error
                             .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .is_none()
-                    {
-                        if let Some(mapped) = map_stream_event(payload, &event_context) {
-                            if let Err(error) = capture_event(
-                                collector.as_ref(),
-                                event_sender.as_ref(),
-                                event_store.as_ref(),
-                                event_store_fail_closed,
-                                mapped,
-                            ) {
-                                *event_store_error
-                                    .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                                    Some(error);
-                            }
-                        }
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error);
                     }
-                    if let Some(callback) = configured_runtime_stream_callback.as_ref() {
-                        let _ = catch_unwind(AssertUnwindSafe(|| callback(payload)));
-                    }
-                }) as crate::llm::LlmStreamCallback,
-            )
+                }
+                if let Some(observer) = stream_observer.as_ref() {
+                    let _ = catch_unwind(AssertUnwindSafe(|| observer(event)));
+                }
+            }) as crate::runtime::RunEventHandler)
         } else {
             None
         };
@@ -648,8 +595,7 @@ impl Runner {
             .sub_task_manager
             .clone()
             .or_else(|| self.default_run_config.sub_task_manager.clone());
-        background_parent_run_config.runtime_log_handler = runtime_log_handler;
-        background_parent_run_config.runtime_stream_callback = runtime_stream_callback;
+        background_parent_run_config.stream = stream_observer;
         background_parent_run_config.budget_limits = budget_limits.clone();
         background_parent_run_config.host_cost_meter = host_cost_meter.clone();
         background_parent_run_config.metadata = if checkpoint_resume {
@@ -717,8 +663,9 @@ impl Runner {
                 .manages_checkpoint_cycles(),
             admission_sender: &mut checkpoint_admission_sender,
         })?;
+        let post_run_event_handler = event_handler.clone();
         let controls = RuntimeRunControls {
-            log_handler,
+            event_handler: event_handler.clone(),
             before_cycle_messages: config
                 .before_cycle_messages
                 .clone()
@@ -729,7 +676,7 @@ impl Runner {
                 .or_else(|| self.default_run_config.interruption_messages.clone()),
             cancellation_token: cancellation_token.clone(),
             execution_context: Some(ExecutionContext {
-                stream_callback,
+                event_handler,
                 metadata: task.metadata.clone(),
                 approval_provider,
                 approval_broker,
@@ -860,15 +807,18 @@ impl Runner {
                     block_on_session(session.add_items(session_items))?;
                 }
                 if has_event_sink {
-                    let payload = std::collections::BTreeMap::from([(
-                        "session_id".to_string(),
-                        Value::String(session.session_id().to_string()),
-                    )]);
-                    if let Some(event) =
-                        map_runtime_event("session_persisted", &payload, &event_context)
-                    {
-                        if let Some(controller) = checkpoint_controller.as_ref() {
-                            let commit_id = controller
+                    let mut event = RunEvent::new(
+                        &run_context.run_id,
+                        &trace_id,
+                        agent.name(),
+                        None,
+                        crate::events::RunEventPayload::SessionPersisted,
+                    );
+                    if let Some(session_id) = event_session_id.as_ref() {
+                        event = event.with_session_id(session_id);
+                    }
+                    if let Some(controller) = checkpoint_controller.as_ref() {
+                        let commit_id = controller
                             .lock()
                             .map_err(|_| {
                                 "checkpoint_store_lock_poisoned: checkpoint controller lock poisoned"
@@ -877,7 +827,7 @@ impl Runner {
                             .checkpoint_key()
                             .map(checkpoint_session_commit_id)
                             .map_err(|error| error.to_string())?;
-                            controller
+                        controller
                             .lock()
                             .map_err(|_| {
                                 "checkpoint_store_lock_poisoned: checkpoint controller lock poisoned"
@@ -885,15 +835,8 @@ impl Runner {
                             })?
                             .persist_preterminal_event(event, &commit_id)
                             .map_err(|error| error.to_string())?;
-                        } else {
-                            capture_event(
-                                event_collector.as_ref(),
-                                event_sender.as_ref(),
-                                event_store.as_ref(),
-                                event_store_fail_closed,
-                                event,
-                            )?;
-                        }
+                    } else if let Some(handler) = post_run_event_handler.as_ref() {
+                        handler(&event);
                     }
                 }
             }
@@ -916,14 +859,8 @@ impl Runner {
                     })?
                     .finalize(result, Some(event))
                     .map_err(|error| error.to_string())?;
-            } else {
-                capture_event(
-                    event_collector.as_ref(),
-                    event_sender.as_ref(),
-                    event_store.as_ref(),
-                    event_store_fail_closed,
-                    event,
-                )?;
+            } else if let Some(handler) = post_run_event_handler.as_ref() {
+                handler(&event);
             }
         }
         if let Some(controller) = checkpoint_controller.as_ref() {

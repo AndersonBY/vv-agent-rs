@@ -1,20 +1,32 @@
-use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value;
+use serde::{de::Error as _, ser::Error as _, Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::{Map, Value};
 
-use crate::runtime::backends::RuntimeRecipe;
 use crate::runtime::CancellationToken;
-use crate::types::{AgentResult, AgentTask};
+use crate::types::{AgentResult, AgentStatus};
 
 use super::DistributedRunEnvelope;
 
+pub const DISTRIBUTED_WORKER_RESPONSE_SCHEMA_VERSION: &str =
+    "vv-agent.distributed-worker-response.v1";
+const JSON_SAFE_INTEGER_MAX: u64 = (1_u64 << 53) - 1;
+const INVALID_AGENT_RESULT: &str =
+    "distributed worker response result must be a complete current AgentResult";
+
 #[derive(Debug, Clone, PartialEq)]
-pub struct CycleDispatchResult {
-    pub finished: bool,
-    pub result: Option<AgentResult>,
-    pub checkpoint_revision: Option<u64>,
-    pub committed_cycle: Option<u64>,
-    pub terminal_candidate: bool,
-    pub terminal_replay: bool,
+pub enum CycleDispatchResult {
+    Pending,
+    Committed {
+        checkpoint_revision: u64,
+        committed_cycle: u64,
+    },
+    TerminalCandidate {
+        checkpoint_revision: u64,
+        result: AgentResult,
+    },
+    TerminalReplay {
+        checkpoint_revision: u64,
+        result: AgentResult,
+    },
 }
 
 impl Serialize for CycleDispatchResult {
@@ -22,7 +34,8 @@ impl Serialize for CycleDispatchResult {
     where
         S: Serializer,
     {
-        self.to_dict().serialize(serializer)
+        self.validate().map_err(S::Error::custom)?;
+        self.wire_value().serialize(serializer)
     }
 }
 
@@ -37,189 +50,261 @@ impl<'de> Deserialize<'de> for CycleDispatchResult {
 }
 
 impl CycleDispatchResult {
-    pub fn unfinished() -> Self {
-        Self {
-            finished: false,
-            result: None,
-            checkpoint_revision: None,
-            committed_cycle: None,
-            terminal_candidate: false,
-            terminal_replay: false,
-        }
+    pub const fn pending() -> Self {
+        Self::Pending
     }
 
-    pub fn committed(cycle_index: u64, checkpoint_revision: u64) -> Self {
-        Self {
-            finished: false,
-            result: None,
-            checkpoint_revision: Some(checkpoint_revision),
-            committed_cycle: Some(cycle_index),
-            terminal_candidate: false,
-            terminal_replay: false,
-        }
-    }
-
-    pub fn finished(result: AgentResult) -> Self {
-        Self::finished_at_revision(result, None)
-    }
-
-    pub fn finished_at_revision(result: AgentResult, checkpoint_revision: Option<u64>) -> Self {
-        Self {
-            finished: true,
-            result: Some(result),
+    pub fn committed(cycle_index: u64, checkpoint_revision: u64) -> Result<Self, String> {
+        let result = Self::Committed {
             checkpoint_revision,
-            committed_cycle: None,
-            terminal_candidate: false,
-            terminal_replay: false,
-        }
-    }
-
-    pub fn terminal_candidate(result: AgentResult, checkpoint_revision: u64) -> Self {
-        Self {
-            finished: true,
-            result: Some(result),
-            checkpoint_revision: Some(checkpoint_revision),
-            committed_cycle: None,
-            terminal_candidate: true,
-            terminal_replay: false,
-        }
-    }
-
-    pub fn terminal_replay(result: AgentResult, checkpoint_revision: u64) -> Self {
-        Self {
-            finished: true,
-            result: Some(result),
-            checkpoint_revision: Some(checkpoint_revision),
-            committed_cycle: None,
-            terminal_candidate: false,
-            terminal_replay: true,
-        }
-    }
-
-    pub fn to_dict(&self) -> Value {
-        let mut payload =
-            serde_json::Map::from_iter([("finished".to_string(), Value::Bool(self.finished))]);
-        if let Some(result) = &self.result {
-            payload.insert("result".to_string(), result.to_dict());
-        }
-        if let Some(revision) = self.checkpoint_revision {
-            payload.insert("checkpoint_revision".to_string(), Value::from(revision));
-        }
-        if let Some(cycle_index) = self.committed_cycle {
-            payload.insert("committed_cycle".to_string(), Value::from(cycle_index));
-        }
-        if self.terminal_candidate {
-            payload.insert("terminal_candidate".to_string(), Value::Bool(true));
-        }
-        if self.terminal_replay {
-            payload.insert("terminal_replay".to_string(), Value::Bool(true));
-        }
-        Value::Object(payload)
-    }
-
-    pub fn from_dict(data: &Value) -> Result<Self, String> {
-        let object = data
-            .as_object()
-            .ok_or_else(|| "CycleDispatchResult payload must be an object".to_string())?;
-        let finished = object
-            .get("finished")
-            .and_then(Value::as_bool)
-            .ok_or_else(|| "CycleDispatchResult finished must be a boolean".to_string())?;
-        let result = object
-            .get("result")
-            .filter(|value| !value.is_null())
-            .map(AgentResult::from_dict)
-            .transpose()?;
-        if finished != result.is_some() {
-            return Err(
-                "CycleDispatchResult result must be present exactly when finished is true"
-                    .to_string(),
-            );
-        }
-        let checkpoint_revision = match object.get("checkpoint_revision") {
-            None | Some(Value::Null) => None,
-            Some(value) => Some(value.as_u64().ok_or_else(|| {
-                "CycleDispatchResult checkpoint_revision must be an unsigned integer".to_string()
-            })?),
-        };
-        let committed_cycle = match object.get("committed_cycle") {
-            None | Some(Value::Null) => None,
-            Some(value) => Some(value.as_u64().ok_or_else(|| {
-                "CycleDispatchResult committed_cycle must be an unsigned integer".to_string()
-            })?),
-        };
-        let terminal_candidate = optional_bool(object, "terminal_candidate")?;
-        let terminal_replay = optional_bool(object, "terminal_replay")?;
-        let result = Self {
-            finished,
-            result,
-            checkpoint_revision,
-            committed_cycle,
-            terminal_candidate,
-            terminal_replay,
+            committed_cycle: cycle_index,
         };
         result.validate()?;
         Ok(result)
     }
 
+    pub fn terminal_candidate(
+        result: AgentResult,
+        checkpoint_revision: u64,
+    ) -> Result<Self, String> {
+        let result = Self::TerminalCandidate {
+            checkpoint_revision,
+            result,
+        };
+        result.validate()?;
+        Ok(result)
+    }
+
+    pub fn terminal_replay(result: AgentResult, checkpoint_revision: u64) -> Result<Self, String> {
+        let result = Self::TerminalReplay {
+            checkpoint_revision,
+            result,
+        };
+        result.validate()?;
+        Ok(result)
+    }
+
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Committed { .. } => "committed",
+            Self::TerminalCandidate { .. } => "terminal_candidate",
+            Self::TerminalReplay { .. } => "terminal_replay",
+        }
+    }
+
+    pub fn to_dict(&self) -> Value {
+        self.validate()
+            .expect("CycleDispatchResult must satisfy the distributed worker response contract");
+        self.wire_value()
+    }
+
+    pub fn from_dict(data: &Value) -> Result<Self, String> {
+        let object = data
+            .as_object()
+            .ok_or_else(|| "distributed worker response must be an object".to_string())?;
+        if object.get("schema_version").and_then(Value::as_str)
+            != Some(DISTRIBUTED_WORKER_RESPONSE_SCHEMA_VERSION)
+        {
+            return Err("unsupported distributed worker response schema_version".to_string());
+        }
+        let response_type = object
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "unsupported distributed worker response type".to_string())?;
+
+        match response_type {
+            "pending" => {
+                require_exact_fields(object, response_type, &["schema_version", "type"])?;
+                Ok(Self::Pending)
+            }
+            "committed" => {
+                require_exact_fields(
+                    object,
+                    response_type,
+                    &[
+                        "schema_version",
+                        "type",
+                        "checkpoint_revision",
+                        "committed_cycle",
+                    ],
+                )?;
+                Ok(Self::Committed {
+                    checkpoint_revision: read_wire_integer(object, "checkpoint_revision")?,
+                    committed_cycle: read_positive_wire_integer(object, "committed_cycle")?,
+                })
+            }
+            "terminal_candidate" | "terminal_replay" => {
+                require_exact_fields(
+                    object,
+                    response_type,
+                    &["schema_version", "type", "checkpoint_revision", "result"],
+                )?;
+                let checkpoint_revision = read_wire_integer(object, "checkpoint_revision")?;
+                let result = parse_complete_agent_result(
+                    object.get("result").expect("exact fields checked above"),
+                )?;
+                if response_type == "terminal_candidate" {
+                    validate_terminal_candidate_result(&result)?;
+                    Ok(Self::TerminalCandidate {
+                        checkpoint_revision,
+                        result,
+                    })
+                } else {
+                    validate_terminal_replay_result(&result)?;
+                    Ok(Self::TerminalReplay {
+                        checkpoint_revision,
+                        result,
+                    })
+                }
+            }
+            _ => Err("unsupported distributed worker response type".to_string()),
+        }
+    }
+
     fn validate(&self) -> Result<(), String> {
-        if self.terminal_candidate && self.terminal_replay {
-            return Err(
-                "CycleDispatchResult terminal_candidate and terminal_replay are mutually exclusive"
-                    .to_string(),
-            );
+        match self {
+            Self::Pending => Ok(()),
+            Self::Committed {
+                checkpoint_revision,
+                committed_cycle,
+            } => {
+                validate_wire_integer(*checkpoint_revision, "checkpoint_revision")?;
+                validate_positive_wire_integer(*committed_cycle, "committed_cycle")
+            }
+            Self::TerminalCandidate {
+                checkpoint_revision,
+                result,
+            } => {
+                validate_wire_integer(*checkpoint_revision, "checkpoint_revision")?;
+                validate_terminal_candidate_result(result)
+            }
+            Self::TerminalReplay {
+                checkpoint_revision,
+                result,
+            } => {
+                validate_wire_integer(*checkpoint_revision, "checkpoint_revision")?;
+                validate_terminal_replay_result(result)
+            }
         }
-        if (self.terminal_candidate || self.terminal_replay)
-            && (!self.finished || self.result.is_none() || self.checkpoint_revision.is_none())
-        {
-            return Err(
-                "CycleDispatchResult terminal disposition requires a finished result and checkpoint_revision"
-                    .to_string(),
-            );
+    }
+
+    fn wire_value(&self) -> Value {
+        let mut payload = Map::from_iter([
+            (
+                "schema_version".to_string(),
+                Value::String(DISTRIBUTED_WORKER_RESPONSE_SCHEMA_VERSION.to_string()),
+            ),
+            ("type".to_string(), Value::String(self.kind().to_string())),
+        ]);
+        match self {
+            Self::Pending => {}
+            Self::Committed {
+                checkpoint_revision,
+                committed_cycle,
+            } => {
+                payload.insert(
+                    "checkpoint_revision".to_string(),
+                    Value::from(*checkpoint_revision),
+                );
+                payload.insert("committed_cycle".to_string(), Value::from(*committed_cycle));
+            }
+            Self::TerminalCandidate {
+                checkpoint_revision,
+                result,
+            }
+            | Self::TerminalReplay {
+                checkpoint_revision,
+                result,
+            } => {
+                payload.insert(
+                    "checkpoint_revision".to_string(),
+                    Value::from(*checkpoint_revision),
+                );
+                payload.insert("result".to_string(), result.to_dict());
+            }
         }
-        if self.committed_cycle.is_some()
-            && (self.finished
-                || self.result.is_some()
-                || self.terminal_candidate
-                || self.terminal_replay)
-        {
-            return Err(
-                "CycleDispatchResult committed_cycle is only valid for unfinished progress"
-                    .to_string(),
-            );
-        }
-        Ok(())
+        Value::Object(payload)
     }
 }
 
-fn optional_bool(object: &serde_json::Map<String, Value>, field: &str) -> Result<bool, String> {
-    match object.get(field) {
-        None => Ok(false),
-        Some(Value::Bool(value)) => Ok(*value),
-        Some(_) => Err(format!("CycleDispatchResult {field} must be a boolean")),
+fn require_exact_fields(
+    object: &Map<String, Value>,
+    response_type: &str,
+    expected: &[&str],
+) -> Result<(), String> {
+    if object.len() != expected.len() || expected.iter().any(|field| !object.contains_key(*field)) {
+        return Err(format!(
+            "distributed worker response fields do not match type {response_type}"
+        ));
     }
+    Ok(())
+}
+
+fn read_wire_integer(object: &Map<String, Value>, field: &str) -> Result<u64, String> {
+    let value = object
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("{field} must be a JSON-safe unsigned integer"))?;
+    validate_wire_integer(value, field)?;
+    Ok(value)
+}
+
+fn validate_wire_integer(value: u64, field: &str) -> Result<(), String> {
+    if value > JSON_SAFE_INTEGER_MAX {
+        return Err(format!("{field} must be a JSON-safe unsigned integer"));
+    }
+    Ok(())
+}
+
+fn read_positive_wire_integer(object: &Map<String, Value>, field: &str) -> Result<u64, String> {
+    let value = read_wire_integer(object, field)?;
+    validate_positive_wire_integer(value, field)?;
+    Ok(value)
+}
+
+fn validate_positive_wire_integer(value: u64, field: &str) -> Result<(), String> {
+    validate_wire_integer(value, field)?;
+    if value == 0 {
+        return Err(format!("{field} must be a positive JSON-safe integer"));
+    }
+    Ok(())
+}
+
+fn parse_complete_agent_result(value: &Value) -> Result<AgentResult, String> {
+    let result = AgentResult::from_dict(value).map_err(|_| invalid_agent_result())?;
+    if result.to_dict() != *value {
+        return Err(invalid_agent_result());
+    }
+    Ok(result)
+}
+
+fn validate_terminal_candidate_result(result: &AgentResult) -> Result<(), String> {
+    if matches!(result.status, AgentStatus::Pending | AgentStatus::Running) {
+        return Err(invalid_agent_result());
+    }
+    Ok(())
+}
+
+fn validate_terminal_replay_result(result: &AgentResult) -> Result<(), String> {
+    if matches!(
+        result.status,
+        AgentStatus::Pending | AgentStatus::Running | AgentStatus::ReconciliationRequired
+    ) {
+        return Err(invalid_agent_result());
+    }
+    Ok(())
+}
+
+fn invalid_agent_result() -> String {
+    INVALID_AGENT_RESULT.to_string()
 }
 
 pub trait CycleDispatcher: Send + Sync {
-    fn dispatch_cycle(
-        &self,
-        task: &AgentTask,
-        recipe: &RuntimeRecipe,
-        cycle_name: &str,
-        cycle_index: u32,
-    ) -> Result<CycleDispatchResult, String>;
-
     fn dispatch_envelope(
         &self,
         envelope: &DistributedRunEnvelope,
-    ) -> Result<CycleDispatchResult, String> {
-        self.dispatch_cycle(
-            &envelope.task,
-            &envelope.recipe,
-            &envelope.cycle_name,
-            envelope.cycle_index,
-        )
-    }
+    ) -> Result<CycleDispatchResult, String>;
 
     fn dispatch_envelope_with_cancellation(
         &self,
@@ -228,7 +313,11 @@ pub trait CycleDispatcher: Send + Sync {
     ) -> Result<CycleDispatchResult, String> {
         check_cancellation(cancellation_token)?;
         let result = self.dispatch_envelope(envelope)?;
-        if result.finished {
+        if matches!(
+            &result,
+            CycleDispatchResult::TerminalCandidate { .. }
+                | CycleDispatchResult::TerminalReplay { .. }
+        ) {
             return Ok(result);
         }
         check_cancellation(cancellation_token)?;

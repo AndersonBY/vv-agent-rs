@@ -1,11 +1,10 @@
 use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
-use vv_agent::types::CycleTokenUsage;
+use vv_agent::types::AgentTask;
 use vv_agent::{
-    AgentResult, AgentStatus, AgentTask, CycleRecord, LLMResponse, Message, NoToolPolicy,
-    SubTaskOutcome, SubTaskRequest, TokenUsage, ToolCall, ToolDirective, ToolExecutionResult,
-    ToolResultStatus,
+    AgentResult, AgentStatus, CycleRecord, LLMResponse, Message, NoToolPolicy, SubTaskOutcome,
+    SubTaskRequest, TokenUsage, ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus,
 };
 
 fn sparse_agent_task_payload() -> Value {
@@ -26,7 +25,7 @@ fn assert_agent_task_defaults(task: &AgentTask) {
 fn tool_execution_result_dict_matches_status_shape() {
     let success = ToolExecutionResult::success("call-1", "ok");
     let success_dict = success.to_dict();
-    assert_eq!(success_dict["status"], json!("success"));
+    assert!(success_dict.get("status").is_none());
     assert_eq!(success_dict["status_code"], json!("SUCCESS"));
     assert_eq!(success_dict["directive"], json!("continue"));
 
@@ -34,29 +33,37 @@ fn tool_execution_result_dict_matches_status_shape() {
     wait.status = ToolResultStatus::WaitResponse;
     wait.directive = ToolDirective::WaitUser;
     let wait_dict = wait.to_dict();
-    assert_eq!(wait_dict["status"], json!("success"));
+    assert!(wait_dict.get("status").is_none());
     assert_eq!(wait_dict["status_code"], json!("WAIT_RESPONSE"));
     assert_eq!(wait_dict["directive"], json!("wait_user"));
 
     let error = ToolExecutionResult::error("call-3", "bad");
     let error_dict = error.to_dict();
-    assert_eq!(error_dict["status"], json!("error"));
+    assert!(error_dict.get("status").is_none());
     assert_eq!(error_dict["status_code"], json!("ERROR"));
 }
 
 #[test]
-fn tool_execution_result_from_unknown_simple_status_defaults_to_success() {
-    let payload = json!({
+fn tool_execution_result_rejects_non_current_fields() {
+    let non_current_status = json!({
         "tool_call_id": "simple-call",
         "status": "done",
-        "content": "simple ok"
+        "content": "simple ok",
+        "directive": "continue"
     });
+    let error = ToolExecutionResult::from_dict(&non_current_status)
+        .expect_err("non-current status rejected");
+    assert!(error.contains("missing=[\"status_code\"]"));
+    assert!(error.contains("unknown=[\"status\"]"));
 
-    let result = ToolExecutionResult::from_dict(&payload).expect("result from dict");
-
-    assert_eq!(result.status, ToolResultStatus::Success);
-    assert_eq!(result.to_dict()["status"], json!("success"));
-    assert_eq!(result.to_dict()["status_code"], json!("SUCCESS"));
+    let unknown_field = json!({
+        "tool_call_id": "simple-call",
+        "content": "simple ok",
+        "status_code": "SUCCESS",
+        "directive": "continue",
+        "compatibility_hint": true
+    });
+    assert!(ToolExecutionResult::from_dict(&unknown_field).is_err());
 }
 
 #[test]
@@ -88,10 +95,9 @@ fn agent_result_dict_round_trips_agent_result_payload_shape() {
 
     let payload = result.to_dict();
     assert_eq!(payload["status"], json!("completed"));
-    assert_eq!(
-        payload["cycles"][0]["tool_results"][0]["status"],
-        json!("success")
-    );
+    assert!(payload["cycles"][0]["tool_results"][0]
+        .get("status")
+        .is_none());
     assert_eq!(
         payload["cycles"][0]["tool_results"][0]["status_code"],
         json!("SUCCESS")
@@ -110,28 +116,28 @@ fn agent_result_dict_round_trips_agent_result_payload_shape() {
 #[test]
 fn agent_result_dict_round_trips_token_usage_cycles() {
     let mut result = AgentResult::completed(vec![Message::user("hi")], vec![], "done");
-    result.token_usage.prompt_tokens = 12;
-    result.token_usage.completion_tokens = 4;
-    result.token_usage.total_tokens = 16;
-    result.token_usage.cycles.push(CycleTokenUsage {
-        cycle_index: 7,
-        usage: TokenUsage {
-            prompt_tokens: 12,
-            completion_tokens: 4,
-            total_tokens: 16,
-            raw: json!({"provider": "deepseek"}),
+    result.token_usage.add_cycle(
+        7,
+        TokenUsage {
+            input_tokens: Some(12),
+            output_tokens: Some(4),
+            total_tokens: Some(16),
+            provider_usage: json!({"provider": "deepseek"})
+                .as_object()
+                .expect("provider usage")
+                .clone(),
             ..TokenUsage::default()
         },
-    });
+    );
 
     let payload = result.to_dict();
     let restored = AgentResult::from_dict(&payload).expect("agent result from dict");
 
-    assert_eq!(restored.token_usage.prompt_tokens, 12);
+    assert_eq!(restored.token_usage.input_tokens, Some(12));
     assert_eq!(restored.token_usage.cycles.len(), 1);
     assert_eq!(restored.token_usage.cycles[0].cycle_index, 7);
     assert_eq!(
-        restored.token_usage.cycles[0].usage.raw["provider"],
+        restored.token_usage.cycles[0].usage.provider_usage["provider"],
         "deepseek"
     );
 }
@@ -141,7 +147,6 @@ fn agent_task_dict_round_trips_agent_runtime_recipe_payload_shape() {
     let mut task = AgentTask::new("task-1", "deepseek-v4-pro", "system", "user");
     task.max_cycles = 3;
     task.no_tool_policy = NoToolPolicy::WaitUser;
-    task.has_sub_agents = true;
     task.agent_type = Some("computer".to_string());
     task.extra_tool_names.push("read_image".to_string());
     task.metadata.insert("k".to_string(), Value::from("v"));
@@ -149,7 +154,7 @@ fn agent_task_dict_round_trips_agent_runtime_recipe_payload_shape() {
     let payload = task.to_dict();
     assert_eq!(payload["task_id"], json!("task-1"));
     assert_eq!(payload["no_tool_policy"], json!("wait_user"));
-    assert_eq!(payload["has_sub_agents"], json!(true));
+    assert!(payload.get("has_sub_agents").is_none());
 
     let restored = AgentTask::from_dict(&payload).expect("agent task from dict");
     assert_eq!(restored.task_id, task.task_id);
@@ -160,7 +165,7 @@ fn agent_task_dict_round_trips_agent_runtime_recipe_payload_shape() {
 }
 
 #[test]
-fn agent_task_sparse_wire_uses_new_defaults_for_dict_and_serde() {
+fn agent_task_sparse_wire_uses_current_defaults_for_dict_and_serde() {
     let payload = sparse_agent_task_payload();
 
     let from_dict = AgentTask::from_dict(&payload).expect("sparse AgentTask dict");
@@ -171,7 +176,7 @@ fn agent_task_sparse_wire_uses_new_defaults_for_dict_and_serde() {
 }
 
 #[test]
-fn agent_task_preserves_explicit_historical_memory_threshold() {
+fn agent_task_preserves_explicit_memory_threshold() {
     let mut payload = sparse_agent_task_payload();
     payload["memory_compact_threshold"] = json!(128_000);
 
@@ -234,7 +239,7 @@ fn agent_task_wire_rejects_wrong_types_ranges_and_container_items() {
         ("no_tool_policy", json!("invalid")),
         ("allow_interruption", json!(1)),
         ("use_workspace", json!(1)),
-        ("has_sub_agents", json!(1)),
+        ("has_sub_agents", json!(true)),
         ("sub_agents", json!([])),
         ("sub_agents", json!({"research": "not-an-object"})),
         ("agent_type", json!(1)),

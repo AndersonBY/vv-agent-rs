@@ -99,19 +99,18 @@ fn maps_only_real_stream_delta_and_does_not_relabel_full_cycle_message() {
 fn maps_approval_action_without_collapsing_session_or_timeout_decisions() {
     let context = event_context();
     let cases = [
-        ("allow", ApprovalAction::Allow, true),
-        ("allow_session", ApprovalAction::AllowSession, true),
-        ("deny", ApprovalAction::Deny, false),
-        ("timeout", ApprovalAction::Timeout, false),
+        ("allow", ApprovalAction::Allow),
+        ("allow_session", ApprovalAction::AllowSession),
+        ("deny", ApprovalAction::Deny),
+        ("timeout", ApprovalAction::Timeout),
     ];
 
-    for (action, expected_action, expected_approved) in cases {
+    for (action, expected_action) in cases {
         let payload = BTreeMap::from([
             ("request_id".to_string(), json!("request_1")),
             ("tool_call_id".to_string(), json!("call_1")),
             ("tool_name".to_string(), json!("shell")),
             ("action".to_string(), json!(action)),
-            ("approved".to_string(), json!(expected_approved)),
         ]);
         let event =
             map_runtime_event("approval_resolved", &payload, &context).expect("approval event");
@@ -119,11 +118,11 @@ fn maps_approval_action_without_collapsing_session_or_timeout_decisions() {
         assert_eq!(event.approval_action(), Some(expected_action));
         assert!(matches!(
             event.payload(),
-            RunEventPayload::ApprovalResolved { approved, .. }
-                if *approved == expected_approved
+            RunEventPayload::ApprovalResolved { action, .. }
+                if *action == expected_action
         ));
         let encoded = serde_json::to_value(event).expect("approval wire payload");
         assert_eq!(encoded["action"], action);
-        assert_eq!(encoded["approved"], expected_approved);
+        assert!(encoded.get("approved").is_none());
     }
 }

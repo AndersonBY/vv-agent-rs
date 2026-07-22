@@ -53,7 +53,7 @@ fn cli_help_uses_json_settings_defaults() {
 
     assert!(error.contains("VV_AGENT_LOCAL_SETTINGS"));
     assert!(error.contains("local_settings.json"));
-    assert!(!error.contains("default: V_AGENT_LOCAL_SETTINGS"));
+    assert_eq!(error.matches("VV_AGENT_LOCAL_SETTINGS").count(), 1);
     assert!(!error.contains("local_settings.py"));
 }
 

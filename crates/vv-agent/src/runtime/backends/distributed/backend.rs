@@ -1,7 +1,6 @@
-use std::sync::Arc;
 use std::time::Duration;
 
-use crate::runtime::state::StateStore;
+use std::sync::Arc;
 
 use super::super::RuntimeRecipe;
 use super::dispatch::CycleDispatcher;
@@ -10,7 +9,6 @@ use super::{DEFAULT_CYCLE_NAME, DEFAULT_LEASE_DURATION_MS};
 #[derive(Clone)]
 pub struct DistributedBackend {
     pub(super) runtime_recipe: Option<RuntimeRecipe>,
-    pub(super) state_store: Option<Arc<dyn StateStore>>,
     pub(super) cycle_dispatcher: Option<Arc<dyn CycleDispatcher>>,
     pub(super) cycle_name: String,
     pub(super) dispatch_timeout: Duration,
@@ -22,7 +20,6 @@ impl std::fmt::Debug for DistributedBackend {
         formatter
             .debug_struct("DistributedBackend")
             .field("runtime_recipe", &self.runtime_recipe)
-            .field("has_state_store", &self.state_store.is_some())
             .field("has_cycle_dispatcher", &self.cycle_dispatcher.is_some())
             .field("cycle_name", &self.cycle_name)
             .field("dispatch_timeout", &self.dispatch_timeout)
@@ -35,7 +32,6 @@ impl DistributedBackend {
     pub fn inline_fallback() -> Self {
         Self {
             runtime_recipe: None,
-            state_store: None,
             cycle_dispatcher: None,
             cycle_name: DEFAULT_CYCLE_NAME.to_string(),
             dispatch_timeout: Duration::from_secs(10 * 60),
@@ -43,25 +39,9 @@ impl DistributedBackend {
         }
     }
 
-    pub fn distributed(runtime_recipe: RuntimeRecipe) -> Self {
+    pub fn new(runtime_recipe: RuntimeRecipe, cycle_dispatcher: Arc<dyn CycleDispatcher>) -> Self {
         Self {
             runtime_recipe: Some(runtime_recipe),
-            state_store: None,
-            cycle_dispatcher: None,
-            cycle_name: DEFAULT_CYCLE_NAME.to_string(),
-            dispatch_timeout: Duration::from_secs(10 * 60),
-            lease_duration_ms: DEFAULT_LEASE_DURATION_MS,
-        }
-    }
-
-    pub fn distributed_with_dispatcher(
-        runtime_recipe: RuntimeRecipe,
-        state_store: Arc<dyn StateStore>,
-        cycle_dispatcher: Arc<dyn CycleDispatcher>,
-    ) -> Self {
-        Self {
-            runtime_recipe: Some(runtime_recipe),
-            state_store: Some(state_store),
             cycle_dispatcher: Some(cycle_dispatcher),
             cycle_name: DEFAULT_CYCLE_NAME.to_string(),
             dispatch_timeout: Duration::from_secs(10 * 60),
@@ -90,10 +70,6 @@ impl DistributedBackend {
 
     pub fn runtime_recipe(&self) -> Option<&RuntimeRecipe> {
         self.runtime_recipe.as_ref()
-    }
-
-    pub fn state_store(&self) -> Option<&Arc<dyn StateStore>> {
-        self.state_store.as_ref()
     }
 
     pub fn cycle_name(&self) -> &str {

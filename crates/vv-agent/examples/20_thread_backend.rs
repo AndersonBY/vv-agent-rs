@@ -4,7 +4,8 @@ use common::{
     build_direct_runtime, make_task_id, print_agent_result, runtime_log_handler, ExampleConfig,
 };
 use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
-use vv_agent::{AgentTask, CancellationToken, ExecutionContext, RuntimeRunControls, ThreadBackend};
+use vv_agent::types::AgentTask;
+use vv_agent::{CancellationToken, ExecutionContext, RuntimeRunControls, ThreadBackend};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ExampleConfig::load();
@@ -34,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         task1,
         RuntimeRunControls {
             workspace: Some(config.workspace.clone()),
-            log_handler: runtime_log_handler(config.verbose),
+            event_handler: runtime_log_handler(config.verbose),
             ..RuntimeRunControls::default()
         },
     )?;
@@ -51,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = CancellationToken::default();
     let controls = RuntimeRunControls {
         workspace: Some(config.workspace),
-        log_handler: runtime_log_handler(config.verbose),
+        event_handler: runtime_log_handler(config.verbose),
         execution_context: Some(ExecutionContext::default().with_cancellation_token(token)),
         ..RuntimeRunControls::default()
     };

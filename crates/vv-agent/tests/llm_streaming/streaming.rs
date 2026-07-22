@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn runtime_execution_context_stream_callback_uses_vv_llm_streaming() {
+fn runtime_execution_context_observes_typed_stream_events() {
     let chat_client = StreamingChatClient::default();
     let probe = chat_client.clone();
     let llm = VvLlmClient::new(
@@ -12,9 +12,9 @@ fn runtime_execution_context_stream_callback_uses_vv_llm_streaming() {
         90.0,
     );
     let runtime = AgentRuntime::new(llm);
-    let events = Arc::new(Mutex::new(Vec::<BTreeMap<String, Value>>::new()));
+    let events = Arc::new(Mutex::new(Vec::<RunEvent>::new()));
     let callback_events = Arc::clone(&events);
-    let stream_callback: StreamCallback = Arc::new(move |event| {
+    let event_handler = Arc::new(move |event: &RunEvent| {
         callback_events
             .lock()
             .expect("stream events lock")
@@ -26,7 +26,7 @@ fn runtime_execution_context_stream_callback_uses_vv_llm_streaming() {
             AgentTask::new("stream_ctx_task", "demo", "system", "finish via stream"),
             RuntimeRunControls {
                 execution_context: Some(
-                    ExecutionContext::default().with_stream_callback(stream_callback),
+                    ExecutionContext::default().with_event_handler(event_handler),
                 ),
                 ..RuntimeRunControls::default()
             },
@@ -37,13 +37,13 @@ fn runtime_execution_context_stream_callback_uses_vv_llm_streaming() {
     assert_eq!(result.final_answer.as_deref(), Some("streamed answer"));
     assert_eq!(probe.completion_calls(), 0);
     assert_eq!(probe.stream_calls(), 1);
-    assert_eq!(result.token_usage.total_tokens, 8);
-    assert_eq!(result.token_usage.cache_usage.read_tokens, Some(2));
+    assert_eq!(result.token_usage.total_tokens, Some(8));
+    assert_eq!(result.token_usage.cache_usage.read_input_tokens, Some(2));
     let events = events.lock().expect("stream events lock");
-    assert!(events.iter().any(|event| {
-        event.get("event") == Some(&json!("assistant_delta"))
-            && event.get("content_delta") == Some(&json!("streamed "))
-    }));
+    assert!(events.iter().any(|event| matches!(
+        &event.payload,
+        RunEventPayload::AssistantDelta { delta, .. } if delta == "streamed "
+    )));
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn structured_stream_tool_events_preserve_provider_tool_call_index() {
     );
     let events = Arc::new(Mutex::new(Vec::<BTreeMap<String, Value>>::new()));
     let callback_events = Arc::clone(&events);
-    let stream_callback: StreamCallback = Arc::new(move |event| {
+    let stream_callback: LlmStreamCallback = Arc::new(move |event| {
         callback_events
             .lock()
             .expect("stream events lock")
@@ -102,7 +102,7 @@ fn structured_stream_events_estimate_tokens_from_char_count() {
     );
     let events = Arc::new(Mutex::new(Vec::<BTreeMap<String, Value>>::new()));
     let callback_events = Arc::clone(&events);
-    let stream_callback: StreamCallback = Arc::new(move |event| {
+    let stream_callback: LlmStreamCallback = Arc::new(move |event| {
         callback_events
             .lock()
             .expect("stream events lock")
@@ -139,50 +139,6 @@ fn structured_stream_events_estimate_tokens_from_char_count() {
 }
 
 #[test]
-fn runtime_controls_stream_callback_is_forwarded_to_runtime() {
-    let chat_client = StreamingChatClient::default();
-    let probe = chat_client.clone();
-    let runtime = AgentRuntime::new(VvLlmClient::new(
-        "deepseek",
-        "deepseek-v4-pro",
-        "deepseek-v4-pro",
-        Box::new(chat_client),
-        90.0,
-    ));
-    let events = Arc::new(Mutex::new(Vec::<BTreeMap<String, Value>>::new()));
-    let callback_events = Arc::clone(&events);
-    let stream_callback: StreamCallback = Arc::new(move |event| {
-        callback_events
-            .lock()
-            .expect("stream events lock")
-            .push(event.clone());
-    });
-    let task = AgentTask::new(
-        "stream-callback",
-        "deepseek-v4-pro",
-        "Use task_finish when finished.",
-        "finish via runtime stream",
-    );
-    let result = runtime
-        .run_with_controls(
-            task,
-            RuntimeRunControls {
-                execution_context: Some(
-                    ExecutionContext::default().with_stream_callback(stream_callback),
-                ),
-                ..RuntimeRunControls::default()
-            },
-        )
-        .expect("runtime run");
-
-    assert_eq!(result.status, AgentStatus::Completed);
-    assert_eq!(result.final_answer.as_deref(), Some("streamed answer"));
-    assert_eq!(probe.completion_calls(), 0);
-    assert_eq!(probe.stream_calls(), 1);
-    assert!(!events.lock().expect("stream events lock").is_empty());
-}
-
-#[test]
 fn vv_llm_client_estimates_usage_when_provider_omits_usage() {
     let llm = VvLlmClient::new(
         "openai",
@@ -200,20 +156,23 @@ fn vv_llm_client_estimates_usage_when_provider_omits_usage() {
         .expect("completion without provider usage");
 
     assert_eq!(response.content, "estimated usage response");
-    assert!(response.token_usage.prompt_tokens > 0);
-    assert!(response.token_usage.completion_tokens > 0);
+    assert!(response
+        .token_usage
+        .input_tokens
+        .is_some_and(|value| value > 0));
+    assert!(response
+        .token_usage
+        .output_tokens
+        .is_some_and(|value| value > 0));
     assert_eq!(
         response.token_usage.total_tokens,
-        response.token_usage.prompt_tokens + response.token_usage.completion_tokens
+        response
+            .token_usage
+            .input_tokens
+            .zip(response.token_usage.output_tokens)
+            .map(|(input, output)| input + output)
     );
-    assert_eq!(
-        response.raw["usage"]["prompt_tokens"],
-        json!(response.token_usage.prompt_tokens)
-    );
-    assert_eq!(
-        response.raw["usage"]["completion_tokens"],
-        json!(response.token_usage.completion_tokens)
-    );
+    assert_eq!(response.raw["usage"], json!({}));
 }
 
 #[test]

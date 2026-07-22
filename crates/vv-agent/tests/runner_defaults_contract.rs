@@ -412,6 +412,13 @@ async fn approval_resume_preserves_runner_default_metadata() {
     let captured = Arc::new(Mutex::new(Vec::new()));
     let captured_for_tool = captured.clone();
     let tool = FunctionTool::builder("guarded_write")
+        .json_schema(json!({
+            "type": "object",
+            "properties": {
+                "value": {"type": "string"}
+            },
+            "required": ["value"]
+        }))
         .needs_approval(true)
         .handler(move |context, _arguments: serde_json::Value| {
             let captured = captured_for_tool.clone();

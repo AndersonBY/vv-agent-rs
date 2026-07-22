@@ -4,13 +4,14 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use vv_agent::memory::{token_utils::count_messages_tokens, CLEARED_MARKER};
+use vv_agent::types::AgentTask;
 use vv_agent::{
-    Agent, AgentRuntime, AgentStatus, AgentTask, ExecutionContext, LLMResponse, LlmClient,
-    LlmError, LlmRequest, MemoryCompactMode, MemoryCompactTrigger, MemoryError, MemoryFuture,
-    MemoryManager, MemoryManagerConfig, MemoryProvider, MemoryProviderResult, MemorySaveRequest,
-    MemorySaveResult, MemorySearchRequest, MemorySearchResult, Message, ModelError, ModelProvider,
-    ModelRef, ModelSettings, NoToolPolicy, ReservedOutputSource, ResolvedModelConfig, RunConfig,
-    RunEvent, RunEventPayload, Runner, RuntimeRunControls, SessionMemory, SessionMemoryConfig,
+    Agent, AgentRuntime, AgentStatus, ExecutionContext, LLMResponse, LlmClient, LlmError,
+    LlmRequest, MemoryCompactMode, MemoryCompactTrigger, MemoryError, MemoryFuture, MemoryManager,
+    MemoryManagerConfig, MemoryProvider, MemoryProviderResult, MemorySaveRequest, MemorySaveResult,
+    MemorySearchRequest, MemorySearchResult, Message, ModelError, ModelProvider, ModelRef,
+    ModelSettings, NoToolPolicy, ReservedOutputSource, ResolvedModelConfig, RunConfig, RunEvent,
+    RunEventPayload, Runner, RuntimeRunControls, SessionMemory, SessionMemoryConfig,
     SessionMemoryEntry, ToolCall,
 };
 
@@ -18,7 +19,7 @@ use vv_agent::{
 mod capacity;
 
 fn contract() -> Value {
-    serde_json::from_str(include_str!("fixtures/parity/memory_lifecycle_v1.json"))
+    serde_json::from_str(include_str!("fixtures/parity/memory_lifecycle.json"))
         .expect("memory lifecycle fixture")
 }
 
@@ -44,7 +45,7 @@ async fn runner_journal_emits_typed_memory_capacity_and_completion_observation()
     let model_provider = ReusableRecordingModelProvider::default();
     let captured = model_provider.requests.clone();
     let memory_provider = RecordingMemoryProvider::default();
-    let runtime_events = Arc::new(Mutex::new(Vec::<(String, BTreeMap<String, Value>)>::new()));
+    let runtime_events = Arc::new(Mutex::new(Vec::<RunEvent>::new()));
     let runtime_event_sink = runtime_events.clone();
     let workspace = tempfile::tempdir().expect("workspace");
     let runner = Runner::builder()
@@ -72,15 +73,22 @@ async fn runner_journal_emits_typed_memory_capacity_and_completion_observation()
                     Message::assistant("working"),
                 ])
                 .memory_provider(Arc::new(memory_provider.clone()))
-                .runtime_log_handler(move |event, payload| {
-                    if event.starts_with("memory_compact_") {
+                .stream(move |event| {
+                    if matches!(
+                        event.payload(),
+                        RunEventPayload::MemoryCompactStarted { .. }
+                            | RunEventPayload::MemoryCompactCompleted { .. }
+                    ) {
                         runtime_event_sink
                             .lock()
                             .expect("runtime memory events")
-                            .push((event.to_string(), payload.clone()));
+                            .push(event.clone());
                     }
-                    if event == "memory_compact_started" {
-                        panic!("raw memory observer panic");
+                    if matches!(
+                        event.payload(),
+                        RunEventPayload::MemoryCompactStarted { .. }
+                    ) {
+                        panic!("typed memory observer panic");
                     }
                 })
                 .build(),
@@ -127,18 +135,18 @@ async fn runner_journal_emits_typed_memory_capacity_and_completion_observation()
             _ => None,
         })
         .expect("typed memory started event");
-    assert_eq!(*started.0, Some(MemoryCompactTrigger::FullThreshold));
-    assert_eq!(*started.1, Some(250_000));
-    assert_eq!(*started.2, Some(10_808));
-    assert_eq!(*started.3, Some(8_106));
-    assert_eq!(*started.4, Some(32_000));
+    assert_eq!(*started.0, MemoryCompactTrigger::FullThreshold);
+    assert_eq!(*started.1, 250_000);
+    assert_eq!(*started.2, 10_808);
+    assert_eq!(*started.3, 8_106);
+    assert_eq!(*started.4, 32_000);
     assert_eq!(*started.5, Some(8_192));
-    assert_eq!(*started.6, Some(8_192));
+    assert_eq!(*started.6, 8_192);
     assert_eq!(
         *started.7,
-        Some(ReservedOutputSource::FrameworkFallbackCappedByModelCapability)
+        ReservedOutputSource::FrameworkFallbackCappedByModelCapability
     );
-    assert_eq!(*started.8, Some(13_000));
+    assert_eq!(*started.8, 13_000);
 
     let completed = result
         .events()
@@ -150,8 +158,8 @@ async fn runner_journal_emits_typed_memory_capacity_and_completion_observation()
             _ => None,
         })
         .expect("typed memory completed event");
-    assert_eq!(completed.0, Some(MemoryCompactMode::Summary));
-    assert_eq!(completed.1, Some(true));
+    assert_eq!(completed.0, MemoryCompactMode::Summary);
+    assert!(completed.1);
 
     let provider_events = memory_provider.events.lock().expect("provider events");
     let runtime_events = runtime_events.lock().expect("runtime memory events");
@@ -171,8 +179,7 @@ async fn runner_journal_emits_typed_memory_capacity_and_completion_observation()
             .collect::<Vec<_>>();
         let runtime_payloads_for_type = runtime_events
             .iter()
-            .filter(|(name, _)| name == event_name)
-            .map(|(_, payload)| payload)
+            .filter(|event| is_expected_payload(event.payload()))
             .collect::<Vec<_>>();
         let runner_events_for_type = result
             .events()
@@ -194,20 +201,20 @@ async fn runner_journal_emits_typed_memory_capacity_and_completion_observation()
             provider_events_for_type.len(),
             "Runner {event_name} count"
         );
-        for ((provider_event, runtime_payload), runner_event) in provider_events_for_type
+        for ((provider_event, runtime_event), runner_event) in provider_events_for_type
             .iter()
             .zip(runtime_payloads_for_type.iter())
             .zip(runner_events_for_type.iter())
         {
             assert_eq!(
-                runtime_payload.get("event_id").and_then(Value::as_str),
-                Some(provider_event.event_id().as_str()),
-                "{event_name} runtime payload must reuse the provider event id"
+                runtime_event.event_id(),
+                provider_event.event_id(),
+                "{event_name} runtime event must reuse the provider event id"
             );
             assert_eq!(
-                runtime_payload.get("created_at").and_then(Value::as_f64),
-                Some(provider_event.created_at()),
-                "{event_name} runtime payload must reuse the provider timestamp"
+                runtime_event.created_at(),
+                provider_event.created_at(),
+                "{event_name} runtime event must reuse the provider timestamp"
             );
             assert_eq!(
                 runner_event.event_id(),
@@ -618,7 +625,7 @@ fn ptl_forced_and_emergency_attempts_notify_providers() {
     let contract = contract();
     let attempts = &contract["provider_attempts"];
     let provider = RecordingMemoryProvider::default();
-    let logs = Arc::new(Mutex::new(Vec::<(String, BTreeMap<String, Value>)>::new()));
+    let logs = Arc::new(Mutex::new(Vec::<RunEvent>::new()));
     let log_sink = logs.clone();
     let runtime = AgentRuntime::new(PromptTooLongThenSuccess::new(
         attempts["prompt_too_long_failures_before_success"]
@@ -639,11 +646,14 @@ fn ptl_forced_and_emergency_attempts_notify_providers() {
                     ]),
                     ..ExecutionContext::default()
                 }),
-                log_handler: Some(Arc::new(move |event, payload| {
-                    log_sink
-                        .lock()
-                        .expect("memory logs")
-                        .push((event.to_string(), payload.clone()));
+                event_handler: Some(Arc::new(move |event| {
+                    if matches!(
+                        event.payload(),
+                        RunEventPayload::MemoryCompactStarted { .. }
+                            | RunEventPayload::MemoryCompactCompleted { .. }
+                    ) {
+                        log_sink.lock().expect("memory logs").push(event.clone());
+                    }
                 })),
                 ..RuntimeRunControls::default()
             },
@@ -661,56 +671,81 @@ fn ptl_forced_and_emergency_attempts_notify_providers() {
             "after".to_string(),
         ]
     );
-    let memory_logs = logs
-        .lock()
-        .expect("memory logs")
-        .iter()
-        .filter(|(event, _)| event.starts_with("memory_compact_"))
-        .cloned()
-        .collect::<Vec<_>>();
+    let memory_logs = logs.lock().expect("memory logs").clone();
     assert_eq!(
         memory_logs
             .iter()
-            .filter(|(event, _)| event == "memory_compact_started")
+            .filter(|event| matches!(
+                event.payload(),
+                RunEventPayload::MemoryCompactStarted { .. }
+            ))
             .count() as u64,
         attempts["started_count"].as_u64().unwrap()
     );
     assert_eq!(
         memory_logs
             .iter()
-            .filter(|(event, _)| event == "memory_compact_completed")
+            .filter(|event| matches!(
+                event.payload(),
+                RunEventPayload::MemoryCompactCompleted { .. }
+            ))
             .count() as u64,
         attempts["completed_count"].as_u64().unwrap()
     );
     assert_eq!(
-        memory_logs[0].1["memory_provider_results"]["RecordingMemoryProvider"]["phase"],
+        memory_logs[0].metadata()["memory_provider_results"]["RecordingMemoryProvider"]["phase"],
         attempts["result_metadata"]["phase"]
     );
     let started = memory_logs
         .iter()
-        .filter(|(event, _)| event == "memory_compact_started")
-        .map(|(_, payload)| payload)
+        .filter(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::MemoryCompactStarted { .. }
+            )
+        })
         .collect::<Vec<_>>();
-    assert!(started
-        .iter()
-        .all(|payload| payload["trigger"] == "prompt_too_long"));
-    assert!(started.iter().all(|payload| {
+    assert!(started.iter().all(|event| matches!(
+        event.payload(),
+        RunEventPayload::MemoryCompactStarted {
+            trigger: MemoryCompactTrigger::PromptTooLong,
+            ..
+        }
+    )));
+    assert!(started.iter().all(|event| {
+        let payload = serde_json::to_value(event).expect("started event wire");
         contract["compaction_events"]["started"]["new_producer_fields"]
             .as_array()
             .unwrap()
             .iter()
             .filter_map(Value::as_str)
-            .all(|field| payload.contains_key(field))
+            .all(|field| payload.get(field).is_some())
     }));
     let completed = memory_logs
         .iter()
-        .filter(|(event, _)| event == "memory_compact_completed")
-        .map(|(_, payload)| payload)
+        .filter(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::MemoryCompactCompleted { .. }
+            )
+        })
         .collect::<Vec<_>>();
-    assert_eq!(completed[0]["mode"], "summary");
-    assert_eq!(completed[0]["changed"], true);
-    assert_eq!(completed[1]["mode"], "none");
-    assert_eq!(completed[1]["changed"], false);
+    assert!(matches!(
+        completed[0].payload(),
+        RunEventPayload::MemoryCompactCompleted {
+            mode: MemoryCompactMode::Summary,
+            changed: true,
+            ..
+        }
+    ));
+    assert!(matches!(
+        completed[1].payload(),
+        RunEventPayload::MemoryCompactCompleted {
+            mode: MemoryCompactMode::None,
+            changed: false,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -718,7 +753,7 @@ fn memory_provider_attempt_errors_are_fail_open() {
     let contract = contract();
     let attempts = &contract["provider_attempts"];
     let provider = RecordingMemoryProvider::failing();
-    let logs = Arc::new(Mutex::new(Vec::<(String, BTreeMap<String, Value>)>::new()));
+    let logs = Arc::new(Mutex::new(Vec::<RunEvent>::new()));
     let log_sink = logs.clone();
     let runtime = AgentRuntime::new(PromptTooLongThenSuccess::new(1));
 
@@ -730,11 +765,14 @@ fn memory_provider_attempt_errors_are_fail_open() {
                     memory_providers: vec![Arc::new(provider)],
                     ..ExecutionContext::default()
                 }),
-                log_handler: Some(Arc::new(move |event, payload| {
-                    log_sink
-                        .lock()
-                        .expect("memory logs")
-                        .push((event.to_string(), payload.clone()));
+                event_handler: Some(Arc::new(move |event| {
+                    if matches!(
+                        event.payload(),
+                        RunEventPayload::MemoryCompactStarted { .. }
+                            | RunEventPayload::MemoryCompactCompleted { .. }
+                    ) {
+                        log_sink.lock().expect("memory logs").push(event.clone());
+                    }
                 })),
                 ..RuntimeRunControls::default()
             },
@@ -745,26 +783,36 @@ fn memory_provider_attempt_errors_are_fail_open() {
     let logs = logs.lock().expect("memory logs");
     let started = logs
         .iter()
-        .find(|(event, _)| event == "memory_compact_started")
+        .find(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::MemoryCompactStarted { .. }
+            )
+        })
         .expect("started event");
     let completed = logs
         .iter()
-        .find(|(event, _)| event == "memory_compact_completed")
+        .find(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::MemoryCompactCompleted { .. }
+            )
+        })
         .expect("completed event");
     assert_eq!(
-        started.1["memory_provider_errors"][0]["stage"],
+        started.metadata()["memory_provider_errors"][0]["stage"],
         attempts["before_error"]["stage"]
     );
     assert_eq!(
-        started.1["memory_provider_errors"][0]["error"],
+        started.metadata()["memory_provider_errors"][0]["error"],
         attempts["before_error"]["error"]
     );
     assert_eq!(
-        completed.1["memory_provider_errors"][0]["stage"],
+        completed.metadata()["memory_provider_errors"][0]["stage"],
         attempts["after_error"]["stage"]
     );
     assert_eq!(
-        completed.1["memory_provider_errors"][0]["error"],
+        completed.metadata()["memory_provider_errors"][0]["error"],
         attempts["after_error"]["error"]
     );
 }

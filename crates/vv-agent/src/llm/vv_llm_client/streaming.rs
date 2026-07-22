@@ -145,7 +145,10 @@ pub(super) async fn collect_vv_llm_stream(
     let token_usage = usage
         .map(from_vv_llm_usage)
         .unwrap_or_else(|| estimate_missing_usage(&completion_payload, &[], estimate));
-    raw.insert("usage".to_string(), token_usage.raw.clone());
+    raw.insert(
+        "usage".to_string(),
+        Value::Object(token_usage.provider_usage.clone()),
+    );
     Ok(LLMResponse {
         content,
         tool_calls: collected_tool_calls

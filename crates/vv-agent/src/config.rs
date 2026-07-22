@@ -7,14 +7,10 @@ use thiserror::Error;
 
 use crate::types::AgentTask;
 
-mod api_keys;
 mod model_resolution;
 mod settings_literal;
 
-pub use api_keys::decode_api_key;
-pub use model_resolution::{
-    build_vv_llm_from_local_settings, build_vv_llm_settings, resolve_model_endpoint,
-};
+pub use model_resolution::{build_vv_llm_from_local_settings, resolve_model_endpoint};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EndpointConfig {
@@ -69,12 +65,6 @@ pub struct ResolvedModelConfig {
     #[serde(default)]
     pub native_multimodal: bool,
     pub endpoint_options: Vec<EndpointOption>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct MemorySummaryDefaults {
-    pub backend: Option<String>,
-    pub model: Option<String>,
 }
 
 impl ResolvedModelConfig {
@@ -168,53 +158,6 @@ pub(crate) fn project_resolved_model_limits(
     }
 }
 
-pub fn load_memory_summary_defaults_from_file(path: &Path) -> MemorySummaryDefaults {
-    let Ok(source) = fs::read_to_string(path) else {
-        return MemorySummaryDefaults::default();
-    };
-    MemorySummaryDefaults {
-        backend: parse_string_setting(
-            &source,
-            &[
-                "DEFAULT_USER_MEMORY_SUMMARIZE_BACKEND",
-                "DEFAULT_MEMORY_SUMMARIZE_BACKEND",
-                "VV_AGENT_MEMORY_SUMMARY_BACKEND",
-                "memory_summary_backend",
-                "compress_memory_summary_backend",
-            ],
-        ),
-        model: parse_string_setting(
-            &source,
-            &[
-                "DEFAULT_USER_MEMORY_SUMMARIZE_MODEL",
-                "DEFAULT_MEMORY_SUMMARIZE_MODEL",
-                "VV_AGENT_MEMORY_SUMMARY_MODEL",
-                "memory_summary_model",
-                "compress_memory_summary_model",
-            ],
-        ),
-    }
-}
-
-fn parse_string_setting(source: &str, targets: &[&str]) -> Option<String> {
-    parse_json_string_setting(source, targets)
-        .or_else(|| settings_literal::parse_string_assignment(source, targets))
-}
-
-fn parse_json_string_setting(source: &str, targets: &[&str]) -> Option<String> {
-    let value = serde_json::from_str::<Value>(source).ok()?;
-    for target in targets {
-        let Some(raw) = value.get(*target).and_then(Value::as_str) else {
-            continue;
-        };
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-    }
-    None
-}
-
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("settings file not found: {0}")]
@@ -248,7 +191,11 @@ pub fn load_llm_settings_from_file(path: impl AsRef<Path>) -> Result<Value, Conf
         source,
     })?;
 
-    match path.extension().and_then(|ext| ext.to_str()) {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    let parsed = match extension.as_deref() {
         Some("py") => settings_literal::parse_llm_settings_source(&content).map_err(|source| {
             ConfigError::Parse {
                 path: path.display().to_string(),
@@ -270,9 +217,34 @@ pub fn load_llm_settings_from_file(path: impl AsRef<Path>) -> Result<Value, Conf
                 source: Box::new(source),
             })
         }
-        _ => serde_json::from_str(&content).map_err(|source| ConfigError::Parse {
-            path: path.display().to_string(),
-            source: Box::new(source),
-        }),
+        extension => {
+            return Err(ConfigError::InvalidSettings(format!(
+                "unsupported settings file extension: {}",
+                extension.unwrap_or("<none>")
+            )))
+        }
+    }?;
+    canonical_settings_value(&parsed)
+}
+
+pub(crate) fn canonical_settings_value(settings: &Value) -> Result<Value, ConfigError> {
+    let object = settings.as_object().ok_or_else(|| {
+        ConfigError::InvalidSettings("LLM_SETTINGS must be an object".to_string())
+    })?;
+    if object.get("VERSION").and_then(Value::as_str) != Some("2") {
+        return Err(ConfigError::InvalidSettings(
+            "LLM_SETTINGS.VERSION must be '2'".to_string(),
+        ));
     }
+    if !object.get("backends").is_some_and(Value::is_object) {
+        return Err(ConfigError::InvalidSettings(
+            "LLM_SETTINGS.backends must be an object".to_string(),
+        ));
+    }
+    if !object.get("endpoints").is_some_and(Value::is_array) {
+        return Err(ConfigError::InvalidSettings(
+            "LLM_SETTINGS.endpoints must be an array".to_string(),
+        ));
+    }
+    Ok(settings.clone())
 }

@@ -279,7 +279,6 @@ pub(super) fn approval_provider_result<C: LlmClient>(
                 "tool_name".to_string(),
                 Value::String(request.tool_name.clone()),
             ),
-            ("approved".to_string(), Value::Bool(decision.is_approved())),
             (
                 "action".to_string(),
                 Value::String(decision_action.to_string()),

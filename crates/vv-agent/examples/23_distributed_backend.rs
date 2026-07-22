@@ -4,7 +4,8 @@ use common::{
     build_direct_runtime, make_task_id, print_agent_result, runtime_log_handler, ExampleConfig,
 };
 use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
-use vv_agent::{AgentTask, DistributedBackend, RuntimeRunControls};
+use vv_agent::types::AgentTask;
+use vv_agent::{DistributedBackend, RuntimeRunControls};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ExampleConfig::load();
@@ -34,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         task,
         RuntimeRunControls {
             workspace: Some(config.workspace),
-            log_handler: runtime_log_handler(config.verbose),
+            event_handler: runtime_log_handler(config.verbose),
             ..RuntimeRunControls::default()
         },
     )?;

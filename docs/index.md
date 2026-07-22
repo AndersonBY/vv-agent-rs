@@ -17,7 +17,8 @@ duplicating the details.
 | `run-budgets.md` | Token, tool, wall-time, and host-cost limits; observations, resume, and distributed behavior. |
 | `output-validation.md` | Default-off host output validation, one-shot tools-free repair, failure, and replay semantics. |
 | `checkpoint-resume.md` | Checkpoint v2 ownership, exact resume, worker reconstruction, terminal ordering, and Apalis result transport. |
-| `app_server.md` | JSONL protocol, lifecycle, approval, schema generation, CLI startup, and host boundary. |
+| `../crates/vv-agent/docs/app_server.md` | JSONL protocol, lifecycle, approval, schema generation, CLI startup, and host boundary. |
+| `../crates/vv-agent/docs/app_server_runtime_mapping.md` | Mapping from App Server lifecycle objects to typed runtime events and state. |
 
 ## Existing Entry Points
 

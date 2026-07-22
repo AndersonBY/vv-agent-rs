@@ -273,8 +273,8 @@ impl LlmClient for PromptTokenCompactionInspectingLlmClient {
         if *responses_seen == 1 {
             let mut response = LLMResponse::new("continue after measuring prompt tokens");
             response.token_usage = TokenUsage {
-                prompt_tokens: 101,
-                total_tokens: 120,
+                input_tokens: Some(101),
+                total_tokens: Some(120),
                 ..TokenUsage::default()
             };
             return Ok(response);

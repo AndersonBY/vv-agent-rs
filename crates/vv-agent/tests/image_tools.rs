@@ -66,7 +66,7 @@ fn read_image_from_url_attaches_original_url() {
 }
 
 #[test]
-fn read_image_coerces_scalar_path() {
+fn read_image_rejects_non_string_path() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -83,9 +83,9 @@ fn read_image_coerces_scalar_path() {
         .expect("read_image");
 
     assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.error_code.as_deref(), Some("image_not_found"));
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
     let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["error"], "image file not found: 123");
+    assert_eq!(payload["error_code"], "invalid_tool_arguments");
 }
 
 #[test]

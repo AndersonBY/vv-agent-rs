@@ -7,11 +7,11 @@ use serde_json::{json, Value};
 use vv_agent::tools::build_default_registry;
 use vv_agent::{
     Agent, AgentStatus, LLMResponse, LlmClient, LlmError, LlmRequest, ModelError, ModelProvider,
-    ModelRef, ResolvedModelConfig, RunConfig, Runner, SubTaskManager, SubTaskOutcome, ToolCall,
-    ToolExecutionResult,
+    ModelRef, ResolvedModelConfig, RunConfig, RunEvent, RunEventPayload, Runner, SubTaskManager,
+    SubTaskOutcome, ToolCall, ToolExecutionResult,
 };
 
-const CONTROL_CONTRACT: &str = include_str!("fixtures/parity/run_config_controls_v1.json");
+const CONTROL_CONTRACT: &str = include_str!("fixtures/parity/run_config_controls.json");
 
 #[derive(Clone)]
 struct ProbeClient {
@@ -43,8 +43,8 @@ impl LlmClient for ProbeClient {
             .any(|message| message.content == "injected before cycle"));
         if let Some(callback) = stream_callback {
             callback(&BTreeMap::from([
-                ("type".to_string(), json!("assistant_delta")),
-                ("delta".to_string(), json!("streamed")),
+                ("event".to_string(), json!("assistant_delta")),
+                ("content_delta".to_string(), json!("streamed")),
             ]));
         }
         match self.step.fetch_add(1, Ordering::SeqCst) {
@@ -124,10 +124,8 @@ async fn run_config_wires_per_run_registry_debug_and_runtime_controls() {
     let tool_runs = Arc::new(AtomicUsize::new(0));
     let factory_calls_for_config = factory_calls.clone();
     let tool_runs_for_factory = tool_runs.clone();
-    let log_events = Arc::new(Mutex::new(Vec::<(String, BTreeMap<String, Value>)>::new()));
-    let log_events_for_config = log_events.clone();
-    let stream_payloads = Arc::new(Mutex::new(Vec::<BTreeMap<String, Value>>::new()));
-    let stream_payloads_for_config = stream_payloads.clone();
+    let events = Arc::new(Mutex::new(Vec::<RunEvent>::new()));
+    let events_for_config = events.clone();
     let interruption_used = Arc::new(AtomicBool::new(false));
     let interruption_used_for_config = interruption_used.clone();
     let debug_dir = tempfile::tempdir().expect("debug dir");
@@ -168,17 +166,11 @@ async fn run_config_wires_per_run_registry_debug_and_runtime_controls() {
             }
         })
         .sub_task_manager(manager)
-        .runtime_log_handler(move |event, payload| {
-            log_events_for_config
+        .stream(move |event| {
+            events_for_config
                 .lock()
-                .expect("log events")
-                .push((event.to_string(), payload.clone()));
-        })
-        .runtime_stream_callback(move |payload| {
-            stream_payloads_for_config
-                .lock()
-                .expect("stream payloads")
-                .push(payload.clone());
+                .expect("run events")
+                .push(event.clone());
         })
         .build();
     let agent = Agent::builder("assistant")
@@ -211,18 +203,27 @@ async fn run_config_wires_per_run_registry_debug_and_runtime_controls() {
             .as_deref(),
         Some("skipped_due_to_steering")
     );
-    let logs = log_events.lock().expect("log events");
-    assert!(logs.iter().any(|(event, _)| event == "run_steered"));
-    let preview = logs
+    let events = events.lock().expect("run events");
+    assert!(events.iter().any(|event| matches!(
+        &event.payload,
+        RunEventPayload::Diagnostic { code, .. } if code == "run_steered"
+    )));
+    let preview = events
         .iter()
-        .find_map(|(event, payload)| {
-            (event == "cycle_llm_response")
-                .then(|| payload.get("assistant_preview").and_then(Value::as_str))
+        .find_map(|event| {
+            let RunEventPayload::Diagnostic { code, details, .. } = &event.payload else {
+                return None;
+            };
+            (code == "cycle_llm_response")
+                .then(|| details.get("assistant_preview").and_then(Value::as_str))
                 .flatten()
         })
         .expect("assistant preview");
     assert_eq!(preview.chars().count(), 40);
-    assert_eq!(stream_payloads.lock().expect("stream payloads").len(), 2);
+    assert!(events.iter().any(|event| matches!(
+        &event.payload,
+        RunEventPayload::AssistantDelta { delta, .. } if delta == "streamed"
+    )));
 }
 
 #[tokio::test]
@@ -281,7 +282,7 @@ fn run_config_control_manifest_has_no_open_capability_gaps() {
     let controls = contract["per_run_controls"]
         .as_array()
         .expect("per-run controls");
-    assert_eq!(controls.len(), 23);
+    assert_eq!(controls.len(), 22);
     assert!(controls.iter().all(|entry| entry["status"] == "equivalent"));
     let capabilities = controls
         .iter()
@@ -289,7 +290,6 @@ fn run_config_control_manifest_has_no_open_capability_gaps() {
         .collect::<std::collections::BTreeSet<_>>();
     assert!(capabilities.contains("per_run_tool_registry"));
     assert!(capabilities.contains("cycle_injection"));
-    assert!(capabilities.contains("raw_runtime_observers"));
     assert!(capabilities.contains("diagnostics"));
     assert!(capabilities.contains("no_tool_policy"));
     assert!(capabilities.contains("run_budget"));

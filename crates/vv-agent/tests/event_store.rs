@@ -32,7 +32,7 @@ fn jsonl_event_store_replays_direct_children_by_default() {
 }
 
 #[test]
-fn run_event_serializes_with_the_python_v1_flat_wire_shape() {
+fn run_event_serializes_with_the_cross_language_flat_wire_shape() {
     let event = RunEvent::run_started("run_1", "trace_1", "assistant", "hello");
 
     let payload = serde_json::to_value(&event).expect("serialize event");
@@ -91,7 +91,7 @@ fn jsonl_event_store_replay_can_exclude_children() {
 fn jsonl_event_store_replay_is_lazy_and_stops_at_a_corrupt_line() {
     let store = JsonlRunEventStore::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/parity/event_store_replay_v1.jsonl"
+        "/tests/fixtures/parity/event_store_replay.jsonl"
     ));
 
     let mut replay = store

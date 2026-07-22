@@ -33,7 +33,7 @@ fn compress_memory_writes_note_to_shared_state() {
 }
 
 #[test]
-fn compress_memory_coerces_scalar_core_information() {
+fn compress_memory_rejects_non_string_core_information() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -50,10 +50,7 @@ fn compress_memory_coerces_scalar_core_information() {
         )
         .expect("compress_memory");
 
-    assert_eq!(result.status, ToolResultStatus::Success);
-    assert_eq!(
-        context.shared_state["memory_notes"][0]["core_information"],
-        json!("123")
-    );
-    assert_eq!(context.shared_state["memory_notes"][0]["cycle_index"], 4);
+    assert_eq!(result.status, ToolResultStatus::Error);
+    assert_eq!(result.error_code.as_deref(), Some("invalid_tool_arguments"));
+    assert!(!context.shared_state.contains_key("memory_notes"));
 }

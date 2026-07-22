@@ -615,7 +615,7 @@ struct ExplicitBackendModelProvider {
     client: Arc<dyn LlmClient>,
     resolved_refs: Arc<Mutex<Vec<ModelRef>>>,
     context_length: u64,
-    max_output_tokens: u64,
+    max_output_tokens: Option<u64>,
 }
 
 impl ModelProvider for ExplicitBackendModelProvider {
@@ -634,7 +634,7 @@ impl ModelProvider for ExplicitBackendModelProvider {
             model.model(),
             Vec::new(),
         )
-        .with_token_limits(Some(self.context_length), Some(self.max_output_tokens))
+        .with_token_limits(Some(self.context_length), self.max_output_tokens)
         .with_capabilities(true, true, false))
     }
 
@@ -651,9 +651,7 @@ fn explicit_backend_and_resolved_limits_reach_real_child_request_and_run_context
     let context_length = resolved_limits["context_length"]
         .as_u64()
         .expect("resolved context length");
-    let max_output_tokens = resolved_limits["max_output_tokens"]
-        .as_u64()
-        .expect("resolved max output tokens");
+    let max_output_tokens = resolved_limits["max_output_tokens"].as_u64();
 
     for (label, child_metadata, expected_context, expected_reserve) in [
         ("resolved limits", BTreeMap::new(), context_length, None),
@@ -790,7 +788,11 @@ fn explicit_backend_and_resolved_limits_reach_real_child_request_and_run_context
             "{label}"
         );
         assert_eq!(
-            requests[0].metadata["model_max_output_tokens"], max_output_tokens,
+            requests[0]
+                .metadata
+                .get("model_max_output_tokens")
+                .and_then(Value::as_u64),
+            max_output_tokens,
             "{label}"
         );
         assert!(
@@ -842,8 +844,9 @@ fn lifecycle_starts_before_model_resolution_failure_and_remains_paired() {
     let lifecycle = Arc::new(Mutex::new(Vec::new()));
     let ordering_for_handler = ordering.clone();
     let lifecycle_for_handler = lifecycle.clone();
-    let log_handler: vv_agent::RuntimeEventHandler = Arc::new(move |name, payload| {
-        if matches!(name, "sub_run_started" | "sub_run_completed") {
+    let event_handler: vv_agent::RunEventHandler = Arc::new(move |run_event| {
+        let (name, payload) = typed_event_parts(run_event);
+        if matches!(name.as_str(), "sub_run_started" | "sub_run_completed") {
             ordering_for_handler
                 .lock()
                 .expect("lifecycle ordering")
@@ -890,7 +893,7 @@ fn lifecycle_starts_before_model_resolution_failure_and_remains_paired() {
         .run_with_controls(
             parent,
             RuntimeRunControls {
-                log_handler: Some(log_handler),
+                event_handler: Some(event_handler),
                 execution_context: Some(ExecutionContext {
                     metadata: BTreeMap::from([
                         ("_vv_agent_run_id".to_string(), json!("parent-run")),
@@ -927,10 +930,7 @@ fn lifecycle_starts_before_model_resolution_failure_and_remains_paired() {
             .filter_map(Value::as_str)
             .collect::<Vec<_>>()
     );
-    assert_eq!(
-        lifecycle[0].1["child_run_id"],
-        lifecycle[1].1["child_run_id"]
-    );
+    assert_eq!(lifecycle[0].1["run_id"], lifecycle[1].1["run_id"]);
     assert_eq!(
         lifecycle[1].1["status"],
         lifecycle_contract["resolution_failure_status"]

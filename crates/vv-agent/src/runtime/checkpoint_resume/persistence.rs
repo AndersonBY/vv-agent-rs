@@ -16,7 +16,7 @@ impl CheckpointResumeController {
         }
         if !self
             .store
-            .acknowledge_terminal_v2(&checkpoint.checkpoint_key, checkpoint.revision)?
+            .acknowledge_terminal(&checkpoint.checkpoint_key, checkpoint.revision)?
         {
             self.reload()?;
             if !self.require_checkpoint()?.terminal_acknowledged {
@@ -40,11 +40,10 @@ impl CheckpointResumeController {
                 "checkpoint progress requires an active claim",
             )
         })?;
-        if !self.store.progress_checkpoint_v2(
-            checkpoint.clone(),
-            &claim_token,
-            checkpoint.revision,
-        )? {
+        if !self
+            .store
+            .progress_checkpoint(checkpoint.clone(), &claim_token, checkpoint.revision)?
+        {
             return Err(CheckpointError::new(
                 "checkpoint_store_conflict",
                 "checkpoint progress lost its claim",
@@ -83,7 +82,7 @@ impl CheckpointResumeController {
 
     pub(super) fn snapshot_extensions_into(
         &self,
-        checkpoint: &mut CheckpointV2,
+        checkpoint: &mut Checkpoint,
     ) -> CheckpointResult<()> {
         let mut snapshot = BTreeMap::new();
         for (namespace, extension) in &self.extensions {
@@ -143,7 +142,7 @@ impl CheckpointResumeController {
 
     pub(super) fn validate_existing_definition(
         &self,
-        checkpoint: &CheckpointV2,
+        checkpoint: &Checkpoint,
     ) -> CheckpointResult<()> {
         let stored_digest = run_definition_digest(&checkpoint.run_definition)?;
         if checkpoint.run_definition_digest != stored_digest {
@@ -159,9 +158,7 @@ impl CheckpointResumeController {
                 "current run definition digest does not match its definition",
             ));
         }
-        if run_definition_comparison_copy(&checkpoint.run_definition)
-            != run_definition_comparison_copy(&self.run_definition)
-        {
+        if checkpoint.run_definition != self.run_definition {
             return Err(CheckpointError::new(
                 "checkpoint_definition_mismatch",
                 "checkpoint embedded run definition does not match this run",
@@ -367,7 +364,7 @@ impl CheckpointResumeController {
         let expiry = now.checked_add(self.lease_duration_ms).ok_or_else(|| {
             CheckpointError::new("checkpoint_claim_invalid", "checkpoint lease overflow")
         })?;
-        if !self.store.renew_checkpoint_claim_v2(
+        if !self.store.renew_checkpoint_claim(
             &checkpoint.checkpoint_key,
             &claim_token,
             expiry,
@@ -416,7 +413,7 @@ impl CheckpointResumeController {
                         )
                     })?;
                     store
-                        .renew_checkpoint_claim_v2(&key, &claim_token, expiry, now)
+                        .renew_checkpoint_claim(&key, &claim_token, expiry, now)
                         .and_then(|renewed| {
                             if renewed {
                                 Ok(())
@@ -476,7 +473,7 @@ impl CheckpointResumeController {
 
     pub(super) fn reload(&mut self) -> CheckpointResult<()> {
         let key = self.checkpoint_key()?.to_string();
-        self.checkpoint = self.store.load_checkpoint_v2(&key)?;
+        self.checkpoint = self.store.load_checkpoint(&key)?;
         if self.checkpoint.is_none() {
             return Err(CheckpointError::new(
                 "checkpoint_not_found",
@@ -486,7 +483,7 @@ impl CheckpointResumeController {
         Ok(())
     }
 
-    pub(super) fn require_checkpoint(&self) -> CheckpointResult<&CheckpointV2> {
+    pub(super) fn require_checkpoint(&self) -> CheckpointResult<&Checkpoint> {
         self.checkpoint.as_ref().ok_or_else(|| {
             CheckpointError::new(
                 "checkpoint_not_admitted",
@@ -495,7 +492,7 @@ impl CheckpointResumeController {
         })
     }
 
-    pub(super) fn require_checkpoint_mut(&mut self) -> CheckpointResult<&mut CheckpointV2> {
+    pub(super) fn require_checkpoint_mut(&mut self) -> CheckpointResult<&mut Checkpoint> {
         self.checkpoint.as_mut().ok_or_else(|| {
             CheckpointError::new(
                 "checkpoint_not_admitted",

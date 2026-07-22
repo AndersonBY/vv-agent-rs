@@ -14,22 +14,10 @@ pub(super) fn run_batch_sync(
     total: usize,
     entries: Vec<BatchRequestEntry>,
 ) -> ToolExecutionResult {
-    let mut prepared_requests = Vec::new();
-    let mut invalid_results = BTreeMap::new();
-    for entry in entries {
-        if let Some(request) = entry.request {
-            prepared_requests.push((entry.index, request));
-        } else {
-            invalid_results.insert(
-                entry.index,
-                json!({
-                    "index": entry.index,
-                    "status": "failed",
-                    "error": entry.error.unwrap_or_else(|| "Invalid task item".to_string()),
-                }),
-            );
-        }
-    }
+    let prepared_requests = entries
+        .into_iter()
+        .map(|entry| (entry.index, entry.request))
+        .collect();
 
     let outcomes = run_prepared_requests(context, runner, prepared_requests);
     let outcome_map: BTreeMap<_, _> = outcomes.into_iter().collect();
@@ -37,11 +25,6 @@ pub(super) fn run_batch_sync(
     let mut completed = 0usize;
     let mut failed = 0usize;
     for index in 0..total {
-        if let Some(payload) = invalid_results.remove(&index) {
-            failed += 1;
-            results.push(payload);
-            continue;
-        }
         let outcome = outcome_map
             .get(&index)
             .expect("valid sub-task request should have an outcome");

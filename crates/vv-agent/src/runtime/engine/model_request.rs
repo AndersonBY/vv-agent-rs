@@ -4,6 +4,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::llm::{LlmRequest, LlmStreamCallback};
+use crate::runtime::RunEventHandler;
 use crate::types::{AgentTask, Message};
 
 use super::RuntimeRunControls;
@@ -26,15 +27,44 @@ pub(super) fn build_model_request(
 }
 
 pub(super) fn cycle_stream_callback(
-    callback: Option<&LlmStreamCallback>,
+    handler: Option<&RunEventHandler>,
+    metadata: &BTreeMap<String, Value>,
     cycle_index: u32,
 ) -> Option<LlmStreamCallback> {
-    callback.map(|callback| {
-        let callback = callback.clone();
+    handler.map(|handler| {
+        let handler = handler.clone();
+        let run_id = identity(metadata, &["_vv_agent_run_id", "run_id"])
+            .unwrap_or_else(|| "runtime".to_string());
+        let trace_id = identity(metadata, &["_vv_agent_trace_id", "trace_id"])
+            .unwrap_or_else(|| run_id.clone());
+        let agent_name = identity(metadata, &["_vv_agent_agent_name", "agent_name"])
+            .unwrap_or_else(|| "runtime".to_string());
+        let session_id = identity(metadata, &["_vv_agent_session_id", "session_id"]);
+        let parent_run_id = identity(metadata, &["_vv_agent_parent_run_id", "parent_run_id"]);
+        let input = identity(metadata, &["_vv_agent_input"]).unwrap_or_default();
+        let context = crate::runner::RuntimeEventContext::new(
+            run_id, trace_id, agent_name, session_id, input,
+        );
         Arc::new(move |event: &BTreeMap<String, Value>| {
             let mut event = event.clone();
             event.insert("cycle".to_string(), Value::from(cycle_index));
-            callback(&event);
+            if let Some(mut event) = crate::runner::map_stream_event(&event, &context) {
+                if let Some(parent_run_id) = parent_run_id.as_ref() {
+                    event = event.with_parent_run_id(parent_run_id);
+                }
+                handler(&event);
+            }
         }) as LlmStreamCallback
+    })
+}
+
+fn identity(metadata: &BTreeMap<String, Value>, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        metadata
+            .get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
     })
 }

@@ -61,7 +61,7 @@ pub use crate::runtime::sub_agent_sessions::{
 };
 pub use controls::{
     BeforeCycleMessageProvider, CheckpointRuntimeControl, InterruptionMessageProvider,
-    RuntimeEventHandler, RuntimeLogCallback, RuntimeLogHandler, RuntimeRunControls,
+    RunEventHandler, RuntimeRunControls,
 };
 pub(crate) use helpers::build_initial_messages;
 
@@ -136,7 +136,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         }
 
         let effective_cancellation_token = controls.effective_cancellation_token();
-        let effective_stream_callback = controls.effective_stream_callback();
+        let effective_event_handler = controls.effective_event_handler();
         let mut pending_error = None;
         let cycle_count = controls.cycle_count.unwrap_or(task.max_cycles);
         let mut result = self.execution_backend.execute_with_state(
@@ -256,7 +256,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         recent_tool_call_ids.as_ref(),
                     );
                 let compaction_mode = compaction_outcome.mode;
-                let memory_compacted = compaction_outcome.legacy_changed;
+                let memory_compacted = compaction_outcome.changed;
                 let mut compacted_messages = compaction_outcome.messages;
                 if let Some(started_event) = memory_compact_event.as_ref() {
                     let completed = memory_compact_completed_event(
@@ -304,8 +304,15 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         ),
                     ]),
                 );
-                let cycle_stream_callback =
-                    cycle_stream_callback(effective_stream_callback.as_ref(), cycle_index);
+                let mut stream_metadata = task.metadata.clone();
+                if let Some(execution_context) = controls.execution_context.as_ref() {
+                    stream_metadata.extend(execution_context.metadata.clone());
+                }
+                let cycle_stream_callback = cycle_stream_callback(
+                    effective_event_handler.as_ref(),
+                    &stream_metadata,
+                    cycle_index,
+                );
                 let response = loop {
                     let request = build_model_request(
                         &task,
@@ -525,7 +532,6 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     sub_task_manager: &sub_task_manager,
                     cycle_index,
                     cancellation_token,
-                    stream_callback: &effective_stream_callback,
                     child_budget_limits: &child_budget_limits,
                     request_tool_schemas: &request_tool_schemas,
                     after_cycle_disallowed_tools: &active_after_cycle_denials,
@@ -571,7 +577,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         cycle_index,
                         &patched_call,
                         || {
-                            let idempotency = super::run_definition_v2::tool_idempotency_for(
+                            let idempotency = super::run_definition::tool_idempotency_for(
                                 &self.tool_registry,
                                 &patched_call.name,
                             );

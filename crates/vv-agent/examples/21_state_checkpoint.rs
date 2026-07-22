@@ -6,16 +6,14 @@ use std::sync::Arc;
 use common::{
     build_facade_agent, build_facade_runner, env_string, print_run_result, ExampleConfig,
 };
-use vv_agent::{
-    CheckpointConfig, CheckpointStoreV2, ResumePolicy, RunConfig, SqliteCheckpointStoreV2,
-};
+use vv_agent::{CheckpointConfig, CheckpointStore, ResumePolicy, RunConfig, SqliteCheckpointStore};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = ExampleConfig::load();
     config.ensure_workspace()?;
     let db_path = PathBuf::from(env_string(
-        "V_AGENT_EXAMPLE_DB",
+        "VV_AGENT_EXAMPLE_DB",
         &config
             .workspace
             .join(".vv-agent-state/checkpoints-v2.db")
@@ -25,14 +23,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all(parent)?;
     }
     let checkpoint_key = env_string(
-        "V_AGENT_EXAMPLE_CHECKPOINT_KEY",
+        "VV_AGENT_EXAMPLE_CHECKPOINT_KEY",
         "example-21-state-checkpoint",
     );
     let prompt = config
         .prompt
         .clone()
         .unwrap_or_else(|| "Calculate 2+3, briefly verify the result, and finish.".to_string());
-    let store = Arc::new(SqliteCheckpointStoreV2::new(&db_path)?);
+    let store = Arc::new(SqliteCheckpointStore::new(&db_path)?);
     let mut checkpoint = CheckpointConfig::new(store.clone());
     checkpoint.key = Some(checkpoint_key.clone());
     checkpoint.resume_policy = ResumePolicy::ResumeIfPresent;
@@ -58,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     print_run_result(&result)?;
 
-    if let Some(retained) = store.load_checkpoint_v2(&checkpoint_key)? {
+    if let Some(retained) = store.load_checkpoint(&checkpoint_key)? {
         println!(
             "[demo] durable_state=cycle:{} resume_attempt:{} terminal_acknowledged:{}",
             retained.cycle_index, retained.resume_attempt, retained.terminal_acknowledged

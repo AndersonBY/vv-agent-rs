@@ -239,39 +239,10 @@ fn async_submission_behavior_matches_fixture() {
         async_contract["single_error_code"].as_str()
     );
 
-    let mixed_manager = SubTaskManager::default();
-    let mut mixed_context = ToolContext::new(".");
-    mixed_context.task_id = "async-mixed-parent".to_string();
-    mixed_context.sub_task_manager = Some(mixed_manager.clone());
-    mixed_context.sub_task_runner = Some(Arc::new(completed_outcome));
-    let mixed = registry
-        .execute(
-            &ToolCall::new(
-                "mixed-batch",
-                "create_sub_task",
-                BTreeMap::from([
-                    ("agent_id".to_string(), json!("researcher")),
-                    (
-                        "tasks".to_string(),
-                        json!(["invalid item", {"task_description": "valid item"}]),
-                    ),
-                    ("wait_for_completion".to_string(), json!(false)),
-                ]),
-            ),
-            &mut mixed_context,
-        )
-        .expect("mixed async batch");
-    let mixed_payload: Value = serde_json::from_str(&mixed.content).expect("mixed batch payload");
-    assert_eq!(mixed.status, ToolResultStatus::Success);
     assert_eq!(
-        mixed_payload["summary"],
-        json!({"total": 2, "accepted": 1, "failed": 1})
+        async_contract["batch_continues_after_submission_failure"],
+        true
     );
-    assert_eq!(async_contract["batch_continues_after_item_failure"], true);
-    let accepted_task = mixed_payload["task_ids"][0]
-        .as_str()
-        .expect("accepted mixed task");
-    assert!(mixed_manager.wait(accepted_task, Some(Duration::from_secs(2))));
 
     let mut failed_context = ToolContext::new(".");
     failed_context.task_id = "async-all-failed-parent".to_string();

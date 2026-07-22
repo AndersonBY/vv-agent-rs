@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use vv_agent::{AgentResult, EndpointConfig, EndpointOption, ResolvedModelConfig, RunResult};
 
 fn contract() -> Value {
-    serde_json::from_str(include_str!("fixtures/parity/result_public_v1.json"))
+    serde_json::from_str(include_str!("fixtures/parity/result_public.json"))
         .expect("result public fixture")
 }
 
@@ -80,4 +80,35 @@ fn run_result_public_projection_matches_shared_contract_without_credentials() {
         .expect("serialize result")
         .contains("secret-must-not-serialize"));
     assert_eq!(result.to_dict(), projection);
+}
+
+#[test]
+fn agent_result_reader_enforces_the_closed_current_wire() {
+    let contract = contract();
+    let raw = &contract["agent_result"];
+    let wire = &contract["agent_result_wire"];
+
+    assert_eq!(AgentResult::from_dict(raw).unwrap().to_dict(), *raw);
+    for field in wire["required_fields"].as_array().unwrap() {
+        let mut invalid = raw.clone();
+        invalid
+            .as_object_mut()
+            .unwrap()
+            .remove(field.as_str().unwrap());
+        assert!(AgentResult::from_dict(&invalid).is_err(), "{field}");
+    }
+    for field in wire["optional_fields"].as_array().unwrap() {
+        let mut invalid = raw.clone();
+        invalid
+            .as_object_mut()
+            .unwrap()
+            .insert(field.as_str().unwrap().to_string(), Value::Null);
+        assert!(AgentResult::from_dict(&invalid).is_err(), "{field}");
+    }
+    let mut unknown = raw.clone();
+    unknown
+        .as_object_mut()
+        .unwrap()
+        .insert("legacy".to_string(), json!(true));
+    assert!(AgentResult::from_dict(&unknown).is_err());
 }

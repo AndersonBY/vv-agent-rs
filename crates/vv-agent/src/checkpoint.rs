@@ -1,9 +1,8 @@
-//! Public building blocks for the opt-in durable checkpoint v2 protocol.
+//! Public building blocks for the current durable checkpoint protocol.
 //!
-//! The v1 checkpoint implementation deliberately remains in
-//! runtime::state and runtime::checkpoint_codec. This module owns the
-//! language-neutral values which are new in checkpoint v2 and the canonical
-//! JSON helpers used by definitions, journals, and event identities.
+//! This module owns the language-neutral values and canonical JSON helpers used
+//! by definitions, journals, and event identities. The wire discriminator is
+//! validated strictly; no historical checkpoint decoder is retained.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,7 +14,7 @@ use serde_json::{Map, Number, Value};
 use sha2::{Digest, Sha256};
 
 use crate::runtime::backends::CapabilityRef;
-use crate::runtime::state_v2::CheckpointStoreV2;
+use crate::runtime::state::CheckpointStore;
 
 mod canonical;
 
@@ -30,7 +29,7 @@ pub const MAX_CHECKPOINT_KEY_BYTES: usize = 512;
 pub const MAX_EXTENSION_NAMESPACE_BYTES: usize = 128;
 pub const MAX_EXTENSION_ENTRY_BYTES: usize = 65_536;
 pub const DEFAULT_MAX_EXTENSION_STATE_BYTES: u64 = 262_144;
-pub const CHECKPOINT_V2_SCHEMA: &str = "vv-agent.checkpoint.v2";
+pub const CHECKPOINT_SCHEMA: &str = "vv-agent.checkpoint.v2";
 pub const RUN_DEFINITION_SCHEMA: &str = "vv-agent.run-definition.v1";
 pub const OPERATION_REQUEST_SCHEMA: &str = "vv-agent.operation-request.v1";
 pub const EVENT_CURSOR_SCHEMA: &str = "vv-agent.event-cursor.v1";
@@ -359,7 +358,7 @@ pub trait CheckpointExtension: Send + Sync {
 /// Runtime configuration for enabling checkpoint v2.
 #[derive(Clone)]
 pub struct CheckpointConfig {
-    pub store: Option<Arc<dyn CheckpointStoreV2>>,
+    pub store: Option<Arc<dyn CheckpointStore>>,
     pub store_ref: Option<CapabilityRef>,
     pub key: Option<String>,
     pub resume_policy: ResumePolicy,
@@ -410,7 +409,7 @@ impl fmt::Debug for CheckpointConfig {
 }
 
 impl CheckpointConfig {
-    pub fn new(store: Arc<dyn CheckpointStoreV2>) -> Self {
+    pub fn new(store: Arc<dyn CheckpointStore>) -> Self {
         Self {
             store: Some(store),
             ..Self::default()
@@ -419,7 +418,7 @@ impl CheckpointConfig {
 
     pub fn with_store<S>(store: S) -> Self
     where
-        S: CheckpointStoreV2 + 'static,
+        S: CheckpointStore + 'static,
     {
         Self::new(Arc::new(store))
     }

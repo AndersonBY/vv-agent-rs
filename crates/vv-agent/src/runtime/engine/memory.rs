@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::config::load_memory_summary_defaults_from_file;
 use crate::events::{MemoryCompactMode, MemoryCompactTrigger, ReservedOutputSource, RunEvent};
 use crate::memory::token_utils::count_messages_tokens;
 use crate::memory::{
@@ -28,8 +27,9 @@ use metadata::{
 use session::build_session_memory;
 use token_limits::resolve_runtime_model_token_limits;
 
-const MODEL_CONTEXT_WINDOW_FALLBACK: u64 = 200_000;
+const DEFAULT_MEMORY_COMPACT_THRESHOLD: u64 = 250_000;
 const RESERVED_OUTPUT_TOKENS_FALLBACK: u64 = 16_000;
+const AUTOCOMPACT_BUFFER_TOKENS_DEFAULT: u64 = 13_000;
 
 #[derive(Debug, Clone, Copy)]
 struct RuntimeMemoryCapacity {
@@ -47,29 +47,11 @@ pub(super) fn build_memory_manager(
     default_backend: Option<&str>,
 ) -> MemoryManager {
     let workspace = task.use_workspace.then_some(workspace_path);
-    let local_summary_defaults = settings_file
-        .map(load_memory_summary_defaults_from_file)
-        .unwrap_or_default();
-    let summary_backend = read_optional_string_metadata(
-        &task.metadata,
-        &[
-            "memory_summary_backend",
-            "compress_memory_summary_backend",
-            "memory_compress_backend",
-        ],
-    )
-    .or(local_summary_defaults.backend)
-    .or_else(|| default_backend.map(str::to_string));
-    let summary_model = read_optional_string_metadata(
-        &task.metadata,
-        &[
-            "memory_summary_model",
-            "compress_memory_summary_model",
-            "memory_compress_model",
-        ],
-    )
-    .or(local_summary_defaults.model)
-    .unwrap_or_else(|| task.model.clone());
+    let summary_backend =
+        read_optional_string_metadata(&task.metadata, &["memory_summary_backend"])
+            .or_else(|| default_backend.map(str::to_string));
+    let summary_model = read_optional_string_metadata(&task.metadata, &["memory_summary_model"])
+        .unwrap_or_else(|| task.model.clone());
     let has_memory_route = summary_backend
         .as_deref()
         .is_some_and(|value| !value.trim().is_empty())
@@ -84,8 +66,17 @@ pub(super) fn build_memory_manager(
     };
     let (resolved_context_window, resolved_max_output_tokens) =
         resolve_runtime_model_token_limits(settings_file, default_backend, &task.model);
-    let capacity =
-        resolve_memory_capacity(task, resolved_context_window, resolved_max_output_tokens);
+    let autocompact_buffer_tokens = read_u64_metadata(
+        &task.metadata,
+        "autocompact_buffer_tokens",
+        AUTOCOMPACT_BUFFER_TOKENS_DEFAULT,
+    );
+    let capacity = resolve_memory_capacity(
+        task,
+        resolved_context_window,
+        resolved_max_output_tokens,
+        autocompact_buffer_tokens,
+    );
 
     MemoryManager::new(MemoryManagerConfig {
         compact_threshold: task.memory_compact_threshold,
@@ -97,11 +88,7 @@ pub(super) fn build_memory_manager(
         model: task.model.clone(),
         model_context_window: capacity.model_context_window,
         reserved_output_tokens: capacity.reserved_output_tokens,
-        autocompact_buffer_tokens: read_u64_metadata(
-            &task.metadata,
-            "autocompact_buffer_tokens",
-            13_000,
-        ),
+        autocompact_buffer_tokens,
         language: read_string_metadata(&task.metadata, "language", "zh-CN"),
         warning_threshold_percentage: task.memory_threshold_percentage.clamp(1, 100),
         include_memory_warning: read_bool_metadata(&task.metadata, "include_memory_warning", false),
@@ -176,11 +163,12 @@ fn resolve_memory_capacity(
     task: &AgentTask,
     resolved_context_window: Option<u64>,
     resolved_max_output_tokens: Option<u64>,
+    autocompact_buffer_tokens: u64,
 ) -> RuntimeMemoryCapacity {
-    let model_context_window = read_optional_u64_metadata(&task.metadata, "model_context_window")
-        .filter(|value| *value > 0)
-        .or(resolved_context_window.filter(|value| *value > 0))
-        .unwrap_or(MODEL_CONTEXT_WINDOW_FALLBACK);
+    let declared_context_window =
+        read_optional_u64_metadata(&task.metadata, "model_context_window")
+            .filter(|value| *value > 0)
+            .or(resolved_context_window.filter(|value| *value > 0));
     let model_max_output_tokens =
         read_optional_u64_metadata(&task.metadata, "model_max_output_tokens")
             .or(resolved_max_output_tokens);
@@ -210,6 +198,16 @@ fn resolve_memory_capacity(
             ReservedOutputSource::FrameworkFallback,
         )
     };
+    let planning_prompt_capacity = if task.memory_compact_threshold > 0 {
+        task.memory_compact_threshold
+    } else {
+        DEFAULT_MEMORY_COMPACT_THRESHOLD
+    };
+    let model_context_window = declared_context_window.unwrap_or_else(|| {
+        planning_prompt_capacity
+            .saturating_add(reserved_output_tokens)
+            .saturating_add(autocompact_buffer_tokens)
+    });
 
     RuntimeMemoryCapacity {
         model_context_window,
@@ -253,7 +251,7 @@ pub(super) fn memory_compact_started_event(
         .and_then(Value::as_str)
         .unwrap_or(&task.task_id)
         .to_string();
-    let event = RunEvent::memory_compact_started_observed(
+    let event = RunEvent::memory_compact_started(
         run_id,
         trace_id,
         agent_name,
@@ -359,7 +357,7 @@ pub(super) fn memory_compact_completed_event(
     model: &str,
     mode: MemoryCompactMode,
 ) -> RunEvent {
-    let event = RunEvent::memory_compact_completed_observed(
+    let event = RunEvent::memory_compact_completed(
         started_event.run_id(),
         started_event.trace_id(),
         started_event
@@ -409,40 +407,32 @@ pub(super) fn memory_compact_event_payload(event: &RunEvent) -> BTreeMap<String,
                     Value::from(*estimated_tokens),
                 );
             }
-            insert_optional_serializable(&mut payload, "trigger", trigger);
-            insert_optional_serializable(
-                &mut payload,
-                "configured_threshold",
-                configured_threshold,
-            );
-            insert_optional_serializable(&mut payload, "effective_threshold", effective_threshold);
-            insert_optional_serializable(
+            insert_serializable(&mut payload, "trigger", trigger);
+            insert_serializable(&mut payload, "configured_threshold", configured_threshold);
+            insert_serializable(&mut payload, "effective_threshold", effective_threshold);
+            insert_serializable(
                 &mut payload,
                 "microcompact_threshold",
                 microcompact_threshold,
             );
-            insert_optional_serializable(
-                &mut payload,
-                "model_context_window",
-                model_context_window,
-            );
+            insert_serializable(&mut payload, "model_context_window", model_context_window);
             payload.insert(
                 "model_max_output_tokens".to_string(),
                 model_max_output_tokens
                     .map(Value::from)
                     .unwrap_or(Value::Null),
             );
-            insert_optional_serializable(
+            insert_serializable(
                 &mut payload,
                 "reserved_output_tokens",
                 reserved_output_tokens,
             );
-            insert_optional_serializable(
+            insert_serializable(
                 &mut payload,
                 "reserved_output_source",
                 reserved_output_source,
             );
-            insert_optional_serializable(
+            insert_serializable(
                 &mut payload,
                 "autocompact_buffer_tokens",
                 autocompact_buffer_tokens,
@@ -460,25 +450,23 @@ pub(super) fn memory_compact_event_payload(event: &RunEvent) -> BTreeMap<String,
             if let Some(summary_tokens) = summary_tokens {
                 payload.insert("summary_tokens".to_string(), Value::from(*summary_tokens));
             }
-            insert_optional_serializable(&mut payload, "mode", mode);
-            insert_optional_serializable(&mut payload, "changed", changed);
+            insert_serializable(&mut payload, "mode", mode);
+            insert_serializable(&mut payload, "changed", changed);
         }
         _ => {}
     }
     payload
 }
 
-fn insert_optional_serializable<T: serde::Serialize>(
+fn insert_serializable<T: serde::Serialize>(
     payload: &mut BTreeMap<String, Value>,
     key: &str,
-    value: &Option<T>,
+    value: &T,
 ) {
-    if let Some(value) = value {
-        payload.insert(
-            key.to_string(),
-            serde_json::to_value(value).unwrap_or(Value::Null),
-        );
-    }
+    payload.insert(
+        key.to_string(),
+        serde_json::to_value(value).unwrap_or(Value::Null),
+    );
 }
 
 fn memory_provider_name(

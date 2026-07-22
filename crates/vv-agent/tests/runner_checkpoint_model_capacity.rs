@@ -2,12 +2,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vv_agent::{
-    Agent, CapabilityRef, CheckpointConfig, CheckpointStoreV2, InMemoryCheckpointStoreV2,
-    LLMResponse, LlmRequest, MemorySession, ModelRef, NoToolPolicy, ResumePolicy, RunConfig,
-    Runner, ScriptedModelProvider,
+    Agent, CapabilityRef, CheckpointConfig, CheckpointStore, InMemoryCheckpointStore, LLMResponse,
+    LlmRequest, MemorySession, ModelRef, NoToolPolicy, ResumePolicy, RunConfig, Runner,
+    ScriptedModelProvider,
 };
 
-fn checkpoint_config(store: InMemoryCheckpointStoreV2) -> CheckpointConfig {
+fn checkpoint_config(store: InMemoryCheckpointStore) -> CheckpointConfig {
     let mut config = CheckpointConfig::with_store(store);
     config.key = Some("resume-capacity".to_string());
     config.resume_policy = ResumePolicy::ResumeIfPresent;
@@ -46,7 +46,7 @@ async fn checkpoint_resume_preserves_model_capability_without_fabricating_output
         .model(ModelRef::named("resume-capacity-model"))
         .build()
         .expect("agent");
-    let store = InMemoryCheckpointStoreV2::new();
+    let store = InMemoryCheckpointStore::new();
     let session = MemorySession::new("resume-capacity-session");
     let crash_once = Arc::new(AtomicBool::new(true));
     let crash_for_hook = crash_once.clone();
@@ -72,12 +72,12 @@ async fn checkpoint_resume_preserves_model_capability_without_fabricating_output
     assert!(first.is_err());
     assert!(requests.lock().expect("resume requests").is_empty());
     let mut crashed = store
-        .load_checkpoint_v2("resume-capacity")
+        .load_checkpoint("resume-capacity")
         .expect("load crashed checkpoint")
         .expect("crashed checkpoint");
     crashed.lease_expires_at_ms = Some(1);
     store
-        .save_checkpoint_v2(crashed)
+        .save_checkpoint(crashed)
         .expect("expire crashed checkpoint lease");
 
     let resumed = runner
