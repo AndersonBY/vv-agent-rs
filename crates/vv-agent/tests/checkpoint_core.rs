@@ -360,24 +360,24 @@ fn sqlite_store_ignores_unrelated_checkpoint_prefixed_tables() {
 
 #[test]
 fn cross_runtime_sqlite_probe_from_environment() {
-    let Ok(path) = std::env::var("VV_AGENT_CROSS_RUNTIME_V2_DB") else {
+    let Ok(path) = std::env::var("VV_AGENT_CROSS_RUNTIME_DB") else {
         return;
     };
-    let mode = std::env::var("VV_AGENT_CROSS_RUNTIME_V2_MODE")
-        .unwrap_or_else(|_| "read_python".to_string());
-    let store = SqliteCheckpointStore::new(path).expect("cross-runtime SQLite v2 store");
+    let mode =
+        std::env::var("VV_AGENT_CROSS_RUNTIME_MODE").unwrap_or_else(|_| "read_python".to_string());
+    let store = SqliteCheckpointStore::new(path).expect("cross-runtime SQLite store");
 
     match mode.as_str() {
         "read_python" => {
             let checkpoint = store
-                .load_checkpoint("python-wrote-v2")
-                .expect("load Python checkpoint v2")
-                .expect("Python checkpoint v2 exists");
-            assert_eq!(checkpoint.messages, vec![Message::user("from Python v2")]);
+                .load_checkpoint("python-wrote")
+                .expect("load Python checkpoint")
+                .expect("Python checkpoint exists");
+            assert_eq!(checkpoint.messages, vec![Message::user("from Python")]);
             assert_eq!(
                 checkpoint.shared_state,
                 BTreeMap::from([
-                    ("format".to_string(), json!("checkpoint-v2")),
+                    ("format".to_string(), json!("checkpoint")),
                     ("writer".to_string(), json!("python")),
                 ])
             );
@@ -387,15 +387,15 @@ fn cross_runtime_sqlite_probe_from_environment() {
             );
         }
         "write_rust" => {
-            let mut checkpoint = minimal_checkpoint("rust-wrote-v2");
-            checkpoint.messages = vec![Message::user("from Rust v2")];
+            let mut checkpoint = minimal_checkpoint("rust-wrote");
+            checkpoint.messages = vec![Message::user("from Rust")];
             checkpoint.shared_state = BTreeMap::from([
-                ("format".to_string(), json!("checkpoint-v2")),
+                ("format".to_string(), json!("checkpoint")),
                 ("writer".to_string(), json!("rust")),
             ]);
             assert!(store.create_checkpoint(checkpoint).unwrap());
         }
-        other => panic!("unknown cross-runtime v2 mode: {other}"),
+        other => panic!("unknown cross-runtime mode: {other}"),
     }
 }
 
