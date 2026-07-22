@@ -19,10 +19,14 @@ committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
 The current lock selects contract `2.0.0` at revision
-`8ef7153e9b1f26b90a9fad85bbfcb4642d6462fa`. The central support matrix remains
-`in-progress` until the final Python and Rust revisions and the recording
-cross-repository conformance run pass. This document maps the Rust producers;
-the central matrix remains the authoritative verification record.
+`8ef7153e9b1f26b90a9fad85bbfcb4642d6462fa`. The central support matrix is
+`verified`. Recording run
+[`29934473634`](https://github.com/AndersonBY/vv-agent-contract/actions/runs/29934473634)
+passed against Python revision
+`64743760634fa70c76bf523bf4b51601713ccfb0` and Rust revision
+`91a53cd1be9ad560f99c93c4437bc2d830271a09`. This document maps the Rust
+producers; the central matrix remains the authoritative current verification
+record.
 
 ## Required Reading
 
