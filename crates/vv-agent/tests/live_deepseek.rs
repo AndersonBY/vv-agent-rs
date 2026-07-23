@@ -3,6 +3,9 @@ use std::path::PathBuf;
 
 use vv_agent::{handoff, Agent, AgentStatus, ModelRef, RunConfig, Runner, VvLlmModelProvider};
 
+#[path = "live_support/deepseek_accounting.rs"]
+mod deepseek_accounting;
+
 #[tokio::test]
 #[ignore = "live API call; run with VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_deepseek -- --ignored"]
 async fn live_deepseek_v4_pro_finishes_runner_task() {

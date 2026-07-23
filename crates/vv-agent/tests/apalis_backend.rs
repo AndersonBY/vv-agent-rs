@@ -309,6 +309,10 @@ async fn apalis_worker_task_recovers_retry_without_blocking_async_runtime() {
         ["memory_compact_threshold"]
         .as_u64()
         .expect("frozen memory threshold");
+    retry_task.metadata.insert(
+        "session_memory_enabled".to_string(),
+        checkpoint.run_definition["runtime_controls"]["session_memory_enabled"].clone(),
+    );
     let envelope = DistributedRunEnvelope::for_cycle(
         retry_task,
         recipe,
