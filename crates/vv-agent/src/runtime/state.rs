@@ -1,4 +1,4 @@
-//! Checkpoint v2 state and store contract.
+//! Checkpoint v3 state and store contract.
 
 use std::collections::BTreeMap;
 
@@ -12,7 +12,7 @@ use crate::checkpoint::{
     OperationState, ToolIdempotency, MAX_EXTENSION_ENTRY_BYTES, MAX_WIRE_INTEGER,
 };
 use crate::events::RunEvent;
-use crate::types::{CycleRecord, Message};
+use crate::types::{CycleRecord, Message, ModelCallOperation, ModelCallRecord};
 
 mod transitions;
 mod validation;
@@ -100,15 +100,23 @@ pub struct OperationJournalEntry {
     pub arguments: Option<Map<String, Value>>,
     pub idempotency_support: Option<ToolIdempotency>,
     pub result: Option<Value>,
+    pub model_operation: Option<ModelCallOperation>,
+    pub backend: Option<String>,
+    pub model: Option<String>,
+    pub call_id: Option<String>,
 }
 
 impl OperationJournalEntry {
+    #[allow(clippy::too_many_arguments)]
     pub fn model(
         operation_id: impl Into<String>,
         cycle_index: u64,
         attempt: u64,
         request_digest: impl Into<String>,
-        idempotency_key: Option<String>,
+        model_operation: ModelCallOperation,
+        backend: impl Into<String>,
+        model: impl Into<String>,
+        call_id: impl Into<String>,
     ) -> Self {
         Self {
             kind: OperationKind::Model,
@@ -117,7 +125,7 @@ impl OperationJournalEntry {
             attempt,
             state: OperationState::Planned,
             request_digest: request_digest.into(),
-            idempotency_key,
+            idempotency_key: None,
             response: None,
             error: None,
             tool_call_id: None,
@@ -125,6 +133,10 @@ impl OperationJournalEntry {
             arguments: None,
             idempotency_support: None,
             result: None,
+            model_operation: Some(model_operation),
+            backend: Some(backend.into()),
+            model: Some(model.into()),
+            call_id: Some(call_id.into()),
         }
     }
 
@@ -155,6 +167,10 @@ impl OperationJournalEntry {
             arguments: Some(arguments),
             idempotency_support: Some(idempotency_support),
             result: None,
+            model_operation: None,
+            backend: None,
+            model: None,
+            call_id: None,
         }
     }
 
@@ -205,8 +221,37 @@ impl OperationJournalEntry {
                         "model journal entries cannot contain tool fields",
                     ));
                 }
+                if self.model_operation.is_none()
+                    || self
+                        .backend
+                        .as_deref()
+                        .is_none_or(|value| value.trim().is_empty())
+                    || self
+                        .model
+                        .as_deref()
+                        .is_none_or(|value| value.trim().is_empty())
+                    || self
+                        .call_id
+                        .as_deref()
+                        .is_none_or(|value| value.trim().is_empty())
+                {
+                    return Err(CheckpointError::new(
+                        "model_identity_invalid",
+                        "model journal entries require operation, backend, model, and call_id",
+                    ));
+                }
             }
             OperationKind::Tool => {
+                if self.model_operation.is_some()
+                    || self.backend.is_some()
+                    || self.model.is_some()
+                    || self.call_id.is_some()
+                {
+                    return Err(CheckpointError::new(
+                        "operation_kind_fields_invalid",
+                        "tool journal entries cannot contain model identity fields",
+                    ));
+                }
                 if self.tool_call_id.as_deref().is_none_or(str::is_empty)
                     || self.tool_name.as_deref().is_none_or(str::is_empty)
                     || self.idempotency_key.as_deref().is_none_or(str::is_empty)
@@ -288,6 +333,23 @@ impl OperationJournalEntry {
                 object.insert(
                     "response".to_string(),
                     self.response.clone().unwrap_or(Value::Null),
+                );
+                object.insert(
+                    "model_operation".to_string(),
+                    serde_json::to_value(self.model_operation.expect("validated model operation"))
+                        .expect("model operation serializes"),
+                );
+                object.insert(
+                    "backend".to_string(),
+                    self.backend.clone().map_or(Value::Null, Value::String),
+                );
+                object.insert(
+                    "model".to_string(),
+                    self.model.clone().map_or(Value::Null, Value::String),
+                );
+                object.insert(
+                    "call_id".to_string(),
+                    self.call_id.clone().map_or(Value::Null, Value::String),
                 );
             }
             OperationKind::Tool => {
@@ -399,6 +461,22 @@ impl OperationJournalEntry {
                 .get("result")
                 .filter(|value| !value.is_null())
                 .cloned(),
+            model_operation: object
+                .get("model_operation")
+                .filter(|value| !value.is_null())
+                .cloned()
+                .map(|value| {
+                    serde_json::from_value(value).map_err(|_| {
+                        CheckpointError::new(
+                            "model_identity_invalid",
+                            "invalid model operation identity",
+                        )
+                    })
+                })
+                .transpose()?,
+            backend: optional_string(object, "backend")?,
+            model: optional_string(object, "model")?,
+            call_id: optional_string(object, "call_id")?,
         };
         entry.validate()?;
         Ok(entry)
@@ -437,6 +515,9 @@ impl OperationJournalEntry {
             .attempt
             .checked_add(1)
             .ok_or_else(|| CheckpointError::new("operation_attempt_invalid", "attempt overflow"))?;
+        if self.kind == OperationKind::Model {
+            self.call_id = Some(format!("{}:attempt:{}", self.operation_id, self.attempt));
+        }
         self.state = OperationState::Planned;
         self.validate()
     }
@@ -679,6 +760,7 @@ pub struct Checkpoint {
     pub status: CheckpointStatus,
     pub messages: Vec<Message>,
     pub cycles: Vec<CycleRecord>,
+    pub model_calls: Vec<ModelCallRecord>,
     pub shared_state: BTreeMap<String, Value>,
     pub budget_usage: Option<BudgetUsageSnapshot>,
     pub event_cursor: Option<EventCursor>,
@@ -710,6 +792,7 @@ impl Default for Checkpoint {
             status: CheckpointStatus::Running,
             messages: Vec::new(),
             cycles: Vec::new(),
+            model_calls: Vec::new(),
             shared_state: BTreeMap::new(),
             budget_usage: None,
             event_cursor: None,

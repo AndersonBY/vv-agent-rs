@@ -16,7 +16,13 @@ const TRACE_FIELDS: &[&str] = &[
     "type",
     "cycle_index",
     "agent_name",
+    "call_id",
+    "operation_id",
+    "attempt",
+    "operation",
+    "backend",
     "model",
+    "usage",
     "delta",
     "tool_name",
     "tool_call_id",
@@ -72,7 +78,7 @@ struct StreamingGoldenProvider;
 impl ModelProvider for StreamingGoldenProvider {
     fn resolve(&self, model: &ModelRef) -> Result<ResolvedModelConfig, ModelError> {
         Ok(ResolvedModelConfig::new(
-            "golden",
+            "test",
             model.model(),
             model.model(),
             model.model(),
@@ -456,7 +462,7 @@ async fn real_runner_live_events_match_python_producer_golden() {
     assert!(!result.new_items().is_empty());
     assert_eq!(result.token_usage(), &result.result().token_usage);
     assert_eq!(result.metadata()["resolved_model"], "golden-model");
-    assert_eq!(result.metadata()["backend"], "golden");
+    assert_eq!(result.metadata()["backend"], "test");
     let mut event_ids = HashSet::new();
     for event in &events {
         assert_eq!(event.run_id(), result.run_id());
@@ -597,7 +603,7 @@ struct PythonTraceProvider {
 impl ModelProvider for PythonTraceProvider {
     fn resolve(&self, model: &ModelRef) -> Result<ResolvedModelConfig, ModelError> {
         Ok(ResolvedModelConfig::new(
-            "scripted",
+            "test",
             model.model(),
             model.model(),
             model.model(),

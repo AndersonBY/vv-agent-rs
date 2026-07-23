@@ -163,6 +163,10 @@ pub fn prepare_commit(
     if snapshot.cycle_index != claimed_cycle {
         return Ok(None);
     }
+    validate_model_journal_accounting(&snapshot)?;
+    snapshot
+        .event_outbox
+        .retain(|entry| entry.state == "pending");
     snapshot.model_call_journal.clear();
     snapshot.tool_journal.clear();
     snapshot.claim_token = None;
@@ -220,6 +224,10 @@ fn prepare_terminal_snapshot(
         ));
     }
     let operator_abort = snapshot.is_operator_abort_terminal();
+    validate_model_journal_accounting(&snapshot)?;
+    snapshot
+        .event_outbox
+        .retain(|entry| entry.state == "pending");
     if !operator_abort {
         snapshot.model_call_journal.clear();
         snapshot.tool_journal.clear();

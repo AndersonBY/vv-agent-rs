@@ -2,7 +2,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
 pub const TOKEN_USAGE_SCHEMA_VERSION: &str = "vv-agent.token-usage.v1";
-pub const TASK_TOKEN_USAGE_SCHEMA_VERSION: &str = "vv-agent.task-token-usage.v1";
+pub const TASK_TOKEN_USAGE_SCHEMA_VERSION: &str = "vv-agent.task-token-usage.v2";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -164,32 +164,109 @@ impl<'de> Deserialize<'de> for TokenUsage {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCallOperation {
+    AgentCycle,
+    SessionMemory,
+    MemoryCompaction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCallStatus {
+    Completed,
+    Failed,
+    Ambiguous,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct CycleTokenUsage {
+pub struct ModelCallRecord {
+    pub call_id: String,
+    pub operation_id: String,
+    pub attempt: u32,
+    pub operation: ModelCallOperation,
     pub cycle_index: u32,
+    pub backend: String,
+    pub model: String,
+    pub status: ModelCallStatus,
     pub usage: TokenUsage,
+    pub error_code: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CycleTokenUsageWire {
+struct ModelCallRecordWire {
+    call_id: String,
+    operation_id: String,
+    attempt: u32,
+    operation: ModelCallOperation,
     cycle_index: u32,
+    backend: String,
+    model: String,
+    status: ModelCallStatus,
     usage: TokenUsage,
+    #[serde(deserialize_with = "required_option")]
+    error_code: Option<String>,
 }
 
-impl<'de> Deserialize<'de> for CycleTokenUsage {
+impl TryFrom<ModelCallRecordWire> for ModelCallRecord {
+    type Error = String;
+
+    fn try_from(wire: ModelCallRecordWire) -> Result<Self, Self::Error> {
+        for (name, value) in [
+            ("call_id", wire.call_id.as_str()),
+            ("operation_id", wire.operation_id.as_str()),
+            ("backend", wire.backend.as_str()),
+            ("model", wire.model.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!("{name} must be a non-empty string"));
+            }
+        }
+        if wire.attempt == 0 {
+            return Err("attempt must be positive".to_string());
+        }
+        if wire.cycle_index == 0 {
+            return Err("cycle_index must be positive".to_string());
+        }
+        match wire.status {
+            ModelCallStatus::Completed if wire.error_code.is_some() => {
+                return Err("completed model calls require error_code=null".to_string())
+            }
+            ModelCallStatus::Failed | ModelCallStatus::Ambiguous
+                if wire
+                    .error_code
+                    .as_deref()
+                    .is_none_or(|value| value.trim().is_empty()) =>
+            {
+                return Err("failed or ambiguous model calls require an error_code".to_string())
+            }
+            _ => {}
+        }
+        Ok(Self {
+            call_id: wire.call_id,
+            operation_id: wire.operation_id,
+            attempt: wire.attempt,
+            operation: wire.operation,
+            cycle_index: wire.cycle_index,
+            backend: wire.backend,
+            model: wire.model,
+            status: wire.status,
+            usage: wire.usage,
+            error_code: wire.error_code,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for ModelCallRecord {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let wire = CycleTokenUsageWire::deserialize(deserializer)?;
-        if wire.cycle_index == 0 {
-            return Err(serde::de::Error::custom("cycle_index must be positive"));
-        }
-        Ok(Self {
-            cycle_index: wire.cycle_index,
-            usage: wire.usage,
-        })
+        ModelCallRecordWire::deserialize(deserializer)?
+            .try_into()
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -200,58 +277,71 @@ pub struct TaskTokenUsage {
     pub total_tokens: Option<u64>,
     pub reasoning_tokens: Option<u64>,
     pub cache_usage: CacheUsage,
-    pub cycles: Vec<CycleTokenUsage>,
+    pub model_calls: Vec<ModelCallRecord>,
 }
 
 impl Default for TaskTokenUsage {
     fn default() -> Self {
         Self {
-            input_tokens: None,
-            output_tokens: None,
-            total_tokens: None,
-            reasoning_tokens: None,
+            input_tokens: Some(0),
+            output_tokens: Some(0),
+            total_tokens: Some(0),
+            reasoning_tokens: Some(0),
             cache_usage: CacheUsage {
                 source: Some("aggregate".to_string()),
                 ..CacheUsage::default()
             },
-            cycles: Vec::new(),
+            model_calls: Vec::new(),
         }
     }
 }
 
 impl TaskTokenUsage {
-    pub fn add_cycle(&mut self, cycle_index: u32, usage: TokenUsage) {
-        assert!(cycle_index > 0, "cycle_index must be positive");
-        self.cycles.push(CycleTokenUsage { cycle_index, usage });
-        self.input_tokens = complete_sum(&self.cycles, |usage| usage.input_tokens);
-        self.output_tokens = complete_sum(&self.cycles, |usage| usage.output_tokens);
-        self.total_tokens = complete_sum(&self.cycles, |usage| usage.total_tokens);
-        self.reasoning_tokens = complete_sum(&self.cycles, |usage| usage.reasoning_tokens);
-        self.cache_usage = aggregate_cache_usage(&self.cycles);
+    pub fn add_model_call(&mut self, model_call: ModelCallRecord) -> Result<(), String> {
+        if self
+            .model_calls
+            .iter()
+            .any(|existing| existing.call_id == model_call.call_id)
+        {
+            return Err("model_call_id_duplicate".to_string());
+        }
+        self.model_calls.push(model_call);
+        self.input_tokens = complete_sum(&self.model_calls, |usage| usage.input_tokens);
+        self.output_tokens = complete_sum(&self.model_calls, |usage| usage.output_tokens);
+        self.total_tokens = complete_sum(&self.model_calls, |usage| usage.total_tokens);
+        self.reasoning_tokens = complete_sum(&self.model_calls, |usage| usage.reasoning_tokens);
+        self.cache_usage = aggregate_cache_usage(&self.model_calls);
+        Ok(())
     }
 }
 
-fn complete_sum(cycles: &[CycleTokenUsage], read: fn(&TokenUsage) -> Option<u64>) -> Option<u64> {
-    if cycles.is_empty() {
-        return None;
+fn complete_sum(
+    model_calls: &[ModelCallRecord],
+    read: fn(&TokenUsage) -> Option<u64>,
+) -> Option<u64> {
+    if model_calls.is_empty() {
+        return Some(0);
     }
-    cycles
-        .iter()
-        .try_fold(0_u64, |total, cycle| total.checked_add(read(&cycle.usage)?))
+    model_calls.iter().try_fold(0_u64, |total, model_call| {
+        total.checked_add(read(&model_call.usage)?)
+    })
 }
 
-fn aggregate_cache_usage(cycles: &[CycleTokenUsage]) -> CacheUsage {
-    if cycles.is_empty() {
-        return CacheUsage::default();
+fn aggregate_cache_usage(model_calls: &[ModelCallRecord]) -> CacheUsage {
+    if model_calls.is_empty() {
+        return CacheUsage {
+            source: Some("aggregate".to_string()),
+            ..CacheUsage::default()
+        };
     }
-    let status = if cycles
+    let status = if model_calls
         .iter()
-        .all(|cycle| cycle.usage.cache_usage.status == CacheUsageStatus::ProviderReported)
+        .all(|model_call| model_call.usage.cache_usage.status == CacheUsageStatus::ProviderReported)
     {
         CacheUsageStatus::ProviderReported
-    } else if cycles
+    } else if model_calls
         .iter()
-        .all(|cycle| cycle.usage.cache_usage.status == CacheUsageStatus::Unsupported)
+        .all(|model_call| model_call.usage.cache_usage.status == CacheUsageStatus::Unsupported)
     {
         CacheUsageStatus::Unsupported
     } else {
@@ -262,8 +352,8 @@ fn aggregate_cache_usage(cycles: &[CycleTokenUsage]) -> CacheUsage {
         if status != CacheUsageStatus::ProviderReported {
             return None;
         }
-        cycles.iter().try_fold(0_u64, |total, cycle| {
-            total.checked_add(read(&cycle.usage.cache_usage)?)
+        model_calls.iter().try_fold(0_u64, |total, model_call| {
+            total.checked_add(read(&model_call.usage.cache_usage)?)
         })
     };
 
@@ -284,7 +374,7 @@ struct TaskTokenUsageWireRef<'a> {
     total_tokens: Option<u64>,
     reasoning_tokens: Option<u64>,
     cache_usage: &'a CacheUsage,
-    cycles: &'a [CycleTokenUsage],
+    model_calls: &'a [ModelCallRecord],
 }
 
 #[derive(Deserialize)]
@@ -300,7 +390,7 @@ struct TaskTokenUsageWire {
     #[serde(deserialize_with = "required_option")]
     reasoning_tokens: Option<u64>,
     cache_usage: CacheUsage,
-    cycles: Vec<CycleTokenUsage>,
+    model_calls: Vec<ModelCallRecord>,
 }
 
 impl Serialize for TaskTokenUsage {
@@ -315,7 +405,7 @@ impl Serialize for TaskTokenUsage {
             total_tokens: self.total_tokens,
             reasoning_tokens: self.reasoning_tokens,
             cache_usage: &self.cache_usage,
-            cycles: &self.cycles,
+            model_calls: &self.model_calls,
         }
         .serialize(serializer)
     }
@@ -334,8 +424,10 @@ impl<'de> Deserialize<'de> for TaskTokenUsage {
             )));
         }
         let mut expected = Self::default();
-        for cycle in wire.cycles {
-            expected.add_cycle(cycle.cycle_index, cycle.usage);
+        for model_call in wire.model_calls {
+            expected
+                .add_model_call(model_call)
+                .map_err(serde::de::Error::custom)?;
         }
         if wire.input_tokens != expected.input_tokens
             || wire.output_tokens != expected.output_tokens
@@ -344,7 +436,7 @@ impl<'de> Deserialize<'de> for TaskTokenUsage {
             || wire.cache_usage != expected.cache_usage
         {
             return Err(serde::de::Error::custom(
-                "TaskTokenUsage aggregate does not match cycle usage",
+                "TaskTokenUsage aggregate does not match model_calls",
             ));
         }
         Ok(expected)

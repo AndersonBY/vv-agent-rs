@@ -7,12 +7,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use vv_agent::{
     tool_request_digest, AfterCycleDecision, AfterCycleSnapshot, Agent, AgentStatus, CapabilityRef,
-    CheckpointConfig, CheckpointStatus, CheckpointStore, ClaimMode, CycleDispatchResult,
-    CycleDispatcher, DistributedBackend, DistributedCapabilities, DistributedCapabilityRegistry,
-    DistributedCycleWorker, FunctionTool, InMemoryCheckpointStore, LLMResponse, MemorySession,
-    ModelRef, NoToolPolicy, OperationJournalEntry, OperationState, ResumePolicy, RunConfig,
+    Checkpoint, CheckpointConfig, CheckpointError, CheckpointStatus, CheckpointStore, ClaimMode,
+    CycleDispatchResult, CycleDispatcher, DistributedBackend, DistributedCapabilities,
+    DistributedCapabilityRegistry, DistributedCycleWorker, EventCursor, FunctionTool,
+    InMemoryCheckpointStore, LLMResponse, MemorySession, ModelCallOperation, ModelRef,
+    NoToolPolicy, OperationJournalEntry, OperationState, ResumePolicy, RunBudgetLimits, RunConfig,
     RunEventPayload, Runner, RuntimeRecipe, ScriptStep, ScriptedLlmClient, ScriptedModelProvider,
-    Session, ToolCall, ToolIdempotency, ToolMetadata, ToolOutput,
+    Session, TokenUsage, ToolCall, ToolIdempotency, ToolMetadata, ToolOutput, UsageSource,
 };
 
 #[derive(Clone)]
@@ -86,7 +87,10 @@ impl CycleDispatcher for DirectWorkerDispatcher {
     }
 }
 
-fn checkpoint_config(store: InMemoryCheckpointStore, key: &str) -> CheckpointConfig {
+fn checkpoint_config<S>(store: S, key: &str) -> CheckpointConfig
+where
+    S: CheckpointStore + 'static,
+{
     let mut config = CheckpointConfig::with_store(store);
     config.key = Some(key.to_string());
     config.resume_policy = ResumePolicy::ResumeIfPresent;
@@ -99,6 +103,184 @@ fn checkpoint_config(store: InMemoryCheckpointStore, key: &str) -> CheckpointCon
         CapabilityRef::new("session.runner-checkpoint", "1").expect("capability ref"),
     );
     config
+}
+
+#[derive(Clone)]
+struct FailAfterSessionMemoryReceiptStore {
+    inner: InMemoryCheckpointStore,
+    fail_once: Arc<AtomicBool>,
+    replay_event_seen: Arc<AtomicBool>,
+}
+
+impl FailAfterSessionMemoryReceiptStore {
+    fn new(inner: InMemoryCheckpointStore) -> Self {
+        Self {
+            inner,
+            fail_once: Arc::new(AtomicBool::new(true)),
+            replay_event_seen: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn replay_event_seen(&self) -> bool {
+        self.replay_event_seen.load(Ordering::SeqCst)
+    }
+}
+
+impl CheckpointStore for FailAfterSessionMemoryReceiptStore {
+    fn create_checkpoint(&self, checkpoint: Checkpoint) -> Result<bool, CheckpointError> {
+        self.inner.create_checkpoint(checkpoint)
+    }
+
+    fn load_checkpoint(&self, checkpoint_key: &str) -> Result<Option<Checkpoint>, CheckpointError> {
+        self.inner.load_checkpoint(checkpoint_key)
+    }
+
+    fn claim_checkpoint(
+        &self,
+        checkpoint_key: &str,
+        cycle_index: u64,
+        claim_token: &str,
+        lease_expires_at_ms: u64,
+        now_ms: u64,
+        claim_mode: ClaimMode,
+    ) -> Result<Option<Checkpoint>, CheckpointError> {
+        self.inner.claim_checkpoint(
+            checkpoint_key,
+            cycle_index,
+            claim_token,
+            lease_expires_at_ms,
+            now_ms,
+            claim_mode,
+        )
+    }
+
+    fn progress_checkpoint(
+        &self,
+        checkpoint: Checkpoint,
+        claim_token: &str,
+        expected_revision: u64,
+    ) -> Result<bool, CheckpointError> {
+        if checkpoint
+            .event_outbox
+            .iter()
+            .any(|entry| entry.event["type"] == "operation_replayed")
+        {
+            self.replay_event_seen.store(true, Ordering::SeqCst);
+        }
+        let session_receipt_committed = checkpoint.model_call_journal.iter().any(|entry| {
+            entry.model_operation == Some(ModelCallOperation::SessionMemory)
+                && entry.state == OperationState::Succeeded
+        }) && checkpoint
+            .model_calls
+            .iter()
+            .any(|record| record.operation == ModelCallOperation::SessionMemory);
+        let progressed =
+            self.inner
+                .progress_checkpoint(checkpoint, claim_token, expected_revision)?;
+        if progressed && session_receipt_committed && self.fail_once.swap(false, Ordering::SeqCst) {
+            return Err(CheckpointError::new(
+                "checkpoint_store_injected_failure",
+                "injected failure after the session-memory receipt was persisted",
+            ));
+        }
+        Ok(progressed)
+    }
+
+    fn suspend_checkpoint(
+        &self,
+        checkpoint: Checkpoint,
+        claim_token: &str,
+        expected_revision: u64,
+    ) -> Result<bool, CheckpointError> {
+        self.inner
+            .suspend_checkpoint(checkpoint, claim_token, expected_revision)
+    }
+
+    fn commit_checkpoint(
+        &self,
+        checkpoint: Checkpoint,
+        claim_token: &str,
+        expected_revision: u64,
+    ) -> Result<bool, CheckpointError> {
+        self.inner
+            .commit_checkpoint(checkpoint, claim_token, expected_revision)
+    }
+
+    fn finalize_claimed_checkpoint(
+        &self,
+        checkpoint: Checkpoint,
+        claim_token: &str,
+        expected_revision: u64,
+    ) -> Result<bool, CheckpointError> {
+        self.inner
+            .finalize_claimed_checkpoint(checkpoint, claim_token, expected_revision)
+    }
+
+    fn finalize_checkpoint(
+        &self,
+        checkpoint: Checkpoint,
+        expected_revision: u64,
+    ) -> Result<bool, CheckpointError> {
+        self.inner
+            .finalize_checkpoint(checkpoint, expected_revision)
+    }
+
+    fn renew_checkpoint_claim(
+        &self,
+        checkpoint_key: &str,
+        claim_token: &str,
+        lease_expires_at_ms: u64,
+        now_ms: u64,
+    ) -> Result<bool, CheckpointError> {
+        self.inner
+            .renew_checkpoint_claim(checkpoint_key, claim_token, lease_expires_at_ms, now_ms)
+    }
+
+    fn record_event_delivery(
+        &self,
+        checkpoint_key: &str,
+        claim_token: Option<&str>,
+        expected_revision: u64,
+        event_id: &str,
+        payload_digest: &str,
+        cursor: EventCursor,
+    ) -> Result<bool, CheckpointError> {
+        self.inner.record_event_delivery(
+            checkpoint_key,
+            claim_token,
+            expected_revision,
+            event_id,
+            payload_digest,
+            cursor,
+        )
+    }
+
+    fn acknowledge_terminal(
+        &self,
+        checkpoint_key: &str,
+        expected_revision: u64,
+    ) -> Result<bool, CheckpointError> {
+        self.inner
+            .acknowledge_terminal(checkpoint_key, expected_revision)
+    }
+
+    fn delete_checkpoint(&self, checkpoint_key: &str) -> Result<(), CheckpointError> {
+        self.inner.delete_checkpoint(checkpoint_key)
+    }
+
+    fn list_checkpoints(&self) -> Result<Vec<String>, CheckpointError> {
+        self.inner.list_checkpoints()
+    }
+}
+
+fn reported_usage(input_tokens: u64, output_tokens: u64) -> TokenUsage {
+    TokenUsage {
+        input_tokens: Some(input_tokens),
+        output_tokens: Some(output_tokens),
+        total_tokens: Some(input_tokens + output_tokens),
+        usage_source: UsageSource::ProviderReported,
+        ..TokenUsage::default()
+    }
 }
 
 #[tokio::test]
@@ -216,6 +398,197 @@ async fn terminal_replay_repeats_typed_output_validation_without_model_call() {
     };
     assert!(replay_error.contains("failed to validate final output"));
     assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn session_memory_receipt_replay_reapplies_state_without_duplicate_usage() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let model_calls = Arc::new(AtomicUsize::new(0));
+    let extraction_calls = model_calls.clone();
+    let agent_calls = model_calls.clone();
+    let provider = ScriptedModelProvider::from_steps(
+        "scripted",
+        "memory-replay-model",
+        vec![
+            ScriptStep::callback(move |request| {
+                extraction_calls.fetch_add(1, Ordering::SeqCst);
+                assert!(request.tools.is_empty());
+                assert_eq!(request.messages.len(), 1);
+                assert!(request.messages[0]
+                    .content
+                    .contains("extract durable facts that should survive context compression"));
+                let mut response = LLMResponse::new(
+                    r#"[
+                        {"category":"KEY_FACT","content":"Durable   Fact","importance":7},
+                        {"category":"key_fact","content":"durable fact","importance":9}
+                    ]"#,
+                );
+                response.token_usage = reported_usage(12, 3);
+                Ok(response)
+            }),
+            ScriptStep::callback(move |request| {
+                agent_calls.fetch_add(1, Ordering::SeqCst);
+                assert!(request.messages.iter().any(|message| {
+                    message.content.contains("<Session Memory>")
+                        && message.content.contains("Durable   Fact")
+                }));
+                let mut response = LLMResponse::new("done after memory replay");
+                response.token_usage = reported_usage(20, 5);
+                Ok(response)
+            }),
+        ],
+    );
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(workspace.path())
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("memory-replay-agent")
+        .instructions("Use durable memory and finish.")
+        .model(ModelRef::named("memory-replay-model"))
+        .build()
+        .expect("agent");
+    let inner_store = InMemoryCheckpointStore::new();
+    let faulting_store = FailAfterSessionMemoryReceiptStore::new(inner_store.clone());
+    let store_probe = faulting_store.clone();
+    let session = MemorySession::new("memory-replay-session");
+    let limits = RunBudgetLimits::builder()
+        .max_total_tokens(1_000)
+        .build()
+        .expect("budget limits");
+    let mut checkpoint = checkpoint_config(faulting_store, "session-memory-receipt-replay");
+    checkpoint.capability_refs.insert(
+        "behavior_affecting_run_metadata".to_string(),
+        CapabilityRef::new("metadata.session-memory-replay", "1").expect("metadata capability"),
+    );
+    let config = RunConfig::builder()
+        .max_cycles(1)
+        .no_tool_policy(NoToolPolicy::Finish)
+        .session(session)
+        .session_memory_enabled(true)
+        .metadata("session_id", json!("memory-replay-session"))
+        .metadata("session_memory_enabled", json!(false))
+        .metadata("session_memory_min_tokens", json!(1))
+        .metadata("session_memory_min_text_messages", json!(1))
+        .budget_limits(limits)
+        .checkpoint_config(checkpoint)
+        .build();
+    let memory_path = workspace
+        .path()
+        .join(".memory/session/memory-replay-session/session_memory.json");
+
+    let first_error = match runner
+        .run_with_config(&agent, "remember this fact", config.clone())
+        .await
+    {
+        Ok(_) => panic!("the injected checkpoint failure must interrupt the first run"),
+        Err(error) => error,
+    };
+
+    assert!(
+        first_error.contains("checkpoint_store_injected_failure"),
+        "unexpected first-run error: {first_error}"
+    );
+    assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+    assert!(!memory_path.exists());
+    let mut interrupted = inner_store
+        .load_checkpoint("session-memory-receipt-replay")
+        .expect("load interrupted checkpoint")
+        .expect("interrupted checkpoint");
+    assert_eq!(interrupted.model_calls.len(), 1);
+    assert_eq!(
+        interrupted.model_calls[0].operation,
+        ModelCallOperation::SessionMemory
+    );
+    assert_eq!(interrupted.model_calls[0].usage.total_tokens, Some(15));
+    assert_eq!(
+        interrupted
+            .budget_usage
+            .as_ref()
+            .and_then(|usage| usage.total_tokens),
+        Some(15)
+    );
+    assert_eq!(
+        interrupted.model_call_journal[0].state,
+        OperationState::Succeeded
+    );
+    interrupted.lease_expires_at_ms = Some(1);
+    inner_store
+        .save_checkpoint(interrupted)
+        .expect("expire interrupted claim");
+
+    let resumed = runner
+        .run_with_config(&agent, "remember this fact", config.clone())
+        .await
+        .expect("resume from the durable memory receipt");
+
+    assert_eq!(resumed.status(), AgentStatus::Completed);
+    assert_eq!(resumed.final_output(), Some("done after memory replay"));
+    assert_eq!(model_calls.load(Ordering::SeqCst), 2);
+    assert!(store_probe.replay_event_seen());
+    assert_eq!(resumed.token_usage().model_calls.len(), 2);
+    assert_eq!(
+        resumed
+            .token_usage()
+            .model_calls
+            .iter()
+            .map(|record| record.operation)
+            .collect::<Vec<_>>(),
+        [
+            ModelCallOperation::SessionMemory,
+            ModelCallOperation::AgentCycle,
+        ]
+    );
+    assert_eq!(resumed.token_usage().total_tokens, Some(40));
+    assert_eq!(
+        resumed.budget_usage().and_then(|usage| usage.total_tokens),
+        Some(40)
+    );
+    let memory_before_terminal_replay = std::fs::read_to_string(&memory_path)
+        .expect("session-memory state written from replayed receipt");
+    let memory: Value =
+        serde_json::from_str(&memory_before_terminal_replay).expect("session-memory JSON");
+    let entries = memory["entries"].as_array().expect("memory entries");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["category"], "key_fact");
+    assert_eq!(entries[0]["content"], "Durable   Fact");
+    assert_eq!(entries[0]["importance"], 9);
+    assert_eq!(memory["initialized"], true);
+    assert!(memory["tokens_at_last_extraction"]
+        .as_u64()
+        .is_some_and(|tokens| tokens > 0));
+    let terminal_before_replay = inner_store
+        .load_checkpoint("session-memory-receipt-replay")
+        .expect("load terminal checkpoint")
+        .expect("terminal checkpoint");
+
+    let replayed_terminal = runner
+        .run_with_config(&agent, "remember this fact", config)
+        .await
+        .expect("terminal replay");
+
+    assert_eq!(replayed_terminal.status(), AgentStatus::Completed);
+    assert_eq!(model_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        std::fs::read_to_string(memory_path).expect("stable session-memory state"),
+        memory_before_terminal_replay
+    );
+    let terminal_after_replay = inner_store
+        .load_checkpoint("session-memory-receipt-replay")
+        .expect("load replayed terminal checkpoint")
+        .expect("replayed terminal checkpoint");
+    assert_eq!(
+        terminal_after_replay.model_calls,
+        terminal_before_replay.model_calls
+    );
+    assert_eq!(
+        terminal_after_replay.budget_usage,
+        terminal_before_replay.budget_usage
+    );
+    assert_eq!(
+        terminal_after_replay.event_outbox,
+        terminal_before_replay.event_outbox
+    );
 }
 
 #[tokio::test]
@@ -574,357 +947,5 @@ async fn distributed_execution_commits_nonterminal_cycle_before_max_cycles_candi
     assert!(terminal.terminal_acknowledged);
 }
 
-#[tokio::test]
-async fn runner_recovery_stops_before_ambiguous_non_idempotent_tool() {
-    let model_calls = Arc::new(AtomicUsize::new(0));
-    let calls_for_model = model_calls.clone();
-    let provider = ScriptedModelProvider::from_steps(
-        "scripted",
-        "checkpoint-model",
-        vec![ScriptStep::callback(move |_request| {
-            calls_for_model.fetch_add(1, Ordering::SeqCst);
-            Ok(LLMResponse::new("must not run after ambiguous recovery"))
-        })],
-    );
-    let tool_effects = Arc::new(AtomicUsize::new(0));
-    let effects_for_tool = tool_effects.clone();
-    let tool = FunctionTool::builder("unsafe_write")
-        .description("A non-idempotent write used by the recovery test.")
-        .tool_metadata(ToolMetadata {
-            idempotency: ToolIdempotency::Unknown,
-            ..ToolMetadata::default()
-        })
-        .handler(move |_context, _arguments: Value| {
-            let effects = effects_for_tool.clone();
-            async move {
-                effects.fetch_add(1, Ordering::SeqCst);
-                Ok(ToolOutput::text("written"))
-            }
-        })
-        .build()
-        .expect("unsafe tool");
-    let workspace = tempfile::tempdir().expect("workspace");
-    let runner = Runner::builder()
-        .model_provider(provider)
-        .workspace(workspace.path())
-        .build()
-        .expect("runner");
-    let agent = Agent::builder("ambiguous-agent")
-        .instructions("Perform the write exactly once.")
-        .model(ModelRef::named("checkpoint-model"))
-        .tool(tool)
-        .build()
-        .expect("agent");
-    let store = InMemoryCheckpointStore::new();
-    let session = MemorySession::new("ambiguous-session");
-    let crash_once = Arc::new(AtomicBool::new(true));
-    let first_crash = crash_once.clone();
-    let first = runner
-        .run_with_config(
-            &agent,
-            "write item 42",
-            RunConfig::builder()
-                .max_cycles(1)
-                .no_tool_policy(NoToolPolicy::Finish)
-                .session(session.clone())
-                .checkpoint_config(checkpoint_config(store.clone(), "ambiguous-runner"))
-                .before_cycle_messages(move |cycle, _messages, _state| {
-                    if cycle == 1 && first_crash.swap(false, Ordering::SeqCst) {
-                        panic!("deterministic crash before first model call");
-                    }
-                    Vec::new()
-                })
-                .build(),
-        )
-        .await;
-    assert!(first.is_err());
-    assert_eq!(model_calls.load(Ordering::SeqCst), 0);
-    assert_eq!(tool_effects.load(Ordering::SeqCst), 0);
-
-    let mut crashed = store
-        .load_checkpoint("ambiguous-runner")
-        .expect("load checkpoint")
-        .expect("checkpoint");
-    let arguments = serde_json::Map::from_iter([("value".to_string(), json!("42"))]);
-    let idempotency_key = "idem_ambiguous_runner";
-    let request_digest = tool_request_digest(
-        "call-unsafe",
-        "unsafe_write",
-        &Value::Object(arguments.clone()),
-        idempotency_key,
-    )
-    .expect("tool request digest");
-    let mut started = OperationJournalEntry::tool(
-        "op_tool_cycle_1_call-unsafe",
-        1,
-        1,
-        request_digest,
-        "call-unsafe",
-        "unsafe_write",
-        arguments,
-        idempotency_key,
-        ToolIdempotency::Unknown,
-    );
-    started
-        .transition_to(OperationState::Started)
-        .expect("started operation");
-    crashed.tool_journal = vec![started];
-    crashed.lease_expires_at_ms = Some(1);
-    store
-        .save_checkpoint(crashed)
-        .expect("persist ambiguous crash point");
-
-    let resumed = runner
-        .run_with_config(
-            &agent,
-            "write item 42",
-            RunConfig::builder()
-                .max_cycles(1)
-                .no_tool_policy(NoToolPolicy::Finish)
-                .session(session)
-                .checkpoint_config(checkpoint_config(store.clone(), "ambiguous-runner"))
-                .before_cycle_messages(|_cycle, _messages, _state| Vec::new())
-                .build(),
-        )
-        .await
-        .expect("reconciliation result");
-    assert_eq!(resumed.status(), AgentStatus::ReconciliationRequired);
-    assert!(resumed.completion_reason().is_none());
-    assert!(resumed.resume_observation().is_some());
-    assert!(resumed.new_items().is_empty());
-    assert_eq!(model_calls.load(Ordering::SeqCst), 0);
-    assert_eq!(tool_effects.load(Ordering::SeqCst), 0);
-
-    let retained = store
-        .load_checkpoint("ambiguous-runner")
-        .expect("load retained checkpoint")
-        .expect("retained checkpoint");
-    assert_eq!(retained.status, CheckpointStatus::ReconciliationRequired);
-    assert_eq!(retained.tool_journal[0].state, OperationState::Ambiguous);
-    assert!(retained.claim_token.is_none());
-    assert!(retained.terminal_result.is_none());
-}
-
-fn run_config(
-    store: InMemoryCheckpointStore,
-    session: MemorySession,
-    crash_once: Arc<AtomicBool>,
-    host_request_id: &str,
-    reserved_output_tokens: u64,
-) -> RunConfig {
-    let mut checkpoint = checkpoint_config(store, "runner-checkpoint");
-    checkpoint.capability_refs.insert(
-        "behavior_affecting_run_metadata".to_string(),
-        CapabilityRef::new("metadata.request-42", "1").expect("run metadata capability ref"),
-    );
-    RunConfig::builder()
-        .max_cycles(2)
-        .no_tool_policy(NoToolPolicy::Finish)
-        .metadata("host_request_id", json!(host_request_id))
-        .metadata("reserved_output_tokens", json!(reserved_output_tokens))
-        .session(session)
-        .checkpoint_config(checkpoint)
-        .before_cycle_messages(move |cycle, _messages, _state| {
-            if cycle == 2 && crash_once.swap(false, Ordering::SeqCst) {
-                panic!("deterministic crash after committed cycle");
-            }
-            Vec::new()
-        })
-        .build()
-}
-
-#[tokio::test]
-async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free() {
-    let model_calls = Arc::new(AtomicUsize::new(0));
-    let model_metadata = Arc::new(Mutex::new(Vec::<Value>::new()));
-    let first_calls = model_calls.clone();
-    let second_calls = model_calls.clone();
-    let first_metadata = model_metadata.clone();
-    let second_metadata = model_metadata.clone();
-    let provider = ScriptedModelProvider::from_steps(
-        "scripted",
-        "checkpoint-model",
-        vec![
-            ScriptStep::callback(move |request| {
-                first_calls.fetch_add(1, Ordering::SeqCst);
-                first_metadata
-                    .lock()
-                    .expect("first model metadata")
-                    .push(request.metadata.clone());
-                Ok(LLMResponse::with_tool_calls(
-                    "write once",
-                    vec![ToolCall::new("call-write", "write_record", BTreeMap::new())],
-                ))
-            }),
-            ScriptStep::callback(move |request| {
-                second_calls.fetch_add(1, Ordering::SeqCst);
-                second_metadata
-                    .lock()
-                    .expect("second model metadata")
-                    .push(request.metadata.clone());
-                Ok(LLMResponse::new("done"))
-            }),
-        ],
-    );
-    let observed_keys = Arc::new(Mutex::new(Vec::<String>::new()));
-    let keys_for_tool = observed_keys.clone();
-    let tool = FunctionTool::builder("write_record")
-        .description("Record one idempotent side effect.")
-        .json_schema(json!({
-            "type": "object",
-            "properties": {},
-            "required": []
-        }))
-        .tool_metadata(ToolMetadata {
-            idempotency: ToolIdempotency::Supported,
-            ..ToolMetadata::default()
-        })
-        .handler(move |context, _arguments: Value| {
-            let keys = keys_for_tool.clone();
-            async move {
-                keys.lock()
-                    .expect("idempotency keys")
-                    .push(context.idempotency_key.expect("stable idempotency key"));
-                Ok(ToolOutput::text("written"))
-            }
-        })
-        .build()
-        .expect("tool");
-    let runner = Runner::builder()
-        .model_provider(provider)
-        .workspace(tempfile::tempdir().expect("workspace").path())
-        .build()
-        .expect("runner");
-    let agent = Agent::builder("checkpoint-agent")
-        .instructions("Write the record, then return the final answer.")
-        .model(ModelRef::named("checkpoint-model"))
-        .tool(tool)
-        .build()
-        .expect("agent");
-    let store = InMemoryCheckpointStore::new();
-    let session = MemorySession::new("runner-checkpoint-session");
-    let crash_once = Arc::new(AtomicBool::new(true));
-
-    let first = runner
-        .run_with_config(
-            &agent,
-            "process item 42",
-            run_config(
-                store.clone(),
-                session.clone(),
-                crash_once.clone(),
-                "request-42",
-                4_096,
-            ),
-        )
-        .await;
-    let first_error = match first {
-        Ok(_) => panic!("first run must crash"),
-        Err(error) => error,
-    };
-    assert!(
-        first_error.contains("runner task failed"),
-        "spawn-blocking panic must surface to the caller"
-    );
-    assert_eq!(model_calls.load(Ordering::SeqCst), 1);
-    let keys = observed_keys.lock().expect("idempotency keys").clone();
-    assert_eq!(keys.len(), 1);
-    assert!(keys[0].starts_with("idem_"));
-
-    let mut crashed = store
-        .load_checkpoint("runner-checkpoint")
-        .expect("load crashed checkpoint")
-        .expect("crashed checkpoint");
-    assert_eq!(crashed.cycle_index, 1);
-    assert_eq!(crashed.cycles.len(), 1);
-    assert_eq!(crashed.resume_attempt, 1);
-    assert!(crashed.claim_token.is_some());
-    assert_eq!(
-        crashed.run_definition["run_metadata"]["host_request_id"],
-        "request-42"
-    );
-    assert_eq!(
-        crashed.run_definition["run_metadata"]["reserved_output_tokens"],
-        4_096
-    );
-    let original_run_id = crashed.root_run_id.clone();
-    let original_trace_id = crashed.trace_id.clone();
-    assert!(!crashed.messages[0].metadata.is_empty());
-    crashed.messages[0].metadata.clear();
-    crashed.lease_expires_at_ms = Some(1);
-    store
-        .save_checkpoint(crashed)
-        .expect("expire crashed claim");
-
-    let resumed = runner
-        .run_with_config(
-            &agent,
-            "process item 42",
-            run_config(
-                store.clone(),
-                session.clone(),
-                crash_once.clone(),
-                "stale-request",
-                1_024,
-            ),
-        )
-        .await
-        .expect("resume");
-    assert_eq!(resumed.status(), AgentStatus::Completed);
-    assert_eq!(resumed.final_output(), Some("done"));
-    assert_eq!(resumed.run_id(), original_run_id);
-    assert_eq!(resumed.trace_id(), original_trace_id);
-    assert_eq!(resumed.result().cycles.len(), 2);
-    assert_eq!(model_calls.load(Ordering::SeqCst), 2);
-    assert_eq!(observed_keys.lock().expect("idempotency keys").len(), 1);
-    {
-        let observed_metadata = model_metadata.lock().expect("model metadata");
-        assert_eq!(observed_metadata.len(), 2);
-        assert_eq!(observed_metadata[1]["host_request_id"], "request-42");
-        assert_eq!(observed_metadata[1]["reserved_output_tokens"], 4_096);
-    }
-
-    let terminal = store
-        .load_checkpoint("runner-checkpoint")
-        .expect("load terminal")
-        .expect("terminal checkpoint");
-    assert_eq!(terminal.resume_attempt, 2);
-    assert!(terminal.terminal_result.is_some());
-    assert!(terminal.terminal_acknowledged);
-    let persisted_items = session.get_items(None).await.expect("session items");
-    assert!(!persisted_items.is_empty());
-
-    let replay = runner
-        .run_with_config(
-            &agent,
-            "process item 42",
-            run_config(
-                store.clone(),
-                session.clone(),
-                crash_once,
-                "newer-stale-request",
-                512,
-            ),
-        )
-        .await
-        .expect("terminal replay");
-    assert_eq!(replay.status(), AgentStatus::Completed);
-    assert_eq!(replay.final_output(), Some("done"));
-    assert_eq!(replay.run_id(), original_run_id);
-    assert_eq!(replay.trace_id(), original_trace_id);
-    assert_eq!(model_calls.load(Ordering::SeqCst), 2);
-    assert_eq!(observed_keys.lock().expect("idempotency keys").len(), 1);
-    assert_eq!(
-        session
-            .get_items(None)
-            .await
-            .expect("replayed session items"),
-        persisted_items
-    );
-    assert!(!replay.events().iter().any(|event| matches!(
-        event.payload(),
-        RunEventPayload::RunCompleted { .. }
-            | RunEventPayload::RunFailed { .. }
-            | RunEventPayload::RunCancelled { .. }
-    )));
-}
+#[path = "runner_checkpoint/resume.rs"]
+mod resume;

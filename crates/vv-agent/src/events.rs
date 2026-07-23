@@ -14,14 +14,14 @@ mod wire;
 
 pub use payload::{
     AgentErrorPayload, ApprovalAction, DiagnosticLevel, MemoryCompactMode, MemoryCompactTrigger,
-    ReservedOutputSource, RunEventPayload, ToolStatus,
+    ModelCallFailureOutcome, ReservedOutputSource, RunEventPayload, ToolStatus,
 };
 
 use wire::{
     add_constructed_supplemental_fields, supplemental_wire_fields, validate_budget_wire_fields,
     validate_checkpoint_wire_fields, validate_compaction_wire_fields,
-    validate_completion_wire_fields, validate_event_wire_shape, validate_stream_wire_fields,
-    validate_tool_lifecycle_wire_fields,
+    validate_completion_wire_fields, validate_event_wire_shape, validate_model_call_wire_fields,
+    validate_stream_wire_fields, validate_tool_lifecycle_wire_fields,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -207,6 +207,8 @@ impl<'de> Deserialize<'de> for RunEvent {
         }
         validate_completion_wire_fields(&value).map_err(D::Error::custom)?;
         validate_budget_wire_fields(&value).map_err(D::Error::custom)?;
+        validate_model_call_wire_fields(&value, &wire.payload, wire.cycle_index)
+            .map_err(D::Error::custom)?;
         validate_stream_wire_fields(&wire.payload, wire.cycle_index).map_err(D::Error::custom)?;
         validate_tool_lifecycle_wire_fields(&value, &wire.payload).map_err(D::Error::custom)?;
         validate_compaction_wire_fields(&value, &wire.payload).map_err(D::Error::custom)?;
@@ -317,6 +319,101 @@ impl RunEvent {
             agent_name,
             Some(cycle_index),
             RunEventPayload::CycleStarted,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn model_call_started(
+        run_id: impl Into<String>,
+        trace_id: impl Into<String>,
+        agent_name: impl Into<String>,
+        cycle_index: u32,
+        call_id: impl Into<String>,
+        operation_id: impl Into<String>,
+        attempt: u32,
+        operation: crate::types::ModelCallOperation,
+        backend: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            run_id,
+            trace_id,
+            agent_name,
+            Some(cycle_index),
+            RunEventPayload::ModelCallStarted {
+                call_id: call_id.into(),
+                operation_id: operation_id.into(),
+                attempt,
+                operation,
+                backend: backend.into(),
+                model: model.into(),
+            },
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn model_call_completed(
+        run_id: impl Into<String>,
+        trace_id: impl Into<String>,
+        agent_name: impl Into<String>,
+        cycle_index: u32,
+        call_id: impl Into<String>,
+        operation_id: impl Into<String>,
+        attempt: u32,
+        operation: crate::types::ModelCallOperation,
+        backend: impl Into<String>,
+        model: impl Into<String>,
+        usage: crate::types::TokenUsage,
+    ) -> Self {
+        Self::new(
+            run_id,
+            trace_id,
+            agent_name,
+            Some(cycle_index),
+            RunEventPayload::ModelCallCompleted {
+                call_id: call_id.into(),
+                operation_id: operation_id.into(),
+                attempt,
+                operation,
+                backend: backend.into(),
+                model: model.into(),
+                usage,
+            },
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn model_call_failed(
+        run_id: impl Into<String>,
+        trace_id: impl Into<String>,
+        agent_name: impl Into<String>,
+        cycle_index: u32,
+        call_id: impl Into<String>,
+        operation_id: impl Into<String>,
+        attempt: u32,
+        operation: crate::types::ModelCallOperation,
+        backend: impl Into<String>,
+        model: impl Into<String>,
+        outcome: ModelCallFailureOutcome,
+        usage: crate::types::TokenUsage,
+        error_code: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            run_id,
+            trace_id,
+            agent_name,
+            Some(cycle_index),
+            RunEventPayload::ModelCallFailed {
+                call_id: call_id.into(),
+                operation_id: operation_id.into(),
+                attempt,
+                operation,
+                backend: backend.into(),
+                model: model.into(),
+                outcome,
+                usage,
+                error_code: error_code.into(),
+            },
         )
     }
 

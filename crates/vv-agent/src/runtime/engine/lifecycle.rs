@@ -8,18 +8,17 @@ use crate::runtime::lifecycle::{
     AfterCycleAction, AfterCycleDecision, AfterCycleHookManager, AfterCycleSnapshot,
     NativeCycleOutcome, NativeCycleOutcomeKind,
 };
-use crate::runtime::token_usage::summarize_task_token_usage;
 use crate::types::{
     AgentResult, AgentTask, CompletionReason, CycleRecord, LLMResponse, Message, NoToolPolicy,
     ToolDirective, ToolExecutionResult,
 };
 
-use super::budget::RunBudgetController;
+use super::budget::{budget_snapshot, SharedRunBudgetController};
 use super::checkpoint::CheckpointCoordinator;
 use super::completion::{
     handle_directive_result, handle_no_tool_response, DirectiveResultRequest, NoToolResponseRequest,
 };
-use super::helpers::failed_agent_result;
+use super::helpers::{failed_agent_result, task_token_usage};
 use super::{AgentRuntime, RuntimeRunControls};
 
 pub(super) struct NoToolCycleFinalization<'a, C: LlmClient> {
@@ -33,7 +32,7 @@ pub(super) struct NoToolCycleFinalization<'a, C: LlmClient> {
     pub(super) cycles: &'a mut Vec<CycleRecord>,
     pub(super) shared_state: &'a mut BTreeMap<String, Value>,
     pub(super) checkpoint: &'a CheckpointCoordinator,
-    pub(super) budget_controller: &'a Option<RunBudgetController>,
+    pub(super) budget_controller: &'a Option<SharedRunBudgetController>,
     pub(super) persisted_denials: &'a [String],
 }
 
@@ -142,7 +141,7 @@ pub(super) struct ToolCycleFinalization<'a, C: LlmClient> {
     pub(super) cycles: &'a mut Vec<CycleRecord>,
     pub(super) shared_state: &'a mut BTreeMap<String, Value>,
     pub(super) checkpoint: &'a CheckpointCoordinator,
-    pub(super) budget_controller: &'a Option<RunBudgetController>,
+    pub(super) budget_controller: &'a Option<SharedRunBudgetController>,
     pub(super) persisted_denials: &'a [String],
 }
 
@@ -258,15 +257,13 @@ fn commit_nonterminal_cycle(
     messages: &[Message],
     cycles: &[CycleRecord],
     shared_state: &BTreeMap<String, Value>,
-    budget_controller: &Option<RunBudgetController>,
+    budget_controller: &Option<SharedRunBudgetController>,
 ) -> Option<AgentResult> {
     if cycle_index >= task.max_cycles {
         return None;
     }
     checkpoint.commit_cycle(cycle_index, messages, cycles, shared_state, || {
-        budget_controller
-            .as_ref()
-            .map(RunBudgetController::snapshot)
+        budget_snapshot(budget_controller)
     })
 }
 
@@ -301,6 +298,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 cycles.to_vec(),
                 shared_state.clone(),
                 format!("{}: {error}", error.code),
+                task_token_usage(controls),
             ))
         })
     }
@@ -360,7 +358,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             cycle,
             messages,
             shared_state,
-            summarize_task_token_usage(cycles),
+            task_token_usage(controls),
             available_tool_names,
             disallowed_tool_names,
             native_outcome.clone(),
@@ -383,6 +381,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 cycles.to_vec(),
                 shared_state.clone(),
                 format!("{}: {error}", error.code),
+                task_token_usage(controls),
             ))
         })?;
 
@@ -406,6 +405,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         cycles.to_vec(),
                         shared_state.clone(),
                         format!("{}: {error}", error.code),
+                        task_token_usage(controls),
                     ))
                 },
             )?;
@@ -428,6 +428,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     cycles.to_vec(),
                     shared_state.clone(),
                     format!("{}: {}", stop.code, stop.message),
+                    task_token_usage(controls),
                 )))
             }
             AfterCycleAction::Steer if !native_outcome.steer_allowed => {
@@ -447,6 +448,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     cycles.to_vec(),
                     shared_state.clone(),
                     format!("{code}: {message}"),
+                    task_token_usage(controls),
                 )))
             }
             AfterCycleAction::Steer => {

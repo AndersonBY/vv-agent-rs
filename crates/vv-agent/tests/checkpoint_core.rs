@@ -7,10 +7,11 @@ use vv_agent::runtime::checkpoint_codec::{checkpoint_from_value, checkpoint_to_v
 use vv_agent::runtime::state::validate_extension_state_size;
 use vv_agent::{
     canonical_json_bytes, checkpoint_from_json, event_payload_digest, model_request_digest,
-    operation_request_digest, run_definition_digest, tool_request_digest, CapabilityRef,
-    Checkpoint, CheckpointStatus, CheckpointStore, ClaimMode, EventCursor, EventOutboxEntry,
-    ExtensionStateEntry, InMemoryCheckpointStore, Message, OperationJournalEntry, OperationKind,
-    OperationState, RedisCheckpointStore, RunEvent, SqliteCheckpointStore,
+    operation_request_digest, run_definition_digest, tool_request_digest, AgentResult, AgentStatus,
+    CapabilityRef, Checkpoint, CheckpointStatus, CheckpointStore, ClaimMode, CompletionReason,
+    EventCursor, EventOutboxEntry, ExtensionStateEntry, InMemoryCheckpointStore, Message,
+    OperationJournalEntry, OperationKind, OperationState, RedisCheckpointStore, ResumeObservation,
+    RunEvent, SqliteCheckpointStore, ToolIdempotency,
 };
 
 const CODEC_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec.json");
@@ -61,6 +62,19 @@ fn minimal_checkpoint(key: &str) -> Checkpoint {
     let mut payload = codec_case("minimal_running");
     payload["checkpoint_key"] = Value::String(key.to_string());
     checkpoint_from_value(&payload, 262_144).unwrap()
+}
+
+fn terminal_result(checkpoint: &Checkpoint, status: AgentStatus) -> AgentResult {
+    AgentResult {
+        status,
+        messages: checkpoint.messages.clone(),
+        cycles: checkpoint.cycles.clone(),
+        budget_usage: checkpoint.budget_usage.clone(),
+        checkpoint_key: Some(checkpoint.checkpoint_key.clone()),
+        shared_state: checkpoint.shared_state.clone(),
+        token_usage: vv_agent::runtime::summarize_task_token_usage(&checkpoint.model_calls),
+        ..AgentResult::default()
+    }
 }
 
 fn delivery_cursor(event_id: &str, sequence: u64) -> EventCursor {
@@ -143,7 +157,7 @@ fn codec_round_trips_canonical_payload_and_rejects_invalid_input() {
     let checkpoint = checkpoint_from_value(&expected, 262_144).unwrap();
     assert_eq!(checkpoint_to_value(&checkpoint, 262_144).unwrap(), expected);
 
-    let unknown_schema = json!({"schema_version": "vv-agent.checkpoint.v3"});
+    let unknown_schema = json!({"schema_version": "vv-agent.checkpoint.v4"});
     let error = checkpoint_from_value(&unknown_schema, 262_144).unwrap_err();
     assert_eq!(error.code(), "checkpoint_schema_unsupported");
 
@@ -209,7 +223,20 @@ fn journal_invalid_cases_return_fixture_codes() {
         OperationJournalEntry::from_value(&case["entry"]).unwrap();
     }
     for case in fixture["invalid_entries"].as_array().unwrap() {
-        let error = OperationJournalEntry::from_value(&case["entry"]).unwrap_err();
+        let entry = if let Some(base_name) = case.get("base_valid_entry").and_then(Value::as_str) {
+            let mut entry = journal_case(base_name).to_value();
+            let mutation = &case["mutation"];
+            if let Some(field) = mutation.get("remove").and_then(Value::as_str) {
+                entry.as_object_mut().unwrap().remove(field);
+            }
+            if let Some(replacements) = mutation.get("replace").and_then(Value::as_object) {
+                entry.as_object_mut().unwrap().extend(replacements.clone());
+            }
+            entry
+        } else {
+            case["entry"].clone()
+        };
+        let error = OperationJournalEntry::from_value(&entry).unwrap_err();
         assert_eq!(
             error.code(),
             case["error_code"].as_str().unwrap(),
@@ -244,13 +271,13 @@ fn exercise_store(store: &dyn CheckpointStore, key: &str) {
     assert_eq!(recovered.revision, 2);
 
     let mut progress = recovered;
-    progress.model_call_journal = vec![journal_case("model_started")];
+    progress.tool_journal = vec![journal_case("tool_started")];
     assert!(store.progress_checkpoint(progress, "owner-b", 2).unwrap());
     assert!(store
         .renew_checkpoint_claim(key, "owner-b", 400, 250)
         .unwrap());
     let mut ambiguous = store.load_checkpoint(key).unwrap().unwrap();
-    ambiguous.model_call_journal[0].mark_ambiguous().unwrap();
+    ambiguous.tool_journal[0].mark_ambiguous().unwrap();
     assert!(store.suspend_checkpoint(ambiguous, "owner-b", 3).unwrap());
     let suspended = store.load_checkpoint(key).unwrap().unwrap();
     assert_eq!(suspended.status, CheckpointStatus::ReconciliationRequired);
@@ -262,7 +289,7 @@ fn exercise_store(store: &dyn CheckpointStore, key: &str) {
         .unwrap()
         .unwrap();
     assert_eq!(resolving.resume_attempt, 3);
-    resolving.model_call_journal.clear();
+    resolving.tool_journal.clear();
     resolving.cycle_index = 1;
     let revision = resolving.revision;
     assert!(store
@@ -271,7 +298,10 @@ fn exercise_store(store: &dyn CheckpointStore, key: &str) {
 
     let mut terminal = store.load_checkpoint(key).unwrap().unwrap();
     terminal.status = CheckpointStatus::Completed;
-    terminal.terminal_result = Some(json!({"status": "completed", "final_answer": "done"}));
+    let mut result = terminal_result(&terminal, AgentStatus::Completed);
+    result.completion_reason = Some(CompletionReason::NoToolFinish);
+    result.final_answer = Some("done".to_string());
+    terminal.terminal_result = Some(result.to_dict());
     let revision = terminal.revision;
     assert!(store.finalize_checkpoint(terminal, revision).unwrap());
     let terminal = store.load_checkpoint(key).unwrap().unwrap();
@@ -290,7 +320,7 @@ fn in_memory_store_has_atomic_continue_recovery_suspend_finalize_and_ack() {
 #[test]
 fn sqlite_store_has_atomic_continue_recovery_suspend_finalize_and_ack() {
     let directory = tempdir().unwrap();
-    let path = directory.path().join("checkpoint-v2.sqlite3");
+    let path = directory.path().join("checkpoint-v3.sqlite3");
     let store = SqliteCheckpointStore::new(&path).unwrap();
     exercise_store(&store, "sqlite-core");
 
@@ -417,7 +447,11 @@ fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {
         .unwrap();
     failure.model_call_journal = vec![journal_case("model_failed")];
     failure.status = CheckpointStatus::Failed;
-    failure.terminal_result = Some(json!({"status": "failed", "error": "provider_rejected"}));
+    let mut failure_result = terminal_result(&failure, AgentStatus::Failed);
+    failure_result.completion_reason = Some(CompletionReason::Failed);
+    failure_result.error = Some("provider_rejected".to_string());
+    failure_result.error_code = Some("provider_rejected".to_string());
+    failure.terminal_result = Some(failure_result.to_dict());
     let failure_revision = failure.revision;
     assert!(!store
         .finalize_claimed_checkpoint(failure.clone(), "failure-owner", failure_revision + 1,)
@@ -455,18 +489,19 @@ fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {
         .unwrap()
         .unwrap();
     abort.status = CheckpointStatus::Failed;
-    abort.terminal_result = Some(json!({
-        "status": "failed",
-        "error_code": "operator_abort_with_unknown_outcome",
-        "resume_observation": {
-            "operation_id": abort.tool_journal[0].operation_id,
-            "operation_kind": "tool",
-            "cycle_index": 2,
-            "state": "ambiguous",
-            "risk": "unknown external tool outcome",
-            "idempotency_support": "unknown"
-        }
-    }));
+    let mut abort_result = terminal_result(&abort, AgentStatus::Failed);
+    abort_result.completion_reason = Some(CompletionReason::Failed);
+    abort_result.error = Some("operator aborted with unknown external outcome".to_string());
+    abort_result.error_code = Some("operator_abort_with_unknown_outcome".to_string());
+    abort_result.resume_observation = Some(ResumeObservation {
+        operation_id: abort.tool_journal[0].operation_id.clone(),
+        operation_kind: OperationKind::Tool,
+        cycle_index: 2,
+        state: OperationState::Ambiguous,
+        risk: "unknown external tool outcome".to_string(),
+        idempotency_support: Some(ToolIdempotency::Unknown),
+    });
+    abort.terminal_result = Some(abort_result.to_dict());
     let abort_revision = abort.revision;
     assert!(store
         .finalize_claimed_checkpoint(abort, "abort-owner", abort_revision)
@@ -553,7 +588,10 @@ fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {
     let digest = pending.payload_digest.clone();
     let mut terminal = minimal_checkpoint(&terminal_event_key);
     terminal.status = CheckpointStatus::Completed;
-    terminal.terminal_result = Some(json!({"status": "completed", "final_answer": "done"}));
+    let mut result = terminal_result(&terminal, AgentStatus::Completed);
+    result.completion_reason = Some(CompletionReason::NoToolFinish);
+    result.final_answer = Some("done".to_string());
+    terminal.terminal_result = Some(result.to_dict());
     terminal.event_outbox.push(pending);
     let terminal_receipt = terminal.terminal_result.clone();
     assert!(store.create_checkpoint(terminal).unwrap());

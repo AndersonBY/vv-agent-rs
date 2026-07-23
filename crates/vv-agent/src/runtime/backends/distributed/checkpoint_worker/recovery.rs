@@ -442,6 +442,6 @@ pub(super) fn reconciliation_candidate(checkpoint: &Checkpoint) -> Result<AgentR
         error: None,
         error_code: None,
         shared_state: checkpoint.shared_state.clone(),
-        token_usage: crate::runtime::summarize_task_token_usage(&checkpoint.cycles),
+        token_usage: crate::runtime::summarize_task_token_usage(&checkpoint.model_calls),
     })
 }

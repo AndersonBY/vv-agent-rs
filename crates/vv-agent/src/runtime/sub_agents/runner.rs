@@ -306,7 +306,7 @@ mod parity_event_tests {
             sub_task_manager: SubTaskManager::default(),
             parent_cancellation_token: None,
             settings_file: None,
-            default_backend: None,
+            default_backend: Some("test".to_string()),
             sub_agent_timeout_seconds: 30.0,
             event_handler: Some(event_handler),
             parent_execution_context: Some(ExecutionContext {

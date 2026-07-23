@@ -639,10 +639,21 @@ fn panic_after_completed_cycle_preserves_cycles_and_token_usage() {
     assert_eq!(outcome.cycles, 1);
     assert_eq!(completion["status"], "failed");
     assert_eq!(completion["metadata"]["cycles"], 1);
-    assert_eq!(completion["token_usage"]["input_tokens"], 13);
-    assert_eq!(completion["token_usage"]["output_tokens"], 8);
-    assert_eq!(completion["token_usage"]["total_tokens"], 21);
-    assert_eq!(completion["token_usage"]["cycles"][0]["cycle_index"], 1);
+    assert_eq!(completion["token_usage"]["input_tokens"], json!(null));
+    assert_eq!(completion["token_usage"]["output_tokens"], json!(null));
+    assert_eq!(completion["token_usage"]["total_tokens"], json!(null));
+    let model_calls = completion["token_usage"]["model_calls"]
+        .as_array()
+        .expect("panic model call ledger");
+    assert_eq!(model_calls.len(), 2);
+    assert_eq!(model_calls[0]["cycle_index"], 1);
+    assert_eq!(model_calls[0]["status"], "completed");
+    assert_eq!(model_calls[0]["usage"]["input_tokens"], 13);
+    assert_eq!(model_calls[0]["usage"]["output_tokens"], 8);
+    assert_eq!(model_calls[0]["usage"]["total_tokens"], 21);
+    assert_eq!(model_calls[1]["cycle_index"], 2);
+    assert_eq!(model_calls[1]["status"], "ambiguous");
+    assert_eq!(model_calls[1]["usage"]["total_tokens"], json!(null));
     assert!(!snapshot.running);
     assert!(vv_agent::get_sub_agent_session(
         payload["session_id"].as_str().expect("child session id")

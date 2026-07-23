@@ -4,12 +4,12 @@ use serde_json::Value;
 
 use super::context::ExecutionContext;
 use super::hooks::RuntimeHookManager;
+use super::model_calls::{ModelCallCoordinator, ModelCallLedger};
 use super::results::assistant_message_from_response;
-use super::token_usage::normalize_token_usage;
 use crate::llm::{LlmClient, LlmError, LlmRequest};
 use crate::memory::{CompactionExhaustedError, MemoryManager};
 use crate::tools::ToolRegistry;
-use crate::types::{AgentTask, CycleRecord, Message};
+use crate::types::{AgentTask, CycleRecord, Message, ModelCallOperation};
 
 pub const MAX_PROMPT_TOO_LONG_RETRIES: u32 = 3;
 
@@ -125,6 +125,24 @@ impl<C: LlmClient> CycleRunner<C> {
             );
 
         let mut prompt_too_long_retries = 0;
+        let coordinator = request
+            .execution_context
+            .and_then(|context| context.runtime_state.model_call_coordinator.clone())
+            .unwrap_or_else(|| {
+                let event_handler = request
+                    .execution_context
+                    .and_then(|context| context.event_handler.clone());
+                ModelCallCoordinator::new(
+                    ModelCallLedger::default(),
+                    &request.task.task_id,
+                    &request.task.task_id,
+                    &request.task.task_id,
+                    None,
+                    None,
+                    event_handler,
+                    None,
+                )
+            });
         let (response, request_messages, request_tool_schemas) = loop {
             let llm_messages = request
                 .memory_manager
@@ -146,8 +164,39 @@ impl<C: LlmClient> CycleRunner<C> {
             llm_request.metadata =
                 Value::Object(request.task.metadata.clone().into_iter().collect());
             llm_request.model_settings = request.task.model_settings.clone();
-            match self.llm_client.complete(llm_request) {
-                Ok(response) => break (response, request_messages, request_tool_schemas),
+            let backend = request
+                .execution_context
+                .and_then(|context| {
+                    context
+                        .metadata
+                        .get("_vv_agent_resolved_backend")
+                        .and_then(Value::as_str)
+                })
+                .unwrap_or("direct");
+            let model = request
+                .execution_context
+                .and_then(|context| {
+                    context
+                        .metadata
+                        .get("_vv_agent_resolved_model")
+                        .and_then(Value::as_str)
+                })
+                .unwrap_or(&request.task.model);
+            let operation_slot = if prompt_too_long_retries == 0 {
+                "main".to_string()
+            } else {
+                format!("prompt_too_long_{prompt_too_long_retries}")
+            };
+            match coordinator.dispatch(
+                ModelCallOperation::AgentCycle,
+                request.cycle_index,
+                &operation_slot,
+                backend,
+                model,
+                &llm_request,
+                || self.llm_client.complete(llm_request.clone()),
+            ) {
+                Ok(dispatch) => break (dispatch.response, request_messages, request_tool_schemas),
                 Err(error) if is_prompt_too_long_error(&error) => {
                     prompt_too_long_retries += 1;
                     if prompt_too_long_retries > MAX_PROMPT_TOO_LONG_RETRIES {
@@ -194,10 +243,6 @@ impl<C: LlmClient> CycleRunner<C> {
         next_messages.push(assistant_message_from_response(&response));
         let mut cycle = CycleRecord::from_response(request.cycle_index, &response, Vec::new());
         cycle.memory_compacted = memory_compacted;
-        if !cycle.token_usage.has_usage() {
-            cycle.token_usage =
-                normalize_token_usage(response.raw.get("usage").unwrap_or(&Value::Null));
-        }
         Ok((next_messages, cycle))
     }
 }

@@ -274,15 +274,19 @@ async fn unsupported_debug_dump_configuration_fails_before_the_first_model_call(
 #[test]
 fn run_config_control_manifest_has_no_open_capability_gaps() {
     let contract: Value = serde_json::from_str(CONTROL_CONTRACT).expect("control contract");
-    assert_eq!(contract["version"], 1);
+    assert_eq!(contract["version"], 2);
     assert_eq!(contract["framework_defaults"]["max_cycles"], 10);
     assert_eq!(contract["framework_defaults"]["max_handoffs"], 10);
+    assert_eq!(
+        contract["framework_defaults"]["session_memory_enabled"],
+        false
+    );
     assert_eq!(contract["app_server_defaults"]["max_cycles"], 80);
 
     let controls = contract["per_run_controls"]
         .as_array()
         .expect("per-run controls");
-    assert_eq!(controls.len(), 22);
+    assert_eq!(controls.len(), 23);
     assert!(controls.iter().all(|entry| entry["status"] == "equivalent"));
     let capabilities = controls
         .iter()
@@ -292,6 +296,7 @@ fn run_config_control_manifest_has_no_open_capability_gaps() {
     assert!(capabilities.contains("cycle_injection"));
     assert!(capabilities.contains("diagnostics"));
     assert!(capabilities.contains("no_tool_policy"));
+    assert!(capabilities.contains("session_memory"));
     assert!(capabilities.contains("run_budget"));
     assert!(capabilities.contains("durable_checkpoint_resume"));
 }

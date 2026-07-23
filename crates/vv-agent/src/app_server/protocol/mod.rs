@@ -34,7 +34,7 @@ pub use thread::{
     ThreadUnsubscribeResponse,
 };
 pub use turn::{
-    AppCacheUsage, AppCycleTokenUsage, AppCycleUsage, AppTokenUsage, AppTurn, CheckpointSummary,
+    AppCacheUsage, AppModelCallUsage, AppModelUsage, AppTokenUsage, AppTurn, CheckpointSummary,
     CheckpointSummaryStatus, InterruptionIdempotencySupport, InterruptionOperationKind,
     InterruptionSummary, TurnCompletedParams, TurnControlResponse, TurnFollowUpParams,
     TurnFollowUpResponse, TurnInterruptParams, TurnInterruptResponse, TurnResumeParams,

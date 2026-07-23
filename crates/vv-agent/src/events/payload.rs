@@ -5,7 +5,7 @@ use crate::budget::{BudgetEnforcementBoundary, BudgetExhaustion, BudgetUsageSnap
 use crate::checkpoint::{
     OperationKind, OperationState, ReconciliationDecisionKind, ResumeObservation, ToolIdempotency,
 };
-use crate::types::{AgentStatus, ToolDirective};
+use crate::types::{AgentStatus, ModelCallOperation, TokenUsage, ToolDirective};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -18,8 +18,33 @@ pub enum RunEventPayload {
     },
     AgentStarted,
     CycleStarted,
-    LlmStarted {
+    ModelCallStarted {
+        call_id: String,
+        operation_id: String,
+        attempt: u32,
+        operation: ModelCallOperation,
+        backend: String,
         model: String,
+    },
+    ModelCallCompleted {
+        call_id: String,
+        operation_id: String,
+        attempt: u32,
+        operation: ModelCallOperation,
+        backend: String,
+        model: String,
+        usage: TokenUsage,
+    },
+    ModelCallFailed {
+        call_id: String,
+        operation_id: String,
+        attempt: u32,
+        operation: ModelCallOperation,
+        backend: String,
+        model: String,
+        outcome: ModelCallFailureOutcome,
+        usage: TokenUsage,
+        error_code: String,
     },
     Diagnostic {
         level: DiagnosticLevel,
@@ -222,6 +247,13 @@ pub enum ReservedOutputSource {
     TaskMetadata,
     FrameworkFallback,
     FrameworkFallbackCappedByModelCapability,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelCallFailureOutcome {
+    Definitive,
+    Ambiguous,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

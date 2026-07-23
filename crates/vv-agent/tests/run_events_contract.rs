@@ -87,17 +87,22 @@ fn run_events_parity_fixture_has_stable_bytes_and_round_trips() {
         "run_started",
         "agent_started",
         "cycle_started",
-        "llm_started",
+        "model_call_started",
+        "model_call_failed",
+        "model_call_started",
         "assistant_delta",
         "reasoning_delta",
         "model_tool_call_started",
         "model_tool_call_progress",
+        "model_call_completed",
         "tool_call_planned",
         "tool_call_started",
         "tool_call_completed",
         "approval_requested",
         "approval_resolved",
         "memory_compact_started",
+        "model_call_started",
+        "model_call_completed",
         "memory_compact_completed",
         "sub_run_started",
         "sub_run_completed",
@@ -128,7 +133,10 @@ fn run_events_parity_fixture_has_stable_bytes_and_round_trips() {
 
         actual_types.push(expected["type"].as_str().expect("event type").to_string());
         if event.run_id() == "run_parity" {
-            assert_eq!(event.event_id().as_str(), "evt_parity");
+            assert_eq!(
+                event.event_id().as_str(),
+                expected["event_id"].as_str().expect("event id")
+            );
             assert_eq!(event.run_id(), "run_parity");
             assert_eq!(event.trace_id(), "trace_parity");
             assert_eq!(event.created_at(), 123.456789);

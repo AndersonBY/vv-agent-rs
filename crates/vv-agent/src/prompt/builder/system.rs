@@ -58,7 +58,7 @@ pub fn create_system_prompt_builder(
         true,
     ));
 
-    if !options.session_memory_context.trim().is_empty() {
+    if options.session_memory_enabled && !options.session_memory_context.trim().is_empty() {
         builder.add_section(PromptSection::constant(
             "session_memory",
             options.session_memory_context,

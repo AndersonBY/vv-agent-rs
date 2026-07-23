@@ -4,8 +4,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use vv_agent::{
     Agent, AgentStatus, BeforeLlmEvent, BeforeLlmPatch, CompletionReason, FunctionTool,
-    LLMResponse, LlmRequest, ModelRef, NoToolPolicy, RunConfig, Runner, RuntimeHook, ScriptStep,
-    ScriptedModelProvider, ToolCall, ToolOutput, ToolUseBehavior,
+    LLMResponse, LlmRequest, ModelCallOperation, ModelRef, NoToolPolicy, RunConfig, Runner,
+    RuntimeHook, ScriptStep, ScriptedModelProvider, ToolCall, ToolOutput, ToolUseBehavior,
 };
 
 const FIXTURE: &str = include_str!("fixtures/parity/completion_policy.json");
@@ -402,10 +402,15 @@ async fn reasoning_only_continue_preserves_history_and_usage_for_next_request() 
         .expect("reasoning-only assistant in second request");
     assert_eq!(replayed.content, "");
     assert!(runtime_case["expected"]["next_model_request_contains_reasoning_turn"] == true);
-    assert_eq!(
-        result.result().cycles[0].token_usage.reasoning_tokens,
-        Some(2048)
-    );
+    let first_cycle_call = result
+        .token_usage()
+        .model_calls
+        .iter()
+        .find(|record| {
+            record.cycle_index == 1 && record.operation == ModelCallOperation::AgentCycle
+        })
+        .expect("first Agent cycle model-call record");
+    assert_eq!(first_cycle_call.usage.reasoning_tokens, Some(2048));
     assert_eq!(result.status(), AgentStatus::Completed);
 }
 

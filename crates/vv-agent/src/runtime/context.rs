@@ -8,12 +8,20 @@ use crate::approval::{ApprovalBroker, ApprovalProvider};
 use crate::events::RunEvent;
 use crate::memory::MemoryProvider;
 
+use super::model_calls::{ModelCallCoordinator, ModelCallLedger};
 use super::state::CheckpointStore;
 use super::{CancellationToken, CancelledError};
 
 pub type RunEventHandler = Arc<dyn Fn(&RunEvent) + Send + Sync + 'static>;
 
+#[doc(hidden)]
 #[derive(Clone, Default)]
+pub struct ExecutionRuntimeState {
+    pub(crate) model_call_ledger: ModelCallLedger,
+    pub(crate) model_call_coordinator: Option<ModelCallCoordinator>,
+}
+
+#[derive(Default)]
 pub struct ExecutionContext {
     pub cancellation_token: Option<CancellationToken>,
     pub event_handler: Option<RunEventHandler>,
@@ -24,6 +32,25 @@ pub struct ExecutionContext {
     pub memory_providers: Vec<Arc<dyn MemoryProvider>>,
     pub app_state: Option<Arc<dyn std::any::Any + Send + Sync>>,
     pub metadata: BTreeMap<String, Value>,
+    #[doc(hidden)]
+    pub runtime_state: ExecutionRuntimeState,
+}
+
+impl Clone for ExecutionContext {
+    fn clone(&self) -> Self {
+        Self {
+            cancellation_token: self.cancellation_token.clone(),
+            event_handler: self.event_handler.clone(),
+            checkpoint_store: self.checkpoint_store.clone(),
+            approval_provider: self.approval_provider.clone(),
+            approval_broker: self.approval_broker.clone(),
+            approval_timeout: self.approval_timeout,
+            memory_providers: self.memory_providers.clone(),
+            app_state: self.app_state.clone(),
+            metadata: self.metadata.clone(),
+            runtime_state: ExecutionRuntimeState::default(),
+        }
+    }
 }
 
 impl std::fmt::Debug for ExecutionContext {
@@ -37,6 +64,10 @@ impl std::fmt::Debug for ExecutionContext {
             .field("has_approval_broker", &self.approval_broker.is_some())
             .field("memory_provider_count", &self.memory_providers.len())
             .field("has_app_state", &self.app_state.is_some())
+            .field(
+                "model_call_count",
+                &self.runtime_state.model_call_ledger.records().len(),
+            )
             .field("metadata", &self.metadata)
             .finish()
     }

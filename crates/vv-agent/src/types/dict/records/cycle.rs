@@ -3,7 +3,6 @@ use serde_json::Value;
 use crate::types::{CycleRecord, ToolCall, ToolExecutionResult};
 
 use super::super::common::*;
-use super::super::token_usage::{token_usage_from_dict, token_usage_to_dict};
 
 impl CycleRecord {
     pub fn to_dict(&self) -> Value {
@@ -30,10 +29,6 @@ impl CycleRecord {
                 "memory_compacted".to_string(),
                 Value::Bool(self.memory_compacted),
             ),
-            (
-                "token_usage".to_string(),
-                token_usage_to_dict(&self.token_usage),
-            ),
         ]))
     }
 
@@ -55,11 +50,6 @@ impl CycleRecord {
             tool_calls,
             tool_results,
             memory_compacted: read_bool(object, "memory_compacted", false),
-            token_usage: object
-                .get("token_usage")
-                .map(token_usage_from_dict)
-                .transpose()?
-                .unwrap_or_default(),
         })
     }
 }

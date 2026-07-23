@@ -4,7 +4,8 @@ use vv_agent::runtime::{
     normalize_token_usage, normalize_token_usage_with_hints, summarize_task_token_usage,
 };
 use vv_agent::{
-    CacheUsage, CacheUsageStatus, CycleRecord, LLMResponse, TaskTokenUsage, TokenUsage, UsageSource,
+    CacheUsage, CacheUsageStatus, ModelCallOperation, ModelCallRecord, ModelCallStatus,
+    TaskTokenUsage, TokenUsage, UsageSource,
 };
 
 fn token_usage_contract() -> Value {
@@ -60,22 +61,33 @@ fn aggregation_matches_canonical_cache_observation_cases() {
         .expect("aggregation cases")
     {
         let mut summary = TaskTokenUsage::default();
-        for (index, observation) in case["cycles"]
+        for (index, observation) in case["model_calls"]
             .as_array()
-            .expect("cycle observations")
+            .expect("model call observations")
             .iter()
             .enumerate()
         {
-            summary.add_cycle(
-                (index + 1) as u32,
-                TokenUsage {
-                    total_tokens: Some(1),
-                    usage_source: UsageSource::ProviderReported,
-                    cache_usage: serde_json::from_value::<CacheUsage>(observation.clone())
-                        .expect("cache observation"),
-                    ..TokenUsage::default()
-                },
-            );
+            let cycle_index = (index + 1) as u32;
+            summary
+                .add_model_call(ModelCallRecord {
+                    call_id: format!("op_model_cycle_{cycle_index}_main:attempt:1"),
+                    operation_id: format!("op_model_cycle_{cycle_index}_main"),
+                    attempt: 1,
+                    operation: ModelCallOperation::AgentCycle,
+                    cycle_index,
+                    backend: "test".to_string(),
+                    model: "test-model".to_string(),
+                    status: ModelCallStatus::Completed,
+                    usage: TokenUsage {
+                        total_tokens: Some(1),
+                        usage_source: UsageSource::ProviderReported,
+                        cache_usage: serde_json::from_value::<CacheUsage>(observation.clone())
+                            .expect("cache observation"),
+                        ..TokenUsage::default()
+                    },
+                    error_code: None,
+                })
+                .expect("unique model call");
         }
 
         assert_eq!(
@@ -120,38 +132,85 @@ fn normalizes_provider_token_usage() {
 }
 
 #[test]
-fn summarizes_task_token_usage_from_cycles() {
-    let cycles = vec![
-        CycleRecord {
-            index: 2,
-            assistant_message: String::new(),
-            tool_calls: vec![],
-            tool_results: vec![],
-            memory_compacted: false,
-            token_usage: TokenUsage {
-                input_tokens: Some(10),
-                output_tokens: Some(5),
-                total_tokens: Some(15),
-                usage_source: UsageSource::ProviderReported,
-                ..TokenUsage::default()
-            },
-        },
-        CycleRecord {
-            index: 3,
-            assistant_message: String::new(),
-            tool_calls: vec![],
-            tool_results: vec![],
-            memory_compacted: false,
-            token_usage: LLMResponse::new("empty").token_usage,
-        },
-    ];
+fn task_aggregation_uses_complete_model_call_ledger() {
+    let contract = token_usage_contract();
+    let cases = contract["task_aggregation_cases"]
+        .as_array()
+        .expect("task aggregation cases");
+    let expected_empty = &cases[0]["expected"];
+    let empty = TaskTokenUsage::default();
+    assert_eq!(empty.input_tokens, expected_empty["input_tokens"].as_u64());
+    assert_eq!(
+        empty.output_tokens,
+        expected_empty["output_tokens"].as_u64()
+    );
+    assert_eq!(empty.total_tokens, expected_empty["total_tokens"].as_u64());
+    assert_eq!(
+        empty.reasoning_tokens,
+        expected_empty["reasoning_tokens"].as_u64()
+    );
+    assert!(empty.model_calls.is_empty());
 
-    let summary = summarize_task_token_usage(&cycles);
+    let model_calls = cases[1]["model_calls"]
+        .as_array()
+        .expect("canonical model calls")
+        .iter()
+        .map(|value| {
+            serde_json::from_value::<ModelCallRecord>(value.clone())
+                .expect("canonical model call record")
+        })
+        .collect::<Vec<_>>();
+    let summary = summarize_task_token_usage(&model_calls);
+    let expected = &cases[1]["expected"];
 
-    assert_eq!(summary.input_tokens, None);
-    assert_eq!(summary.output_tokens, None);
-    assert_eq!(summary.total_tokens, None);
-    assert_eq!(summary.cycles.len(), 2);
-    assert_eq!(summary.cycles[0].cycle_index, 2);
-    assert_eq!(summary.cycles[1].cycle_index, 3);
+    assert_eq!(summary.input_tokens, expected["input_tokens"].as_u64());
+    assert_eq!(summary.output_tokens, expected["output_tokens"].as_u64());
+    assert_eq!(summary.total_tokens, expected["total_tokens"].as_u64());
+    assert_eq!(
+        summary.reasoning_tokens,
+        expected["reasoning_tokens"].as_u64()
+    );
+    assert_eq!(
+        serde_json::to_value(&summary.cache_usage).expect("cache aggregate"),
+        expected["cache_usage"]
+    );
+    assert_eq!(
+        summary.model_calls.len() as u64,
+        expected["model_call_count"]
+            .as_u64()
+            .expect("model call count")
+    );
+    assert_eq!(
+        serde_json::from_value::<TaskTokenUsage>(
+            serde_json::to_value(&summary).expect("task usage wire")
+        )
+        .expect("task usage round trip"),
+        summary
+    );
+}
+
+#[test]
+fn duplicate_model_call_ids_and_superseded_task_wire_are_rejected() {
+    let contract = token_usage_contract();
+    let payload = contract["task_aggregation_cases"][1]["model_calls"][0].clone();
+    let record = serde_json::from_value::<ModelCallRecord>(payload).expect("model call record");
+    let mut summary = TaskTokenUsage::default();
+    summary
+        .add_model_call(record.clone())
+        .expect("first model call");
+    assert_eq!(
+        summary.add_model_call(record),
+        Err("model_call_id_duplicate".to_string())
+    );
+
+    let mut superseded = serde_json::to_value(summary)
+        .expect("task usage")
+        .as_object()
+        .cloned()
+        .expect("task usage object");
+    superseded.insert(
+        "schema_version".to_string(),
+        Value::String("vv-agent.task-token-usage.v1".to_string()),
+    );
+    assert!(serde_json::from_value::<TaskTokenUsage>(Value::Object(superseded)).is_err());
 }

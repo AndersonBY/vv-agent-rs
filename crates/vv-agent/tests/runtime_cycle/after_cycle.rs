@@ -246,7 +246,6 @@ fn after_cycle_manager_composes_same_snapshot_in_registration_order() {
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
             memory_compacted: false,
-            token_usage: TokenUsage::default(),
         },
         &[Message::assistant("answer")],
         &BTreeMap::new(),

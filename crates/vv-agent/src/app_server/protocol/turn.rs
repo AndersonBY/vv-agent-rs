@@ -226,6 +226,7 @@ pub enum TurnStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct AppTokenUsage {
     pub schema_version: String,
     pub input_tokens: Option<u64>,
@@ -233,17 +234,27 @@ pub struct AppTokenUsage {
     pub total_tokens: Option<u64>,
     pub reasoning_tokens: Option<u64>,
     pub cache_usage: AppCacheUsage,
-    pub cycles: Vec<AppCycleTokenUsage>,
+    pub model_calls: Vec<AppModelCallUsage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-pub struct AppCycleTokenUsage {
+#[serde(rename_all = "camelCase")]
+pub struct AppModelCallUsage {
+    pub call_id: String,
+    pub operation_id: String,
+    pub attempt: u32,
+    pub operation: String,
     pub cycle_index: u32,
-    pub usage: AppCycleUsage,
+    pub backend: String,
+    pub model: String,
+    pub status: String,
+    pub usage: AppModelUsage,
+    pub error_code: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-pub struct AppCycleUsage {
+#[serde(rename_all = "camelCase")]
+pub struct AppModelUsage {
     pub schema_version: String,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
@@ -255,6 +266,7 @@ pub struct AppCycleUsage {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct AppCacheUsage {
     pub status: String,
     pub read_input_tokens: Option<u64>,

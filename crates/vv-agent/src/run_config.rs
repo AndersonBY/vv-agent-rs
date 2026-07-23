@@ -45,6 +45,7 @@ pub struct RunConfig {
     pub workspace: Option<PathBuf>,
     pub workspace_backend: Option<Arc<dyn WorkspaceBackend>>,
     pub session: Option<Arc<dyn Session>>,
+    pub session_memory_enabled: bool,
     pub initial_messages: Option<Vec<Message>>,
     pub max_cycles: Option<u32>,
     pub max_handoffs: Option<u32>,
@@ -154,6 +155,11 @@ impl RunConfigBuilder {
 
     pub fn session_arc(mut self, session: Arc<dyn Session>) -> Self {
         self.config.session = Some(session);
+        self
+    }
+
+    pub fn session_memory_enabled(mut self, enabled: bool) -> Self {
+        self.config.session_memory_enabled = enabled;
         self
     }
 

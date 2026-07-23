@@ -1,3 +1,9 @@
+use std::collections::HashSet;
+
+use crate::budget::BudgetEnforcementBoundary;
+use crate::events::{ModelCallFailureOutcome, RunEventPayload};
+use crate::types::{AgentResult, AgentStatus, ModelCallStatus};
+
 use super::*;
 
 pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
@@ -114,6 +120,18 @@ pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
             "terminal_result requires a terminal checkpoint status",
         ));
     }
+    let call_ids = checkpoint
+        .model_calls
+        .iter()
+        .map(|record| record.call_id.as_str())
+        .collect::<HashSet<_>>();
+    if call_ids.len() != checkpoint.model_calls.len() {
+        return Err(CheckpointError::new(
+            "checkpoint_status_invalid",
+            "checkpoint model_calls contains duplicate call ids",
+        ));
+    }
+
     let active_cycle = checkpoint.active_cycle()?;
     for entry in checkpoint
         .model_call_journal
@@ -150,9 +168,17 @@ pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
     if let Some(cursor) = &checkpoint.event_cursor {
         cursor.validate()?;
     }
+    let mut event_ids = HashSet::new();
     for entry in &checkpoint.event_outbox {
         entry.verify_payload()?;
+        if !event_ids.insert(entry.event_id.as_str()) {
+            return Err(CheckpointError::new(
+                "event_identity_conflict",
+                "checkpoint event_outbox contains a duplicate event id",
+            ));
+        }
     }
+    validate_model_journal_accounting(checkpoint)?;
     for value in checkpoint.shared_state.values() {
         validate_json(value, "shared_state")?;
     }
@@ -184,15 +210,413 @@ pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
     }
     if let Some(result) = &checkpoint.terminal_result {
         validate_json(result, "terminal_result")?;
-        let result_status = result.get("status").and_then(Value::as_str);
-        if result_status != Some(checkpoint.status.as_str()) {
+        let result = AgentResult::from_dict(result).map_err(|error| {
+            CheckpointError::new(
+                "checkpoint_status_invalid",
+                format!("terminal_result is not the current AgentResult shape: {error}"),
+            )
+        })?;
+        if !agent_status_matches_checkpoint(result.status, checkpoint.status) {
             return Err(CheckpointError::new(
                 "checkpoint_status_invalid",
                 "terminal result status must match checkpoint status",
             ));
         }
+        if result
+            .checkpoint_key
+            .as_deref()
+            .is_some_and(|key| key != checkpoint.checkpoint_key)
+        {
+            return Err(CheckpointError::new(
+                "checkpoint_status_invalid",
+                "terminal result checkpoint_key must match checkpoint",
+            ));
+        }
+        if result.token_usage.model_calls != checkpoint.model_calls {
+            return Err(CheckpointError::new(
+                "checkpoint_status_invalid",
+                "terminal result model-call ledger does not match checkpoint",
+            ));
+        }
     }
     Ok(())
+}
+
+pub fn validate_model_journal_accounting(checkpoint: &Checkpoint) -> CheckpointResult<()> {
+    for journal in &checkpoint.model_call_journal {
+        if journal.kind != OperationKind::Model {
+            return Err(CheckpointError::new(
+                "operation_kind_fields_invalid",
+                "model_call_journal contains a non-model entry",
+            ));
+        }
+        validate_model_journal_entry_accounting(checkpoint, journal)?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ModelAccountingIdentity {
+    call_id: String,
+    operation_id: String,
+    attempt: u64,
+    operation: ModelCallOperation,
+    cycle_index: u64,
+    backend: String,
+    model: String,
+}
+
+fn validate_model_journal_entry_accounting(
+    checkpoint: &Checkpoint,
+    journal: &OperationJournalEntry,
+) -> CheckpointResult<()> {
+    journal.validate()?;
+    let identity = model_journal_identity(journal)?;
+    let record_candidates = checkpoint
+        .model_calls
+        .iter()
+        .filter(|record| {
+            record.call_id == identity.call_id
+                || (record.operation_id == identity.operation_id
+                    && u64::from(record.attempt) == identity.attempt)
+        })
+        .collect::<Vec<_>>();
+
+    let mut event_candidates = Vec::new();
+    for (index, entry) in checkpoint.event_outbox.iter().enumerate() {
+        entry.verify_payload()?;
+        let event: RunEvent = serde_json::from_value(entry.event.clone()).map_err(|error| {
+            CheckpointError::new(
+                "checkpoint_event_outbox_invalid",
+                format!("checkpoint event payload is invalid: {error}"),
+            )
+        })?;
+        let Some(event_identity) = model_event_identity(&event) else {
+            continue;
+        };
+        if event_identity.call_id == identity.call_id
+            || (event_identity.operation_id == identity.operation_id
+                && event_identity.attempt == identity.attempt)
+        {
+            event_candidates.push((index, event, event_identity));
+        }
+    }
+    let started_events = event_candidates
+        .iter()
+        .filter(|(_, event, _)| matches!(event.payload(), RunEventPayload::ModelCallStarted { .. }))
+        .collect::<Vec<_>>();
+    let terminal_events = event_candidates
+        .iter()
+        .filter(|(_, event, _)| {
+            matches!(
+                event.payload(),
+                RunEventPayload::ModelCallCompleted { .. }
+                    | RunEventPayload::ModelCallFailed { .. }
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if record_candidates.len() > 1 || started_events.len() > 1 || terminal_events.len() > 1 {
+        return Err(model_accounting_error(
+            "model journal attempt has duplicate accounting evidence",
+        ));
+    }
+
+    match journal.state {
+        OperationState::Planned => {
+            require_model_evidence_counts(
+                &record_candidates,
+                &started_events,
+                &terminal_events,
+                (0, 0, 0),
+            )?;
+            return Ok(());
+        }
+        OperationState::Started => {
+            require_model_evidence_counts(
+                &record_candidates,
+                &started_events,
+                &terminal_events,
+                (0, 1, 0),
+            )?;
+            require_model_identity(&identity, &started_events[0].2)?;
+            return Ok(());
+        }
+        OperationState::Failed
+            if record_candidates.is_empty()
+                && started_events.is_empty()
+                && terminal_events.is_empty() =>
+        {
+            return Ok(());
+        }
+        OperationState::Succeeded | OperationState::Failed | OperationState::Ambiguous => {}
+    }
+
+    require_model_evidence_counts(
+        &record_candidates,
+        &started_events,
+        &terminal_events,
+        (1, 1, 1),
+    )?;
+    let record = record_candidates[0];
+    let started_event = started_events[0];
+    let terminal_event = terminal_events[0];
+    require_model_identity(&identity, &model_record_identity(record))?;
+    require_model_identity(&identity, &started_event.2)?;
+    require_model_identity(&identity, &terminal_event.2)?;
+
+    let status_matches = match journal.state {
+        OperationState::Succeeded => matches!(
+            record.status,
+            ModelCallStatus::Completed | ModelCallStatus::Ambiguous
+        ),
+        OperationState::Failed => matches!(
+            record.status,
+            ModelCallStatus::Failed | ModelCallStatus::Ambiguous
+        ),
+        OperationState::Ambiguous => record.status == ModelCallStatus::Ambiguous,
+        OperationState::Planned | OperationState::Started => false,
+    };
+    let event_type_matches = matches!(
+        (record.status, terminal_event.1.payload()),
+        (
+            ModelCallStatus::Completed,
+            RunEventPayload::ModelCallCompleted { .. }
+        ) | (
+            ModelCallStatus::Failed | ModelCallStatus::Ambiguous,
+            RunEventPayload::ModelCallFailed { .. }
+        )
+    );
+    if !status_matches || !event_type_matches {
+        return Err(model_accounting_error(
+            "model journal terminal state does not match its accounting evidence",
+        ));
+    }
+
+    let event_usage = match terminal_event.1.payload() {
+        RunEventPayload::ModelCallCompleted { usage, .. }
+        | RunEventPayload::ModelCallFailed { usage, .. } => usage,
+        _ => unreachable!("terminal event filtered above"),
+    };
+    if event_usage != &record.usage {
+        return Err(model_accounting_error(
+            "model terminal event usage does not match its ledger record",
+        ));
+    }
+    if let RunEventPayload::ModelCallFailed {
+        outcome,
+        error_code,
+        ..
+    } = terminal_event.1.payload()
+    {
+        let expected_outcome = if record.status == ModelCallStatus::Ambiguous {
+            ModelCallFailureOutcome::Ambiguous
+        } else {
+            ModelCallFailureOutcome::Definitive
+        };
+        if *outcome != expected_outcome || record.error_code.as_deref() != Some(error_code.as_str())
+        {
+            return Err(model_accounting_error(
+                "model failed event does not match its ledger record",
+            ));
+        }
+    }
+
+    validate_terminal_budget_event_order(checkpoint, terminal_event.0)?;
+    Ok(())
+}
+
+fn require_model_evidence_counts(
+    records: &[&ModelCallRecord],
+    started_events: &[&(usize, RunEvent, ModelAccountingIdentity)],
+    terminal_events: &[&(usize, RunEvent, ModelAccountingIdentity)],
+    expected: (usize, usize, usize),
+) -> CheckpointResult<()> {
+    if (records.len(), started_events.len(), terminal_events.len()) != expected {
+        return Err(model_accounting_error(
+            "model journal attempt is missing atomic accounting evidence",
+        ));
+    }
+    Ok(())
+}
+
+fn model_journal_identity(
+    journal: &OperationJournalEntry,
+) -> CheckpointResult<ModelAccountingIdentity> {
+    Ok(ModelAccountingIdentity {
+        call_id: journal.call_id.clone().ok_or_else(|| {
+            model_accounting_error("model journal call_id is missing from accounting identity")
+        })?,
+        operation_id: journal.operation_id.clone(),
+        attempt: journal.attempt,
+        operation: journal.model_operation.ok_or_else(|| {
+            model_accounting_error("model journal operation is missing from accounting identity")
+        })?,
+        cycle_index: journal.cycle_index,
+        backend: journal.backend.clone().ok_or_else(|| {
+            model_accounting_error("model journal backend is missing from accounting identity")
+        })?,
+        model: journal.model.clone().ok_or_else(|| {
+            model_accounting_error("model journal model is missing from accounting identity")
+        })?,
+    })
+}
+
+fn model_record_identity(record: &ModelCallRecord) -> ModelAccountingIdentity {
+    ModelAccountingIdentity {
+        call_id: record.call_id.clone(),
+        operation_id: record.operation_id.clone(),
+        attempt: u64::from(record.attempt),
+        operation: record.operation,
+        cycle_index: u64::from(record.cycle_index),
+        backend: record.backend.clone(),
+        model: record.model.clone(),
+    }
+}
+
+fn model_event_identity(event: &RunEvent) -> Option<ModelAccountingIdentity> {
+    let (call_id, operation_id, attempt, operation, backend, model) = match event.payload() {
+        RunEventPayload::ModelCallStarted {
+            call_id,
+            operation_id,
+            attempt,
+            operation,
+            backend,
+            model,
+        }
+        | RunEventPayload::ModelCallCompleted {
+            call_id,
+            operation_id,
+            attempt,
+            operation,
+            backend,
+            model,
+            ..
+        }
+        | RunEventPayload::ModelCallFailed {
+            call_id,
+            operation_id,
+            attempt,
+            operation,
+            backend,
+            model,
+            ..
+        } => (call_id, operation_id, attempt, operation, backend, model),
+        _ => return None,
+    };
+    Some(ModelAccountingIdentity {
+        call_id: call_id.clone(),
+        operation_id: operation_id.clone(),
+        attempt: u64::from(*attempt),
+        operation: *operation,
+        cycle_index: u64::from(event.cycle_index()?),
+        backend: backend.clone(),
+        model: model.clone(),
+    })
+}
+
+fn require_model_identity(
+    expected: &ModelAccountingIdentity,
+    observed: &ModelAccountingIdentity,
+) -> CheckpointResult<()> {
+    if expected != observed {
+        return Err(model_accounting_error(
+            "model journal, event, and ledger identities do not match",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_terminal_budget_event_order(
+    checkpoint: &Checkpoint,
+    terminal_event_index: usize,
+) -> CheckpointResult<()> {
+    let budget_configured = checkpoint
+        .run_definition
+        .get("budget_limits")
+        .is_some_and(|value| !value.is_null());
+    let next_event = checkpoint
+        .event_outbox
+        .get(terminal_event_index + 1)
+        .map(|entry| {
+            serde_json::from_value::<RunEvent>(entry.event.clone()).map_err(|error| {
+                CheckpointError::new(
+                    "checkpoint_event_outbox_invalid",
+                    format!("checkpoint event payload is invalid: {error}"),
+                )
+            })
+        })
+        .transpose()?;
+    let next_is_model_budget = next_event.as_ref().is_some_and(|event| {
+        matches!(
+            event.payload(),
+            RunEventPayload::BudgetSnapshot {
+                enforcement_boundary: BudgetEnforcementBoundary::ModelCallComplete,
+                ..
+            } | RunEventPayload::BudgetExhausted {
+                enforcement_boundary: BudgetEnforcementBoundary::ModelCallComplete,
+                ..
+            }
+        )
+    });
+    if budget_configured != next_is_model_budget {
+        return Err(model_accounting_error(
+            "model terminal event must be followed immediately by its configured budget observation",
+        ));
+    }
+    if next_is_model_budget {
+        let duplicate_budget = checkpoint
+            .event_outbox
+            .get(terminal_event_index + 2)
+            .map(|entry| {
+                serde_json::from_value::<RunEvent>(entry.event.clone()).map_err(|error| {
+                    CheckpointError::new(
+                        "checkpoint_event_outbox_invalid",
+                        format!("checkpoint event payload is invalid: {error}"),
+                    )
+                })
+            })
+            .transpose()?
+            .as_ref()
+            .is_some_and(|event| {
+                matches!(
+                    event.payload(),
+                    RunEventPayload::BudgetSnapshot {
+                        enforcement_boundary: BudgetEnforcementBoundary::ModelCallComplete,
+                        ..
+                    } | RunEventPayload::BudgetExhausted {
+                        enforcement_boundary: BudgetEnforcementBoundary::ModelCallComplete,
+                        ..
+                    }
+                )
+            });
+        if duplicate_budget {
+            return Err(model_accounting_error(
+                "budget_exhausted must replace budget_snapshot for a model-call boundary",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn model_accounting_error(message: impl Into<String>) -> CheckpointError {
+    CheckpointError::new("checkpoint_status_invalid", message)
+}
+
+fn agent_status_matches_checkpoint(status: AgentStatus, checkpoint: CheckpointStatus) -> bool {
+    matches!(
+        (status, checkpoint),
+        (AgentStatus::Pending, CheckpointStatus::Pending)
+            | (AgentStatus::Running, CheckpointStatus::Running)
+            | (AgentStatus::WaitUser, CheckpointStatus::WaitUser)
+            | (AgentStatus::Completed, CheckpointStatus::Completed)
+            | (AgentStatus::Failed, CheckpointStatus::Failed)
+            | (AgentStatus::MaxCycles, CheckpointStatus::MaxCycles)
+            | (
+                AgentStatus::ReconciliationRequired,
+                CheckpointStatus::ReconciliationRequired
+            )
+    )
 }
 
 pub fn validate_extension_state_size(

@@ -58,6 +58,9 @@ fn render_prompt_scenario(scenario: &Value) -> Value {
                         .expect("current_time_utc")
                         .to_string(),
                 ),
+                session_memory_enabled: input["session_memory_enabled"]
+                    .as_bool()
+                    .expect("session_memory_enabled"),
                 session_memory_context: input["session_memory_context"]
                     .as_str()
                     .expect("session_memory_context")

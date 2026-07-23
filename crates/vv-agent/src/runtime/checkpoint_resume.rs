@@ -21,6 +21,10 @@ use crate::event_store::RunEventStore;
 use crate::events::{RunEvent, RunEventPayload};
 use crate::llm::{LlmError, LlmRequest};
 use crate::runtime::backends::CapabilityRef;
+use crate::runtime::model_calls::{
+    is_definitive_model_error, model_error_code, response_usage, ModelCallCoordinator,
+    ModelCallDispatchRequest, ModelCallDispatchResult, ModelCallIdentity, ModelCallTerminal,
+};
 use crate::runtime::state::{
     validate_extension_state_size, Checkpoint, CheckpointStore, EventOutboxEntry,
     ExtensionStateEntry, OperationError, OperationJournalEntry,
@@ -57,7 +61,7 @@ pub(crate) struct CheckpointControllerRequest {
 
 #[derive(Debug)]
 pub(crate) enum ModelOperationOutcome {
-    Response(Box<LLMResponse>),
+    Response(Box<ModelCallDispatchResult>),
     Error(LlmError),
     Interrupted(Box<AgentResult>),
 }
@@ -97,6 +101,7 @@ pub(crate) struct CheckpointResumeController {
     owned_claim_token: Option<String>,
     lease_duration_ms: u64,
     heartbeat: Option<HeartbeatHandle>,
+    model_accounting: Option<ModelCallCoordinator>,
 }
 
 mod operations;
@@ -143,15 +148,6 @@ fn raw_event_cursor(event_id: &str) -> CheckpointResult<EventCursor> {
         json!({"event_id": event_id}),
         Some(event_id.to_string()),
     ))
-}
-
-fn model_operation_id(cycle_index: u32, operation_slot: &str) -> String {
-    let digest = Sha256::digest(operation_slot.as_bytes());
-    format!(
-        "op_model_cycle_{}_{}",
-        cycle_index,
-        &format!("{digest:x}")[..16]
-    )
 }
 
 fn tool_idempotency_key(checkpoint_key: &str, cycle_index: u32, call_id: &str) -> String {
@@ -210,7 +206,7 @@ fn reconciliation_result(checkpoint: &Checkpoint, observation: ResumeObservation
         error: None,
         error_code: None,
         shared_state: checkpoint.shared_state.clone(),
-        token_usage: summarize_task_token_usage(&checkpoint.cycles),
+        token_usage: summarize_task_token_usage(&checkpoint.model_calls),
     }
 }
 
@@ -250,25 +246,6 @@ fn apply_reconciliation_decision(
         ReconciliationDecisionKind::Defer | ReconciliationDecisionKind::Abort => {}
     }
     Ok(())
-}
-
-fn definitive_model_error(error: &LlmError) -> bool {
-    if matches!(
-        error,
-        LlmError::ScriptExhausted | LlmError::CompactionExhausted(_)
-    ) {
-        return true;
-    }
-    let message = error.to_string().to_ascii_lowercase();
-    [
-        "context length",
-        "context_length_exceeded",
-        "maximum context length",
-        "prompt is too long",
-        "request too large",
-    ]
-    .iter()
-    .any(|marker| message.contains(marker))
 }
 
 fn checkpoint_status(status: AgentStatus) -> CheckpointResult<CheckpointStatus> {

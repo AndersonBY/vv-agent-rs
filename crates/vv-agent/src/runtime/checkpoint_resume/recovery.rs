@@ -106,25 +106,52 @@ impl CheckpointResumeController {
     }
 
     pub(super) fn recover_ambiguous_operations(&mut self) -> CheckpointResult<Option<AgentResult>> {
-        let mut changed = false;
+        let started_models = self
+            .require_checkpoint()?
+            .model_call_journal
+            .iter()
+            .filter(|entry| entry.state == OperationState::Started)
+            .cloned()
+            .collect::<Vec<_>>();
+        if !started_models.is_empty() {
+            let accounting = self.model_accounting.clone().ok_or_else(|| {
+                CheckpointError::new(
+                    "checkpoint_status_invalid",
+                    "checkpoint model accounting is not initialized",
+                )
+            })?;
+            for started in started_models {
+                let identity = super::operations::model_identity_from_entry(&started)?;
+                {
+                    let entry =
+                        self.find_operation_mut(OperationKind::Model, &started.operation_id)?;
+                    entry.transition_to(OperationState::Ambiguous)?;
+                }
+                let mut terminal = accounting.failed_terminal(
+                    &identity,
+                    "model_outcome_ambiguous".to_string(),
+                    true,
+                    None,
+                );
+                terminal.event = self.stable_model_terminal_event(
+                    terminal.event,
+                    "model_call_failed",
+                    &identity,
+                )?;
+                self.commit_model_terminal(&started.operation_id, terminal, &accounting)?;
+            }
+        }
+        let mut tools_changed = false;
         {
             let checkpoint = self.require_checkpoint_mut()?;
-            for entry in &mut checkpoint.model_call_journal {
-                if entry.state == OperationState::Started {
-                    entry.state = OperationState::Ambiguous;
-                    entry.validate()?;
-                    changed = true;
-                }
-            }
             for entry in &mut checkpoint.tool_journal {
                 if entry.state == OperationState::Started {
-                    entry.state = OperationState::Ambiguous;
-                    entry.validate()?;
-                    changed = true;
+                    entry.transition_to(OperationState::Ambiguous)?;
+                    tools_changed = true;
                 }
             }
         }
-        if changed {
+        if tools_changed {
             self.progress()?;
         }
         let ambiguous = self

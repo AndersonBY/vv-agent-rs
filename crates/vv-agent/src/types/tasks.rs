@@ -52,6 +52,7 @@ pub struct SubAgentConfig {
     pub backend: Option<String>,
     pub system_prompt: Option<String>,
     pub max_cycles: u32,
+    pub session_memory_enabled: bool,
     pub exclude_tools: Vec<String>,
     pub metadata: Metadata,
     pub denied_side_effects: Vec<ToolSideEffect>,
@@ -72,6 +73,8 @@ struct SubAgentConfigWire {
     system_prompt: Option<String>,
     #[serde(default = "default_sub_agent_max_cycles")]
     max_cycles: u32,
+    #[serde(default)]
+    session_memory_enabled: bool,
     #[serde(default)]
     exclude_tools: Vec<String>,
     #[serde(default)]
@@ -106,6 +109,7 @@ impl<'de> Deserialize<'de> for SubAgentConfig {
             backend: wire.backend,
             system_prompt: wire.system_prompt,
             max_cycles: wire.max_cycles,
+            session_memory_enabled: wire.session_memory_enabled,
             exclude_tools: wire.exclude_tools,
             metadata: wire.metadata,
             denied_side_effects: wire.denied_side_effects,
@@ -130,6 +134,7 @@ impl SubAgentConfig {
             backend: None,
             system_prompt: None,
             max_cycles: 8,
+            session_memory_enabled: false,
             exclude_tools: Vec::new(),
             metadata: Metadata::new(),
             denied_side_effects: Vec::new(),

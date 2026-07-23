@@ -106,13 +106,19 @@ fn real_configured_sub_agent_producer_matches_locked_event_fixture_line_by_line(
         )),
     ]);
     let success = AgentRuntime::new(success_llm)
+        .with_default_backend("test")
         .with_tool_registry(build_registry())
         .run_with_controls(
             build_parent(SubAgentConfig::new("child-model", "Research")),
             controls.clone(),
         )
         .expect("successful configured sub-agent producer");
-    assert_eq!(success.status, AgentStatus::Completed);
+    assert_eq!(
+        success.status,
+        AgentStatus::Completed,
+        "configured child failed: {:?}",
+        success.error
+    );
 
     let failure_llm = ScriptedLlmClient::from_steps(vec![
         ScriptStep::response(LLMResponse::with_tool_calls(
@@ -135,6 +141,7 @@ fn real_configured_sub_agent_producer_matches_locked_event_fixture_line_by_line(
     let mut invalid_sub_agent = SubAgentConfig::new("child-model", "Research");
     invalid_sub_agent.system_prompt = Some(" \n ".to_string());
     let failure = AgentRuntime::new(failure_llm)
+        .with_default_backend("test")
         .with_tool_registry(build_registry())
         .run_with_controls(build_parent(invalid_sub_agent), controls)
         .expect("runtime-invalid configured sub-agent producer");

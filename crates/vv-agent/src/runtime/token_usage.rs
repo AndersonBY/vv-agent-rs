@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::types::{
-    CacheUsage, CacheUsageStatus, CycleRecord, TaskTokenUsage, TokenUsage, UsageSource,
+    CacheUsage, CacheUsageStatus, ModelCallRecord, TaskTokenUsage, TokenUsage, UsageSource,
 };
 
 pub fn normalize_token_usage(raw_usage: &Value) -> TokenUsage {
@@ -130,10 +130,12 @@ pub fn normalize_token_usage_with_hints(
     }
 }
 
-pub fn summarize_task_token_usage(cycles: &[CycleRecord]) -> TaskTokenUsage {
+pub fn summarize_task_token_usage(model_calls: &[ModelCallRecord]) -> TaskTokenUsage {
     let mut summary = TaskTokenUsage::default();
-    for cycle in cycles {
-        summary.add_cycle(cycle.index, cycle.token_usage.clone());
+    for model_call in model_calls {
+        summary
+            .add_model_call(model_call.clone())
+            .expect("runtime model call ledger contains duplicate call_id");
     }
     summary
 }

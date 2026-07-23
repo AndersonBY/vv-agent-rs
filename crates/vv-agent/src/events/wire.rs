@@ -29,7 +29,71 @@ pub(super) fn validate_event_wire_shape(value: &Value) -> Result<(), String> {
     let (event_fields, required_fields): (&[&str], &[&str]) = match event_type {
         "run_started" => (&["input"], &["input"]),
         "agent_started" | "cycle_started" | "session_persisted" => (&[], &[]),
-        "llm_started" => (&["model"], &["model"]),
+        "model_call_started" => (
+            &[
+                "call_id",
+                "operation_id",
+                "attempt",
+                "operation",
+                "backend",
+                "model",
+            ],
+            &[
+                "call_id",
+                "operation_id",
+                "attempt",
+                "operation",
+                "cycle_index",
+                "backend",
+                "model",
+            ],
+        ),
+        "model_call_completed" => (
+            &[
+                "call_id",
+                "operation_id",
+                "attempt",
+                "operation",
+                "backend",
+                "model",
+                "usage",
+            ],
+            &[
+                "call_id",
+                "operation_id",
+                "attempt",
+                "operation",
+                "cycle_index",
+                "backend",
+                "model",
+                "usage",
+            ],
+        ),
+        "model_call_failed" => (
+            &[
+                "call_id",
+                "operation_id",
+                "attempt",
+                "operation",
+                "backend",
+                "model",
+                "outcome",
+                "usage",
+                "error_code",
+            ],
+            &[
+                "call_id",
+                "operation_id",
+                "attempt",
+                "operation",
+                "cycle_index",
+                "backend",
+                "model",
+                "outcome",
+                "usage",
+                "error_code",
+            ],
+        ),
         "run_state_changed" => (&["state"], &["state"]),
         "diagnostic" => (&["level", "code", "details"], &["level", "code", "details"]),
         "assistant_delta" => (
@@ -322,6 +386,70 @@ pub(super) fn validate_event_wire_shape(value: &Value) -> Result<(), String> {
             "run event {event_type} is missing required fields: {}",
             missing.join(", ")
         ));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_model_call_wire_fields(
+    value: &Value,
+    payload: &RunEventPayload,
+    cycle_index: Option<u32>,
+) -> Result<(), String> {
+    let identity = match payload {
+        RunEventPayload::ModelCallStarted {
+            call_id,
+            operation_id,
+            attempt,
+            backend,
+            model,
+            ..
+        }
+        | RunEventPayload::ModelCallCompleted {
+            call_id,
+            operation_id,
+            attempt,
+            backend,
+            model,
+            ..
+        }
+        | RunEventPayload::ModelCallFailed {
+            call_id,
+            operation_id,
+            attempt,
+            backend,
+            model,
+            ..
+        } => Some((call_id, operation_id, attempt, backend, model)),
+        _ => None,
+    };
+    let Some((call_id, operation_id, attempt, backend, model)) = identity else {
+        return Ok(());
+    };
+    for (field, text) in [
+        ("call_id", call_id),
+        ("operation_id", operation_id),
+        ("backend", backend),
+        ("model", model),
+    ] {
+        if text.trim().is_empty() {
+            return Err(format!(
+                "model call event {field} must be a non-empty string"
+            ));
+        }
+    }
+    if *attempt == 0 {
+        return Err("model call event attempt must be positive".to_string());
+    }
+    if cycle_index.is_none_or(|cycle| cycle == 0) {
+        return Err("model call event cycle_index must be positive".to_string());
+    }
+    if let RunEventPayload::ModelCallFailed { error_code, .. } = payload {
+        if error_code.trim().is_empty() {
+            return Err("model call failed event error_code must be non-empty".to_string());
+        }
+    }
+    if matches!(payload, RunEventPayload::ModelCallStarted { .. }) && value.get("usage").is_some() {
+        return Err("model call started event cannot contain usage".to_string());
     }
     Ok(())
 }

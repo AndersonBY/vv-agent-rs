@@ -192,10 +192,10 @@ async fn turn_completion_keeps_cross_language_terminal_fields() {
     assert_ne!(params["runId"], "assistant_run");
     assert!(params.get("tokenUsage").is_some());
     assert_eq!(
-        params["tokenUsage"]["cache_usage"]["status"],
+        params["tokenUsage"]["cacheUsage"]["status"],
         "provider_reported"
     );
-    assert_eq!(params["tokenUsage"]["cache_usage"]["read_input_tokens"], 0);
+    assert_eq!(params["tokenUsage"]["cacheUsage"]["readInputTokens"], 0);
     assert!(params.get("turn").is_none());
 }
 

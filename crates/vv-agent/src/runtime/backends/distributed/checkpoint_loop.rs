@@ -436,7 +436,7 @@ fn max_cycles_result(checkpoint_controller: &CheckpointController) -> AgentResul
             status: AgentStatus::MaxCycles,
             completion_reason: Some(CompletionReason::MaxCycles),
             partial_output: last_assistant_output(&checkpoint.cycles),
-            token_usage: summarize_task_token_usage(&checkpoint.cycles),
+            token_usage: summarize_task_token_usage(&checkpoint.model_calls),
             messages: checkpoint.messages,
             cycles: checkpoint.cycles,
             budget_usage: checkpoint.budget_usage,
@@ -457,7 +457,7 @@ fn cancellation_result(
             status: AgentStatus::Failed,
             completion_reason: Some(CompletionReason::Cancelled),
             partial_output: last_assistant_output(&checkpoint.cycles),
-            token_usage: summarize_task_token_usage(&checkpoint.cycles),
+            token_usage: summarize_task_token_usage(&checkpoint.model_calls),
             messages: checkpoint.messages,
             cycles: checkpoint.cycles,
             budget_usage: checkpoint.budget_usage,
@@ -475,7 +475,7 @@ fn controller_failure(checkpoint_controller: &CheckpointController, error: Strin
             status: AgentStatus::Failed,
             completion_reason: Some(CompletionReason::Failed),
             partial_output: last_assistant_output(&checkpoint.cycles),
-            token_usage: summarize_task_token_usage(&checkpoint.cycles),
+            token_usage: summarize_task_token_usage(&checkpoint.model_calls),
             messages: checkpoint.messages,
             cycles: checkpoint.cycles,
             budget_usage: checkpoint.budget_usage,
@@ -499,7 +499,7 @@ fn checkpoint_error_result(
             result.shared_state = checkpoint.shared_state.clone();
             result.budget_usage = checkpoint.budget_usage.clone();
             result.partial_output = last_assistant_output(&result.cycles);
-            result.token_usage = summarize_task_token_usage(&result.cycles);
+            result.token_usage = summarize_task_token_usage(&checkpoint.model_calls);
         }
     }
     result

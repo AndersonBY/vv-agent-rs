@@ -162,10 +162,10 @@ pub use tools::{
 pub use tracing::{JsonlTraceExporter, Span, TraceSink};
 pub use types::{
     AgentResult, AgentStatus, CacheUsage, CacheUsageStatus, CompletionReason, CycleRecord,
-    CycleStatus, LLMResponse, Message, MessageRole, NoToolPolicy, SubAgentConfig,
-    SubAgentConfigValidationError, SubTaskOutcome, SubTaskRequest, TaskTokenUsage, TokenUsage,
-    ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus, UsageSource,
-    INVALID_SUB_AGENT_MODEL_CODE, INVALID_SUB_AGENT_MODEL_MESSAGE,
+    CycleStatus, LLMResponse, Message, MessageRole, ModelCallOperation, ModelCallRecord,
+    ModelCallStatus, NoToolPolicy, SubAgentConfig, SubAgentConfigValidationError, SubTaskOutcome,
+    SubTaskRequest, TaskTokenUsage, TokenUsage, ToolCall, ToolDirective, ToolExecutionResult,
+    ToolResultStatus, UsageSource, INVALID_SUB_AGENT_MODEL_CODE, INVALID_SUB_AGENT_MODEL_MESSAGE,
     INVALID_SUB_AGENT_SYSTEM_PROMPT_CODE, INVALID_SUB_AGENT_SYSTEM_PROMPT_MESSAGE,
 };
 pub use workspace::{

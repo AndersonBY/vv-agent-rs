@@ -21,6 +21,7 @@ pub struct BuildSystemPromptOptions {
     pub available_skills: Option<Value>,
     pub workspace: Option<PathBuf>,
     pub current_time_utc: Option<String>,
+    pub session_memory_enabled: bool,
     pub session_memory_context: String,
 }
 
@@ -36,6 +37,7 @@ impl Default for BuildSystemPromptOptions {
             available_skills: None,
             workspace: None,
             current_time_utc: None,
+            session_memory_enabled: false,
             session_memory_context: String::new(),
         }
     }

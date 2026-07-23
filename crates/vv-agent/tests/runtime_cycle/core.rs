@@ -105,18 +105,60 @@ fn runtime_collects_cycle_and_total_token_usage_from_llm_responses() {
     let result = runtime.run(task).expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
-    assert_eq!(result.token_usage.cycles.len(), 2);
-    assert_eq!(result.cycles[0].token_usage.input_tokens, Some(100));
-    assert_eq!(result.cycles[0].token_usage.output_tokens, Some(25));
-    assert_eq!(result.cycles[0].token_usage.reasoning_tokens, Some(10));
+    assert_eq!(result.token_usage.model_calls.len(), 2);
     assert_eq!(
-        result.cycles[0].token_usage.cache_usage.read_input_tokens,
+        result
+            .token_usage
+            .model_calls
+            .iter()
+            .map(|call| call.operation)
+            .collect::<Vec<_>>(),
+        [
+            vv_agent::ModelCallOperation::AgentCycle,
+            vv_agent::ModelCallOperation::AgentCycle,
+        ]
+    );
+    assert_eq!(
+        result
+            .token_usage
+            .model_calls
+            .iter()
+            .map(|call| call.cycle_index)
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert_eq!(
+        result.token_usage.model_calls[0].usage.input_tokens,
+        Some(100)
+    );
+    assert_eq!(
+        result.token_usage.model_calls[0].usage.output_tokens,
+        Some(25)
+    );
+    assert_eq!(
+        result.token_usage.model_calls[0].usage.reasoning_tokens,
+        Some(10)
+    );
+    assert_eq!(
+        result.token_usage.model_calls[0]
+            .usage
+            .cache_usage
+            .read_input_tokens,
         Some(40)
     );
-    assert_eq!(result.cycles[1].token_usage.input_tokens, Some(50));
-    assert_eq!(result.cycles[1].token_usage.output_tokens, Some(30));
     assert_eq!(
-        result.cycles[1].token_usage.cache_usage.write_input_tokens,
+        result.token_usage.model_calls[1].usage.input_tokens,
+        Some(50)
+    );
+    assert_eq!(
+        result.token_usage.model_calls[1].usage.output_tokens,
+        Some(30)
+    );
+    assert_eq!(
+        result.token_usage.model_calls[1]
+            .usage
+            .cache_usage
+            .write_input_tokens,
         Some(12)
     );
 

@@ -175,22 +175,6 @@ pub fn map_runtime_event(
                 .map(|cycle| cycle as u32),
             RunEventPayload::AgentStarted,
         )),
-        "llm_started" => Some(RunEvent::new(
-            &context.run_id,
-            &context.trace_id,
-            &context.agent_name,
-            payload
-                .get("cycle")
-                .and_then(Value::as_u64)
-                .map(|cycle| cycle as u32),
-            RunEventPayload::LlmStarted {
-                model: payload
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-            },
-        )),
         "run_state_changed" => Some(RunEvent::new(
             &context.run_id,
             &context.trace_id,

@@ -12,12 +12,12 @@ mod memory;
 mod model_request;
 mod planning;
 mod run_setup;
+mod session_api;
 mod state;
 mod tool_batch;
 
-use std::collections::BTreeMap;
-
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 use crate::llm::{LlmClient, LlmError};
 use crate::memory::CompactionExhaustedError;
@@ -27,53 +27,49 @@ use crate::types::{AgentResult, AgentTask, CompletionReason, ToolDirective, Tool
 use super::cancellation::CancellationToken;
 
 use super::cycle_runner::{is_prompt_too_long_error, MAX_PROMPT_TOO_LONG_RETRIES};
+use super::model_calls::ModelCallDispatchRequest;
 use super::results::assistant_message_from_response;
-use super::token_usage::normalize_token_usage;
 use super::tool_call_runner::{apply_tool_use_behavior, needs_tool_call_id, skipped_tool_result};
 
 use self::approval::{approval_error_result, approval_provider_result, PendingToolApprovalCapture};
 use self::budget::{
-    enforce_cycle_start, finalize_run_budget, observe_llm_completion,
-    observe_tool_batch_completion, preflight_tool_batch, PreparedRunBudget,
+    budget_snapshot, enforce_cycle_start, finalize_run_budget, lock_budget,
+    observe_tool_batch_completion, preflight_tool_batch, project_model_call_completion,
+    PreparedRunBudget,
 };
-use self::checkpoint::{CheckpointCoordinator, CheckpointModelCompletion, CheckpointToolPlan};
+use self::checkpoint::{CheckpointModelCompletion, CheckpointToolPlan};
 use self::helpers::{
     cancelled_agent_result, collect_interruption_messages, controls_cancelled,
     drain_steering_queue, failed_agent_result, finalize_terminal_projection,
-    image_notification_from_tool_result, previous_cycle_memory_usage, project_cycle_cancellation,
+    image_notification_from_tool_result, project_cycle_cancellation, task_token_usage,
 };
 use self::lifecycle::{
     finalize_no_tool_cycle, finalize_tool_cycle, NoToolCycleFinalization, ToolCycleFinalization,
 };
 use self::memory::{
-    memory_compact_completed_event, memory_compact_event_payload, memory_compact_started_event,
-    notify_memory_after_compact, notify_memory_before_compact,
+    compact_cycle_memory, memory_compact_completed_event, memory_compact_event_payload,
+    memory_compact_started_event, memory_inference_failure_result, notify_memory_after_compact,
+    notify_memory_before_compact, CycleMemoryCompaction,
 };
-use self::model_request::{build_model_request, cycle_stream_callback};
+use self::model_request::{
+    build_model_request, cycle_stream_callback, effective_model_call_target,
+};
 use self::planning::block_on_engine_tool_run;
-use self::run_setup::{prepare_run_setup, PreparedRun};
+use self::run_setup::{
+    prepare_approval_broker, prepare_run_setup, prepare_runtime_accounting, PreparedRun,
+    PreparedRuntimeAccounting,
+};
 pub use self::state::AgentRuntime;
 use self::tool_batch::{PreparedToolBatch, ToolBatchSetup};
 
-pub use crate::runtime::sub_agent_sessions::{
-    _register_sub_agent_session, _unregister_sub_agent_session, get_sub_agent_session,
-    steer_sub_agent_session, subscribe_sub_agent_session,
-};
 pub use controls::{
     BeforeCycleMessageProvider, CheckpointRuntimeControl, InterruptionMessageProvider,
     RunEventHandler, RuntimeRunControls,
 };
 pub(crate) use helpers::build_initial_messages;
+pub use session_api::*;
 
 impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
-    pub fn set_tool_policy(&mut self, tool_policy: crate::tools::ToolPolicy) {
-        self.tool_policy = Some(tool_policy);
-    }
-
-    pub fn run(&self, task: AgentTask) -> Result<AgentResult, LlmError> {
-        self.run_with_controls(task, RuntimeRunControls::default())
-    }
-
     pub fn run_with_controls(
         &self,
         mut task: AgentTask,
@@ -82,11 +78,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         if let Some(policy) = self.tool_policy.as_ref() {
             crate::runtime::tool_planner::project_tool_policy(&mut task, policy);
         }
-        if let Some(context) = controls.execution_context.as_mut() {
-            if context.approval_provider.is_some() && context.approval_broker.is_none() {
-                context.approval_broker = Some(crate::approval::ApprovalBroker::default());
-            }
-        }
+        prepare_approval_broker(&mut controls);
         let PreparedRun {
             task,
             messages,
@@ -95,26 +87,41 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             workspace_path,
             workspace_backend,
             sub_task_manager,
-            mut memory_manager,
-        } = prepare_run_setup(self, task, &controls);
+            memory_manager,
+            memory_model_provider,
+        } = prepare_run_setup(self, task, &controls)?;
         let cycle_index_start = controls.cycle_index_start.unwrap_or(1);
         let backend_manages_checkpoint_cycles = self.execution_backend.manages_checkpoint_cycles();
-        let checkpoint =
-            CheckpointCoordinator::new(controls.effective_checkpoint_controller().cloned());
+        self.emit_run_started(&controls, &task, &workspace_path);
+        let PreparedRunBudget {
+            limits: effective_budget_limits,
+            controller: budget_controller,
+            early_result,
+        } = self.prepare_run_budget(&controls, &messages, &cycles, &shared_state);
+        let configured_budget = effective_budget_limits.is_some();
+        let child_budget_limits = effective_budget_limits.clone();
+
+        let effective_cancellation_token = controls.effective_cancellation_token();
+        let PreparedRuntimeAccounting {
+            model_call_ledger,
+            model_call_coordinator,
+            checkpoint,
+            mut memory_manager,
+        } = prepare_runtime_accounting(
+            self,
+            &task,
+            &mut controls,
+            memory_manager,
+            memory_model_provider,
+            &budget_controller,
+        )?;
         if !backend_manages_checkpoint_cycles {
             if let Some(result) = checkpoint.begin_run_cycle(cycle_index_start)? {
                 return Ok(result);
             }
         }
-        self.emit_run_started(&controls, &task, &workspace_path);
-        let PreparedRunBudget {
-            limits: effective_budget_limits,
-            controller: mut budget_controller,
-            early_result,
-        } = self.prepare_run_budget(&controls, &messages, &cycles, &shared_state);
-        let configured_budget = effective_budget_limits.is_some();
-        let child_budget_limits = effective_budget_limits.clone();
-        if let Some(result) = early_result {
+        if let Some(mut result) = early_result {
+            result.token_usage = model_call_ledger.usage();
             return Ok(result);
         }
         self.emit_log(
@@ -122,7 +129,6 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             "agent_started",
             BTreeMap::from([("model".to_string(), Value::String(task.model.clone()))]),
         );
-
         if !configured_budget && controls_cancelled(&controls) {
             self.emit_log(
                 &controls,
@@ -132,10 +138,13 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     Value::String("Operation was cancelled".to_string()),
                 )]),
             );
-            return Ok(cancelled_agent_result(messages, cycles, shared_state));
+            return Ok(cancelled_agent_result(
+                messages,
+                cycles,
+                shared_state,
+                task_token_usage(&controls),
+            ));
         }
-
-        let effective_cancellation_token = controls.effective_cancellation_token();
         let effective_event_handler = controls.effective_event_handler();
         let mut pending_error = None;
         let cycle_count = controls.cycle_count.unwrap_or(task.max_cycles);
@@ -187,7 +196,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     return Some(result);
                 }
                 if let Some(result) = enforce_cycle_start(
-                    &mut budget_controller,
+                    &budget_controller,
                     &controls,
                     cycle_index,
                     messages,
@@ -197,7 +206,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     return Some(result);
                 }
                 if let Some(result) = checkpoint.update_budget_usage(
-                    || budget_controller.as_ref().map(|value| value.snapshot()),
+                    || budget_snapshot(&budget_controller),
                     messages,
                     cycles,
                     shared_state,
@@ -214,67 +223,35 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     ]),
                 );
                 let hook_manager = self.hook_manager();
-                let pre_compact_messages = hook_manager.apply_before_memory_compact(
+                let CycleMemoryCompaction {
+                    messages: mut compacted_messages,
+                    changed: memory_compacted,
+                    recent_tool_call_ids,
+                } = match compact_cycle_memory(
+                    self,
+                    &controls,
                     &task,
+                    &hook_manager,
+                    &mut memory_manager,
                     cycle_index,
-                    messages.clone(),
+                    messages,
+                    cycles,
                     shared_state,
-                );
-                let pre_compact_messages =
-                    memory_manager.apply_session_memory_context(&pre_compact_messages);
-                let (previous_prompt_tokens, recent_tool_call_ids) =
-                    previous_cycle_memory_usage(cycles);
-                let memory_compact_event = memory_compact_started_event(
-                    controls.execution_context.as_ref(),
-                    &memory_manager,
-                    &task,
-                    cycle_index,
-                    &pre_compact_messages,
-                    previous_prompt_tokens,
-                    recent_tool_call_ids.as_ref(),
-                    false,
-                )
-                .map(|event| {
-                    let event = notify_memory_before_compact(
-                        controls.execution_context.as_ref(),
-                        event,
-                        &pre_compact_messages,
-                    );
-                    self.emit_log(
-                        &controls,
-                        "memory_compact_started",
-                        memory_compact_event_payload(&event),
-                    );
-                    event
-                });
-                let compaction_outcome = memory_manager
-                    .compact_for_cycle_with_usage_observed(
-                        &pre_compact_messages,
-                        cycle_index,
-                        false,
-                        previous_prompt_tokens,
-                        recent_tool_call_ids.as_ref(),
-                    );
-                let compaction_mode = compaction_outcome.mode;
-                let memory_compacted = compaction_outcome.changed;
-                let mut compacted_messages = compaction_outcome.messages;
-                if let Some(started_event) = memory_compact_event.as_ref() {
-                    let completed = memory_compact_completed_event(
-                        started_event,
-                        cycle_index,
-                        &pre_compact_messages,
-                        &compacted_messages,
-                        &memory_manager.config.model,
-                        compaction_mode,
-                    );
-                    let completed =
-                        notify_memory_after_compact(controls.execution_context.as_ref(), completed);
-                    self.emit_log(
-                        &controls,
-                        "memory_compact_completed",
-                        memory_compact_event_payload(&completed),
-                    );
-                }
+                    &model_call_ledger,
+                ) {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        return Some(memory_inference_failure_result(
+                            error,
+                            &checkpoint,
+                            &budget_controller,
+                            &controls,
+                            messages,
+                            cycles,
+                            shared_state,
+                        ));
+                    }
+                };
                 *messages = compacted_messages.clone();
                 let tool_schemas = self.planned_tool_schemas_with_after_cycle_denials(
                     &task,
@@ -292,18 +269,6 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 let mut request_tool_schemas = request_tool_schemas;
                 let mut memory_compacted = memory_compacted;
                 let mut prompt_too_long_retries = 0;
-                self.emit_log(
-                    &controls,
-                    "llm_started",
-                    BTreeMap::from([
-                        ("cycle".to_string(), Value::from(cycle_index)),
-                        ("model".to_string(), Value::String(task.model.clone())),
-                        (
-                            "message_count".to_string(),
-                            Value::from(request_messages.len()),
-                        ),
-                    ]),
-                );
                 let mut stream_metadata = task.metadata.clone();
                 if let Some(execution_context) = controls.execution_context.as_ref() {
                     stream_metadata.extend(execution_context.metadata.clone());
@@ -320,11 +285,27 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         &request_messages,
                         &request_tool_schemas,
                     );
+                    let (effective_backend, effective_model) = effective_model_call_target(
+                        &task,
+                        &controls,
+                        self.default_backend.as_deref(),
+                    );
+                    let operation_slot = if prompt_too_long_retries == 0 {
+                        "main".to_string()
+                    } else {
+                        format!("prompt_too_long_{prompt_too_long_retries}")
+                    };
                     let completion = checkpoint.complete_model(
-                        cycle_index,
-                        &format!("main:{}", prompt_too_long_retries + 1),
-                        request,
-                        || budget_controller.as_ref().map(|value| value.snapshot()),
+                        ModelCallDispatchRequest {
+                            cycle_index,
+                            operation_slot: &operation_slot,
+                            operation: crate::types::ModelCallOperation::AgentCycle,
+                            backend: &effective_backend,
+                            model: &effective_model,
+                            request: &request,
+                            accounting: &model_call_coordinator,
+                        },
+                        || budget_snapshot(&budget_controller),
                         |request| {
                             self.llm_client
                                 .complete_with_stream(request, cycle_stream_callback.clone())
@@ -336,7 +317,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         CheckpointModelCompletion::Stop(result) => return Some(*result),
                     };
                     match completion {
-                        Ok(response) => break response,
+                        Ok(dispatch) => break dispatch,
                         Err(error) if is_prompt_too_long_error(&error) => {
                             prompt_too_long_retries += 1;
                             if prompt_too_long_retries > MAX_PROMPT_TOO_LONG_RETRIES {
@@ -352,6 +333,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                     cycles.clone(),
                                     shared_state.clone(),
                                     message,
+                                    task_token_usage(&controls),
                                 ));
                             }
                             memory_compacted = true;
@@ -379,13 +361,27 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             );
                             let compaction_mode;
                             compacted_messages = if prompt_too_long_retries == 1 {
-                                let outcome = memory_manager.compact_for_cycle_with_usage_observed(
-                                    &compacted_messages,
-                                    cycle_index,
-                                    true,
-                                    None,
-                                    recent_tool_call_ids.as_ref(),
-                                );
+                                let outcome = match memory_manager
+                                    .compact_for_cycle_with_usage_observed(
+                                        &compacted_messages,
+                                        cycle_index,
+                                        true,
+                                        None,
+                                        recent_tool_call_ids.as_ref(),
+                                    ) {
+                                    Ok(outcome) => outcome,
+                                    Err(error) => {
+                                        return Some(memory_inference_failure_result(
+                                            error,
+                                            &checkpoint,
+                                            &budget_controller,
+                                            &controls,
+                                            messages,
+                                            cycles,
+                                            shared_state,
+                                        ));
+                                    }
+                                };
                                 compaction_mode = outcome.mode;
                                 outcome.messages
                             } else {
@@ -440,16 +436,19 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 cycles.clone(),
                                 shared_state.clone(),
                                 message,
+                                task_token_usage(&controls),
                             ));
                         }
                     }
                 };
+                let model_budget_exhaustion = response.budget_exhaustion.clone();
+                let model_usage = response.usage.clone();
                 let response = hook_manager.apply_after_llm(
                     &task,
                     cycle_index,
                     &request_messages,
                     &request_tool_schemas,
-                    response,
+                    response.response,
                     shared_state,
                 );
                 *messages = request_messages;
@@ -460,17 +459,11 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     Vec::<ToolExecutionResult>::new(),
                 );
                 cycle.memory_compacted = memory_compacted;
-                if !cycle.token_usage.has_usage() {
-                    cycle.token_usage =
-                        normalize_token_usage(response.raw.get("usage").unwrap_or(&Value::Null));
-                }
-                self.emit_cycle_llm_response(&controls, &cycle);
 
-                let llm_boundary_result = observe_llm_completion(
-                    &mut budget_controller,
+                let model_boundary_result = project_model_call_completion(
+                    &budget_controller,
                     &controls,
-                    cycle_index,
-                    &cycle.token_usage,
+                    model_budget_exhaustion,
                     cancellation_token,
                     &cycle,
                     messages,
@@ -478,16 +471,17 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     shared_state,
                 );
                 if let Some(result) = checkpoint.update_budget_usage(
-                    || budget_controller.as_ref().map(|value| value.snapshot()),
+                    || budget_snapshot(&budget_controller),
                     messages,
                     cycles,
                     shared_state,
                 ) {
                     return Some(result);
                 }
-                if let Some(result) = llm_boundary_result {
+                if let Some(result) = model_boundary_result {
                     return Some(result);
                 }
+                self.emit_cycle_llm_response(&controls, &cycle, &model_usage);
 
                 if response.tool_calls.is_empty() {
                     return finalize_no_tool_cycle(NoToolCycleFinalization {
@@ -507,7 +501,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 }
 
                 if let Some(result) = preflight_tool_batch(
-                    &mut budget_controller,
+                    &budget_controller,
                     &controls,
                     cycle_index,
                     &response.tool_calls,
@@ -546,8 +540,13 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         || controls_cancelled(&controls)
                     {
                         *shared_state = context.shared_state.clone();
-                        if let Some(controller) = &mut budget_controller {
-                            controller.tool_batch_complete(&controls, cycle_index, false, true);
+                        if let Some(controller) = &budget_controller {
+                            lock_budget(controller).tool_batch_complete(
+                                &controls,
+                                cycle_index,
+                                false,
+                                true,
+                            );
                         }
                         cycles.push(cycle);
                         self.emit_log(
@@ -565,6 +564,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             messages.clone(),
                             cycles.clone(),
                             shared_state.clone(),
+                            task_token_usage(&controls),
                         ));
                     }
                     let (patched_call, short_circuit_result) = hook_manager.apply_before_tool_call(
@@ -581,8 +581,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 &self.tool_registry,
                                 &patched_call.name,
                             );
-                            let budget_usage =
-                                budget_controller.as_ref().map(|value| value.snapshot());
+                            let budget_usage = budget_snapshot(&budget_controller);
                             (idempotency, budget_usage)
                         },
                         messages,
@@ -714,8 +713,13 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     let result = execution.complete();
                     if let Some(error) = approval_failure {
                         *shared_state = context.shared_state.clone();
-                        if let Some(controller) = &mut budget_controller {
-                            controller.tool_batch_complete(&controls, cycle_index, true, false);
+                        if let Some(controller) = &budget_controller {
+                            lock_budget(controller).tool_batch_complete(
+                                &controls,
+                                cycle_index,
+                                true,
+                                false,
+                            );
                         }
                         cycles.push(cycle);
                         self.emit_log(
@@ -731,13 +735,14 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             cycles.clone(),
                             shared_state.clone(),
                             error.to_string(),
+                            task_token_usage(&controls),
                         ));
                     }
                     if let Some(result) = checkpoint.finish_tool(
                         cycle_index,
                         &patched_call,
                         &result,
-                        || budget_controller.as_ref().map(|value| value.snapshot()),
+                        || budget_snapshot(&budget_controller),
                         (messages, cycles, shared_state),
                     ) {
                         return Some(result);
@@ -904,7 +909,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
 
                 cycles.push(cycle);
                 let tool_boundary_result = observe_tool_batch_completion(
-                    &mut budget_controller,
+                    &budget_controller,
                     &controls,
                     cycle_index,
                     cancellation_token,
@@ -913,7 +918,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     shared_state,
                 );
                 if let Some(result) = checkpoint.update_budget_usage(
-                    || budget_controller.as_ref().map(|value| value.snapshot()),
+                    || budget_snapshot(&budget_controller),
                     messages,
                     cycles,
                     shared_state,
@@ -955,8 +960,14 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         if let Some(error) = pending_error {
             return Err(error);
         }
+        if backend_manages_checkpoint_cycles && !checkpoint.refresh_model_call_ledger()? {
+            model_call_ledger
+                .replace(result.token_usage.model_calls.clone())
+                .map_err(LlmError::Request)?;
+        }
+        result.token_usage = model_call_ledger.usage();
         result = finalize_run_budget(
-            &mut budget_controller,
+            &budget_controller,
             &controls,
             effective_cancellation_token.as_ref(),
             result,

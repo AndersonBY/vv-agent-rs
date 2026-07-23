@@ -20,6 +20,7 @@ pub use tasks::{
     INVALID_SUB_AGENT_SYSTEM_PROMPT_CODE, INVALID_SUB_AGENT_SYSTEM_PROMPT_MESSAGE,
 };
 pub use token_usage::{
-    CacheUsage, CacheUsageStatus, CycleTokenUsage, TaskTokenUsage, TokenUsage, UsageSource,
+    CacheUsage, CacheUsageStatus, ModelCallOperation, ModelCallRecord, ModelCallStatus,
+    TaskTokenUsage, TokenUsage, UsageSource,
 };
 pub use tool_calls::{ToolCall, ToolExecutionResult};

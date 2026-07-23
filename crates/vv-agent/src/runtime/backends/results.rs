@@ -1,8 +1,7 @@
-use super::super::token_usage::summarize_task_token_usage;
 use crate::runtime::CancellationToken;
 use crate::types::{
     last_assistant_output, AgentResult, AgentStatus, CompletionReason, CycleRecord, Message,
-    Metadata,
+    Metadata, TaskTokenUsage,
 };
 
 pub(crate) fn execute_cycle_loop<F>(
@@ -67,7 +66,7 @@ where
         }
     }
 
-    let token_usage = summarize_task_token_usage(&cycles);
+    let token_usage = TaskTokenUsage::default();
     let partial_output = last_assistant_output(&cycles);
     AgentResult {
         status: AgentStatus::MaxCycles,
@@ -94,7 +93,7 @@ pub(crate) fn cancelled_backend_result(
     cycles: Vec<CycleRecord>,
     shared_state: Metadata,
 ) -> AgentResult {
-    let token_usage = summarize_task_token_usage(&cycles);
+    let token_usage = TaskTokenUsage::default();
     let partial_output = last_assistant_output(&cycles);
     AgentResult {
         status: AgentStatus::Failed,
@@ -122,7 +121,7 @@ pub(crate) fn failed_backend_result(
     shared_state: Metadata,
     error: String,
 ) -> AgentResult {
-    let token_usage = summarize_task_token_usage(&cycles);
+    let token_usage = TaskTokenUsage::default();
     let partial_output = last_assistant_output(&cycles);
     AgentResult {
         status: AgentStatus::Failed,

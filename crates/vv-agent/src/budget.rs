@@ -34,7 +34,7 @@ pub enum BudgetDimension {
 pub enum BudgetEnforcementBoundary {
     RunStart,
     CycleStart,
-    LlmComplete,
+    ModelCallComplete,
     ToolBatchPreflight,
     ToolBatchComplete,
     Terminal,
@@ -438,8 +438,8 @@ impl BudgetEvaluator {
         })
     }
 
-    pub fn llm_complete(&mut self, usage: &TokenUsage) -> Option<BudgetExhaustion> {
-        let boundary = BudgetEnforcementBoundary::LlmComplete;
+    pub fn model_call_complete(&mut self, usage: &TokenUsage) -> Option<BudgetExhaustion> {
+        let boundary = BudgetEnforcementBoundary::ModelCallComplete;
         self.cycles = self.cycles.saturating_add(1);
         self.observe_token_usage(usage);
         self.observe_boundary();

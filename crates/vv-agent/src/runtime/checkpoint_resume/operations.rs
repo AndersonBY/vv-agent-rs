@@ -2,6 +2,11 @@
 
 use super::*;
 
+mod model_terminal;
+
+pub(super) use model_terminal::model_identity_from_entry;
+use model_terminal::require_effective_model_identity;
+
 impl CheckpointResumeController {
     pub(crate) fn new(request: CheckpointControllerRequest) -> CheckpointResult<Self> {
         request.config.validate()?;
@@ -46,7 +51,12 @@ impl CheckpointResumeController {
             owned_claim_token: None,
             lease_duration_ms: DEFAULT_CHECKPOINT_LEASE_MS,
             heartbeat: None,
+            model_accounting: None,
         })
+    }
+
+    pub(crate) fn bind_model_accounting(&mut self, accounting: ModelCallCoordinator) {
+        self.model_accounting = Some(accounting);
     }
 
     pub(crate) fn checkpoint_key(&self) -> CheckpointResult<&str> {
@@ -230,28 +240,42 @@ impl CheckpointResumeController {
 
     pub(crate) fn complete_model<F>(
         &mut self,
-        cycle_index: u32,
-        operation_slot: &str,
-        request: &LlmRequest,
+        dispatch: ModelCallDispatchRequest<'_>,
         budget_usage: Option<BudgetUsageSnapshot>,
         invoke: F,
     ) -> CheckpointResult<ModelOperationOutcome>
     where
         F: FnOnce() -> Result<LLMResponse, LlmError>,
     {
-        if operation_slot.trim().is_empty() {
+        if dispatch.operation_slot.trim().is_empty() {
             return Err(CheckpointError::new(
                 "checkpoint_journal_integrity_mismatch",
                 "model operation slot must be non-empty",
             ));
         }
-        if let Some(interruption) = self.ensure_claim(u64::from(cycle_index))? {
+        if let Some(interruption) = self.ensure_claim(u64::from(dispatch.cycle_index))? {
             return Ok(ModelOperationOutcome::Interrupted(Box::new(interruption)));
         }
+        self.bind_model_accounting(dispatch.accounting.clone());
         self.set_budget_snapshot(budget_usage);
-        let projection = self.model_request_projection(request)?;
+        let projection =
+            self.model_request_projection(dispatch.request, dispatch.backend, dispatch.model)?;
         let digest = operation_request_digest(OperationKind::Model, &projection)?;
-        let operation_id = model_operation_id(cycle_index, operation_slot);
+        let initial_identity = dispatch
+            .accounting
+            .new_identity(
+                dispatch.cycle_index,
+                dispatch.operation_slot,
+                dispatch.operation,
+                dispatch.backend,
+                dispatch.model,
+                1,
+                None,
+            )
+            .map_err(|error| {
+                CheckpointError::new("checkpoint_journal_integrity_mismatch", error)
+            })?;
+        let operation_id = initial_identity.operation_id.clone();
 
         if let Some(entry) = self.find_operation(OperationKind::Model, &operation_id) {
             if entry.request_digest != digest {
@@ -260,6 +284,13 @@ impl CheckpointResumeController {
                     "model request does not match the durable operation slot",
                 ));
             }
+            let identity = model_identity_from_entry(&entry)?;
+            require_effective_model_identity(
+                &identity,
+                dispatch.operation,
+                dispatch.backend,
+                dispatch.model,
+            )?;
             match entry.state {
                 OperationState::Succeeded => {
                     let response = entry.response.clone().ok_or_else(|| {
@@ -275,7 +306,14 @@ impl CheckpointResumeController {
                             format!("durable model response is invalid: {error}"),
                         )
                     })?;
-                    return Ok(ModelOperationOutcome::Response(Box::new(response)));
+                    let usage = response_usage(&response);
+                    return Ok(ModelOperationOutcome::Response(Box::new(
+                        ModelCallDispatchResult {
+                            response,
+                            usage,
+                            budget_exhaustion: None,
+                        },
+                    )));
                 }
                 OperationState::Failed => {
                     let error = entry.error.clone().unwrap_or_else(|| {
@@ -302,10 +340,13 @@ impl CheckpointResumeController {
         } else {
             let entry = OperationJournalEntry::model(
                 operation_id.clone(),
-                u64::from(cycle_index),
-                1,
+                u64::from(dispatch.cycle_index),
+                u64::from(initial_identity.attempt),
                 digest,
-                None,
+                initial_identity.operation,
+                initial_identity.backend.clone(),
+                initial_identity.model.clone(),
+                initial_identity.call_id.clone(),
             );
             self.require_checkpoint_mut()?
                 .model_call_journal
@@ -313,48 +354,118 @@ impl CheckpointResumeController {
             self.progress()?;
         }
 
+        let entry = self
+            .find_operation(OperationKind::Model, &operation_id)
+            .expect("planned model operation remains present");
+        if entry.state != OperationState::Planned {
+            return Err(CheckpointError::new(
+                "checkpoint_journal_integrity_mismatch",
+                "model journal is not executable after recovery",
+            ));
+        }
+        let identity = model_identity_from_entry(&entry)?;
+        require_effective_model_identity(
+            &identity,
+            dispatch.operation,
+            dispatch.backend,
+            dispatch.model,
+        )?;
+        self.renew_claim_before_dispatch()?;
+        let started_event = dispatch
+            .accounting
+            .started_event(&identity)
+            .with_event_id(self.stable_event_id(
+                "model_call_started",
+                &[&identity.operation_id, &identity.attempt.to_string()],
+            )?)
+            .map_err(|error| CheckpointError::new("checkpoint_event_outbox_invalid", error))?;
         {
             let entry = self.find_operation_mut(OperationKind::Model, &operation_id)?;
-            entry.state = OperationState::Started;
-            entry.validate()?;
+            entry.transition_to(OperationState::Started)?;
         }
+        self.queue_outbox_event(started_event)?;
         self.progress()?;
-        self.renew_claim_before_dispatch()?;
+        self.deliver_pending_outbox()?;
 
         let outcome = catch_unwind(AssertUnwindSafe(invoke));
         match outcome {
-            Ok(Ok(response)) => {
+            Ok(Ok(mut response)) => {
+                let usage = response_usage(&response);
+                response.token_usage = usage.clone();
                 let receipt = serde_json::to_value(&response).map_err(|error| {
                     CheckpointError::new(
                         "checkpoint_journal_integrity_mismatch",
                         format!("model response cannot be serialized: {error}"),
                     )
                 })?;
-                let entry = self.find_operation_mut(OperationKind::Model, &operation_id)?;
-                entry.state = OperationState::Succeeded;
-                entry.response = Some(receipt);
-                entry.error = None;
-                entry.validate()?;
-                self.progress()?;
-                Ok(ModelOperationOutcome::Response(Box::new(response)))
+                {
+                    let entry = self.find_operation_mut(OperationKind::Model, &operation_id)?;
+                    entry.state = OperationState::Succeeded;
+                    entry.response = Some(receipt);
+                    entry.error = None;
+                    entry.validate()?;
+                }
+                let mut terminal = dispatch
+                    .accounting
+                    .completed_terminal(&identity, usage.clone());
+                terminal.event = self.stable_model_terminal_event(
+                    terminal.event,
+                    "model_call_completed",
+                    &identity,
+                )?;
+                let budget_exhaustion = terminal.budget.exhaustion.clone();
+                self.commit_model_terminal(&operation_id, terminal, dispatch.accounting)?;
+                Ok(ModelOperationOutcome::Response(Box::new(
+                    ModelCallDispatchResult {
+                        response,
+                        usage,
+                        budget_exhaustion,
+                    },
+                )))
             }
-            Ok(Err(error)) if definitive_model_error(&error) => {
-                let entry = self.find_operation_mut(OperationKind::Model, &operation_id)?;
-                entry.state = OperationState::Failed;
-                entry.error = Some(OperationError::new(
-                    "model_request_failed",
-                    error.to_string(),
-                    false,
-                ));
-                entry.validate()?;
-                self.progress()?;
+            Ok(Err(error)) if is_definitive_model_error(&error) => {
+                let error_code = model_error_code(&error);
+                {
+                    let entry = self.find_operation_mut(OperationKind::Model, &operation_id)?;
+                    entry.state = OperationState::Failed;
+                    entry.error = Some(OperationError::new(
+                        &error_code,
+                        "model request failed with a definitive outcome",
+                        false,
+                    ));
+                    entry.validate()?;
+                }
+                let mut terminal = dispatch
+                    .accounting
+                    .failed_terminal(&identity, error_code, false, None);
+                terminal.event = self.stable_model_terminal_event(
+                    terminal.event,
+                    "model_call_failed",
+                    &identity,
+                )?;
+                self.commit_model_terminal(&operation_id, terminal, dispatch.accounting)?;
                 Ok(ModelOperationOutcome::Error(error))
             }
-            Ok(Err(_)) | Err(_) => {
-                let entry = self.find_operation_mut(OperationKind::Model, &operation_id)?;
-                entry.state = OperationState::Ambiguous;
-                entry.validate()?;
-                self.progress()?;
+            outcome @ (Ok(Err(_)) | Err(_)) => {
+                let error_code = match &outcome {
+                    Ok(Err(error)) => model_error_code(error),
+                    Err(_) => "model_request_panicked".to_string(),
+                    Ok(Ok(_)) => unreachable!(),
+                };
+                {
+                    let entry = self.find_operation_mut(OperationKind::Model, &operation_id)?;
+                    entry.state = OperationState::Ambiguous;
+                    entry.validate()?;
+                }
+                let mut terminal = dispatch
+                    .accounting
+                    .failed_terminal(&identity, error_code, true, None);
+                terminal.event = self.stable_model_terminal_event(
+                    terminal.event,
+                    "model_call_failed",
+                    &identity,
+                )?;
+                self.commit_model_terminal(&operation_id, terminal, dispatch.accounting)?;
                 let entry = self
                     .find_operation(OperationKind::Model, &operation_id)
                     .expect("model operation remains present");
@@ -648,9 +759,6 @@ impl CheckpointResumeController {
         let checkpoint = self.require_checkpoint_mut()?;
         checkpoint.cycle_index = u64::from(cycle_index);
         checkpoint.status = CheckpointStatus::Running;
-        checkpoint
-            .event_outbox
-            .retain(|entry| entry.state == "pending");
         let revision = checkpoint.revision;
         let claim_token = checkpoint
             .claim_token
@@ -776,9 +884,6 @@ impl CheckpointResumeController {
             checkpoint.cycles = result.cycles.clone();
             checkpoint.shared_state = result.shared_state.clone();
             checkpoint.budget_usage = result.budget_usage.clone();
-            checkpoint
-                .event_outbox
-                .retain(|entry| entry.state == "pending");
         }
         self.snapshot_extensions()?;
         if let Some(event) = terminal_event {

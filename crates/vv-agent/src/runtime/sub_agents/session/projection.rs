@@ -63,5 +63,6 @@ pub(super) fn project_execution_context(
             .unwrap_or_default(),
         app_state: parent.and_then(|context| context.app_state.clone()),
         metadata,
+        ..ExecutionContext::default()
     }
 }

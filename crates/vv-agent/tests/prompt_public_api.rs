@@ -30,6 +30,7 @@ Review code.
 
     let options = BuildSystemPromptOptions {
         current_time_utc: Some("2026-05-26T00:00:00Z".to_string()),
+        session_memory_enabled: true,
         session_memory_context: "<Session Memory>\nRemember alpha\n</Session Memory>".to_string(),
         available_sub_agents: BTreeMap::from([(
             "reviewer".to_string(),
@@ -103,6 +104,7 @@ fn model_visible_system_prompt_stays_capability_focused() {
     };
 
     let bundle = build_system_prompt_bundle_with_options("You are careful.", options);
+    assert!(!bundle.prompt.contains("<Session Memory>"));
     for forbidden in prompt_forbidden_terms() {
         assert!(
             !contains_forbidden_term(&bundle.prompt, forbidden.as_str()),

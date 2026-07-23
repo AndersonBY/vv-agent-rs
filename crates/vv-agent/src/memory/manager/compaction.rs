@@ -5,6 +5,7 @@ use crate::memory::artifacts::{
 };
 use crate::memory::post_compact_restore::{restore_key_files, PostCompactRestoreConfig};
 use crate::memory::summary::LocalSummary;
+use crate::memory::{RuntimeMemoryCallback, RuntimeMemoryCallbackError};
 use crate::types::{Message, MessageRole};
 
 use super::helpers::{extract_original_user_request, normalize_summary_output};
@@ -37,10 +38,11 @@ impl MemoryManager {
         &self,
         messages: &[Message],
         cycle_index: Option<u32>,
-    ) -> (Vec<Message>, bool) {
+        runtime_callback: Option<&RuntimeMemoryCallback>,
+    ) -> Result<(Vec<Message>, bool), RuntimeMemoryCallbackError> {
         let messages = self.strip_session_memory_context(messages);
         if messages.len() <= 2 {
-            return (messages, false);
+            return Ok((messages, false));
         }
         let system_message = messages
             .iter()
@@ -72,8 +74,13 @@ impl MemoryManager {
                 )
             })
             .collect::<Vec<_>>();
-        let mut compressed_memory =
-            self.generate_summary(&summary_prompt, &messages_for_summary, artifact_facts);
+        let mut compressed_memory = self.generate_summary(
+            &summary_prompt,
+            &messages_for_summary,
+            artifact_facts,
+            cycle_index,
+            runtime_callback,
+        )?;
         if let Some(summary_data) = parse_first_json_object(&compressed_memory) {
             let restored_context = restore_key_files(
                 &summary_data,
@@ -100,7 +107,7 @@ impl MemoryManager {
         compacted.push(Message::user(format!(
             "<Original User Request>\n{original_request}\n</Original User Request>\n\n<Compressed Agent Memory>\n{compressed_memory}\n</Compressed Agent Memory>"
         )));
-        (compacted, true)
+        Ok((compacted, true))
     }
 
     fn build_compress_memory_prompt(&self, messages: &[Message]) -> String {
@@ -116,7 +123,21 @@ impl MemoryManager {
         prompt: &str,
         messages: &[Message],
         key_facts: Vec<String>,
-    ) -> String {
+        cycle_index: Option<u32>,
+        runtime_callback: Option<&RuntimeMemoryCallback>,
+    ) -> Result<String, RuntimeMemoryCallbackError> {
+        if let (Some(callback), Some(cycle_index)) = (runtime_callback, cycle_index) {
+            if let Some(summary) = callback(
+                prompt,
+                self.config.summary_backend.as_deref(),
+                self.config.summary_model.as_deref(),
+                cycle_index,
+            )?
+            .filter(|summary| !summary.trim().is_empty())
+            {
+                return Ok(normalize_summary_output(&summary));
+            }
+        }
         if let Some(callback) = &self.config.summary_callback {
             let callback_result = catch_unwind(AssertUnwindSafe(|| {
                 callback(
@@ -128,16 +149,16 @@ impl MemoryManager {
             if let Ok(Some(summary)) = callback_result {
                 let normalized = normalize_summary_output(&summary);
                 if !normalized.trim().is_empty() {
-                    return normalized;
+                    return Ok(normalized);
                 }
             }
         }
-        LocalSummary::from_messages_with_key_facts(
+        Ok(LocalSummary::from_messages_with_key_facts(
             messages,
             self.config.summary_event_limit,
             key_facts,
         )
-        .to_json_string()
+        .to_json_string())
     }
 
     fn normalize_compaction_messages(&self, messages: &[Message]) -> (Vec<Message>, bool) {

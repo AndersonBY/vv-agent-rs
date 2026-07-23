@@ -97,6 +97,16 @@ fn public_export_path(id: &str) -> &'static str {
         ),
         "result.cache_usage" => export_type!(vv_agent::CacheUsage, "vv_agent::CacheUsage"),
         "result.token_usage" => export_type!(vv_agent::TokenUsage, "vv_agent::TokenUsage"),
+        "result.model_call_operation" => export_type!(
+            vv_agent::ModelCallOperation,
+            "vv_agent::ModelCallOperation"
+        ),
+        "result.model_call_status" => {
+            export_type!(vv_agent::ModelCallStatus, "vv_agent::ModelCallStatus")
+        }
+        "result.model_call_record" => {
+            export_type!(vv_agent::ModelCallRecord, "vv_agent::ModelCallRecord")
+        }
         "result.task_token_usage" => {
             export_type!(vv_agent::TaskTokenUsage, "vv_agent::TaskTokenUsage")
         }

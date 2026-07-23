@@ -13,6 +13,9 @@ use crate::tools::{BeforeToolDispatch, ToolError, ToolRunOptions};
 use crate::types::{AgentResult, CycleRecord, LLMResponse, Message, ToolCall, ToolExecutionResult};
 
 use super::helpers::failed_agent_result;
+use crate::runtime::model_calls::{
+    ModelCallCoordinator, ModelCallDispatchRequest, ModelCallDispatchResult, ModelCallLedger,
+};
 
 type PendingCheckpointError = Arc<Mutex<Option<CheckpointError>>>;
 type FailureContext<'a> = (
@@ -22,8 +25,14 @@ type FailureContext<'a> = (
 );
 
 pub(super) enum CheckpointModelCompletion {
-    Continue(Box<Result<LLMResponse, LlmError>>),
+    Continue(Box<Result<ModelCallDispatchResult, LlmError>>),
     Stop(Box<AgentResult>),
+}
+
+pub(super) enum CheckpointModelDispatch {
+    Continue(Box<Result<ModelCallDispatchResult, LlmError>>),
+    Interrupted(Box<AgentResult>),
+    Failed(CheckpointError),
 }
 
 pub(super) enum CheckpointToolPlan {
@@ -31,16 +40,22 @@ pub(super) enum CheckpointToolPlan {
     Stop(Box<AgentResult>),
 }
 
+#[derive(Clone)]
 pub(super) struct CheckpointCoordinator {
     controller: Option<CheckpointController>,
     pending_error: PendingCheckpointError,
+    model_call_ledger: ModelCallLedger,
 }
 
 impl CheckpointCoordinator {
-    pub(super) fn new(controller: Option<CheckpointController>) -> Self {
+    pub(super) fn new(
+        controller: Option<CheckpointController>,
+        model_call_ledger: ModelCallLedger,
+    ) -> Self {
         Self {
             controller,
             pending_error: Arc::new(Mutex::new(None)),
+            model_call_ledger,
         }
     }
 
@@ -52,6 +67,32 @@ impl CheckpointCoordinator {
             Some(result) => result.map_err(checkpoint_llm_error),
             None => Ok(None),
         }
+    }
+
+    pub(super) fn bind_model_accounting(
+        &self,
+        accounting: &ModelCallCoordinator,
+    ) -> Result<(), LlmError> {
+        let Some(controller) = self.controller.as_ref() else {
+            return Ok(());
+        };
+        lock_controller(controller)
+            .map(|mut controller| controller.bind_model_accounting(accounting.clone()))
+            .map_err(checkpoint_llm_error)
+    }
+
+    pub(super) fn refresh_model_call_ledger(&self) -> Result<bool, LlmError> {
+        let Some(controller) = self.controller.as_ref() else {
+            return Ok(false);
+        };
+        let model_calls = lock_controller(controller)
+            .and_then(|mut controller| controller.refresh_authoritative())
+            .map_err(checkpoint_llm_error)?
+            .model_calls;
+        self.model_call_ledger
+            .replace(model_calls)
+            .map_err(LlmError::Request)?;
+        Ok(true)
     }
 
     pub(super) fn begin_cycle(
@@ -90,9 +131,7 @@ impl CheckpointCoordinator {
 
     pub(super) fn complete_model<F, B>(
         &self,
-        cycle_index: u32,
-        operation_slot: &str,
-        request: LlmRequest,
+        dispatch: ModelCallDispatchRequest<'_>,
         budget_usage: B,
         invoke: F,
         failure_context: FailureContext<'_>,
@@ -101,33 +140,70 @@ impl CheckpointCoordinator {
         F: FnOnce(LlmRequest) -> Result<LLMResponse, LlmError>,
         B: FnOnce() -> Option<BudgetUsageSnapshot>,
     {
+        match self.dispatch_model(dispatch, budget_usage, invoke) {
+            CheckpointModelDispatch::Continue(completion) => {
+                CheckpointModelCompletion::Continue(completion)
+            }
+            CheckpointModelDispatch::Interrupted(result) => CheckpointModelCompletion::Stop(result),
+            CheckpointModelDispatch::Failed(error) => {
+                CheckpointModelCompletion::Stop(Box::new(self.failure(
+                    error,
+                    failure_context.0,
+                    failure_context.1,
+                    failure_context.2,
+                )))
+            }
+        }
+    }
+
+    pub(super) fn dispatch_model<F, B>(
+        &self,
+        dispatch: ModelCallDispatchRequest<'_>,
+        budget_usage: B,
+        invoke: F,
+    ) -> CheckpointModelDispatch
+    where
+        F: FnOnce(LlmRequest) -> Result<LLMResponse, LlmError>,
+        B: FnOnce() -> Option<BudgetUsageSnapshot>,
+    {
         let Some(controller) = self.controller.as_ref() else {
-            return CheckpointModelCompletion::Continue(Box::new(invoke(request)));
+            return CheckpointModelDispatch::Continue(Box::new(dispatch.accounting.dispatch(
+                dispatch.operation,
+                dispatch.cycle_index,
+                dispatch.operation_slot,
+                dispatch.backend,
+                dispatch.model,
+                dispatch.request,
+                || invoke(dispatch.request.clone()),
+            )));
         };
-        let invoke_request = request.clone();
+        let invoke_request = dispatch.request.clone();
         let budget_usage = budget_usage();
         let outcome = lock_controller(controller).and_then(|mut controller| {
-            controller.complete_model(cycle_index, operation_slot, &request, budget_usage, || {
-                invoke(invoke_request)
-            })
+            controller.complete_model(dispatch, budget_usage, || invoke(invoke_request))
         });
         match outcome {
             Ok(ModelOperationOutcome::Response(response)) => {
-                CheckpointModelCompletion::Continue(Box::new(Ok(*response)))
+                CheckpointModelDispatch::Continue(Box::new(Ok(*response)))
             }
             Ok(ModelOperationOutcome::Error(error)) => {
-                CheckpointModelCompletion::Continue(Box::new(Err(error)))
+                CheckpointModelDispatch::Continue(Box::new(Err(error)))
             }
             Ok(ModelOperationOutcome::Interrupted(result)) => {
-                CheckpointModelCompletion::Stop(result)
+                CheckpointModelDispatch::Interrupted(result)
             }
-            Err(error) => CheckpointModelCompletion::Stop(Box::new(self.failure(
-                error,
-                failure_context.0,
-                failure_context.1,
-                failure_context.2,
-            ))),
+            Err(error) => CheckpointModelDispatch::Failed(error),
         }
+    }
+
+    pub(super) fn failure_result(
+        &self,
+        error: CheckpointError,
+        messages: &[Message],
+        cycles: &[CycleRecord],
+        shared_state: &BTreeMap<String, Value>,
+    ) -> AgentResult {
+        self.failure(error, messages, cycles, shared_state)
     }
 
     pub(super) fn plan_tool<F>(
@@ -201,7 +277,9 @@ impl CheckpointCoordinator {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .is_some()
-            .then(|| checkpoint_failed_result(messages, cycles, shared_state))
+            .then(|| {
+                checkpoint_failed_result(messages, cycles, shared_state, &self.model_call_ledger)
+            })
     }
 
     pub(super) fn finish_tool<F>(
@@ -283,7 +361,7 @@ impl CheckpointCoordinator {
             .pending_error
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error);
-        checkpoint_failed_result(messages, cycles, shared_state)
+        checkpoint_failed_result(messages, cycles, shared_state, &self.model_call_ledger)
     }
 }
 
@@ -291,12 +369,14 @@ fn checkpoint_failed_result(
     messages: &[Message],
     cycles: &[CycleRecord],
     shared_state: &BTreeMap<String, Value>,
+    model_call_ledger: &ModelCallLedger,
 ) -> AgentResult {
     failed_agent_result(
         messages.to_vec(),
         cycles.to_vec(),
         shared_state.clone(),
         "checkpoint runtime failed".to_string(),
+        model_call_ledger.usage(),
     )
 }
 

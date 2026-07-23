@@ -1,14 +1,15 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::llm::LlmClient;
+use crate::llm::{LlmClient, LlmError};
 use crate::runtime::backends::RuntimeExecutionBackend;
 use crate::runtime::hooks::RuntimeHook;
 use crate::runtime::lifecycle::AfterCycleHook;
 use crate::tools::{build_default_registry, ToolRegistry};
+use crate::types::{AgentResult, AgentTask};
 use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
-use super::AgentRuntime;
+use super::{AgentRuntime, RuntimeRunControls};
 
 impl<C: LlmClient> AgentRuntime<C> {
     pub fn new(llm_client: C) -> Self {
@@ -94,5 +95,15 @@ impl<C: LlmClient> AgentRuntime<C> {
     ) -> Self {
         self.pending_tool_approval = Some(pending);
         self
+    }
+}
+
+impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
+    pub fn set_tool_policy(&mut self, tool_policy: crate::tools::ToolPolicy) {
+        self.tool_policy = Some(tool_policy);
+    }
+
+    pub fn run(&self, task: AgentTask) -> Result<AgentResult, LlmError> {
+        self.run_with_controls(task, RuntimeRunControls::default())
     }
 }

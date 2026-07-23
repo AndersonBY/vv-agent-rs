@@ -6,7 +6,6 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::budget::{BudgetExhaustion, BudgetUsageSnapshot};
-use crate::events::RunEventPayload;
 use crate::runtime::sub_agents::events::{
     emit_sub_agent_session_event, emit_sub_run_completed, emit_sub_run_started,
 };
@@ -133,14 +132,7 @@ impl RuntimeSubAgentSession {
         let parent_event_handler = controls.event_handler.clone();
         let observed_progress_for_log = observed_progress.clone();
         let event_handler: crate::runtime::RunEventHandler = Arc::new(move |event| {
-            if let RunEventPayload::Diagnostic { code, details, .. } = event.payload() {
-                if code == "cycle_llm_response" {
-                    observed_progress_for_log.record_completed_cycle(
-                        event.cycle_index(),
-                        &details.clone().into_iter().collect(),
-                    );
-                }
-            }
+            observed_progress_for_log.record_event(event);
             if let Ok(Value::Object(object)) = serde_json::to_value(event) {
                 let event_name = object
                     .get("type")
@@ -160,6 +152,18 @@ impl RuntimeSubAgentSession {
             lifecycle,
             Some(cancellation_token.clone()),
         );
+        if let Some(backend) = self.resolved.get("backend") {
+            execution_context.metadata.insert(
+                "_vv_agent_resolved_backend".to_string(),
+                Value::String(backend.clone()),
+            );
+        }
+        if let Some(model) = self.resolved.get("model_id") {
+            execution_context.metadata.insert(
+                "_vv_agent_resolved_model".to_string(),
+                Value::String(model.clone()),
+            );
+        }
         execution_context.event_handler = Some(event_handler.clone());
         let child_run_context = self.child_run_context(lifecycle, &task, &execution_context);
         let result = runtime
@@ -183,6 +187,7 @@ impl RuntimeSubAgentSession {
                     initial_messages: None,
                     initial_shared_state: None,
                     initial_cycles: None,
+                    initial_model_calls: None,
                     cycle_index_start: None,
                     cycle_count: None,
                     initial_budget_usage: None,
@@ -191,11 +196,8 @@ impl RuntimeSubAgentSession {
                 },
             )
             .map_err(|error| Box::new((error.to_string(), observed_progress.token_usage())))?;
-        let token_usage = if result.cycles.is_empty() {
-            (result.status != AgentStatus::Failed).then(|| result.token_usage.clone())
-        } else {
-            Some(crate::runtime::summarize_task_token_usage(&result.cycles))
-        };
+        let token_usage = (result.status != AgentStatus::Failed || !result.cycles.is_empty())
+            .then(|| result.token_usage.clone());
 
         {
             let mut state = self.state.lock().map_err(|_| {
@@ -633,16 +635,39 @@ mod capability_projection_tests {
         );
         let captured = captured.lock().expect("captured completions");
         assert_eq!(captured[1]["status"], "failed");
-        assert_eq!(captured[1]["token_usage"]["input_tokens"], json!(11));
-        assert_eq!(captured[1]["token_usage"]["output_tokens"], json!(7));
-        assert_eq!(captured[1]["token_usage"]["total_tokens"], json!(18));
+        assert_eq!(captured[1]["token_usage"]["input_tokens"], json!(null));
+        assert_eq!(captured[1]["token_usage"]["output_tokens"], json!(null));
+        assert_eq!(captured[1]["token_usage"]["total_tokens"], json!(null));
         assert_eq!(
-            captured[1]["token_usage"]["cycles"][0]["cycle_index"],
+            captured[1]["token_usage"]["model_calls"]
+                .as_array()
+                .expect("model call ledger")
+                .len(),
+            2
+        );
+        assert_eq!(
+            captured[1]["token_usage"]["model_calls"][0]["cycle_index"],
             json!(1)
         );
         assert_eq!(
-            captured[1]["token_usage"]["cycles"][0]["usage"]["total_tokens"],
+            captured[1]["token_usage"]["model_calls"][0]["status"],
+            json!("completed")
+        );
+        assert_eq!(
+            captured[1]["token_usage"]["model_calls"][0]["usage"]["total_tokens"],
             json!(18)
+        );
+        assert_eq!(
+            captured[1]["token_usage"]["model_calls"][1]["cycle_index"],
+            json!(2)
+        );
+        assert_eq!(
+            captured[1]["token_usage"]["model_calls"][1]["status"],
+            json!("ambiguous")
+        );
+        assert_eq!(
+            captured[1]["token_usage"]["model_calls"][1]["usage"]["total_tokens"],
+            json!(null)
         );
     }
 

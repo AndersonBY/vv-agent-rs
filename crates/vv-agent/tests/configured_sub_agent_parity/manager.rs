@@ -778,7 +778,7 @@ fn explicit_backend_and_resolved_limits_reach_real_child_request_and_run_context
         assert_eq!(result.status, AgentStatus::Completed, "{label}");
         assert_eq!(model_contract["explicit_backend_requires_resolver"], true);
         let refs = resolved_refs.lock().expect("resolved explicit refs");
-        assert_eq!(refs.len(), 1, "{label}");
+        assert_eq!(refs.len(), 1, "{label}: {refs:?}");
         assert_eq!(refs[0].backend_name(), Some("child-backend"), "{label}");
         assert_eq!(refs[0].model(), "child-model", "{label}");
         let requests = child_requests.lock().expect("captured child requests");

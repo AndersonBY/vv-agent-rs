@@ -5,6 +5,7 @@ pub mod message_sanitizer;
 pub mod microcompact;
 pub mod post_compact_restore;
 pub mod provider;
+mod runtime_callbacks;
 mod session;
 pub mod session_memory;
 mod summary;
@@ -25,6 +26,11 @@ pub use post_compact_restore::{restore_key_files, PostCompactRestoreConfig};
 pub use provider::{
     MemoryError, MemoryFuture, MemoryProvider, MemoryProviderResult, MemorySaveRequest,
     MemorySaveResult, MemorySearchRequest, MemorySearchResult,
+};
+pub(crate) use runtime_callbacks::{
+    RuntimeMemoryCallback, RuntimeMemoryCallbackError, RuntimeMemoryCallbacks,
+    SessionMemoryDiagnosticCallback, SessionMemoryOutputDiagnostic,
+    SessionMemoryOutputInvalidReason,
 };
 pub use session::{
     SessionMemory, SessionMemoryConfig, SessionMemoryEntry, SessionMemoryExtractionCallback,

@@ -125,6 +125,24 @@ impl Runner {
             metadata.extend(config.metadata.clone());
             metadata
         };
+        let session_memory_enabled = if checkpoint_resume {
+            preloaded_checkpoint
+                .as_ref()
+                .and_then(|checkpoint| checkpoint.run_definition.get("runtime_controls"))
+                .and_then(Value::as_object)
+                .and_then(|controls| controls.get("session_memory_enabled"))
+                .and_then(Value::as_bool)
+                .ok_or_else(|| {
+                    "checkpoint_definition_invalid: runtime_controls.session_memory_enabled must be a boolean"
+                        .to_string()
+                })?
+        } else {
+            config.session_memory_enabled
+        };
+        run_metadata.insert(
+            "session_memory_enabled".to_string(),
+            Value::Bool(session_memory_enabled),
+        );
         run_metadata.remove(INITIAL_BUDGET_USAGE_METADATA_KEY);
         let trace_id = preloaded_checkpoint
             .as_ref()
@@ -316,6 +334,10 @@ impl Runner {
             task.metadata
                 .extend(self.default_run_config.metadata.clone());
             task.metadata.extend(config.metadata.clone());
+            task.metadata.insert(
+                "session_memory_enabled".to_string(),
+                Value::Bool(config.session_memory_enabled),
+            );
             task.metadata.remove(INITIAL_BUDGET_USAGE_METADATA_KEY);
             if let Some(context_bundle) = context_bundle {
                 insert_context_metadata(&mut task.metadata, &context_bundle);
@@ -635,6 +657,7 @@ impl Runner {
             initial_budget_usage,
             initial_messages: checkpoint_initial_messages,
             initial_cycles: checkpoint_initial_cycles,
+            initial_model_calls: checkpoint_initial_model_calls,
             initial_shared_state: checkpoint_initial_shared_state,
             cycle_index_start: checkpoint_cycle_index_start,
             cycle_count: checkpoint_cycle_count,
@@ -699,6 +722,7 @@ impl Runner {
             initial_budget_usage,
             initial_messages: checkpoint_initial_messages,
             initial_cycles: checkpoint_initial_cycles,
+            initial_model_calls: checkpoint_initial_model_calls,
             initial_shared_state: checkpoint_initial_shared_state,
             cycle_index_start: checkpoint_cycle_index_start,
             cycle_count: checkpoint_cycle_count,

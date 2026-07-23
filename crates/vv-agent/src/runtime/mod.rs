@@ -8,6 +8,7 @@ pub mod cycle_runner;
 pub mod engine;
 pub mod hooks;
 pub mod lifecycle;
+pub(crate) mod model_calls;
 pub mod processes;
 mod results;
 pub(crate) mod run_definition;

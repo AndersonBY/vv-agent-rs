@@ -88,10 +88,12 @@ fn read_optional_bool_metadata(metadata: &BTreeMap<String, Value>, key: &str) ->
     })
 }
 
-pub(super) fn session_memory_enabled(metadata: &BTreeMap<String, Value>) -> bool {
-    read_optional_bool_metadata(metadata, "session_memory_enabled")
-        .or_else(|| read_optional_bool_metadata(metadata, "enable_session_memory"))
-        .unwrap_or_else(|| !read_bool_metadata(metadata, "is_sub_task", false))
+pub(super) fn session_memory_enabled(metadata: &BTreeMap<String, Value>) -> Result<bool, String> {
+    match metadata.get("session_memory_enabled") {
+        None => Ok(false),
+        Some(Value::Bool(enabled)) => Ok(*enabled),
+        Some(_) => Err("session_memory_enabled must be a boolean".to_string()),
+    }
 }
 
 pub(super) fn read_string_metadata(

@@ -1,17 +1,30 @@
 use super::{SessionMemory, SessionMemoryEntry};
+use crate::memory::SessionMemoryOutputInvalidReason;
 
 impl SessionMemory {
     pub fn parse_extraction_result(&self, raw: &str, cycle: i32) -> Vec<SessionMemoryEntry> {
+        self.parse_extraction_result_checked(raw, cycle)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn parse_extraction_result_checked(
+        &self,
+        raw: &str,
+        cycle: i32,
+    ) -> Result<Vec<SessionMemoryEntry>, SessionMemoryOutputInvalidReason> {
+        if raw.trim().is_empty() {
+            return Err(SessionMemoryOutputInvalidReason::EmptyOutput);
+        }
         let Some(array_text) = extract_first_json_array(raw) else {
-            return Vec::new();
+            return Err(SessionMemoryOutputInvalidReason::JsonArrayMissing);
         };
         let Ok(value) = serde_json::from_str::<serde_json::Value>(array_text) else {
-            return Vec::new();
+            return Err(SessionMemoryOutputInvalidReason::JsonArrayMissing);
         };
         let Some(items) = value.as_array() else {
-            return Vec::new();
+            return Err(SessionMemoryOutputInvalidReason::JsonArrayMissing);
         };
-        items
+        let entries = items
             .iter()
             .filter_map(|item| {
                 let object = item.as_object()?;
@@ -35,7 +48,12 @@ impl SessionMemory {
                     importance.max(1),
                 ))
             })
-            .collect()
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            Err(SessionMemoryOutputInvalidReason::NoValidEntries)
+        } else {
+            Ok(entries)
+        }
     }
 }
 

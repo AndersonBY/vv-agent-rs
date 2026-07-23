@@ -195,7 +195,8 @@ fn runtime_emits_typed_lifecycle_events() {
             "run_started",
             "agent_started",
             "cycle_started",
-            "llm_started",
+            "model_call_started",
+            "model_call_completed",
             "cycle_llm_response",
             "tool_call_planned",
             "tool_call_started",
@@ -207,21 +208,21 @@ fn runtime_emits_typed_lifecycle_events() {
     assert_eq!(events[0].metadata()["task_id"], "log_task");
     assert_eq!(events[0].metadata()["model"], "demo");
     let cycle_details =
-        diagnostic_details(&events[4], "cycle_llm_response").expect("cycle llm response details");
+        diagnostic_details(&events[5], "cycle_llm_response").expect("cycle llm response details");
     assert_eq!(cycle_details["assistant_message"], "assistant log");
     assert_eq!(cycle_details["tool_call_count"], 1);
     assert!(matches!(
-        events[5].payload(),
+        events[6].payload(),
         RunEventPayload::ToolCallPlanned { tool_call_id, tool_name, .. }
             if tool_call_id == "log_finish" && tool_name == "task_finish"
     ));
     assert!(matches!(
-        events[6].payload(),
+        events[7].payload(),
         RunEventPayload::ToolCallStarted { tool_call_id, tool_name, .. }
             if tool_call_id == "log_finish" && tool_name == "task_finish"
     ));
     assert!(matches!(
-        events[7].payload(),
+        events[8].payload(),
         RunEventPayload::ToolCallCompleted {
             tool_call_id,
             tool_name,
@@ -231,7 +232,7 @@ fn runtime_emits_typed_lifecycle_events() {
         } if tool_call_id == "log_finish" && tool_name == "task_finish"
     ));
     let tool_result_details =
-        diagnostic_details(&events[8], "tool_result").expect("tool result details");
+        diagnostic_details(&events[9], "tool_result").expect("tool result details");
     let tool_result_content: serde_json::Value = serde_json::from_str(
         tool_result_details["content"]
             .as_str()
@@ -243,7 +244,7 @@ fn runtime_emits_typed_lifecycle_events() {
         json!({"message": "logged finish", "ok": true})
     );
     assert_eq!(
-        diagnostic_details(&events[9], "run_completed").expect("run completed details")
+        diagnostic_details(&events[10], "run_completed").expect("run completed details")
             ["final_answer"],
         "logged finish"
     );

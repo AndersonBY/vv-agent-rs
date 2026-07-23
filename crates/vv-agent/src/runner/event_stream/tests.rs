@@ -27,26 +27,22 @@ fn runtime_payload() -> BTreeMap<String, Value> {
 }
 
 #[test]
-fn maps_agent_cycle_and_llm_as_distinct_taxonomy_with_payload_session() {
+fn maps_agent_and_cycle_while_rejecting_superseded_llm_started() {
     let mut payload = runtime_payload();
     payload.insert("producer_extra".to_string(), json!({"nested": true}));
     let context = event_context();
     let agent = map_runtime_event("agent_started", &payload, &context).expect("agent event");
     let cycle = map_runtime_event("cycle_started", &payload, &context).expect("cycle event");
-    let llm = map_runtime_event("llm_started", &payload, &context).expect("llm event");
+    let llm = map_runtime_event("llm_started", &payload, &context);
 
     assert!(matches!(agent.payload(), RunEventPayload::AgentStarted));
     assert!(matches!(cycle.payload(), RunEventPayload::CycleStarted));
-    assert!(matches!(
-        llm.payload(),
-        RunEventPayload::LlmStarted { model } if model == "model-parity"
-    ));
+    assert!(llm.is_none());
     assert_eq!(agent.run_id(), "run_context");
     assert_eq!(agent.trace_id(), "trace_context");
     assert_eq!(agent.agent_name(), Some("context-agent"));
     assert_eq!(agent.session_id(), Some("session_context"));
     assert_eq!(cycle.session_id(), Some("session_context"));
-    assert_eq!(llm.session_id(), Some("session_context"));
     assert_eq!(
         agent.metadata().get("producer_extra"),
         Some(&json!({"nested": true}))

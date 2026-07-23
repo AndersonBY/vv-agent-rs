@@ -16,8 +16,9 @@ use vv_agent::{
     AfterCycleDecision, AfterCycleHook, AfterCycleSnapshot, AgentResult, AmbiguousModelPolicy,
     AmbiguousToolPolicy, CheckpointExtension, CheckpointStatus, CheckpointStore, ClaimMode,
     CycleDispatchResult, EventOutboxEntry, ExtensionStateEntry, InMemoryCheckpointStore,
-    InMemoryRunEventStore, LLMResponse, ModelSettings, OperationJournalEntry, OperationState,
-    ResumePolicy, RunBudgetLimits, RuntimeRecipe, ScriptedLlmClient, ToolIdempotency,
+    InMemoryRunEventStore, LLMResponse, ModelCallRecord, ModelCallStatus, ModelSettings,
+    OperationJournalEntry, OperationState, ResumePolicy, RunBudgetLimits, RunEvent, RuntimeRecipe,
+    ScriptedLlmClient, TokenUsage, ToolIdempotency,
 };
 
 const ENVELOPE_FIXTURE: &str = include_str!("fixtures/parity/distributed_run_envelope.json");
@@ -157,6 +158,70 @@ fn journal_entry(name: &str) -> OperationJournalEntry {
     OperationJournalEntry::from_value(&entry).expect("valid journal entry")
 }
 
+fn attach_succeeded_model_accounting(
+    checkpoint: &mut vv_agent::Checkpoint,
+    entry: &OperationJournalEntry,
+) {
+    let cycle_index = u32::try_from(entry.cycle_index).expect("model cycle index");
+    let attempt = u32::try_from(entry.attempt).expect("model attempt");
+    let call_id = entry.call_id.clone().expect("model call id");
+    let operation = entry.model_operation.expect("model operation");
+    let backend = entry.backend.clone().expect("model backend");
+    let model = entry.model.clone().expect("model name");
+    let usage: TokenUsage = serde_json::from_value(
+        entry.response.as_ref().expect("model response")["token_usage"].clone(),
+    )
+    .expect("model token usage");
+
+    checkpoint.model_calls.push(ModelCallRecord {
+        call_id: call_id.clone(),
+        operation_id: entry.operation_id.clone(),
+        attempt,
+        operation,
+        cycle_index,
+        backend: backend.clone(),
+        model: model.clone(),
+        status: ModelCallStatus::Completed,
+        usage: usage.clone(),
+        error_code: None,
+    });
+    let started = RunEvent::model_call_started(
+        &checkpoint.root_run_id,
+        &checkpoint.trace_id,
+        &checkpoint.task_id,
+        cycle_index,
+        &call_id,
+        &entry.operation_id,
+        attempt,
+        operation,
+        &backend,
+        &model,
+    );
+    let completed = RunEvent::model_call_completed(
+        &checkpoint.root_run_id,
+        &checkpoint.trace_id,
+        &checkpoint.task_id,
+        cycle_index,
+        &call_id,
+        &entry.operation_id,
+        attempt,
+        operation,
+        &backend,
+        &model,
+        usage,
+    );
+    for event in [started, completed] {
+        let event_id = event.event_id().as_str().to_string();
+        checkpoint.event_outbox.push(
+            EventOutboxEntry::pending(
+                event_id,
+                serde_json::to_value(event).expect("model accounting event"),
+            )
+            .expect("model accounting outbox entry"),
+        );
+    }
+}
+
 fn store_ref() -> CapabilityRef {
     CapabilityRef::new("checkpoint.test", "2").unwrap()
 }
@@ -188,6 +253,10 @@ fn envelope(
     task.metadata.insert(
         "_vv_agent_run_id".to_string(),
         json!(checkpoint.root_run_id),
+    );
+    task.metadata.insert(
+        "session_memory_enabled".to_string(),
+        checkpoint.run_definition["runtime_controls"]["session_memory_enabled"].clone(),
     );
     let mut recipe = RuntimeRecipe::new("settings.json", "test", "test-model", ".");
     recipe.capabilities = DistributedCapabilities {
@@ -493,9 +562,9 @@ fn redelivery_replays_committed_receipt_without_external_call() {
         "run-replay",
         "trace-replay",
     );
-    checkpoint
-        .model_call_journal
-        .push(journal_entry("model_succeeded"));
+    let succeeded = journal_entry("model_succeeded");
+    attach_succeeded_model_accounting(&mut checkpoint, &succeeded);
+    checkpoint.model_call_journal.push(succeeded);
     store.create_checkpoint(checkpoint.clone()).unwrap();
     let external_calls = Arc::new(AtomicUsize::new(0));
     let executor = TestExecutor::new(move |envelope, _, progress| {

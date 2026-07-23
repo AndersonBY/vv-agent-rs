@@ -39,6 +39,7 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 backend,
                 system_prompt,
                 max_cycles,
+                session_memory_enabled,
                 exclude_tools,
                 metadata,
                 denied_side_effects,
@@ -83,6 +84,7 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 workspace,
                 workspace_backend,
                 session,
+                session_memory_enabled,
                 initial_messages,
                 max_cycles,
                 no_tool_policy,
@@ -515,7 +517,7 @@ fn public_api_manifest_compiles_real_rust_exports() {
             );
         }
     }
-    assert_eq!(capability_ids.len(), 149);
+    assert_eq!(capability_ids.len(), 151);
 
     let surfaces = fixture["surfaces"].as_array().expect("public API surfaces");
     let surface_map = surfaces

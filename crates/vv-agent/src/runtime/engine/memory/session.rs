@@ -16,10 +16,9 @@ pub(super) fn build_session_memory(
     extraction_callback: Option<SessionMemoryExtractionCallback>,
     summary_backend: Option<String>,
     summary_model: String,
-) -> Option<SessionMemory> {
-    if !session_memory_enabled(&task.metadata) && !task.metadata.contains_key("session_memory_seed")
-    {
-        return None;
+) -> Result<Option<SessionMemory>, String> {
+    if !session_memory_enabled(&task.metadata)? {
+        return Ok(None);
     }
     let extraction_model =
         read_optional_string_metadata(&task.metadata, &["session_memory_extraction_model"])
@@ -67,7 +66,7 @@ pub(super) fn build_session_memory(
         &mut session_memory,
         task.metadata.get("session_memory_seed"),
     );
-    Some(session_memory)
+    Ok(Some(session_memory))
 }
 
 fn seed_session_memory(session_memory: &mut SessionMemory, value: Option<&Value>) {

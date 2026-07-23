@@ -5,8 +5,8 @@ use crate::budget::{BudgetExhaustion, BudgetUsageSnapshot};
 use crate::checkpoint::ResumeObservation;
 
 use super::{
-    AgentStatus, CompletionReason, LLMResponse, Message, Metadata, TaskTokenUsage, TokenUsage,
-    ToolCall, ToolExecutionResult,
+    AgentStatus, CompletionReason, LLMResponse, Message, Metadata, TaskTokenUsage, ToolCall,
+    ToolExecutionResult,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -16,7 +16,6 @@ pub struct CycleRecord {
     pub tool_calls: Vec<ToolCall>,
     pub tool_results: Vec<ToolExecutionResult>,
     pub memory_compacted: bool,
-    pub token_usage: TokenUsage,
 }
 
 impl CycleRecord {
@@ -31,7 +30,6 @@ impl CycleRecord {
             tool_calls: response.tool_calls.clone(),
             tool_results,
             memory_compacted: false,
-            token_usage: response.token_usage.clone(),
         }
     }
 }
@@ -102,10 +100,6 @@ impl AgentResult {
         final_answer: impl Into<String>,
         shared_state: Metadata,
     ) -> Self {
-        let mut token_usage = TaskTokenUsage::default();
-        for cycle in &cycles {
-            token_usage.add_cycle(cycle.index, cycle.token_usage.clone());
-        }
         Self {
             status: AgentStatus::Completed,
             messages,
@@ -122,7 +116,7 @@ impl AgentResult {
             error: None,
             error_code: None,
             shared_state,
-            token_usage,
+            token_usage: TaskTokenUsage::default(),
         }
     }
 

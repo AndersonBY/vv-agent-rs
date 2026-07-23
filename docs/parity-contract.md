@@ -18,15 +18,12 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock selects contract `2.0.0` at revision
-`8ef7153e9b1f26b90a9fad85bbfcb4642d6462fa`. The central support matrix is
-`verified`. Recording run
-[`29934473634`](https://github.com/AndersonBY/vv-agent-contract/actions/runs/29934473634)
-passed against Python revision
-`64743760634fa70c76bf523bf4b51601713ccfb0` and Rust revision
-`91a53cd1be9ad560f99c93c4437bc2d830271a09`. This document maps the Rust
-producers; the central matrix remains the authoritative current verification
-record.
+The current lock selects contract `3.0.0` at revision
+`a0c7c22e4416446f66712cf4484583fcfe2c4969`. The central support matrix remains
+`in-progress` while Rust adoption is being completed. It may move to
+`verified` only after the Python and Rust locks select this exact revision,
+both full implementation gates pass, and the central cross-repository workflow
+records both exact implementation revisions.
 
 ## Required Reading
 
@@ -81,23 +78,82 @@ Never repair a contract failure by editing a file under
 | Optional output validation and repair | `crates/vv-agent/src/output_validation.rs`, `crates/vv-agent/src/agent.rs`, `crates/vv-agent/src/runner/`, `crates/vv-agent/tests/output_validation_contract.rs` |
 | Delegation and background tasks | `crates/vv-agent/src/tools/background_agent_task.rs`, `crates/vv-agent/src/handoffs.rs`, `crates/vv-agent/src/runtime/sub_agents/` |
 | Sessions and stores | `crates/vv-agent/src/sessions.rs`, `crates/vv-agent/src/runtime/stores/`, `crates/vv-agent/tests/session_store_parity.rs` |
-| Events and tracing | `crates/vv-agent/src/events.rs`, `crates/vv-agent/src/event_store.rs`, `crates/vv-agent/src/tracing.rs` |
+| Events and tracing | `crates/vv-agent/src/events/`, `crates/vv-agent/src/event_store.rs`, `crates/vv-agent/src/runtime/model_calls.rs`, `crates/vv-agent/src/tracing.rs`; `crates/vv-agent/tests/run_events_contract.rs`, `crates/vv-agent/tests/run_event_validation.rs` |
 | Tool planned/started/completed lifecycle | `crates/vv-agent/src/tools/orchestrator.rs`, `crates/vv-agent/src/runtime/engine/tool_batch.rs`, `crates/vv-agent/src/events.rs`, `crates/vv-agent/src/events/wire.rs`, `crates/vv-agent/src/runner/event_stream.rs`, `crates/vv-agent/src/runner/resume.rs`; `crates/vv-agent/tests/runtime_cycle/hooks.rs`, `crates/vv-agent/tests/runner_producer_parity.rs`, `crates/vv-agent/tests/run_events_contract.rs`, `crates/vv-agent/tests/run_event_validation.rs`, `crates/vv-agent/tests/approval_resume_completion.rs` |
 | Model stream projection | `crates/vv-agent/src/events/`, `crates/vv-agent/src/runner/event_stream/stream_projection.rs`, `crates/vv-agent/src/runner/run_single.rs`, `crates/vv-agent/src/runtime/sub_agents/events.rs`, `crates/vv-agent/src/app_server/protocol/item.rs`, `crates/vv-agent/tests/runner_producer_parity.rs` |
-| Token and cache usage | `crates/vv-agent/src/types/token_usage.rs`, `crates/vv-agent/src/runtime/token_usage.rs`, `crates/vv-agent/src/llm/vv_llm_client/`, `crates/vv-agent/tests/token_usage.rs` |
+| Model-call ledger, token, and cache usage | `crates/vv-agent/src/types/token_usage.rs`, `crates/vv-agent/src/runtime/model_calls.rs`, `crates/vv-agent/src/runtime/token_usage.rs`, `crates/vv-agent/src/runtime/checkpoint_resume/operations.rs`, `crates/vv-agent/src/llm/vv_llm_client/`; `crates/vv-agent/tests/token_usage.rs`, `crates/vv-agent/tests/runtime_cycle/session_memory.rs`, `crates/vv-agent/tests/runner_checkpoint.rs` |
 | Assistant reasoning history | `crates/vv-agent/src/memory/message_sanitizer.rs`, `crates/vv-agent/src/llm/vv_llm_client/`, `crates/vv-agent/tests/message_sanitizer.rs`, `crates/vv-agent/tests/completion_policy_contract.rs` |
-| Memory capacity and compaction lifecycle | `crates/vv-agent/src/config.rs`, `crates/vv-agent/src/memory/manager/`, `crates/vv-agent/src/runtime/engine/memory.rs`, `crates/vv-agent/src/runner/event_stream.rs`, `crates/vv-agent/src/events/`; `crates/vv-agent/tests/memory_lifecycle_contract.rs`, `crates/vv-agent/tests/runtime_cycle/microcompact.rs`, `crates/vv-agent/tests/run_events_contract.rs`, `crates/vv-agent/tests/run_event_validation.rs`, `crates/vv-agent/tests/configured_sub_agent_parity.rs`, `crates/vv-agent/tests/runner_checkpoint.rs` |
+| Memory capacity, Session Memory, and compaction lifecycle | `crates/vv-agent/src/config.rs`, `crates/vv-agent/src/memory/`, `crates/vv-agent/src/runtime/engine/memory/`, `crates/vv-agent/src/runner/event_stream.rs`, `crates/vv-agent/src/events/`; `crates/vv-agent/tests/memory_lifecycle_contract.rs`, `crates/vv-agent/tests/runtime_cycle/microcompact.rs`, `crates/vv-agent/tests/runtime_cycle/session_memory.rs`, `crates/vv-agent/tests/run_events_contract.rs`, `crates/vv-agent/tests/configured_sub_agent_parity.rs`, `crates/vv-agent/tests/runner_checkpoint.rs` |
 | Run budgets | `crates/vv-agent/src/budget.rs`, `crates/vv-agent/src/runtime/engine/budget.rs`, `crates/vv-agent/tests/run_budget.rs` |
 | After-cycle lifecycle hooks | `crates/vv-agent/src/runtime/lifecycle.rs`, `crates/vv-agent/src/runtime/engine/lifecycle.rs`, `crates/vv-agent/src/runtime/run_definition.rs`, `crates/vv-agent/src/runtime/backends/distributed/`, `crates/vv-agent/tests/runtime_cycle/after_cycle.rs`, `crates/vv-agent/tests/distributed_checkpoint.rs` |
 | Completion policy and terminal observations | `crates/vv-agent/src/runner/`, `crates/vv-agent/src/runtime/engine/`, `crates/vv-agent/tests/completion_policy_contract.rs`, `crates/vv-agent/tests/approval_resume_completion.rs`, `crates/vv-agent/tests/runner_terminal_contract.rs` |
 | Tool metadata in checkpoint and durable execution | `crates/vv-agent/src/runtime/run_definition.rs`, `crates/vv-agent/src/checkpoint/canonical.rs`, `crates/vv-agent/src/runtime/checkpoint_resume.rs`, `crates/vv-agent/src/runtime/checkpoint_resume/persistence.rs`, `crates/vv-agent/src/runtime/backends/distributed/`; `crates/vv-agent/tests/checkpoint_core.rs`, `crates/vv-agent/tests/runner_checkpoint.rs`, `crates/vv-agent/tests/distributed_checkpoint.rs` |
 | Distributed runtime | `crates/vv-agent/src/runtime/backends/distributed/`, `crates/vv-agent/src/runtime/checkpoint_codec.rs`, `crates/vv-agent/tests/distributed_checkpoint.rs` |
-| App Server tool lifecycle projection | `crates/vv-agent/src/app_server/protocol/item.rs`, `crates/vv-agent/src/app_server/run_adapter.rs`; `crates/vv-agent/tests/app_server_thread_turn.rs`, `crates/vv-agent/tests/app_server_contract_parity.rs` |
+| App Server lifecycle and usage projection | `crates/vv-agent/src/app_server/protocol/`, `crates/vv-agent/src/app_server/run_adapter.rs`; `crates/vv-agent/tests/app_server_thread_turn.rs`, `crates/vv-agent/tests/app_server_contract_parity.rs` |
 | Real closure tests | `crates/vv-agent/tests/parity_evidence_manifests.rs`, `crates/vv-agent/tests/runner_producer_parity.rs` |
 
 A fixture parser or private helper test cannot replace a real public producer
 test. A field that is declared but ignored by a planner, executor, provider, or
 store remains a contract failure.
+
+## Contract 3.0 Boundaries
+
+### Model Calls And Events
+
+Every primary Agent cycle, Session Memory extraction, and full memory
+compaction request passes through one `ModelCallCoordinator`. Each actual
+dispatch emits `model_call_started` and exactly one terminal
+`model_call_completed` or `model_call_failed` event. The event and ledger
+record share call id, operation id, attempt, operation, cycle, backend, model,
+usage, and error outcome.
+
+Task-neutral observations remain typed diagnostics. A diagnostic cannot replace
+model, budget, cancellation, tool, approval, checkpoint, or terminal lifecycle
+events. `RunEvent` version `v1` is the strict current wire discriminator; stale,
+missing, unknown, and malformed fields are rejected rather than routed through
+an older decoder.
+
+### Durable Accounting
+
+Checkpoints require `vv-agent.checkpoint.v3`, and run definitions require
+`vv-agent.run-definition.v2`. The checkpoint owns the complete ordered
+run-level model-call ledger. A started model journal entry and started event
+become durable together. After dispatch, the terminal journal state, ledger
+record, budget observation, provider response receipt, and terminal event
+become durable together and must agree on identity.
+
+Receipt replay returns the stored model response without another provider
+dispatch, ledger append, or budget increment. Session Memory then reapplies its
+derived merge from that response. The merge key is the normalized category and
+case-folded, whitespace-normalized content, so replay does not duplicate an
+existing fact. Producer coverage for the crash boundary and terminal replay is
+in `crates/vv-agent/tests/runner_checkpoint.rs`.
+
+### Model Usage And Memory
+
+`TaskTokenUsage v2` contains the ordered `model_calls` ledger. Aggregate token
+and cache values are derived from that ledger; an empty ledger has exact zero
+totals, while a missing measurement in any dispatched attempt keeps the
+corresponding aggregate unavailable rather than inventing zero. `CycleRecord`
+does not duplicate usage.
+
+Session Memory defaults to disabled. Only the exact boolean
+`session_memory_enabled=true` enables its prompt injection, storage access,
+workspace writes, or model dispatch. Existing files, seed data, parent
+configuration, and the removed `enable_session_memory` alias do not activate
+it. Internal memory calls use the configured provider route or the primary
+client only when that route is the default; explicit backend selection never
+silently reuses an unrelated direct client. Cancellation, budget exhaustion,
+checkpoint interruption, and checkpoint integrity errors propagate through the
+runtime control path instead of being swallowed by memory fail-soft behavior.
+
+### App Server
+
+Model-call lifecycle events project to `modelCall` items with the same seven
+identity fields and terminal accounting. Terminal `tokenUsage` recursively
+camel-cases the complete task usage object, including `modelCalls` and
+`cacheUsage`, while opaque provider-native keys inside `providerUsage` remain
+unchanged.
 
 Distributed workers and dispatchers exchange only the closed
 `vv-agent.distributed-worker-response.v1` wire. The implementation in

@@ -151,6 +151,7 @@ impl<C: LlmClient> AgentRuntime<C> {
         &self,
         controls: &RuntimeRunControls,
         cycle: &CycleRecord,
+        token_usage: &crate::types::TokenUsage,
     ) {
         self.emit_log(
             controls,
@@ -189,7 +190,7 @@ impl<C: LlmClient> AgentRuntime<C> {
                 ),
                 (
                     "token_usage".to_string(),
-                    serde_json::to_value(&cycle.token_usage).unwrap_or(Value::Null),
+                    serde_json::to_value(token_usage).unwrap_or(Value::Null),
                 ),
             ]),
         );

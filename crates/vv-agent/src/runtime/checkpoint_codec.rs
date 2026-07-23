@@ -15,7 +15,7 @@ use crate::runtime::state::{
     validate_checkpoint, validate_extension_state_size, Checkpoint, EventOutboxEntry,
     ExtensionStateEntry, OperationJournalEntry,
 };
-use crate::types::{CycleRecord, Message};
+use crate::types::{CycleRecord, Message, ModelCallRecord};
 
 const KNOWN_FIELDS: &[&str] = &[
     "schema_version",
@@ -31,6 +31,7 @@ const KNOWN_FIELDS: &[&str] = &[
     "status",
     "messages",
     "cycles",
+    "model_calls",
     "shared_state",
     "budget_usage",
     "event_cursor",
@@ -106,13 +107,13 @@ pub fn checkpoint_to_value(
     );
     object.insert(
         "cycles".to_string(),
-        Value::Array(
-            checkpoint
-                .cycles
-                .iter()
-                .map(checkpoint_cycle_to_value)
-                .collect(),
-        ),
+        Value::Array(checkpoint.cycles.iter().map(CycleRecord::to_dict).collect()),
+    );
+    object.insert(
+        "model_calls".to_string(),
+        serde_json::to_value(&checkpoint.model_calls).map_err(|error| {
+            CheckpointError::new("checkpoint_model_calls_invalid", error.to_string())
+        })?,
     );
     object.insert(
         "shared_state".to_string(),
@@ -214,7 +215,7 @@ pub fn checkpoint_from_value(
     let object = payload.as_object().ok_or_else(|| {
         CheckpointError::new(
             "checkpoint_payload_invalid",
-            "checkpoint v2 payload must be an object",
+            "checkpoint v3 payload must be an object",
         )
     })?;
     if let Some(field) = object
@@ -229,7 +230,7 @@ pub fn checkpoint_from_value(
     if object.get("schema_version").and_then(Value::as_str) != Some(CHECKPOINT_SCHEMA) {
         return Err(CheckpointError::new(
             "checkpoint_schema_unsupported",
-            "checkpoint schema_version is not vv-agent.checkpoint.v2",
+            "checkpoint schema_version is not vv-agent.checkpoint.v3",
         ));
     }
     let run_definition_schema = required_string(
@@ -283,6 +284,7 @@ pub fn checkpoint_from_value(
         status: parse_status(object, "status")?,
         messages: parse_messages(object.get("messages"))?,
         cycles: parse_cycles(object.get("cycles"))?,
+        model_calls: parse_model_calls(object.get("model_calls"))?,
         shared_state: parse_object_map(object, "shared_state", "checkpoint_shared_state_invalid")?,
         budget_usage: parse_optional_budget(object.get("budget_usage"))?,
         event_cursor: parse_optional(object.get("event_cursor"), "event_cursor")?,
@@ -327,7 +329,7 @@ pub fn checkpoint_to_json(
     max_extension_state_bytes: u64,
 ) -> CheckpointResult<String> {
     let value = checkpoint_to_value(checkpoint, max_extension_state_bytes)?;
-    let bytes = canonical_json_bytes(&value, "checkpoint v2")?;
+    let bytes = canonical_json_bytes(&value, "checkpoint v3")?;
     String::from_utf8(bytes).map_err(|error| {
         CheckpointError::new(
             "checkpoint_canonicalization_invalid",
@@ -380,21 +382,22 @@ fn parse_cycles(value: Option<&Value>) -> CheckpointResult<Vec<CycleRecord>> {
         .collect()
 }
 
-fn checkpoint_cycle_to_value(cycle: &CycleRecord) -> Value {
-    let mut value = cycle.to_dict();
-    if let Some(token_usage) = value
-        .as_object_mut()
-        .and_then(|cycle| cycle.get_mut("token_usage"))
-        .and_then(Value::as_object_mut)
-    {
-        if token_usage
-            .get("raw")
-            .is_some_and(|raw| raw.as_object().is_some_and(serde_json::Map::is_empty))
-        {
-            token_usage.remove("raw");
-        }
-    }
-    value
+fn parse_model_calls(value: Option<&Value>) -> CheckpointResult<Vec<ModelCallRecord>> {
+    let values = value.and_then(Value::as_array).ok_or_else(|| {
+        CheckpointError::new(
+            "checkpoint_model_calls_invalid",
+            "model_calls must be an array",
+        )
+    })?;
+    values
+        .iter()
+        .cloned()
+        .map(|value| {
+            serde_json::from_value(value).map_err(|error| {
+                CheckpointError::new("checkpoint_model_calls_invalid", error.to_string())
+            })
+        })
+        .collect()
 }
 
 fn parse_object_map(

@@ -26,6 +26,25 @@ pub(super) fn build_model_request(
     request
 }
 
+pub(super) fn effective_model_call_target(
+    task: &AgentTask,
+    controls: &RuntimeRunControls,
+    default_backend: Option<&str>,
+) -> (String, String) {
+    let metadata = controls
+        .execution_context
+        .as_ref()
+        .map(|context| &context.metadata);
+    let backend = metadata
+        .and_then(|metadata| identity(metadata, &["_vv_agent_resolved_backend"]))
+        .or_else(|| default_backend.map(str::to_string))
+        .unwrap_or_else(|| "direct".to_string());
+    let model = metadata
+        .and_then(|metadata| identity(metadata, &["_vv_agent_resolved_model"]))
+        .unwrap_or_else(|| task.model.clone());
+    (backend, model)
+}
+
 pub(super) fn cycle_stream_callback(
     handler: Option<&RunEventHandler>,
     metadata: &BTreeMap<String, Value>,

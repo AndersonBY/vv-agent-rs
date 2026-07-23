@@ -165,7 +165,7 @@ fn total_tokens_equal_limit_can_finish_but_next_cycle_is_rejected() {
 
     assert_eq!(evaluator.run_start(), None);
     assert_eq!(evaluator.cycle_start(), None);
-    assert_eq!(evaluator.llm_complete(&usage(10, Some(10))), None);
+    assert_eq!(evaluator.model_call_complete(&usage(10, Some(10))), None);
     let exhaustion = evaluator.cycle_start().expect("next LLM is rejected");
 
     assert_eq!(exhaustion.dimension, BudgetDimension::TotalTokens);
@@ -188,7 +188,7 @@ fn total_tokens_allow_one_atomic_overshoot() {
     evaluator.cycle_start();
 
     let exhaustion = evaluator
-        .llm_complete(&usage(12, Some(12)))
+        .model_call_complete(&usage(12, Some(12)))
         .expect("completed call overshoots");
 
     assert_eq!(exhaustion.reason, BudgetExhaustionReason::LimitExceeded);
@@ -213,7 +213,7 @@ fn missing_uncached_usage_is_not_zero_and_policy_is_configurable() {
 
     continuing.run_start();
     continuing.cycle_start();
-    assert_eq!(continuing.llm_complete(&usage(4, None)), None);
+    assert_eq!(continuing.model_call_complete(&usage(4, None)), None);
     assert_eq!(continuing.snapshot().uncached_input_tokens, None);
     assert_eq!(
         continuing.snapshot().unavailable_dimensions[0].reason,
@@ -223,7 +223,7 @@ fn missing_uncached_usage_is_not_zero_and_policy_is_configurable() {
     strict.run_start();
     strict.cycle_start();
     let exhaustion = strict
-        .llm_complete(&usage(4, None))
+        .model_call_complete(&usage(4, None))
         .expect("strict missing metric stops");
     assert_eq!(exhaustion.reason, BudgetExhaustionReason::MetricUnavailable);
     assert_eq!(
@@ -242,7 +242,7 @@ fn explicit_zero_uncached_usage_remains_available() {
     evaluator.run_start();
     evaluator.cycle_start();
 
-    assert_eq!(evaluator.llm_complete(&usage(3, Some(0))), None);
+    assert_eq!(evaluator.model_call_complete(&usage(3, Some(0))), None);
     assert_eq!(evaluator.snapshot().uncached_input_tokens, Some(0));
     assert!(evaluator.snapshot().unavailable_dimensions.is_empty());
 }
@@ -306,7 +306,7 @@ fn host_meter_overshoot_and_non_monotonic_reading_are_typed() {
     overshoot.cycle_start();
 
     let exhaustion = overshoot
-        .llm_complete(&usage(1, Some(1)))
+        .model_call_complete(&usage(1, Some(1)))
         .expect("host cost overshoots");
     assert_eq!(exhaustion.dimension, BudgetDimension::HostCost);
     assert_eq!(exhaustion.overshoot, Some(20));
@@ -340,7 +340,7 @@ fn token_sum_wire_overflow_becomes_typed_unavailable() {
     let mut evaluator = evaluator(limits, None, Some(initial), [0, 0]);
 
     let exhaustion = evaluator
-        .llm_complete(&usage(1, Some(0)))
+        .model_call_complete(&usage(1, Some(0)))
         .expect("overflow stops strict accounting");
 
     assert_eq!(exhaustion.reason, BudgetExhaustionReason::MetricUnavailable);

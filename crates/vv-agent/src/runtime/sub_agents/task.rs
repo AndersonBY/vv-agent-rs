@@ -95,6 +95,7 @@ pub(super) fn build_sub_agent_task(
         request,
         &context.workspace_path,
         generated_sections,
+        sub_agent.session_memory_enabled,
     );
     project_resolved_model_limits(
         &mut sub_task.metadata,
@@ -123,6 +124,7 @@ fn build_sub_task_metadata(
     request: &SubTaskRequest,
     workspace_path: &Path,
     system_prompt_sections: Vec<Value>,
+    session_memory_enabled: bool,
 ) -> BTreeMap<String, Value> {
     let mut metadata = BTreeMap::from([
         ("is_sub_task".to_string(), Value::Bool(true)),
@@ -134,7 +136,10 @@ fn build_sub_task_metadata(
             "sub_agent_name".to_string(),
             Value::String(lifecycle.agent_name.clone()),
         ),
-        ("session_memory_enabled".to_string(), Value::Bool(false)),
+        (
+            "session_memory_enabled".to_string(),
+            Value::Bool(session_memory_enabled),
+        ),
         (
             "workspace".to_string(),
             Value::String(workspace_path.display().to_string()),
@@ -178,7 +183,10 @@ fn build_sub_task_metadata(
             "sub_agent_name".to_string(),
             Value::String(lifecycle.agent_name.clone()),
         ),
-        ("session_memory_enabled".to_string(), Value::Bool(false)),
+        (
+            "session_memory_enabled".to_string(),
+            Value::Bool(session_memory_enabled),
+        ),
         (
             "workspace".to_string(),
             Value::String(workspace_path.display().to_string()),
@@ -457,6 +465,7 @@ mod parity_tests {
             "use_workspace": task.use_workspace,
             "agent_type": task.agent_type,
             "native_multimodal": task.native_multimodal,
+            "session_memory_enabled": task.metadata["session_memory_enabled"],
             "extra_tool_names": task.extra_tool_names,
             "exclude_tools": task.exclude_tools,
             "model_settings": task.model_settings,
@@ -509,5 +518,34 @@ mod parity_tests {
             };
             assert_eq!(task.metadata[key], expected, "reserved metadata {key}");
         }
+
+        let mut enabled_child = child.clone();
+        enabled_child.session_memory_enabled = true;
+        let enabled_task = build_sub_agent_task(
+            &context,
+            SubTaskBuildInputs {
+                lifecycle: &SubRunLifecycle {
+                    run_id: "child-run-enabled".to_string(),
+                    trace_id: "trace-enabled".to_string(),
+                    parent_run_id: "parent-run".to_string(),
+                    parent_tool_call_id: "delegate-enabled".to_string(),
+                    task_id: "child-task-enabled".to_string(),
+                    session_id: "child-session-enabled".to_string(),
+                    agent_name: "researcher".to_string(),
+                    parent_task_id: "parent-task".to_string(),
+                    model: "child-model".to_string(),
+                },
+                sub_agent: &enabled_child,
+                resolved_model_id: "child-model",
+                resolved_native_multimodal: true,
+                resolved_context_length: Some(32_000),
+                resolved_max_output_tokens: Some(4_096),
+                request: &request,
+            },
+        );
+        assert_eq!(
+            enabled_task.metadata["session_memory_enabled"],
+            fixture["session_memory_projection"]["explicit_true_is_projected"]
+        );
     }
 }

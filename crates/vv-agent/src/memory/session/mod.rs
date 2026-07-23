@@ -9,6 +9,10 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 
 use crate::memory::token_utils::estimate_tokens;
+use crate::memory::{
+    RuntimeMemoryCallback, RuntimeMemoryCallbackError, SessionMemoryDiagnosticCallback,
+    SessionMemoryOutputDiagnostic,
+};
 use crate::types::Message;
 
 pub use config::{SessionMemoryConfig, SessionMemoryExtractionCallback};
@@ -44,7 +48,18 @@ impl SessionMemory {
     }
 
     pub fn should_extract(&self, current_tokens: u64, message_count: usize) -> bool {
-        if self.config.extraction_callback.is_none() || current_tokens == 0 || message_count == 0 {
+        if self.config.extraction_callback.is_none() {
+            return false;
+        }
+        self.should_extract_with_runtime_callback(current_tokens, message_count)
+    }
+
+    pub(crate) fn should_extract_with_runtime_callback(
+        &self,
+        current_tokens: u64,
+        message_count: usize,
+    ) -> bool {
+        if current_tokens == 0 || message_count == 0 {
             return false;
         }
 
@@ -116,6 +131,71 @@ impl SessionMemory {
         self.record_extraction(messages.len() as i32 - 1, current_tokens);
         self.save();
         merged_count
+    }
+
+    pub(crate) fn extract_with_runtime_callback(
+        &mut self,
+        messages: &[Message],
+        current_cycle: i32,
+        current_tokens: u64,
+        callback: &RuntimeMemoryCallback,
+        diagnostic_callback: Option<&SessionMemoryDiagnosticCallback>,
+    ) -> Result<usize, RuntimeMemoryCallbackError> {
+        if messages.is_empty() {
+            return Ok(0);
+        }
+        let new_messages = self.new_extraction_messages(messages);
+        if new_messages.is_empty() {
+            self.record_extraction(messages.len() as i32 - 1, current_tokens);
+            return Ok(0);
+        }
+
+        let prompt = build_extraction_prompt(&new_messages);
+        let Some(raw_result) = callback(
+            &prompt,
+            self.config.extraction_backend.as_deref(),
+            self.config.extraction_model.as_deref(),
+            current_cycle.max(1) as u32,
+        )?
+        else {
+            return Ok(0);
+        };
+        let entries = match self.parse_extraction_result_checked(&raw_result, current_cycle) {
+            Ok(entries) => entries,
+            Err(reason) => {
+                if let Some(diagnostic_callback) = diagnostic_callback {
+                    diagnostic_callback(&SessionMemoryOutputDiagnostic {
+                        cycle_index: current_cycle.max(1) as u32,
+                        backend: self.config.extraction_backend.clone(),
+                        model: self.config.extraction_model.clone(),
+                        reason,
+                    });
+                }
+                return Ok(0);
+            }
+        };
+        let merged_count = self.merge_entries(entries);
+        self.prune_to_budget();
+        self.record_extraction(messages.len() as i32 - 1, current_tokens);
+        self.save();
+        Ok(merged_count)
+    }
+
+    fn new_extraction_messages<'a>(&self, messages: &'a [Message]) -> Vec<&'a Message> {
+        let start_index = if self.state.last_extracted_message_index >= 0
+            && (self.state.last_extracted_message_index as usize) < messages.len()
+        {
+            self.state.last_extracted_message_index as usize + 1
+        } else {
+            0
+        };
+        messages
+            .iter()
+            .enumerate()
+            .filter_map(|(index, message)| {
+                (index >= start_index && !should_skip_message(message)).then_some(message)
+            })
+            .collect()
     }
 
     pub fn render_as_system_context(&self) -> String {

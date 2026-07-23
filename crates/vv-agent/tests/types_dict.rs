@@ -3,8 +3,9 @@ use std::collections::BTreeMap;
 use serde_json::{json, Value};
 use vv_agent::types::AgentTask;
 use vv_agent::{
-    AgentResult, AgentStatus, CycleRecord, LLMResponse, Message, NoToolPolicy, SubTaskOutcome,
-    SubTaskRequest, TokenUsage, ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus,
+    AgentResult, AgentStatus, CycleRecord, LLMResponse, Message, ModelCallOperation,
+    ModelCallRecord, ModelCallStatus, NoToolPolicy, SubTaskOutcome, SubTaskRequest, TokenUsage,
+    ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus,
 };
 
 fn sparse_agent_task_payload() -> Value {
@@ -114,30 +115,41 @@ fn agent_result_dict_round_trips_agent_result_payload_shape() {
 }
 
 #[test]
-fn agent_result_dict_round_trips_token_usage_cycles() {
+fn agent_result_dict_round_trips_model_call_usage() {
     let mut result = AgentResult::completed(vec![Message::user("hi")], vec![], "done");
-    result.token_usage.add_cycle(
-        7,
-        TokenUsage {
-            input_tokens: Some(12),
-            output_tokens: Some(4),
-            total_tokens: Some(16),
-            provider_usage: json!({"provider": "deepseek"})
-                .as_object()
-                .expect("provider usage")
-                .clone(),
-            ..TokenUsage::default()
-        },
-    );
+    result
+        .token_usage
+        .add_model_call(ModelCallRecord {
+            call_id: "op_model_cycle_7_main:attempt:1".to_string(),
+            operation_id: "op_model_cycle_7_main".to_string(),
+            attempt: 1,
+            operation: ModelCallOperation::AgentCycle,
+            cycle_index: 7,
+            backend: "deepseek".to_string(),
+            model: "deepseek-v4-pro".to_string(),
+            status: ModelCallStatus::Completed,
+            usage: TokenUsage {
+                input_tokens: Some(12),
+                output_tokens: Some(4),
+                total_tokens: Some(16),
+                provider_usage: json!({"provider": "deepseek"})
+                    .as_object()
+                    .expect("provider usage")
+                    .clone(),
+                ..TokenUsage::default()
+            },
+            error_code: None,
+        })
+        .expect("unique model call");
 
     let payload = result.to_dict();
     let restored = AgentResult::from_dict(&payload).expect("agent result from dict");
 
     assert_eq!(restored.token_usage.input_tokens, Some(12));
-    assert_eq!(restored.token_usage.cycles.len(), 1);
-    assert_eq!(restored.token_usage.cycles[0].cycle_index, 7);
+    assert_eq!(restored.token_usage.model_calls.len(), 1);
+    assert_eq!(restored.token_usage.model_calls[0].cycle_index, 7);
     assert_eq!(
-        restored.token_usage.cycles[0].usage.provider_usage["provider"],
+        restored.token_usage.model_calls[0].usage.provider_usage["provider"],
         "deepseek"
     );
 }

@@ -1,4 +1,4 @@
-//! SQLite checkpoint v2 store.
+//! SQLite checkpoint v3 store.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -18,8 +18,8 @@ const MAX_EXTENSION_STATE_BYTES: u64 = crate::checkpoint::MAX_WIRE_INTEGER;
 const CREATE_CHECKPOINTS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS checkpoints (
     checkpoint_key TEXT PRIMARY KEY,
-    schema_version TEXT NOT NULL CHECK (schema_version = 'vv-agent.checkpoint.v2'),
-    run_definition_schema TEXT NOT NULL CHECK (run_definition_schema = 'vv-agent.run-definition.v1'),
+    schema_version TEXT NOT NULL CHECK (schema_version = 'vv-agent.checkpoint.v3'),
+    run_definition_schema TEXT NOT NULL CHECK (run_definition_schema = 'vv-agent.run-definition.v2'),
     run_definition TEXT NOT NULL,
     task_id TEXT NOT NULL,
     root_run_id TEXT NOT NULL,
@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS checkpoints (
     status TEXT NOT NULL,
     messages TEXT NOT NULL,
     cycles TEXT NOT NULL,
+    model_calls TEXT NOT NULL,
     shared_state TEXT NOT NULL,
     budget_usage TEXT,
     event_cursor TEXT,
@@ -95,13 +96,14 @@ impl SqliteCheckpointStore {
                 INSERT INTO checkpoints (
                     checkpoint_key, schema_version, run_definition_schema, run_definition,
                     task_id, root_run_id, trace_id, run_definition_digest, resume_attempt,
-                    cycle_index, status, messages, cycles, shared_state, budget_usage,
-                    event_cursor, event_outbox, extension_state, model_call_journal,
-                    tool_journal, revision, claim_token, claimed_cycle,
-                    lease_expires_at_ms, terminal_result, terminal_acknowledged
+                    cycle_index, status, messages, cycles, model_calls, shared_state,
+                    budget_usage, event_cursor, event_outbox, extension_state,
+                    model_call_journal, tool_journal, revision, claim_token,
+                    claimed_cycle, lease_expires_at_ms, terminal_result,
+                    terminal_acknowledged
                 ) VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                    ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26
+                    ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27
                 )
                 ON CONFLICT(checkpoint_key) DO UPDATE SET
                     schema_version = excluded.schema_version,
@@ -116,6 +118,7 @@ impl SqliteCheckpointStore {
                     status = excluded.status,
                     messages = excluded.messages,
                     cycles = excluded.cycles,
+                    model_calls = excluded.model_calls,
                     shared_state = excluded.shared_state,
                     budget_usage = excluded.budget_usage,
                     event_cursor = excluded.event_cursor,
@@ -222,13 +225,14 @@ impl CheckpointStore for SqliteCheckpointStore {
                 INSERT OR IGNORE INTO checkpoints (
                     checkpoint_key, schema_version, run_definition_schema, run_definition,
                     task_id, root_run_id, trace_id, run_definition_digest, resume_attempt,
-                    cycle_index, status, messages, cycles, shared_state, budget_usage,
-                    event_cursor, event_outbox, extension_state, model_call_journal,
-                    tool_journal, revision, claim_token, claimed_cycle,
-                    lease_expires_at_ms, terminal_result, terminal_acknowledged
+                    cycle_index, status, messages, cycles, model_calls, shared_state,
+                    budget_usage, event_cursor, event_outbox, extension_state,
+                    model_call_journal, tool_journal, revision, claim_token,
+                    claimed_cycle, lease_expires_at_ms, terminal_result,
+                    terminal_acknowledged
                 ) VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                    ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26
+                    ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27
                 )
                 "#,
                 values.params(),
@@ -559,6 +563,7 @@ struct SqlValues {
     status: String,
     messages: String,
     cycles: String,
+    model_calls: String,
     shared_state: String,
     budget_usage: Option<String>,
     event_cursor: Option<String>,
@@ -592,6 +597,7 @@ impl SqlValues {
             status: string_field(object, "status")?,
             messages: json_field(object, "messages")?,
             cycles: json_field(object, "cycles")?,
+            model_calls: json_field(object, "model_calls")?,
             shared_state: json_field(object, "shared_state")?,
             budget_usage: nullable_json_field(object, "budget_usage")?,
             event_cursor: nullable_json_field(object, "event_cursor")?,
@@ -614,7 +620,7 @@ impl SqlValues {
         })
     }
 
-    fn params(&self) -> [&(dyn rusqlite::ToSql + Sync); 26] {
+    fn params(&self) -> [&(dyn rusqlite::ToSql + Sync); 27] {
         [
             &self.checkpoint_key,
             &self.schema_version,
@@ -629,6 +635,7 @@ impl SqlValues {
             &self.status,
             &self.messages,
             &self.cycles,
+            &self.model_calls,
             &self.shared_state,
             &self.budget_usage,
             &self.event_cursor,
@@ -665,13 +672,13 @@ fn update_row(
                 schema_version = ?1, run_definition_schema = ?2, run_definition = ?3,
                 task_id = ?4, root_run_id = ?5, trace_id = ?6, run_definition_digest = ?7,
                 resume_attempt = ?8, cycle_index = ?9, status = ?10, messages = ?11,
-                cycles = ?12, shared_state = ?13, budget_usage = ?14, event_cursor = ?15,
-                event_outbox = ?16, extension_state = ?17, model_call_journal = ?18,
-                tool_journal = ?19, revision = ?20,
-                claim_token = ?21, claimed_cycle = ?22, lease_expires_at_ms = ?23,
-                terminal_result = ?24, terminal_acknowledged = ?25
-            WHERE checkpoint_key = ?26 AND revision = ?27
-              AND (?28 IS NULL OR claim_token = ?28)
+                cycles = ?12, model_calls = ?13, shared_state = ?14, budget_usage = ?15,
+                event_cursor = ?16, event_outbox = ?17, extension_state = ?18,
+                model_call_journal = ?19, tool_journal = ?20, revision = ?21,
+                claim_token = ?22, claimed_cycle = ?23, lease_expires_at_ms = ?24,
+                terminal_result = ?25, terminal_acknowledged = ?26
+            WHERE checkpoint_key = ?27 AND revision = ?28
+              AND (?29 IS NULL OR claim_token = ?29)
             "#,
             params![
                 values.schema_version,
@@ -686,6 +693,7 @@ fn update_row(
                 values.status,
                 values.messages,
                 values.cycles,
+                values.model_calls,
                 values.shared_state,
                 values.budget_usage,
                 values.event_cursor,
@@ -714,9 +722,9 @@ fn load_row(connection: &Connection, checkpoint_key: &str) -> CheckpointResult<O
             r#"
             SELECT checkpoint_key, schema_version, run_definition_schema, run_definition,
                    task_id, root_run_id, trace_id, run_definition_digest, resume_attempt,
-                   cycle_index, status, messages, cycles, shared_state, budget_usage,
-                   event_cursor, event_outbox, extension_state, model_call_journal,
-                   tool_journal, revision, claim_token, claimed_cycle,
+                   cycle_index, status, messages, cycles, model_calls, shared_state,
+                   budget_usage, event_cursor, event_outbox, extension_state,
+                   model_call_journal, tool_journal, revision, claim_token, claimed_cycle,
                    lease_expires_at_ms, terminal_result, terminal_acknowledged
             FROM checkpoints WHERE checkpoint_key = ?1
             "#,
@@ -738,9 +746,9 @@ fn load_row_transaction(
             r#"
             SELECT checkpoint_key, schema_version, run_definition_schema, run_definition,
                    task_id, root_run_id, trace_id, run_definition_digest, resume_attempt,
-                   cycle_index, status, messages, cycles, shared_state, budget_usage,
-                   event_cursor, event_outbox, extension_state, model_call_journal,
-                   tool_journal, revision, claim_token, claimed_cycle,
+                   cycle_index, status, messages, cycles, model_calls, shared_state,
+                   budget_usage, event_cursor, event_outbox, extension_state,
+                   model_call_journal, tool_journal, revision, claim_token, claimed_cycle,
                    lease_expires_at_ms, terminal_result, terminal_acknowledged
             FROM checkpoints WHERE checkpoint_key = ?1
             "#,
@@ -767,19 +775,20 @@ fn row_to_checkpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<CheckpointResu
     let status: String = row.get(10)?;
     let messages: String = row.get(11)?;
     let cycles: String = row.get(12)?;
-    let shared_state: String = row.get(13)?;
-    let budget_usage: Option<String> = row.get(14)?;
-    let event_cursor: Option<String> = row.get(15)?;
-    let event_outbox: String = row.get(16)?;
-    let extension_state: String = row.get(17)?;
-    let model_call_journal: String = row.get(18)?;
-    let tool_journal: String = row.get(19)?;
-    let revision: i64 = row.get(20)?;
-    let claim_token: Option<String> = row.get(21)?;
-    let claimed_cycle: Option<i64> = row.get(22)?;
-    let lease_expires_at_ms: Option<i64> = row.get(23)?;
-    let terminal_result: Option<String> = row.get(24)?;
-    let terminal_acknowledged: i64 = row.get(25)?;
+    let model_calls: String = row.get(13)?;
+    let shared_state: String = row.get(14)?;
+    let budget_usage: Option<String> = row.get(15)?;
+    let event_cursor: Option<String> = row.get(16)?;
+    let event_outbox: String = row.get(17)?;
+    let extension_state: String = row.get(18)?;
+    let model_call_journal: String = row.get(19)?;
+    let tool_journal: String = row.get(20)?;
+    let revision: i64 = row.get(21)?;
+    let claim_token: Option<String> = row.get(22)?;
+    let claimed_cycle: Option<i64> = row.get(23)?;
+    let lease_expires_at_ms: Option<i64> = row.get(24)?;
+    let terminal_result: Option<String> = row.get(25)?;
+    let terminal_acknowledged: i64 = row.get(26)?;
 
     let result = (|| {
         let mut object = Map::new();
@@ -805,6 +814,7 @@ fn row_to_checkpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<CheckpointResu
         object.insert("status".to_string(), Value::String(status));
         object.insert("messages".to_string(), parse_value(&messages)?);
         object.insert("cycles".to_string(), parse_value(&cycles)?);
+        object.insert("model_calls".to_string(), parse_value(&model_calls)?);
         object.insert("shared_state".to_string(), parse_value(&shared_state)?);
         object.insert(
             "budget_usage".to_string(),

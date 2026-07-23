@@ -15,6 +15,7 @@ use crate::events::{MemoryCompactMode, ReservedOutputSource};
 use crate::memory::message_sanitizer::filter_empty_assistant_messages;
 use crate::memory::session::SessionMemory;
 use crate::memory::token_utils::count_messages_tokens;
+use crate::memory::{RuntimeMemoryCallbackError, RuntimeMemoryCallbacks};
 use crate::types::{Message, MessageRole};
 
 pub use config::{MemoryManagerConfig, SummaryCallback};
@@ -29,6 +30,7 @@ pub struct MemoryManager {
     session_memory: Option<SessionMemory>,
     model_max_output_tokens: Option<u64>,
     reserved_output_source: ReservedOutputSource,
+    runtime_callbacks: RuntimeMemoryCallbacks,
 }
 
 #[derive(Debug)]
@@ -46,6 +48,7 @@ impl MemoryManager {
             session_memory,
             model_max_output_tokens: None,
             reserved_output_source: ReservedOutputSource::FrameworkFallback,
+            runtime_callbacks: RuntimeMemoryCallbacks::default(),
         }
     }
 
@@ -59,6 +62,11 @@ impl MemoryManager {
         self
     }
 
+    pub(crate) fn with_runtime_callbacks(mut self, callbacks: RuntimeMemoryCallbacks) -> Self {
+        self.runtime_callbacks = callbacks;
+        self
+    }
+
     pub(crate) fn model_max_output_tokens(&self) -> Option<u64> {
         self.model_max_output_tokens
     }
@@ -69,6 +77,7 @@ impl MemoryManager {
 
     pub fn compact(&mut self, messages: &[Message], force: bool) -> (Vec<Message>, bool) {
         self.compact_for_cycle_with_usage_inner(messages, 0, None, force, None, None)
+            .expect("public memory compaction has no runtime callback control flow")
             .into_tuple()
     }
 
@@ -86,6 +95,7 @@ impl MemoryManager {
             None,
             None,
         )
+        .expect("public memory compaction has no runtime callback control flow")
         .into_tuple()
     }
 
@@ -105,6 +115,7 @@ impl MemoryManager {
             total_tokens,
             recent_tool_call_ids,
         )
+        .expect("public memory compaction has no runtime callback control flow")
         .into_tuple()
     }
 
@@ -115,7 +126,7 @@ impl MemoryManager {
         force: bool,
         total_tokens: Option<u64>,
         recent_tool_call_ids: Option<&BTreeSet<String>>,
-    ) -> MemoryCompactionOutcome {
+    ) -> Result<MemoryCompactionOutcome, RuntimeMemoryCallbackError> {
         self.compact_for_cycle_with_usage_inner(
             messages,
             cycle_index,
@@ -134,14 +145,14 @@ impl MemoryManager {
         force: bool,
         total_tokens: Option<u64>,
         recent_tool_call_ids: Option<&BTreeSet<String>>,
-    ) -> MemoryCompactionOutcome {
+    ) -> Result<MemoryCompactionOutcome, RuntimeMemoryCallbackError> {
         if messages.is_empty() {
-            return MemoryCompactionOutcome::new(
+            return Ok(MemoryCompactionOutcome::new(
                 messages,
                 Vec::new(),
                 MemoryCompactMode::None,
                 false,
-            );
+            ));
         }
 
         let cleaned = self.remove_previous_summary(messages);
@@ -167,9 +178,31 @@ impl MemoryManager {
                         && !message.content.trim().is_empty()
                 })
                 .count();
-            if session_memory.should_extract(message_length, text_messages)
-                && session_memory.extract(&working_messages, cycle_index as i32, message_length) > 0
-            {
+            let runtime_callback = self.runtime_callbacks.session_memory.as_ref();
+            let should_extract = match runtime_callback {
+                Some(_) => session_memory
+                    .should_extract_with_runtime_callback(message_length, text_messages),
+                None => session_memory.should_extract(message_length, text_messages),
+            };
+            let extracted = if should_extract {
+                match runtime_callback {
+                    Some(callback) => session_memory.extract_with_runtime_callback(
+                        &working_messages,
+                        cycle_index as i32,
+                        message_length,
+                        callback,
+                        self.runtime_callbacks.session_memory_diagnostic.as_ref(),
+                    )?,
+                    None => session_memory.extract(
+                        &working_messages,
+                        cycle_index as i32,
+                        message_length,
+                    ),
+                }
+            } else {
+                0
+            };
+            if extracted > 0 {
                 let before_refresh = working_messages;
                 working_messages = self.apply_session_memory_context(&sanitized);
                 if working_messages != before_refresh {
@@ -196,7 +229,9 @@ impl MemoryManager {
                 mode = mode.max(MemoryCompactMode::Structural);
                 changed = true;
             }
-            return MemoryCompactionOutcome::new(messages, warned, mode, changed);
+            return Ok(MemoryCompactionOutcome::new(
+                messages, warned, mode, changed,
+            ));
         }
         let mut summary_source = self.strip_session_memory_context(&working_messages);
         if summary_source != working_messages {
@@ -211,20 +246,23 @@ impl MemoryManager {
                 && count_messages_tokens(&artifact_compacted, &self.config.model)
                     <= self.autocompact_threshold()
             {
-                return MemoryCompactionOutcome::new(
+                return Ok(MemoryCompactionOutcome::new(
                     messages,
                     artifact_compacted,
                     mode.max(MemoryCompactMode::Structural),
                     true,
-                );
+                ));
             }
             if image_changed || artifact_changed {
                 mode = mode.max(MemoryCompactMode::Structural);
                 summary_source = artifact_compacted;
             }
         }
-        let (compacted, summary_changed) =
-            self.compress_memory(&summary_source, artifact_cycle_index);
+        let (compacted, summary_changed) = self.compress_memory(
+            &summary_source,
+            artifact_cycle_index,
+            self.runtime_callbacks.memory_compaction.as_ref(),
+        )?;
         if summary_changed {
             mode = mode.max(MemoryCompactMode::Summary);
             let post_compaction_tokens = count_messages_tokens(
@@ -235,7 +273,12 @@ impl MemoryManager {
                 session_memory.on_compaction(Some(post_compaction_tokens));
             }
         }
-        MemoryCompactionOutcome::new(messages, compacted, mode, changed || summary_changed)
+        Ok(MemoryCompactionOutcome::new(
+            messages,
+            compacted,
+            mode,
+            changed || summary_changed,
+        ))
     }
 
     fn remove_previous_summary(&self, messages: &[Message]) -> Vec<Message> {

@@ -212,6 +212,24 @@ impl MemoryCompactionInspectingLlmClient {
 
 impl LlmClient for MemoryCompactionInspectingLlmClient {
     fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        if request.tools.is_empty()
+            && request.messages.len() == 1
+            && request.messages[0]
+                .content
+                .contains("<Conversation History>")
+        {
+            let marker = if request.messages[0]
+                .content
+                .contains("hook-added-before-memory-compact")
+            {
+                "hook-added-before-memory-compact"
+            } else {
+                "memory compacted"
+            };
+            return Ok(LLMResponse::new(
+                json!({"summary_version":"2.0","key_facts":[marker]}).to_string(),
+            ));
+        }
         let mut responses_seen = self
             .responses_seen
             .lock()

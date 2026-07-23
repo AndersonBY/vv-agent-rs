@@ -112,6 +112,7 @@ fn sub_agent_config_from_wire_normalizes_model() {
             "backend": restored.backend,
             "system_prompt": restored.system_prompt,
             "max_cycles": restored.max_cycles,
+            "session_memory_enabled": restored.session_memory_enabled,
             "exclude_tools": restored.exclude_tools,
             "denied_side_effects": restored.denied_side_effects,
             "denied_capability_tags": restored.denied_capability_tags,
@@ -157,6 +158,10 @@ fn sub_agent_config_from_wire_rejects_shared_type_and_range_corpus() {
     let cases = [
         ("backend_non_string", "backend"),
         ("max_cycles_negative", "max_cycles"),
+        (
+            "session_memory_enabled_non_boolean",
+            "session_memory_enabled",
+        ),
         ("denied_side_effects_non_array", "denied_side_effects"),
         ("denied_capability_tags_non_array", "denied_capability_tags"),
         ("deny_terminal_tools_non_boolean", "deny_terminal_tools"),

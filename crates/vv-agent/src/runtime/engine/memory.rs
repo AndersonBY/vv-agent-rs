@@ -5,20 +5,33 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::events::{MemoryCompactMode, MemoryCompactTrigger, ReservedOutputSource, RunEvent};
+use crate::llm::LlmClient;
 use crate::memory::token_utils::count_messages_tokens;
 use crate::memory::{
     provider::block_on_memory_future, MemoryManager, MemoryManagerConfig, MemoryProvider,
+    RuntimeMemoryCallbackError,
 };
-use crate::model::ModelProvider;
 use crate::runtime::context::ExecutionContext;
-use crate::types::{AgentTask, Message};
+use crate::runtime::hooks::RuntimeHookManager;
+use crate::runtime::model_calls::ModelCallLedger;
+use crate::types::{AgentResult, AgentTask, CycleRecord, Message, Metadata};
+
+use super::budget::{budget_failure_result, lock_budget, SharedRunBudgetController};
+use super::checkpoint::CheckpointCoordinator;
+use super::helpers::{
+    cancelled_agent_result, failed_agent_result, previous_cycle_memory_usage, task_token_usage,
+};
+use super::{AgentRuntime, RuntimeRunControls};
 
 mod callbacks;
 mod metadata;
 mod session;
 mod token_limits;
 
-use callbacks::build_memory_summary_callback;
+pub(super) use callbacks::{
+    build_runtime_memory_callbacks, decode_control as decode_memory_inference_control,
+    MemoryInferenceControl,
+};
 use metadata::{
     metadata_path, read_bool_metadata, read_f64_metadata, read_optional_string_metadata,
     read_optional_u64_metadata, read_string_metadata, read_string_set_metadata, read_u64_metadata,
@@ -39,31 +52,24 @@ struct RuntimeMemoryCapacity {
     reserved_output_source: ReservedOutputSource,
 }
 
+pub(super) struct CycleMemoryCompaction {
+    pub messages: Vec<Message>,
+    pub changed: bool,
+    pub recent_tool_call_ids: Option<BTreeSet<String>>,
+}
+
 pub(super) fn build_memory_manager(
     task: &AgentTask,
     workspace_path: PathBuf,
-    memory_model_provider: Option<Arc<dyn ModelProvider>>,
     settings_file: Option<&Path>,
     default_backend: Option<&str>,
-) -> MemoryManager {
+) -> Result<MemoryManager, String> {
     let workspace = task.use_workspace.then_some(workspace_path);
     let summary_backend =
         read_optional_string_metadata(&task.metadata, &["memory_summary_backend"])
             .or_else(|| default_backend.map(str::to_string));
     let summary_model = read_optional_string_metadata(&task.metadata, &["memory_summary_model"])
         .unwrap_or_else(|| task.model.clone());
-    let has_memory_route = summary_backend
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
-        || read_optional_string_metadata(&task.metadata, &["session_memory_extraction_backend"])
-            .is_some();
-    let summary_callback = if has_memory_route {
-        memory_model_provider.map(|provider| {
-            build_memory_summary_callback(provider, summary_backend.clone(), summary_model.clone())
-        })
-    } else {
-        None
-    };
     let (resolved_context_window, resolved_max_output_tokens) =
         resolve_runtime_model_token_limits(settings_file, default_backend, &task.model);
     let autocompact_buffer_tokens = read_u64_metadata(
@@ -78,7 +84,14 @@ pub(super) fn build_memory_manager(
         autocompact_buffer_tokens,
     );
 
-    MemoryManager::new(MemoryManagerConfig {
+    let session_memory = build_session_memory(
+        task,
+        workspace.clone(),
+        None,
+        summary_backend.clone(),
+        summary_model.clone(),
+    )?;
+    Ok(MemoryManager::new(MemoryManagerConfig {
         compact_threshold: task.memory_compact_threshold,
         keep_recent_messages: read_usize_metadata(
             &task.metadata,
@@ -95,7 +108,7 @@ pub(super) fn build_memory_manager(
         summary_event_limit: read_usize_metadata(&task.metadata, "summary_event_limit", 40),
         summary_backend: summary_backend.clone(),
         summary_model: Some(summary_model.clone()),
-        summary_callback: summary_callback.clone(),
+        summary_callback: None,
         tool_result_compact_threshold: read_usize_metadata(
             &task.metadata,
             "tool_result_compact_threshold",
@@ -145,18 +158,137 @@ pub(super) fn build_memory_manager(
             "microcompact_compactable_tools",
         ),
         workspace: workspace.clone(),
-        session_memory: build_session_memory(
-            task,
-            workspace,
-            summary_callback.clone(),
-            summary_backend,
-            summary_model,
-        ),
+        session_memory,
     })
     .with_capacity_observation(
         capacity.model_max_output_tokens,
         capacity.reserved_output_source,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn compact_cycle_memory<C>(
+    runtime: &AgentRuntime<C>,
+    controls: &RuntimeRunControls,
+    task: &AgentTask,
+    hook_manager: &RuntimeHookManager,
+    memory_manager: &mut MemoryManager,
+    cycle_index: u32,
+    messages: &[Message],
+    cycles: &[CycleRecord],
+    shared_state: &Metadata,
+    model_call_ledger: &ModelCallLedger,
+) -> Result<CycleMemoryCompaction, RuntimeMemoryCallbackError>
+where
+    C: LlmClient + Clone + 'static,
+{
+    let pre_compact_messages = hook_manager.apply_before_memory_compact(
+        task,
+        cycle_index,
+        messages.to_vec(),
+        shared_state,
+    );
+    let pre_compact_messages = memory_manager.apply_session_memory_context(&pre_compact_messages);
+    let (previous_prompt_tokens, recent_tool_call_ids) = previous_cycle_memory_usage(
+        cycles,
+        model_call_ledger.previous_agent_input_tokens(cycle_index),
+    );
+    let memory_compact_event = memory_compact_started_event(
+        controls.execution_context.as_ref(),
+        memory_manager,
+        task,
+        cycle_index,
+        &pre_compact_messages,
+        previous_prompt_tokens,
+        recent_tool_call_ids.as_ref(),
+        false,
     )
+    .map(|event| {
+        let event = notify_memory_before_compact(
+            controls.execution_context.as_ref(),
+            event,
+            &pre_compact_messages,
+        );
+        runtime.emit_log(
+            controls,
+            "memory_compact_started",
+            memory_compact_event_payload(&event),
+        );
+        event
+    });
+    let compaction_outcome = memory_manager.compact_for_cycle_with_usage_observed(
+        &pre_compact_messages,
+        cycle_index,
+        false,
+        previous_prompt_tokens,
+        recent_tool_call_ids.as_ref(),
+    )?;
+    if let Some(started_event) = memory_compact_event.as_ref() {
+        let completed = memory_compact_completed_event(
+            started_event,
+            cycle_index,
+            &pre_compact_messages,
+            &compaction_outcome.messages,
+            &memory_manager.config.model,
+            compaction_outcome.mode,
+        );
+        let completed = notify_memory_after_compact(controls.execution_context.as_ref(), completed);
+        runtime.emit_log(
+            controls,
+            "memory_compact_completed",
+            memory_compact_event_payload(&completed),
+        );
+    }
+    Ok(CycleMemoryCompaction {
+        messages: compaction_outcome.messages,
+        changed: compaction_outcome.changed,
+        recent_tool_call_ids,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn memory_inference_failure_result(
+    error: RuntimeMemoryCallbackError,
+    checkpoint: &CheckpointCoordinator,
+    budget_controller: &Option<SharedRunBudgetController>,
+    controls: &RuntimeRunControls,
+    messages: &[Message],
+    cycles: &[CycleRecord],
+    shared_state: &Metadata,
+) -> AgentResult {
+    match decode_memory_inference_control(error) {
+        Ok(MemoryInferenceControl::BudgetExhausted(exhaustion)) => {
+            let controller = budget_controller
+                .as_ref()
+                .expect("memory model-call exhaustion requires a budget controller");
+            let controller = lock_budget(controller);
+            budget_failure_result(
+                messages.to_vec(),
+                cycles.to_vec(),
+                shared_state.clone(),
+                &controller,
+                exhaustion,
+                task_token_usage(controls),
+            )
+        }
+        Ok(MemoryInferenceControl::Cancelled) => cancelled_agent_result(
+            messages.to_vec(),
+            cycles.to_vec(),
+            shared_state.clone(),
+            task_token_usage(controls),
+        ),
+        Ok(MemoryInferenceControl::Interrupted(result)) => *result,
+        Ok(MemoryInferenceControl::CheckpointFailed(error)) => {
+            checkpoint.failure_result(error, messages, cycles, shared_state)
+        }
+        Err(_) => failed_agent_result(
+            messages.to_vec(),
+            cycles.to_vec(),
+            shared_state.clone(),
+            "memory inference callback failed".to_string(),
+            task_token_usage(controls),
+        ),
+    }
 }
 
 fn resolve_memory_capacity(

@@ -429,11 +429,8 @@ fn inline_backend_execute_returns_agent_max_cycles_result() {
         Some("Reached max cycles without finish signal.")
     );
     assert_eq!(result.cycles.len(), 2);
-    assert_eq!(
-        result.token_usage,
-        vv_agent::runtime::token_usage::summarize_task_token_usage(&result.cycles)
-    );
-    assert_eq!(result.token_usage.cycles.len(), 2);
+    assert_eq!(result.token_usage, vv_agent::TaskTokenUsage::default());
+    assert!(result.token_usage.model_calls.is_empty());
 }
 
 #[test]

@@ -409,7 +409,7 @@ mod tests {
         let payload = completed_payload(&outcome, Some(&usage));
 
         assert_eq!(payload["token_usage"]["total_tokens"], json!(0));
-        assert_eq!(payload["token_usage"]["cycles"], json!([]));
+        assert_eq!(payload["token_usage"]["model_calls"], json!([]));
     }
 
     #[test]

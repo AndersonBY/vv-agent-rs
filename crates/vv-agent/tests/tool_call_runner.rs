@@ -47,7 +47,6 @@ fn tool_call_runner_skips_remaining_calls_after_finish() {
         tool_calls: tool_calls.clone(),
         tool_results: Vec::new(),
         memory_compacted: false,
-        token_usage: vv_agent::TokenUsage::default(),
     };
 
     let outcome = runner
@@ -195,7 +194,6 @@ fn empty_cycle(tool_calls: Vec<ToolCall>) -> vv_agent::CycleRecord {
         tool_calls,
         tool_results: Vec::new(),
         memory_compacted: false,
-        token_usage: vv_agent::TokenUsage::default(),
     }
 }
 
@@ -221,7 +219,6 @@ fn tool_call_runner_short_circuit_result_keeps_original_tool_call_id_after_call_
         tool_calls: tool_calls.clone(),
         tool_results: Vec::new(),
         memory_compacted: false,
-        token_usage: vv_agent::TokenUsage::default(),
     };
 
     runner

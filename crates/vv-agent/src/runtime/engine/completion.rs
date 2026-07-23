@@ -3,13 +3,13 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use crate::llm::LlmClient;
-use crate::runtime::token_usage::summarize_task_token_usage;
 use crate::types::{
     last_assistant_output, AgentResult, AgentStatus, AgentTask, CompletionReason, CycleRecord,
     LLMResponse, Message, NoToolPolicy, ToolDirective, ToolExecutionResult,
 };
 
 use super::super::results::{extract_final_message, extract_wait_reason};
+use super::helpers::task_token_usage;
 use super::{AgentRuntime, RuntimeRunControls};
 
 pub(super) struct NoToolResponseRequest<'a, C: LlmClient> {
@@ -61,6 +61,7 @@ pub(super) fn handle_no_tool_response<C: LlmClient>(
                 shared_state.clone(),
             );
             result.completion_reason = Some(CompletionReason::NoToolFinish);
+            result.token_usage = task_token_usage(controls);
             Some(result)
         }
         NoToolPolicy::WaitUser => {
@@ -105,7 +106,7 @@ pub(super) fn handle_no_tool_response<C: LlmClient>(
                 error: None,
                 error_code: None,
                 shared_state: shared_state.clone(),
-                token_usage: summarize_task_token_usage(cycles),
+                token_usage: task_token_usage(controls),
             })
         }
         NoToolPolicy::Continue => {
@@ -178,6 +179,7 @@ pub(super) fn handle_directive_result<C: LlmClient>(
             );
             agent_result.completion_reason = Some(completion_reason);
             agent_result.completion_tool_name = Some(completion_tool_name.to_string());
+            agent_result.token_usage = task_token_usage(controls);
             Some(agent_result)
         }
         ToolDirective::WaitUser => {
@@ -224,7 +226,7 @@ pub(super) fn handle_directive_result<C: LlmClient>(
                 error: None,
                 error_code: None,
                 shared_state: shared_state.clone(),
-                token_usage: summarize_task_token_usage(cycles),
+                token_usage: task_token_usage(controls),
             })
         }
         ToolDirective::Continue => None,

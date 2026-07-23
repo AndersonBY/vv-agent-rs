@@ -1,10 +1,8 @@
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
-use serde_json::Value;
-
-use crate::types::TaskTokenUsage;
+use crate::events::{ModelCallFailureOutcome, RunEvent, RunEventPayload};
+use crate::types::{ModelCallRecord, ModelCallStatus, TaskTokenUsage};
 
 #[derive(Default)]
 pub(super) struct ObservedRunProgress {
@@ -13,27 +11,69 @@ pub(super) struct ObservedRunProgress {
 }
 
 impl ObservedRunProgress {
-    pub(super) fn record_completed_cycle(
-        &self,
-        cycle_index: Option<u32>,
-        payload: &BTreeMap<String, Value>,
-    ) {
-        let Some(cycle_index) = cycle_index.filter(|value| *value > 0) else {
+    pub(super) fn record_event(&self, event: &RunEvent) {
+        let Some(cycle_index) = event.cycle_index().filter(|value| *value > 0) else {
             return;
         };
-        self.completed_cycles
-            .fetch_max(cycle_index, Ordering::Relaxed);
-
-        let Some(raw_usage) = payload.get("token_usage") else {
-            return;
+        let model_call = match event.payload() {
+            RunEventPayload::ModelCallCompleted {
+                call_id,
+                operation_id,
+                attempt,
+                operation,
+                backend,
+                model,
+                usage,
+            } => {
+                self.completed_cycles
+                    .fetch_max(cycle_index, Ordering::Relaxed);
+                Some(ModelCallRecord {
+                    call_id: call_id.clone(),
+                    operation_id: operation_id.clone(),
+                    attempt: *attempt,
+                    operation: *operation,
+                    cycle_index,
+                    backend: backend.clone(),
+                    model: model.clone(),
+                    status: ModelCallStatus::Completed,
+                    usage: usage.clone(),
+                    error_code: None,
+                })
+            }
+            RunEventPayload::ModelCallFailed {
+                call_id,
+                operation_id,
+                attempt,
+                operation,
+                backend,
+                model,
+                outcome,
+                usage,
+                error_code,
+            } => Some(ModelCallRecord {
+                call_id: call_id.clone(),
+                operation_id: operation_id.clone(),
+                attempt: *attempt,
+                operation: *operation,
+                cycle_index,
+                backend: backend.clone(),
+                model: model.clone(),
+                status: match outcome {
+                    ModelCallFailureOutcome::Definitive => ModelCallStatus::Failed,
+                    ModelCallFailureOutcome::Ambiguous => ModelCallStatus::Ambiguous,
+                },
+                usage: usage.clone(),
+                error_code: Some(error_code.clone()),
+            }),
+            _ => None,
         };
-        let Ok(usage) = serde_json::from_value(raw_usage.clone()) else {
+        let Some(model_call) = model_call else {
             return;
         };
         if let Ok(mut observed) = self.token_usage.lock() {
-            observed
+            let _ = observed
                 .get_or_insert_with(TaskTokenUsage::default)
-                .add_cycle(cycle_index, usage);
+                .add_model_call(model_call);
         }
     }
 

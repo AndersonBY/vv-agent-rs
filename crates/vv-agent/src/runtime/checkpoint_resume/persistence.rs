@@ -167,59 +167,32 @@ impl CheckpointResumeController {
         Ok(())
     }
 
-    pub(super) fn model_request_projection(&self, request: &LlmRequest) -> CheckpointResult<Value> {
+    pub(super) fn model_request_projection(
+        &self,
+        request: &LlmRequest,
+        backend: &str,
+        model: &str,
+    ) -> CheckpointResult<Value> {
         let checkpoint = self.require_checkpoint()?;
-        let model_definition = checkpoint
-            .run_definition
-            .get("model")
-            .and_then(Value::as_object)
-            .ok_or_else(|| {
-                CheckpointError::new(
-                    "checkpoint_definition_invalid",
-                    "checkpoint model definition is invalid",
-                )
-            })?;
-        let model_override = request
-            .metadata
-            .get("_vv_agent_checkpoint_model")
-            .and_then(Value::as_object);
-        let backend = model_override
-            .and_then(|value| value.get("backend"))
-            .or_else(|| model_definition.get("backend"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                CheckpointError::new(
-                    "checkpoint_journal_integrity_mismatch",
-                    "effective model backend is unavailable",
-                )
-            })?;
-        let model_id = model_override
-            .and_then(|value| value.get("model_id"))
-            .or_else(|| model_definition.get("model_id"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                CheckpointError::new(
-                    "checkpoint_journal_integrity_mismatch",
-                    "effective model id is unavailable",
-                )
-            })?;
-        let settings = if model_override.is_some() {
-            request
-                .model_settings
-                .as_ref()
-                .map(|settings| settings.to_value())
-                .unwrap_or_else(|| json!({}))
-        } else {
-            model_definition
-                .get("settings")
-                .cloned()
-                .unwrap_or_else(|| json!({}))
-        };
+        if backend.trim().is_empty() || model.trim().is_empty() {
+            return Err(CheckpointError::new(
+                "checkpoint_journal_integrity_mismatch",
+                "effective model backend and model must be non-empty",
+            ));
+        }
+        let mut settings = request
+            .model_settings
+            .as_ref()
+            .map(|settings| settings.to_value())
+            .unwrap_or_else(|| json!({}));
+        if let Some(settings) = settings.as_object_mut() {
+            settings.remove("timeout_seconds");
+        }
         Ok(json!({
             "schema_version": OPERATION_REQUEST_SCHEMA,
             "kind": "model",
             "request": {
-                "model": {"backend": backend, "model_id": model_id},
+                "model": {"backend": backend, "model_id": model},
                 "messages": request
                     .messages
                     .iter()

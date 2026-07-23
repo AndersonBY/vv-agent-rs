@@ -128,6 +128,7 @@ pub(crate) fn build_run_definition(
             "max_cycles": request.task.max_cycles,
             "max_handoffs": request.run_config.max_handoffs,
             "no_tool_policy": no_tool_policy_name(request.task.no_tool_policy),
+            "session_memory_enabled": request.run_config.session_memory_enabled,
             "memory_compact_threshold": request.task.memory_compact_threshold,
             "memory_threshold_percentage": request.task.memory_threshold_percentage,
             "allow_interruption": request.task.allow_interruption,
@@ -274,6 +275,10 @@ pub(crate) fn build_frozen_task(
     if let Some(run_metadata) = definition.get("run_metadata").and_then(Value::as_object) {
         metadata.extend(run_metadata.clone());
     }
+    metadata.insert(
+        "session_memory_enabled".to_string(),
+        Value::Bool(required_bool(controls, "session_memory_enabled")?),
+    );
     let tool_use_behavior = required_string(controls, "tool_use_behavior")?;
     metadata.insert(
         "_vv_agent_tool_use_behavior".to_string(),
@@ -382,6 +387,13 @@ pub(crate) fn validate_distributed_run_definition(
         && controls.get("max_cycles").and_then(Value::as_u64) == Some(u64::from(task.max_cycles))
         && controls.get("no_tool_policy").and_then(Value::as_str)
             == Some(no_tool_policy_name(task.no_tool_policy))
+        && controls
+            .get("session_memory_enabled")
+            .and_then(Value::as_bool)
+            == task
+                .metadata
+                .get("session_memory_enabled")
+                .and_then(Value::as_bool)
         && controls
             .get("memory_compact_threshold")
             .and_then(Value::as_u64)

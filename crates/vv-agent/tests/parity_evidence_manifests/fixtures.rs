@@ -2,7 +2,8 @@
 fn evidence_json_is_canonical_utf8() {
     for name in CANONICAL_FIXTURES {
         let raw = fs::read(fixture_path(name)).expect("read canonical fixture");
-        let value: Value = serde_json::from_slice(&raw).expect("parse canonical fixture");
+        let value: serde_yaml::Value =
+            serde_json::from_slice(&raw).expect("parse canonical fixture");
         let canonical = format!(
             "{}\n",
             serde_json::to_string_pretty(&value).expect("serialize canonical fixture")
