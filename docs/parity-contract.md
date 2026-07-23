@@ -19,11 +19,11 @@ committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
 The current lock selects contract `3.0.0` at revision
-`a0c7c22e4416446f66712cf4484583fcfe2c4969`. The central support matrix remains
-`in-progress` while Rust adoption is being completed. It may move to
-`verified` only after the Python and Rust locks select this exact revision,
-both full implementation gates pass, and the central cross-repository workflow
-records both exact implementation revisions.
+`a0c7c22e4416446f66712cf4484583fcfe2c4969`. The central support matrix records
+this adoption as `verified` after the complete Python and Rust gates passed in
+cross-repository run `30019030120`. The verified implementation revisions are
+Python `1a7eaeaf4f18252616b4418def7a7ff97bbbb7dc` and Rust
+`5604f4d202495b2cacc17947df03bb0ec7356c5c`.
 
 ## Required Reading
 
