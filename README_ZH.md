@@ -5,7 +5,42 @@
 `vv-agent-rs` 是 `vv-agent` crate 的 Rust 工作空间，提供可嵌入的 Agent
 运行时、SDK、CLI、工具系统、记忆层和工作区抽象，用来构建由大语言模型驱动的自动化任务。
 
-它的核心设计是显式控制 Agent 状态。向后兼容的默认方式仍是调用 `task_finish` 完成任务、
+## 安装
+
+当前稳定版本为 `0.8.0`。它实现语言无关的 Contract `3.0.0`；另一套实现读取同一
+契约，两边可观察能力一致，只保留符合各自语言习惯的 API 写法。
+
+```bash
+cargo add vv-agent@0.8.0
+```
+
+需要 Apalis adapter 时使用：
+
+```bash
+cargo add vv-agent@0.8.0 --features apalis
+```
+
+Contract 3 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
+公共 API 与传输数据结构。需要旧协议的应用应固定旧 crate 版本。
+
+### 0.8.0 重点能力
+
+- 每次真正进入模型调用边界的尝试都会写入
+  `result.token_usage().model_calls`，包括 Agent 主循环、Session Memory、完整上下文
+  压缩、失败、重试和结果不确定的调用。Provider 没有返回 token 或缓存字段时会明确
+  保持“不可用”，不会伪装成 0。
+- 工具参数会在审批和副作用发生前，按照 JSON Schema Draft 2020-12 对完整参数做
+  校验。无效调用返回结构化的 `invalid_tool_arguments`，不会执行工具 handler。
+- 可选的宿主输出校验默认关闭；开启后最多执行一次不携带任何工具的修复回调，之后
+  才提交终态结果。
+- 持久化执行统一使用 `vv-agent.checkpoint.v3`、
+  `vv-agent.run-definition.v2`、`vv-agent.distributed-run.v2` 和
+  `vv-agent.distributed-worker-response.v1`，严格限定恢复与分布式 controller 边界。
+
+详细规则见[输出校验](docs/output-validation.md)和
+[Checkpoint 与恢复](docs/checkpoint-resume.md)。
+
+它的核心设计是显式控制 Agent 状态。默认方式是调用 `task_finish` 完成任务、
 调用 `ask_user` 等待用户输入；宿主也可以显式配置 `NoToolPolicy::Finish` 或
 `NoToolPolicy::WaitUser`，让普通 assistant 回复结束或暂停运行。框架只执行声明的策略，
 不会根据文本是否“像最终答案”猜测任务是否完成。
@@ -34,7 +69,7 @@ Provider 请求构造、endpoint 通信、重试、streaming delta、token limit
 provider 协议细节统一交给已发布的 `vv-llm` crate。`vv-agent` 专注于 Agent
 执行层：prompt、工具、hook、memory、session、workspace 访问和任务编排。
 
-## 安装与配置
+## 仓库配置
 
 在本仓库根目录运行：
 

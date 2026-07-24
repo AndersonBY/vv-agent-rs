@@ -1,8 +1,8 @@
 # Optional Output Validation
 
-Contract `0.9.0` adds a default-off host extension that validates a completed
-output and may make one tools-free repair request. It runs outside the normal
-agent loop and never calls the primary model again.
+The current contract defines a default-off host extension that validates a
+completed output and may make one tools-free repair request. It runs outside
+the normal agent loop and never calls the primary model again.
 
 ## Rust API
 
@@ -77,7 +77,7 @@ extension cannot expand tool policy, infer a task type, inspect hidden scoring,
 inject another agent cycle, or replace cancellation, budget exhaustion,
 reconciliation, or operator-abort precedence.
 
-Checkpoint v2 requires stable `output_validator` and `output_repair`
+Checkpoint v3 requires stable `output_validator` and `output_repair`
 capability refs when those callbacks are enabled.
 
 ## Verification

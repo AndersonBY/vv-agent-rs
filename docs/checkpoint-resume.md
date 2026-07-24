@@ -1,6 +1,6 @@
 # Durable Checkpoint And Resume
 
-Checkpoint v2 is an opt-in Runner capability. It preserves the last committed
+Checkpoint v3 is an opt-in Runner capability. It preserves the last committed
 cycle, operation receipts, budget usage, extension state, event cursor, claim,
 lease, and retained terminal result. The language-neutral behavior is defined
 by the locked `vv-agent-contract`; this document records the Rust producer and
@@ -13,6 +13,12 @@ Configure `RunConfig.checkpoint_config` with a stable key, a
 used by the scheduler process. A distributed worker resolves the same logical
 store through `RuntimeRecipe.capabilities.checkpoint_store_ref` and its
 `DistributedCapabilityRegistry`.
+
+Enabled records require `schema_version=vv-agent.checkpoint.v3` and
+`run_definition_schema=vv-agent.run-definition.v2`. Distributed workers accept
+only `vv-agent.distributed-run.v2` and return only
+`vv-agent.distributed-worker-response.v1`; no other current record or envelope
+shape is read or repaired.
 
 `CheckpointConfig` intentionally keeps concrete `store` and reconstructable
 `store_ref` mutually exclusive. When a local scheduler handle and a worker
@@ -36,7 +42,7 @@ synthesized and no stored definition or digest is rewritten.
 
 Execution telemetry is not a durable receipt. A `tool_call_started` event may
 exist without `tool_call_completed` after cancellation, process loss, or an
-exception. The checkpoint v2 operation journal remains authoritative for
+exception. The checkpoint v3 operation journal remains authoritative for
 whether an operation is planned, started, committed, replayable, or ambiguous;
 neither `duration_ms` nor a lifecycle observer provides exactly-once effects.
 
@@ -78,9 +84,25 @@ call. In-flight messages and cycles are reconstructed from those receipts;
 only a completed cycle or final terminal commit advances the durable
 transcript.
 
+## Model Call Ledger
+
+Every model dispatch attempt admitted across the local provider boundary adds
+one `ModelCallRecord` to the checkpoint and to the public
+`result.token_usage().model_calls` ledger. The ledger covers `AgentCycle`,
+`SessionMemory`, and `MemoryCompaction` operations. Logical retries retain
+their `operation_id`, receive a new `call_id`, and increment `attempt`; failed
+and ambiguous attempts remain visible. Replaying a durable receipt does not add
+another record or charge the budget again.
+
+The terminal `TaskTokenUsage` aggregate is derived from this complete ledger.
+Provider-omitted token and cache observations remain `None` with
+`AccountingMissing` status; only an explicit provider-reported zero is treated
+as zero. Ledger, budget snapshot, terminal model event, and durable operation
+transition share the same checkpoint progress boundary.
+
 ## Worker Reconstruction
 
-`DistributedCycleWorker::new()` has a production checkpoint-v2 executor. It
+`DistributedCycleWorker::new()` has a production checkpoint-v3 executor. It
 resolves the declared model, workspace, toolset, policy, hooks, observers,
 budget meter, extensions, and reconciliation provider, then rebuilds an inline
 single-cycle `AgentRuntime`. `with_checkpoint_executor()` remains available for

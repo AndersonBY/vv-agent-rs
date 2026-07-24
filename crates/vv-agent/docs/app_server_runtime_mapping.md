@@ -39,5 +39,5 @@
   contains them; mapping must not fabricate execution, duration, directive, or
   error facts.
 - Item notifications are observations, not an exactly-once execution or
-  durable-receipt protocol. Checkpoint v2 operation journals remain
+  durable-receipt protocol. Checkpoint v3 operation journals remain
   authoritative after an interrupted started call.

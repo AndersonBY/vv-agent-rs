@@ -6,6 +6,46 @@
 agent runtime, SDK, CLI, tool system, memory layer, and workspace abstraction
 for model-driven automation.
 
+## Install
+
+The current stable release is `0.8.0`. It implements language-neutral Contract
+`3.0.0` while keeping a Rust-idiomatic API; the sibling implementation consumes
+the same contract.
+
+```bash
+cargo add vv-agent@0.8.0
+```
+
+Enable the Apalis adapter with:
+
+```bash
+cargo add vv-agent@0.8.0 --features apalis
+```
+
+Contract 3 and repository `HEAD` are forward-only: current readers accept only
+the current strict public and wire shapes. Pin an older crate release when an
+application must retain an older protocol.
+
+### 0.8.0 Highlights
+
+- Every admitted model dispatch is recorded in
+  `result.token_usage().model_calls`, including agent cycles, Session Memory,
+  full memory compaction, failures, retries, and ambiguous outcomes. Missing
+  provider token or cache fields remain unavailable instead of being reported
+  as zero.
+- Tool arguments are validated as a complete JSON Schema Draft 2020-12 value
+  before approval or side effects. Invalid calls return structured
+  `invalid_tool_arguments` details without invoking the handler.
+- Optional host output validation is disabled by default and can make at most
+  one tools-free repair callback before a terminal result is committed.
+- Durable execution uses `vv-agent.checkpoint.v3`,
+  `vv-agent.run-definition.v2`, `vv-agent.distributed-run.v2`, and
+  `vv-agent.distributed-worker-response.v1` for strict recovery and
+  distributed-controller boundaries.
+
+See [output validation](docs/output-validation.md) and
+[checkpoint/resume](docs/checkpoint-resume.md) for the detailed contracts.
+
 It is designed around explicit agent control flow. The default uses
 `task_finish` to complete and `ask_user` to pause. Hosts can
 instead opt into `NoToolPolicy::Finish` or `NoToolPolicy::WaitUser` when a
@@ -37,7 +77,7 @@ limits, usage accounting, and provider-specific protocol details are delegated
 to the published `vv-llm` crate. `vv-agent` focuses on agent execution: prompts,
 tools, hooks, memory, sessions, workspace access, and orchestration.
 
-## Setup
+## Repository Setup
 
 Run commands from this repository root:
 
