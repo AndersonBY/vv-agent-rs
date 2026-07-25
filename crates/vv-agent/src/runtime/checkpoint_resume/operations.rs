@@ -486,14 +486,22 @@ impl CheckpointResumeController {
         if let Some(interruption) = self.ensure_claim(u64::from(cycle_index))? {
             return Ok((
                 ToolOperationPlan {
-                    idempotency_key: String::new(),
+                    idempotency_key: None,
                     replay_result: None,
                 },
                 Some(interruption),
             ));
         }
         self.set_budget_snapshot(budget_usage);
-        let idempotency_key = tool_idempotency_key(self.checkpoint_key()?, cycle_index, &call.id);
+        let idempotency_key = if idempotency_support == ToolIdempotency::Unsupported {
+            None
+        } else {
+            Some(tool_idempotency_key(
+                self.checkpoint_key()?,
+                cycle_index,
+                &call.id,
+            ))
+        };
         let projection = json!({
             "schema_version": OPERATION_REQUEST_SCHEMA,
             "kind": "tool",
@@ -556,6 +564,12 @@ impl CheckpointResumeController {
                                 metadata: Metadata::new(),
                                 image_url: None,
                                 image_path: None,
+                                truncated: false,
+                                truncation_reason: None,
+                                original_bytes: None,
+                                visible_bytes: None,
+                                artifact: None,
+                                cursor: None,
                             }),
                         },
                         None,

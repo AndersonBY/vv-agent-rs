@@ -10,6 +10,7 @@ use crate::memory::{
     SessionMemoryOutputDiagnostic,
 };
 use crate::model::{ModelProvider, ModelRef};
+use crate::prompt::PromptBundle;
 use crate::runtime::model_calls::{ModelCallCoordinator, ModelCallDispatchRequest};
 use crate::runtime::{CancellationToken, RunEventHandler};
 use crate::types::{AgentResult, Message, ModelCallOperation};
@@ -111,6 +112,7 @@ pub(crate) fn build_runtime_memory_callbacks(
     direct_client: Arc<dyn LlmClient>,
     default_backend: String,
     default_model: String,
+    prompt_bundle: PromptBundle,
     checkpoint: CheckpointCoordinator,
     accounting: ModelCallCoordinator,
     budget_snapshot: BudgetSnapshotProvider,
@@ -185,6 +187,7 @@ pub(crate) fn build_runtime_memory_callbacks(
             budget_snapshot.clone(),
             budget_exhaustion.clone(),
             cancellation_token.clone(),
+            prompt_bundle.clone(),
             ModelCallOperation::SessionMemory,
             "session",
         )),
@@ -195,6 +198,7 @@ pub(crate) fn build_runtime_memory_callbacks(
             budget_snapshot,
             budget_exhaustion,
             cancellation_token,
+            prompt_bundle,
             ModelCallOperation::MemoryCompaction,
             "compaction",
         )),
@@ -210,6 +214,7 @@ fn build_runtime_memory_callback(
     budget_snapshot: BudgetSnapshotProvider,
     budget_exhaustion: BudgetExhaustionProvider,
     cancellation_token: Option<CancellationToken>,
+    prompt_bundle: PromptBundle,
     operation: ModelCallOperation,
     operation_slot: &'static str,
 ) -> RuntimeMemoryCallback {
@@ -223,7 +228,11 @@ fn build_runtime_memory_callback(
         let Some(routed) = router.resolve(backend, model) else {
             return Ok(None);
         };
-        let request = LlmRequest::new(routed.request_model.clone(), vec![Message::user(prompt)]);
+        let request = LlmRequest::new(
+            routed.request_model.clone(),
+            vec![Message::user(prompt)],
+            prompt_bundle.clone(),
+        );
         let client = routed.client.clone();
         let dispatch = checkpoint.dispatch_model(
             ModelCallDispatchRequest {

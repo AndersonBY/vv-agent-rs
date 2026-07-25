@@ -8,33 +8,29 @@ use crate::skills::{normalize_skill_list, render_skills_xml, MAX_SKILLS_PROMPT_C
 
 pub fn task_finish_prompt(language: &str) -> &'static str {
     match language {
-        "zh-CN" => "当你确认任务完成时, 必须调用 `task_finish`, 并在 `message` 字段里给出面向用户的最终结果.",
-        _ => "When you confirm task completion, you must call `task_finish` and put the final user-facing result in its `message` field.",
+        "zh-CN" => "可使用 task_finish 显式返回最终结果；若配置的 no-tool policy 允许，也可自然结束。",
+        _ => "Use task_finish for an explicit final result. Natural completion is allowed when the configured no-tool policy permits it.",
     }
 }
 
 pub fn ask_user_prompt(language: &str) -> &'static str {
     match language {
-        "zh-CN" => "当你需要用户补充信息或做出选择时, 调用 `ask_user`. 你可以提供 options 并设置选择模式.",
-        _ => "When you need clarification or decision from the user, call `ask_user`. You may provide options and set selection mode.",
+        "zh-CN" => "只有缺少无法从上下文或可用工具中获得的必要决策时才询问用户。",
+        _ => "Ask the user only for a required decision that cannot be resolved from context or available tools.",
     }
 }
 
 pub fn todo_prompt(language: &str) -> &'static str {
     match language {
-        "zh-CN" => "多步骤任务请使用 `todo_write` 管理任务清单并及时更新状态, 任意时刻仅保留一个 in_progress.",
-        _ => "Use `todo_write` for multi-step tasks and keep progress updated. Only one item should be in progress at a time.",
+        "zh-CN" => "多步骤工作中，同一时间只保留一个进行中的 TODO。",
+        _ => "For multi-step work, keep the TODO state current with at most one item in progress.",
     }
 }
 
 pub fn tool_priority_prompt(language: &str) -> &'static str {
     match language {
-        "zh-CN" => {
-            "工具优先级: 优先使用专用工具而不是 shell. 查找候选文件用 `find_files`, 读取用 `read_file`, 搜索文件内容用 `search_files`, 写入用 `write_file`, 编辑用 `edit_file`. 仅在专用工具不足时使用 `bash`."
-        }
-        _ => {
-            "Tool priority: prefer specialized tools over shell commands. Find candidate files with `find_files`, read with `read_file`, search file contents with `search_files`, write with `write_file`, edit with `edit_file`. Use `bash` only when specialized tools are insufficient."
-        }
+        "zh-CN" => "直接操作文件时优先使用工作区专用工具；仅在专用工具不足时使用 bash。",
+        _ => "Prefer specialized workspace tools for direct file operations; use bash when they are insufficient.",
     }
 }
 
@@ -68,19 +64,10 @@ pub fn render_sub_agents(
     available_sub_agents: &BTreeMap<String, String>,
 ) -> String {
     let header = match language {
-        "zh-CN" => {
-            "如果已配置子 Agent, 可使用 `create_sub_task` 委派任务: 用 `agent_id` 指定目标子 Agent, 单任务用 `task_description`, 同一子 Agent 的并行任务用 `tasks`, 后台执行用 `wait_for_completion=false`; 需要查询进度或追加消息时使用 `sub_task_status`。如果后台任务完成前主任务无法继续, 请调用 `sub_task_status` 并设置 `wait_for_completion=true` 和较长的 `check_interval_seconds`, 不要连续轮询。"
-        }
-        _ => {
-            "If sub-agents are configured, delegate work with `create_sub_task`. Use `agent_id` to select the target sub-agent, `task_description` for one task, `tasks` for multiple independent tasks of the same sub-agent, `wait_for_completion=false` for background execution, and `sub_task_status` to query progress or send follow-up messages. If background work must finish before you can continue, call `sub_task_status` with `wait_for_completion=true` and a longer `check_interval_seconds` instead of repeatedly polling."
-        }
+        "zh-CN" => "已配置的子 Agent：",
+        _ => "Configured sub-agents:",
     };
-    let list_header = if language == "zh-CN" {
-        "可用子 Agent 列表 (调用时请直接使用下列 agent_id):"
-    } else {
-        "Available sub-agents (use the agent_id exactly as shown):"
-    };
-    let mut lines = vec![header.to_string(), list_header.to_string()];
+    let mut lines = vec![header.to_string()];
     for (name, description) in available_sub_agents {
         lines.push(format!("- agent_id=`{name}`: {description}"));
     }

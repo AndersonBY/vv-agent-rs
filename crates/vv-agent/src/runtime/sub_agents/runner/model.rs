@@ -169,8 +169,12 @@ mod tests {
             .to_string(),
         )
         .expect("write settings");
-        let parent_task =
-            AgentTask::new("parent-task", "parent-model", "Parent prompt", "Delegate");
+        let parent_task = AgentTask::new(
+            "parent-task",
+            "parent-model",
+            crate::prompt::PromptBundle::from_instruction_text("Parent prompt").unwrap(),
+            "Delegate",
+        );
         let mut sub_agent = SubAgentConfig::new("child-model", "Research");
         sub_agent.backend = Some(
             contract["validation"]["portable_whitespace"]["blank_backend_input"]

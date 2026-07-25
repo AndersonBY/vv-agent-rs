@@ -220,7 +220,7 @@ pub(crate) fn build_initial_messages(task: &AgentTask) -> Vec<Message> {
         let starts_with_system = messages
             .first()
             .is_some_and(|message| message.role == MessageRole::System);
-        if !starts_with_system && !task.system_prompt.is_empty() {
+        if !starts_with_system {
             messages.insert(0, system_message_from_task(task));
         } else if starts_with_system && !task.metadata.is_empty() {
             if let Some(system_message) = messages.first_mut() {
@@ -244,16 +244,14 @@ pub(crate) fn build_initial_messages(task: &AgentTask) -> Vec<Message> {
         return messages;
     }
 
-    let mut messages = Vec::new();
-    if !task.system_prompt.is_empty() {
-        messages.push(system_message_from_task(task));
-    }
-    messages.push(Message::user(task.user_prompt.clone()));
-    messages
+    vec![
+        system_message_from_task(task),
+        Message::user(task.user_prompt.clone()),
+    ]
 }
 
 fn system_message_from_task(task: &AgentTask) -> Message {
-    let mut message = Message::system(task.system_prompt.clone());
+    let mut message = Message::system(task.prompt_bundle.flatten());
     message.metadata = task.metadata.clone();
     message
 }

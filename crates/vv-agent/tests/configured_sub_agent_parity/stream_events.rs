@@ -263,7 +263,13 @@ impl ModelProvider for ObserverPanicConfiguredStreamProvider {
 }
 
 fn stream_observer_parent_task(task_id: &str) -> AgentTask {
-    let mut parent = AgentTask::new(task_id, "shared-model", "Parent prompt", "Delegate");
+    let mut parent = AgentTask::new(
+        task_id,
+        "shared-model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+            .expect("prompt bundle"),
+        "Delegate",
+    );
     parent.max_cycles = 2;
     parent.use_workspace = false;
     let mut child = SubAgentConfig::new("shared-model", "Research");

@@ -22,12 +22,13 @@ use crate::checkpoint::{CheckpointConfig, ResumePolicy};
 use crate::config::apply_resolved_model_limits;
 use crate::context::RunContext;
 use crate::context_providers::{
-    assemble_context_fragments, collect_context_fragments, ContextBundle, ContextRequest,
+    assemble_context_fragments, collect_context_fragments, ContextRequest,
 };
 use crate::events::{AgentErrorPayload, RunEvent};
 use crate::guardrails::GuardrailOutcome;
 use crate::llm::LlmClient;
 use crate::model::{ModelError, ModelProvider, ModelRef};
+use crate::prompt::{PromptBundle, PromptSection};
 use crate::result::{RunResult, RunResumeContext};
 use crate::run_config::{validate_max_cycles, RunConfig, INITIAL_BUDGET_USAGE_METADATA_KEY};
 use crate::runtime::checkpoint_resume::{
@@ -64,8 +65,7 @@ use session_blocking::block_on_session;
 use support::{
     apply_cancellation_precedence, apply_input_guardrails, apply_optional_output_validation,
     apply_output_guardrails, capture_event, effective_event_store, effective_session_id,
-    extract_handoff, initial_budget_usage, insert_context_metadata, merged_tool_policy,
-    ApprovalHook, SingleRunOutcome,
+    extract_handoff, initial_budget_usage, merged_tool_policy, ApprovalHook, SingleRunOutcome,
 };
 use trace_lifecycle::RunTrace;
 
@@ -201,7 +201,7 @@ impl Runner {
     fn build_instructions_with_context(
         &self,
         request: InstructionBuildRequest<'_>,
-    ) -> Result<(String, Option<ContextBundle>), String> {
+    ) -> Result<PromptBundle, String> {
         let InstructionBuildRequest {
             agent,
             run_context,
@@ -244,36 +244,40 @@ impl Runner {
         {
             request = request.max_prompt_chars(max_chars);
         }
-        let mut fragments = vec![crate::context_providers::ContextFragment::new(
-            "agent_instructions",
-            agent.resolve_instructions(run_context),
-        )
-        .stable(true)
-        .priority(0)
-        .source("agent.instructions")];
+        let mut sections = agent.resolve_prompt_bundle(run_context)?.sections;
         if !agent.sub_agents().is_empty() {
             let available_sub_agents = agent
                 .sub_agents()
                 .iter()
                 .map(|(id, config)| (id.clone(), config.description.clone()))
                 .collect();
-            fragments.push(
-                crate::context_providers::ContextFragment::new(
+            sections.push(
+                PromptSection::new(
                     "configured_sub_agents",
                     crate::prompt::templates::render_sub_agents("en-US", &available_sub_agents),
+                    true,
                 )
-                .stable(true)
-                .priority(10)
                 .source("agent.sub_agents"),
             );
         }
-        fragments.extend(
-            collect_context_fragments(&request, &providers)
-                .map_err(|error| format!("context provider failed: {error}"))?,
-        );
-        let bundle = assemble_context_fragments(&request, fragments)
+        let fragments = collect_context_fragments(&request, &providers)
+            .map_err(|error| format!("context provider failed: {error}"))?;
+        let context_bundle = assemble_context_fragments(&request, fragments)
             .map_err(|error| format!("context assembly failed: {error}"))?;
-        Ok((bundle.prompt.clone(), Some(bundle)))
+        sections.extend(
+            context_bundle
+                .sections
+                .into_iter()
+                .map(|section| PromptSection {
+                    id: section.id,
+                    text: section.text,
+                    stable: section.stable,
+                    source: section.source,
+                    cache_hint: section.cache_hint,
+                    metadata: section.metadata,
+                }),
+        );
+        PromptBundle::new(sections).map_err(|error| format!("prompt bundle invalid: {error}"))
     }
 }
 

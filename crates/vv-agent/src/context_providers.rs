@@ -223,13 +223,12 @@ pub fn assemble_context_fragments(
         left.priority
             .cmp(&right.priority)
             .then_with(|| right.stable.cmp(&left.stable))
-            .then_with(|| left.id.cmp(&right.id))
+            .then_with(|| left.id.encode_utf16().cmp(right.id.encode_utf16()))
     });
 
     let mut prompt_parts = Vec::new();
     let mut total_chars = 0usize;
     let mut sections = Vec::new();
-    let mut stable_parts = Vec::new();
     let mut sources = BTreeMap::new();
     let mut omitted_section_ids = Vec::new();
 
@@ -250,9 +249,6 @@ pub fn assemble_context_fragments(
         if let Some(source) = fragment.source.as_ref() {
             sources.insert(fragment.id.clone(), source.clone());
         }
-        if fragment.stable {
-            stable_parts.push(text.clone());
-        }
         prompt_parts.push(text.clone());
         total_chars = candidate_len;
         sections.push(ContextSection {
@@ -266,14 +262,28 @@ pub fn assemble_context_fragments(
         });
     }
 
+    let stable_hash = stable_section_hash(&sections)?;
+
     Ok(ContextBundle {
         prompt: prompt_parts.join("\n\n"),
         sections,
-        stable_hash: sha256_hex(stable_parts.join("").as_bytes()),
+        stable_hash,
         sources,
         total_chars,
         omitted_section_ids,
     })
+}
+
+fn stable_section_hash(sections: &[ContextSection]) -> Result<String, ContextError> {
+    let stable_sections = sections
+        .iter()
+        .filter(|section| section.stable)
+        .map(ContextSection::to_metadata)
+        .collect::<Vec<_>>();
+    let bytes = serde_json_canonicalizer::to_vec(&stable_sections).map_err(|error| {
+        ContextError::new(format!("context sections cannot be hashed: {error}"))
+    })?;
+    Ok(sha256_hex(&bytes))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

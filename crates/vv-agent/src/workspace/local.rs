@@ -4,9 +4,9 @@ use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
 
 use super::{
-    absolutize_path, expand_home_path, glob_match, normalize_path_lexically,
-    normalized_glob_pattern, path_to_posix, suffix_with_dot, system_time_to_utc_isoformat,
-    FileInfo, WorkspaceBackend,
+    absolutize_path, artifacts::is_reserved_artifact_path, expand_home_path, glob_match,
+    normalize_path_lexically, normalized_glob_pattern, path_to_posix, suffix_with_dot,
+    system_time_to_utc_isoformat, FileInfo, WorkspaceBackend,
 };
 
 #[derive(Debug, Clone)]
@@ -114,6 +114,12 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
     }
 
     fn write_text(&self, path: &str, content: &str, append: bool) -> std::io::Result<usize> {
+        if is_reserved_artifact_path(path) {
+            return Err(Error::new(
+                ErrorKind::PermissionDenied,
+                "artifact paths are immutable",
+            ));
+        }
         let target = self.resolve_path(path)?;
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
@@ -130,6 +136,10 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
             fs::write(&target, content)?;
             Ok(content.len())
         }
+    }
+
+    fn write_text_exclusive(&self, path: &str, content: &str) -> std::io::Result<usize> {
+        write_text_exclusive_below(&self.normalized_root(), path, content)
     }
 
     fn file_info(&self, path: &str) -> std::io::Result<Option<FileInfo>> {
@@ -167,6 +177,121 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
     fn mkdir(&self, path: &str) -> std::io::Result<()> {
         fs::create_dir_all(self.resolve_path(path)?)
     }
+}
+
+fn exclusive_path_segments(path: &str) -> std::io::Result<Vec<&str>> {
+    if Path::new(path).is_absolute() || path.contains(['\\', '\0']) {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "exclusive path must be a normalized relative path",
+        ));
+    }
+    let segments = path.split('/').collect::<Vec<_>>();
+    if segments.is_empty()
+        || segments
+            .iter()
+            .any(|segment| segment.is_empty() || matches!(*segment, "." | ".."))
+    {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "exclusive path contains an invalid segment",
+        ));
+    }
+    Ok(segments)
+}
+
+#[cfg(unix)]
+fn write_text_exclusive_below(root: &Path, path: &str, content: &str) -> std::io::Result<usize> {
+    use std::ffi::CString;
+    use std::io::Write;
+    use std::os::fd::{AsRawFd, FromRawFd};
+
+    let segments = exclusive_path_segments(path)?;
+    let mut directory = fs::File::open(root)?;
+    for segment in &segments[..segments.len() - 1] {
+        let segment = CString::new(*segment)
+            .map_err(|_| Error::new(ErrorKind::InvalidInput, "path contains NUL"))?;
+        let created = unsafe { libc::mkdirat(directory.as_raw_fd(), segment.as_ptr(), 0o700) };
+        if created == -1 {
+            let error = Error::last_os_error();
+            if error.kind() != ErrorKind::AlreadyExists {
+                return Err(error);
+            }
+        }
+        let fd = unsafe {
+            libc::openat(
+                directory.as_raw_fd(),
+                segment.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            )
+        };
+        if fd == -1 {
+            let error = Error::last_os_error();
+            if matches!(error.raw_os_error(), Some(libc::ELOOP | libc::ENOTDIR)) {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    "exclusive path traverses a symlink or non-directory segment",
+                ));
+            }
+            return Err(error);
+        }
+        directory = unsafe { fs::File::from_raw_fd(fd) };
+    }
+
+    let filename = CString::new(*segments.last().expect("non-empty segments"))
+        .map_err(|_| Error::new(ErrorKind::InvalidInput, "path contains NUL"))?;
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            filename.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            0o600,
+        )
+    };
+    if fd == -1 {
+        return Err(Error::last_os_error());
+    }
+    let mut file = unsafe { fs::File::from_raw_fd(fd) };
+    file.write_all(content.as_bytes())?;
+    file.sync_all()?;
+    directory.sync_all()?;
+    Ok(content.len())
+}
+
+#[cfg(not(unix))]
+fn write_text_exclusive_below(root: &Path, path: &str, content: &str) -> std::io::Result<usize> {
+    use std::io::Write;
+
+    let segments = exclusive_path_segments(path)?;
+    let mut parent = root.to_path_buf();
+    for segment in &segments[..segments.len() - 1] {
+        parent.push(segment);
+        match fs::symlink_metadata(&parent) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    "exclusive path contains a symlink",
+                ));
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    "exclusive path parent is not a directory",
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => fs::create_dir(&parent)?,
+            Err(error) => return Err(error),
+        }
+    }
+    let target = parent.join(segments.last().expect("non-empty segments"));
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(target)?;
+    file.write_all(content.as_bytes())?;
+    file.sync_all()?;
+    Ok(content.len())
 }
 
 fn walk_recursive(root: &Path) -> std::io::Result<Vec<PathBuf>> {

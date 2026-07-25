@@ -77,7 +77,7 @@ async fn runner_recovery_stops_before_ambiguous_non_idempotent_tool() {
         "call-unsafe",
         "unsafe_write",
         &Value::Object(arguments.clone()),
-        idempotency_key,
+        Some(idempotency_key),
     )
     .expect("tool request digest");
     let mut started = OperationJournalEntry::tool(
@@ -88,7 +88,7 @@ async fn runner_recovery_stops_before_ambiguous_non_idempotent_tool() {
         "call-unsafe",
         "unsafe_write",
         arguments,
-        idempotency_key,
+        Some(idempotency_key.to_string()),
         ToolIdempotency::Unknown,
     );
     started
@@ -131,10 +131,30 @@ async fn runner_recovery_stops_before_ambiguous_non_idempotent_tool() {
     assert!(retained.terminal_result.is_none());
 }
 
+struct CountingResumeContextProvider {
+    calls: Arc<AtomicUsize>,
+}
+
+impl ContextProvider for CountingResumeContextProvider {
+    fn fragments(
+        &self,
+        _request: &ContextRequest<'_>,
+    ) -> Result<Vec<ContextFragment>, ContextError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(vec![ContextFragment::new(
+            "checkpoint_context",
+            "Frozen checkpoint context.",
+        )
+        .stable(false)
+        .source("provider.checkpoint")])
+    }
+}
+
 fn run_config(
     store: InMemoryCheckpointStore,
     session: MemorySession,
     crash_once: Arc<AtomicBool>,
+    context_calls: Arc<AtomicUsize>,
     host_request_id: &str,
     reserved_output_tokens: u64,
 ) -> RunConfig {
@@ -143,12 +163,24 @@ fn run_config(
         "behavior_affecting_run_metadata".to_string(),
         CapabilityRef::new("metadata.request-42", "1").expect("run metadata capability ref"),
     );
+    checkpoint.capability_refs.insert(
+        "agent.instructions".to_string(),
+        CapabilityRef::new("agent.dynamic-prompt-bundle", "1")
+            .expect("dynamic instructions capability ref"),
+    );
+    checkpoint.capability_refs.insert(
+        "context_provider:0".to_string(),
+        CapabilityRef::new("context.checkpoint", "1").expect("context capability ref"),
+    );
     RunConfig::builder()
         .max_cycles(2)
         .no_tool_policy(NoToolPolicy::Finish)
         .metadata("host_request_id", json!(host_request_id))
         .metadata("reserved_output_tokens", json!(reserved_output_tokens))
         .session(session)
+        .context_provider(Arc::new(CountingResumeContextProvider {
+            calls: context_calls,
+        }))
         .checkpoint_config(checkpoint)
         .before_cycle_messages(move |cycle, _messages, _state| {
             if cycle == 2 && crash_once.swap(false, Ordering::SeqCst) {
@@ -163,10 +195,13 @@ fn run_config(
 async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free() {
     let model_calls = Arc::new(AtomicUsize::new(0));
     let model_metadata = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let model_prompt_bundles = Arc::new(Mutex::new(Vec::<PromptBundle>::new()));
     let first_calls = model_calls.clone();
     let second_calls = model_calls.clone();
     let first_metadata = model_metadata.clone();
     let second_metadata = model_metadata.clone();
+    let first_bundles = Arc::clone(&model_prompt_bundles);
+    let second_bundles = Arc::clone(&model_prompt_bundles);
     let provider = ScriptedModelProvider::from_steps(
         "scripted",
         "checkpoint-model",
@@ -177,6 +212,10 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
                     .lock()
                     .expect("first model metadata")
                     .push(request.metadata.clone());
+                first_bundles
+                    .lock()
+                    .expect("first model prompt bundle")
+                    .push(request.prompt_bundle.clone());
                 Ok(LLMResponse::with_tool_calls(
                     "write once",
                     vec![ToolCall::new("call-write", "write_record", BTreeMap::new())],
@@ -188,6 +227,10 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
                     .lock()
                     .expect("second model metadata")
                     .push(request.metadata.clone());
+                second_bundles
+                    .lock()
+                    .expect("second model prompt bundle")
+                    .push(request.prompt_bundle.clone());
                 Ok(LLMResponse::new("done"))
             }),
         ],
@@ -221,8 +264,30 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
         .workspace(tempfile::tempdir().expect("workspace").path())
         .build()
         .expect("runner");
+    let instruction_calls = Arc::new(AtomicUsize::new(0));
+    let clock_calls = Arc::new(AtomicUsize::new(0));
+    let instruction_calls_for_agent = Arc::clone(&instruction_calls);
+    let clock_calls_for_agent = Arc::clone(&clock_calls);
     let agent = Agent::builder("checkpoint-agent")
-        .instructions("Write the record, then return the final answer.")
+        .dynamic_prompt_bundle(move |_context, _agent| {
+            instruction_calls_for_agent.fetch_add(1, Ordering::SeqCst);
+            let clock_index = clock_calls_for_agent.fetch_add(1, Ordering::SeqCst);
+            PromptBundle::new(vec![
+                PromptSection::new(
+                    "checkpoint_instructions",
+                    "Write the record, then return the final answer.",
+                    true,
+                )
+                .source("agent.instructions"),
+                PromptSection::new(
+                    "current_time",
+                    format!("2026-07-25T00:00:0{clock_index}Z"),
+                    false,
+                )
+                .source("run.clock"),
+            ])
+            .expect("dynamic prompt bundle")
+        })
         .model(ModelRef::named("checkpoint-model"))
         .tool(tool)
         .build()
@@ -230,6 +295,7 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
     let store = InMemoryCheckpointStore::new();
     let session = MemorySession::new("runner-checkpoint-session");
     let crash_once = Arc::new(AtomicBool::new(true));
+    let context_calls = Arc::new(AtomicUsize::new(0));
 
     let first = runner
         .run_with_config(
@@ -239,6 +305,7 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
                 store.clone(),
                 session.clone(),
                 crash_once.clone(),
+                Arc::clone(&context_calls),
                 "request-42",
                 4_096,
             ),
@@ -253,6 +320,9 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
         "spawn-blocking panic must surface to the caller"
     );
     assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(instruction_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(context_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(clock_calls.load(Ordering::SeqCst), 1);
     let keys = observed_keys.lock().expect("idempotency keys").clone();
     assert_eq!(keys.len(), 1);
     assert!(keys[0].starts_with("idem_"));
@@ -273,6 +343,14 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
         crashed.run_definition["run_metadata"]["reserved_output_tokens"],
         4_096
     );
+    let frozen_prompt_bundle = PromptBundle::from_value(&crashed.run_definition["prompt_bundle"])
+        .expect("frozen prompt bundle");
+    assert_eq!(
+        model_prompt_bundles
+            .lock()
+            .expect("first model prompt bundle")[0],
+        frozen_prompt_bundle
+    );
     let original_run_id = crashed.root_run_id.clone();
     let original_trace_id = crashed.trace_id.clone();
     assert!(!crashed.messages[0].metadata.is_empty());
@@ -290,6 +368,7 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
                 store.clone(),
                 session.clone(),
                 crash_once.clone(),
+                Arc::clone(&context_calls),
                 "stale-request",
                 1_024,
             ),
@@ -302,13 +381,24 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
     assert_eq!(resumed.trace_id(), original_trace_id);
     assert_eq!(resumed.result().cycles.len(), 2);
     assert_eq!(model_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(instruction_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(context_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(clock_calls.load(Ordering::SeqCst), 1);
     assert_eq!(observed_keys.lock().expect("idempotency keys").len(), 1);
     {
         let observed_metadata = model_metadata.lock().expect("model metadata");
         assert_eq!(observed_metadata.len(), 2);
         assert_eq!(observed_metadata[1]["host_request_id"], "request-42");
         assert_eq!(observed_metadata[1]["reserved_output_tokens"], 4_096);
+        assert!(observed_metadata
+            .iter()
+            .all(|metadata| metadata.get("system_prompt_sections").is_none()));
     }
+    assert!(model_prompt_bundles
+        .lock()
+        .expect("model prompt bundles")
+        .iter()
+        .all(|bundle| bundle == &frozen_prompt_bundle));
 
     let terminal = store
         .load_checkpoint("runner-checkpoint")
@@ -328,6 +418,7 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
                 store.clone(),
                 session.clone(),
                 crash_once,
+                Arc::clone(&context_calls),
                 "newer-stale-request",
                 512,
             ),
@@ -339,6 +430,9 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
     assert_eq!(replay.run_id(), original_run_id);
     assert_eq!(replay.trace_id(), original_trace_id);
     assert_eq!(model_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(instruction_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(context_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(clock_calls.load(Ordering::SeqCst), 1);
     assert_eq!(observed_keys.lock().expect("idempotency keys").len(), 1);
     assert_eq!(
         session

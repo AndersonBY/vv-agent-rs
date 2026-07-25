@@ -366,7 +366,12 @@ mod tests {
 
     #[test]
     fn projecting_tool_policy_only_adds_metadata_denials() {
-        let mut task = AgentTask::new("metadata-denials", "model", "system", "prompt");
+        let mut task = AgentTask::new(
+            "metadata-denials",
+            "model",
+            crate::prompt::PromptBundle::from_instruction_text("system").unwrap(),
+            "prompt",
+        );
         task.metadata.insert(
             DENIED_SIDE_EFFECTS_METADATA_KEY.to_string(),
             json!(["execute"]),

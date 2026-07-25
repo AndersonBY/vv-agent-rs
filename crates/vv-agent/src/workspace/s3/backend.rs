@@ -6,12 +6,12 @@ use futures_util::TryStreamExt;
 use object_store::aws::AmazonS3Builder;
 use object_store::memory::InMemory;
 use object_store::path::Path as ObjectPath;
-use object_store::{ObjectStore, ObjectStoreExt, PutPayload};
+use object_store::{ObjectStore, ObjectStoreExt, PutMode, PutPayload};
 use tokio::runtime::Runtime;
 
 use crate::workspace::{
-    glob_match, non_empty_option, normalize_workspace_path, normalized_glob_pattern,
-    object_store_error_to_io, suffix_with_dot, FileInfo, WorkspaceBackend,
+    artifacts::is_reserved_artifact_path, glob_match, non_empty_option, normalize_workspace_path,
+    normalized_glob_pattern, object_store_error_to_io, suffix_with_dot, FileInfo, WorkspaceBackend,
 };
 
 use super::config::S3WorkspaceConfig;
@@ -160,6 +160,12 @@ impl WorkspaceBackend for S3WorkspaceBackend {
     }
 
     fn write_text(&self, path: &str, content: &str, append: bool) -> std::io::Result<usize> {
+        if is_reserved_artifact_path(path) {
+            return Err(Error::new(
+                ErrorKind::PermissionDenied,
+                "artifact paths are immutable",
+            ));
+        }
         let key = ObjectPath::from(self.object_key(path));
         let content = if append {
             match self.read_text(path) {
@@ -174,6 +180,22 @@ impl WorkspaceBackend for S3WorkspaceBackend {
         self.block_on(async {
             self.store
                 .put(&key, PutPayload::from(content.into_bytes()))
+                .await
+                .map(|_| ())
+        })?;
+        Ok(len)
+    }
+
+    fn write_text_exclusive(&self, path: &str, content: &str) -> std::io::Result<usize> {
+        let key = ObjectPath::from(self.object_key(path));
+        let len = content.len();
+        self.block_on(async {
+            self.store
+                .put_opts(
+                    &key,
+                    PutPayload::from(content.as_bytes().to_vec()),
+                    PutMode::Create.into(),
+                )
                 .await
                 .map(|_| ())
         })?;

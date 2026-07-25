@@ -83,7 +83,8 @@ fn provider_resolve_and_client_panics_emit_one_failed_completion_and_cleanup() {
         let mut parent = AgentTask::new(
             format!("provider-panic-parent-{label}"),
             "parent-model",
-            "Parent prompt",
+            vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+                .expect("prompt bundle"),
             "Delegate",
         );
         parent.max_cycles = 3;

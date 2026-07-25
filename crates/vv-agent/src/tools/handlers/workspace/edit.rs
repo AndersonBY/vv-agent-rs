@@ -215,6 +215,12 @@ pub(crate) fn workspace_tool_error_with_details(
         metadata,
         image_url: None,
         image_path: None,
+        truncated: false,
+        truncation_reason: None,
+        original_bytes: None,
+        visible_bytes: None,
+        artifact: None,
+        cursor: None,
     }
 }
 
@@ -349,6 +355,12 @@ fn edit_success_result(
         metadata: changed_file_metadata(path, before, after, "edit_file", line_ending),
         image_url: None,
         image_path: None,
+        truncated: false,
+        truncation_reason: None,
+        original_bytes: None,
+        visible_bytes: None,
+        artifact: None,
+        cursor: None,
     }
 }
 

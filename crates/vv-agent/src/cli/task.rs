@@ -24,16 +24,12 @@ pub fn build_cli_task(
             ..BuildSystemPromptOptions::default()
         },
     );
-    let mut task = AgentTask::new(task_id, model_id, prompt_bundle.prompt, args.prompt.clone());
+    let mut task = AgentTask::new(task_id, model_id, prompt_bundle, args.prompt.clone());
     task.max_cycles = args.max_cycles.max(1);
     task.agent_type = args.agent_type.clone();
     task.model_settings = args.model_settings.clone();
     task.metadata
         .insert("language".to_string(), Value::String(args.language.clone()));
-    task.metadata.insert(
-        "system_prompt_sections".to_string(),
-        Value::Array(prompt_bundle.sections),
-    );
     Ok(task)
 }
 

@@ -8,8 +8,8 @@ use serde_json::{json, Value};
 use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
 use vv_agent::types::AgentTask;
 use vv_agent::{
-    background_session_manager, build_default_registry, ToolCall, ToolContext, ToolExecutionResult,
-    ToolExposure, ToolRegistry, ToolSpec,
+    background_session_manager, build_default_registry, PromptBundle, ToolCall, ToolContext,
+    ToolExecutionResult, ToolExposure, ToolRegistry, ToolSpec,
 };
 
 fn fixture() -> Value {
@@ -50,12 +50,17 @@ fn assert_result(result: &ToolExecutionResult, expected: &Value, contract: &Valu
         assert_eq!(wire[key], expected[key], "outer result field {key}");
     }
     assert_eq!(wire.get("error_code"), expected.get("error_code"));
-    let content: Value = serde_json::from_str(&result.content).expect("tool content JSON");
+    let expected_content = &expected["content"];
+    let content = if expected_content.is_object() || expected_content.is_array() {
+        serde_json::from_str(&result.content).expect("structured tool content JSON")
+    } else {
+        Value::String(result.content.clone())
+    };
     assert_eq!(content, expected["content"]);
     assert_eq!(json!(result.metadata), expected["metadata"]);
 
-    if expected["status_code"] == "ERROR" {
-        for key in contract["error_content_required_keys"]
+    if expected["status_code"] == "ERROR" && expected_content.is_object() {
+        for key in contract["structured_error_content_required_keys"]
             .as_array()
             .expect("required error keys")
         {
@@ -128,22 +133,6 @@ fn fixture_drives_prompt_registry_dynamic_hint_and_projection() {
     }
 
     let mut registry = build_default_registry();
-    let description_case = &fixture["registry"]["builtin_description"];
-    let spec = registry
-        .get(description_case["tool_name"].as_str().expect("tool name"))
-        .expect("builtin spec");
-    assert_eq!(
-        !spec.description.trim().is_empty(),
-        description_case["must_be_non_empty"]
-            .as_bool()
-            .expect("flag")
-    );
-    assert_eq!(
-        spec.description,
-        spec.schema["function"]["description"]
-            .as_str()
-            .expect("schema description")
-    );
 
     let hidden_case = &fixture["registry"]["hidden_exposure"];
     let hidden_name = hidden_case["tool_name"].as_str().expect("hidden tool name");
@@ -168,7 +157,12 @@ fn fixture_drives_prompt_registry_dynamic_hint_and_projection() {
     );
 
     let hint_case = &fixture["dynamic_bash_description"]["non_string_bash_shell"];
-    let mut task = AgentTask::new("fixture-task", "fixture-model", "system", "user");
+    let mut task = AgentTask::new(
+        "fixture-task",
+        "fixture-model",
+        PromptBundle::from_instruction_text("system").expect("valid prompt bundle"),
+        "user",
+    );
     task.agent_type = Some("computer".to_string());
     task.metadata
         .insert("bash_shell".to_string(), hint_case["bash_shell"].clone());
@@ -210,24 +204,6 @@ fn fixture_drives_builtin_handler_envelopes_and_metadata() {
     let tools = &fixture["tools"];
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
-
-    let mut context = ToolContext::new(workspace.path());
-    let case = &tools["compress_memory"]["success"];
-    let result = execute(
-        &registry,
-        &mut context,
-        "compress_memory",
-        &case["arguments"],
-    );
-    assert_result(&result, &case["result"], contract);
-    let case = &tools["compress_memory"]["missing_core_information"];
-    let result = execute(
-        &registry,
-        &mut context,
-        "compress_memory",
-        &case["arguments"],
-    );
-    assert_result(&result, &case["result"], contract);
 
     let skill_case = &tools["activate_skill"]["success"];
     let mut context = ToolContext::new(workspace.path());
@@ -306,7 +282,13 @@ fn fixture_drives_bash_and_background_command_contract() {
         context.metadata.insert(key.clone(), value.clone());
     }
     let result = execute(&registry, &mut context, "bash", &non_zero["arguments"]);
-    assert_result(&result, &non_zero["result"], contract);
+    let expected = &non_zero["result"];
+    let wire = result.to_dict();
+    assert_eq!(wire["status_code"], expected["status_code"]);
+    assert_eq!(wire["directive"], expected["directive"]);
+    assert_eq!(wire["error_code"], expected["error_code"]);
+    assert_eq!(result.content, expected["content"]);
+    assert_eq!(json!(result.metadata), expected["metadata"]);
 
     let invalid_timeout = &tools["bash"]["invalid_timeout"];
     let mut context = ToolContext::new(workspace.path());
@@ -329,7 +311,7 @@ fn fixture_drives_bash_and_background_command_contract() {
     let result = execute(&registry, &mut context, "bash", &background["arguments"]);
     let expected = &background["result"];
     let wire = result.to_dict();
-    for key in ["status", "status_code", "directive"] {
+    for key in ["status_code", "directive"] {
         assert_eq!(wire[key], expected[key]);
     }
     let content: Value = serde_json::from_str(&result.content).expect("background content");

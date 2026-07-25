@@ -4,21 +4,29 @@ use serde_json::{json, Value};
 use vv_agent::types::AgentTask;
 use vv_agent::{
     AgentResult, AgentStatus, CycleRecord, LLMResponse, Message, ModelCallOperation,
-    ModelCallRecord, ModelCallStatus, NoToolPolicy, SubTaskOutcome, SubTaskRequest, TokenUsage,
-    ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus,
+    ModelCallRecord, ModelCallStatus, NoToolPolicy, PromptBundle, SubTaskOutcome, SubTaskRequest,
+    TokenUsage, ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus,
 };
 
 fn sparse_agent_task_payload() -> Value {
     json!({
         "task_id": "task-1",
         "model": "model-1",
-        "system_prompt": "system",
+        "prompt_bundle": PromptBundle::from_instruction_text("system").expect("prompt bundle"),
         "user_prompt": "user"
     })
 }
 
 fn assert_agent_task_defaults(task: &AgentTask) {
-    assert_eq!(task, &AgentTask::new("task-1", "model-1", "system", "user"));
+    assert_eq!(
+        task,
+        &AgentTask::new(
+            "task-1",
+            "model-1",
+            PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+            "user"
+        )
+    );
     assert_eq!(task.memory_compact_threshold, 250_000);
 }
 
@@ -156,7 +164,12 @@ fn agent_result_dict_round_trips_model_call_usage() {
 
 #[test]
 fn agent_task_dict_round_trips_agent_runtime_recipe_payload_shape() {
-    let mut task = AgentTask::new("task-1", "deepseek-v4-pro", "system", "user");
+    let mut task = AgentTask::new(
+        "task-1",
+        "deepseek-v4-pro",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "user",
+    );
     task.max_cycles = 3;
     task.no_tool_policy = NoToolPolicy::WaitUser;
     task.agent_type = Some("computer".to_string());
@@ -192,9 +205,8 @@ fn agent_task_preserves_explicit_memory_threshold() {
     let mut payload = sparse_agent_task_payload();
     payload["memory_compact_threshold"] = json!(128_000);
 
-    let from_dict = AgentTask::from_dict(&payload).expect("historical AgentTask dict");
-    let from_serde: AgentTask =
-        serde_json::from_value(payload).expect("historical AgentTask serde");
+    let from_dict = AgentTask::from_dict(&payload).expect("AgentTask dict");
+    let from_serde: AgentTask = serde_json::from_value(payload).expect("AgentTask serde");
 
     assert_eq!(from_dict.memory_compact_threshold, 128_000);
     assert_eq!(from_serde.memory_compact_threshold, 128_000);
@@ -202,7 +214,7 @@ fn agent_task_preserves_explicit_memory_threshold() {
 
 #[test]
 fn agent_task_wire_requires_all_core_string_fields() {
-    for field_name in ["task_id", "model", "system_prompt", "user_prompt"] {
+    for field_name in ["task_id", "model", "user_prompt"] {
         let mut missing = sparse_agent_task_payload();
         missing
             .as_object_mut()
@@ -228,6 +240,33 @@ fn agent_task_wire_requires_all_core_string_fields() {
             "serde accepted non-string {field_name}"
         );
     }
+
+    let mut missing_bundle = sparse_agent_task_payload();
+    missing_bundle
+        .as_object_mut()
+        .expect("AgentTask object")
+        .remove("prompt_bundle");
+    assert!(AgentTask::from_dict(&missing_bundle).is_err());
+    assert!(serde_json::from_value::<AgentTask>(missing_bundle).is_err());
+
+    let mut wrong_bundle = sparse_agent_task_payload();
+    wrong_bundle["prompt_bundle"] = json!("system");
+    assert!(AgentTask::from_dict(&wrong_bundle).is_err());
+    assert!(serde_json::from_value::<AgentTask>(wrong_bundle).is_err());
+}
+
+#[test]
+fn agent_task_wire_rejects_removed_system_prompt_field() {
+    let mut payload = sparse_agent_task_payload();
+    payload["system_prompt"] = json!("legacy prompt");
+
+    let dict_error = AgentTask::from_dict(&payload).expect_err("legacy field must be rejected");
+    assert!(dict_error.contains("unknown field `system_prompt`"));
+    let serde_error =
+        serde_json::from_value::<AgentTask>(payload).expect_err("legacy field must be rejected");
+    assert!(serde_error
+        .to_string()
+        .contains("unknown field `system_prompt`"));
 }
 
 #[test]
@@ -303,7 +342,12 @@ fn agent_task_wire_accepts_unsigned_boundaries() {
 
 #[test]
 fn agent_task_round_trips_full_serde_and_compact_dict_wire() {
-    let mut task = AgentTask::new("task-full", "model", "system", "user");
+    let mut task = AgentTask::new(
+        "task-full",
+        "model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "user",
+    );
     task.model_settings = Some(vv_agent::ModelSettings::builder().max_tokens(512).build());
     task.initial_messages = vec![Message::user("persisted")];
     task.initial_shared_state

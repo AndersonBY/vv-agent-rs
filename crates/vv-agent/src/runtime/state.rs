@@ -149,7 +149,7 @@ impl OperationJournalEntry {
         tool_call_id: impl Into<String>,
         tool_name: impl Into<String>,
         arguments: Map<String, Value>,
-        idempotency_key: impl Into<String>,
+        idempotency_key: Option<String>,
         idempotency_support: ToolIdempotency,
     ) -> Self {
         Self {
@@ -159,7 +159,7 @@ impl OperationJournalEntry {
             attempt,
             state: OperationState::Planned,
             request_digest: request_digest.into(),
-            idempotency_key: Some(idempotency_key.into()),
+            idempotency_key,
             response: None,
             error: None,
             tool_call_id: Some(tool_call_id.into()),
@@ -254,14 +254,31 @@ impl OperationJournalEntry {
                 }
                 if self.tool_call_id.as_deref().is_none_or(str::is_empty)
                     || self.tool_name.as_deref().is_none_or(str::is_empty)
-                    || self.idempotency_key.as_deref().is_none_or(str::is_empty)
                     || self.arguments.is_none()
                     || self.idempotency_support.is_none()
                 {
                     return Err(CheckpointError::new(
                         "tool_idempotency_key_required",
-                        "tool journal entries require call, arguments, idempotency key, and support",
+                        "tool journal entries require call, arguments, and idempotency support",
                     ));
+                }
+                match self.idempotency_support.expect("checked above") {
+                    ToolIdempotency::Unsupported => {
+                        if self.idempotency_key.is_some() {
+                            return Err(CheckpointError::new(
+                                "tool_idempotency_key_invalid",
+                                "unsupported tools must not carry an idempotency key",
+                            ));
+                        }
+                    }
+                    ToolIdempotency::Supported | ToolIdempotency::Unknown => {
+                        if self.idempotency_key.as_deref().is_none_or(str::is_empty) {
+                            return Err(CheckpointError::new(
+                                "tool_idempotency_key_required",
+                                "supported or unknown tools require an idempotency key",
+                            ));
+                        }
+                    }
                 }
                 if self.response.is_some() {
                     return Err(CheckpointError::new(

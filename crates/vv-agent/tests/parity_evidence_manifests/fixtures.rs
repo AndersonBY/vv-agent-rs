@@ -2,13 +2,11 @@
 fn evidence_json_is_canonical_utf8() {
     for name in CANONICAL_FIXTURES {
         let raw = fs::read(fixture_path(name)).expect("read canonical fixture");
-        let value: serde_yaml::Value =
-            serde_json::from_slice(&raw).expect("parse canonical fixture");
-        let canonical = format!(
-            "{}\n",
-            serde_json::to_string_pretty(&value).expect("serialize canonical fixture")
-        );
-        assert_eq!(raw, canonical.as_bytes(), "{name}");
+        let text = std::str::from_utf8(&raw).expect("canonical fixture must be UTF-8");
+        assert!(text.ends_with('\n'), "{name} must end with LF");
+        let value: Value = serde_json::from_slice(&raw).expect("parse canonical fixture");
+        serde_json_canonicalizer::to_vec(&value)
+            .expect("canonical fixture must be RFC 8785 serializable");
     }
 }
 

@@ -229,7 +229,12 @@ fn top_level_types_are_constructible() {
         .model(ModelRef::named("mini"))
         .build()
         .expect("agent");
-    let _task = AgentTask::new("task_1", "mini", "system", "user");
+    let _task = AgentTask::new(
+        "task_1",
+        "mini",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "user",
+    );
     let _runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new("done")]))
         .with_settings_file("settings.json")
         .with_default_backend("deepseek")
@@ -332,7 +337,6 @@ fn tools_handlers_module_reexports_agent_handler_functions() {
     assert_handler(vv_agent::tools::handlers::activate_skill);
     assert_handler(vv_agent::tools::handlers::ask_user);
     assert_handler(vv_agent::tools::handlers::check_background_command);
-    assert_handler(vv_agent::tools::handlers::compress_memory);
     assert_handler(vv_agent::tools::handlers::create_sub_task);
     assert_handler(vv_agent::tools::handlers::edit_file);
     assert_handler(vv_agent::tools::handlers::file_info);
@@ -352,7 +356,6 @@ fn tools_handlers_module_reexports_agent_handler_functions() {
     assert_handler(vv_agent::tools::handlers::control::ask_user);
     assert_handler(vv_agent::tools::handlers::control::task_finish);
     assert_handler(vv_agent::tools::handlers::image::read_image);
-    assert_handler(vv_agent::tools::handlers::memory::compress_memory);
     assert_handler(vv_agent::tools::handlers::search::search_files);
     assert_handler(vv_agent::tools::handlers::skills::activate_skill);
     assert_handler(vv_agent::tools::handlers::sub_agents::create_sub_task);
@@ -383,7 +386,6 @@ fn constants_module_exports_agent_tool_names_and_workspace_tool_list() {
     );
     assert_eq!(constants::CREATE_SUB_TASK_TOOL_NAME, "create_sub_task");
     assert_eq!(constants::SUB_TASK_STATUS_TOOL_NAME, "sub_task_status");
-    assert_eq!(constants::COMPRESS_MEMORY_TOOL_NAME, "compress_memory");
     assert_eq!(constants::TODO_WRITE_TOOL_NAME, "todo_write");
     assert_eq!(constants::READ_IMAGE_TOOL_NAME, "read_image");
     assert_eq!(constants::FILE_INFO_TOOL_NAME, "file_info");
@@ -397,7 +399,6 @@ fn constants_module_exports_agent_tool_names_and_workspace_tool_list() {
             constants::WRITE_FILE_TOOL_NAME,
             constants::EDIT_FILE_TOOL_NAME,
             constants::SEARCH_FILES_TOOL_NAME,
-            constants::COMPRESS_MEMORY_TOOL_NAME,
             constants::TODO_WRITE_TOOL_NAME,
         ]
     );

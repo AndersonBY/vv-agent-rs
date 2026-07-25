@@ -2,9 +2,13 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use vv_agent::{
-    LLMResponse, LlmClient, LlmError, LlmRequest, Message, ModelSettings, ScriptStep,
-    ScriptedLlmClient,
+    prompt::PromptBundle, LLMResponse, LlmClient, LlmError, LlmRequest, Message, ModelSettings,
+    ScriptStep, ScriptedLlmClient,
 };
+
+fn prompt_bundle() -> PromptBundle {
+    PromptBundle::from_instruction_text("system").expect("prompt bundle")
+}
 
 #[test]
 fn scripted_llm_accepts_callable_steps() {
@@ -28,7 +32,7 @@ fn scripted_llm_accepts_callable_steps() {
         ScriptStep::response(LLMResponse::new("static response")),
     ]);
 
-    let mut request = LlmRequest::new("model-a", vec![Message::user("hello")]);
+    let mut request = LlmRequest::new("model-a", vec![Message::user("hello")], prompt_bundle());
     request.tools.push(json!({
         "type": "function",
         "function": {"name": "task_finish", "parameters": {"type": "object"}}
@@ -38,7 +42,7 @@ fn scripted_llm_accepts_callable_steps() {
 
     let first = llm.complete(request).expect("dynamic step");
     let second = llm
-        .complete(LlmRequest::new("model-b", Vec::new()))
+        .complete(LlmRequest::new("model-b", Vec::new(), prompt_bundle()))
         .expect("static step");
 
     assert_eq!(first.content, "dynamic response");
@@ -53,7 +57,7 @@ fn scripted_llm_accepts_callable_steps() {
 fn scripted_llm_reports_exhausted_steps() {
     let llm = ScriptedLlmClient::new(Vec::new());
     let error = llm
-        .complete(LlmRequest::new("model", Vec::new()))
+        .complete(LlmRequest::new("model", Vec::new(), prompt_bundle()))
         .expect_err("empty scripted queue should fail");
 
     assert!(matches!(error, LlmError::ScriptExhausted));

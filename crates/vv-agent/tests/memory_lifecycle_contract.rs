@@ -362,7 +362,12 @@ fn runtime_routes_summary_through_configured_backend_model_pair() {
     let workspace = tempfile::tempdir().expect("workspace");
     let mut runtime = AgentRuntime::new(OneShotLlm);
     runtime.default_workspace = Some(workspace.path().to_path_buf());
-    let mut task = AgentTask::new("memory_route", "main-model", "system", "continue");
+    let mut task = AgentTask::new(
+        "memory_route",
+        "main-model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "continue",
+    );
     task.initial_messages = vec![
         Message::system("system"),
         Message::user("u".repeat(160)),
@@ -438,7 +443,7 @@ fn runtime_routes_session_extraction_through_its_own_backend_model_pair() {
     let mut task = AgentTask::new(
         "session_memory_route",
         "main-model",
-        "system",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
         "remember this decision",
     );
     task.max_cycles = 1;
@@ -612,7 +617,12 @@ impl LlmClient for PromptTooLongThenSuccess {
 }
 
 fn ptl_task() -> AgentTask {
-    let mut task = AgentTask::new("memory_ptl", "main-model", "system", "continue");
+    let mut task = AgentTask::new(
+        "memory_ptl",
+        "main-model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "continue",
+    );
     task.initial_messages = vec![
         Message::system("system"),
         Message::user("first"),

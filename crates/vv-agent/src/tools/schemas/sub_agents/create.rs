@@ -1,27 +1,6 @@
 use serde_json::{json, Value};
 
-const CREATE_SUB_TASK_DESCRIPTION: &str = r#"Create sub-tasks for a configured sub-agent.
-
-Modes:
-- Single task: provide `task_description` (+ optional `output_requirements`) for one self-contained objective.
-- Batch task: provide `tasks` array for multiple independent tasks of the same sub-agent. Use this for parallel work that can be split into independent investigations, file reads, reviews, or implementation checks.
-
-Delegation rules:
-- Use the exact sub-agent id from the configured `sub_agents` mapping.
-- Give the child concrete scope, relevant files or commands, constraints, and expected evidence.
-- Do not use batch mode for ordered edits, shared mutable state, dependent tasks, or work where one child result changes what the next child should do.
-- Keep `include_main_summary=false` for independent tasks; enable it only when the child truly needs parent context.
-- `exclude_files_pattern` is a discovery filter over normalized workspace-relative paths. It hides matches from child file listing, search, and status snapshots, but direct known-path access, shell commands, and custom tools remain available. It is not an access-control boundary or sandbox.
-
-Execution:
-- `wait_for_completion=true` (default): wait for result(s) and return final payload. Batch mode may run requests through the runtime execution backend in parallel and returns a summary plus one result per task.
-- `wait_for_completion=false`: start background sub-task(s) and return `task_id` / `task_ids` for later polling.
-- After a schema-valid batch is accepted, individual child executions or background submissions can still fail; inspect each runtime result before deciding whether the parent task can continue.
-
-Result handling:
-- For synchronous runs, read every returned result and error entry before using the child output.
-- Treat runtime partial failures as unresolved work unless the failed child was optional or its failure is itself the required evidence.
-- For background runs, preserve the returned task ids and use `sub_task_status` later to inspect progress, fetch results, or send follow-up messages."#;
+const CREATE_SUB_TASK_DESCRIPTION: &str = "Run one task, or independent batch tasks, on a configured sub-agent. Use the exact agent id, keep tasks self-contained, and choose background execution only when the parent can continue independently.";
 
 pub(in crate::tools::schemas) fn create_sub_task_schema() -> Value {
     json!({
@@ -34,20 +13,20 @@ pub(in crate::tools::schemas) fn create_sub_task_schema() -> Value {
                 "properties": {
                     "agent_id": {
                         "type": "string",
-                        "description": "Exact sub-agent identifier from the configured `sub_agents` mapping. Do not pass a display name, model name, or inferred label."
+                        "description": "Exact sub-agent identifier from the configured `sub_agents` mapping."
                     },
                     "task_description": {
                         "type": "string",
-                        "description": "Single-task description for one self-contained objective. Mutually exclusive with `tasks`; give a concrete objective, constraints, relevant files or commands, and the evidence or deliverable expected by the parent Agent."
+                        "description": "Single-task description for one self-contained objective."
                     },
                     "output_requirements": {
                         "type": "string",
-                        "description": "Optional output constraints for single-task mode. State success criteria, expected format, concrete deliverables, and verification evidence the parent Agent needs."
+                        "description": "Optional output constraints for single-task mode."
                     },
                     "tasks": {
                         "type": "array",
                         "minItems": 1,
-                        "description": "Batch mode: multiple independent tasks for the same sub-agent. Use when parallel work can be safely delegated without shared mutable state or ordering dependencies.",
+                        "description": "Batch mode: multiple independent tasks for the same sub-agent.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -65,15 +44,15 @@ pub(in crate::tools::schemas) fn create_sub_task_schema() -> Value {
                     },
                     "include_main_summary": {
                         "type": "boolean",
-                        "description": "Whether to include parent-task summary context. Default false. Use when the child needs parent context; keep false for independent tasks."
+                        "description": "Whether to include parent-task summary context."
                     },
                     "exclude_files_pattern": {
                         "type": "string",
-                        "description": "Optional portable regex applied to normalized workspace-relative paths for child discovery only. Matching paths are hidden from file listing, search, and status snapshots. Direct known-path access, shell commands, and custom tools remain available, so this is not an access-control boundary or sandbox. Blank values are treated as absent; lookaround, backreferences, Unicode property escapes, engine-specific anchors/escapes, possessive quantifiers, and character-class set operations are rejected."
+                        "description": "Optional portable regex applied to normalized workspace-relative paths for child discovery only."
                     },
                     "wait_for_completion": {
                         "type": "boolean",
-                        "description": "Whether to wait for completion. Default true; false starts background execution. When false, returned task ids can be polled with `sub_task_status`."
+                        "description": "Whether to wait for completion."
                     }
                 },
                 "required": ["agent_id"]

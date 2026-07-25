@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use vv_agent::{
     assemble_context_fragments, Agent, ContextError, ContextFragment, ContextProvider,
-    ContextRequest, LLMResponse, ModelRef, RunConfig, Runner, ScriptedModelProvider, ToolCall,
+    ContextRequest, LLMResponse, ModelRef, NoToolPolicy, PromptBundle, PromptSection, RunConfig,
+    Runner, ScriptStep, ScriptedModelProvider, SubAgentConfig, ToolCall,
 };
 
 struct StaticProvider;
@@ -54,6 +56,35 @@ fn context_budget_counts_unicode_characters_instead_of_utf8_bytes() {
     assert_eq!(bundle.prompt, "你好世界");
     assert_eq!(bundle.total_chars, 4);
     assert!(bundle.omitted_section_ids.is_empty());
+}
+
+#[test]
+fn provider_fragments_use_utf16_id_order_after_priority_and_stability() {
+    let request = ContextRequest::for_test("assistant", "input");
+    let bundle = assemble_context_fragments(
+        &request,
+        vec![
+            ContextFragment::new("\u{e000}", "bmp")
+                .priority(10)
+                .stable(true),
+            ContextFragment::new("\u{10000}", "supplementary")
+                .priority(10)
+                .stable(true),
+            ContextFragment::new("volatile", "later")
+                .priority(10)
+                .stable(false),
+        ],
+    )
+    .expect("bundle");
+
+    assert_eq!(
+        bundle
+            .sections
+            .iter()
+            .map(|section| section.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["\u{10000}", "\u{e000}", "volatile"]
+    );
 }
 
 struct InspectingProvider;
@@ -121,18 +152,154 @@ async fn runner_globally_orders_instructions_and_provider_context_with_cache_met
     let request = requests.first().expect("model request");
     assert_eq!(
         request.messages[0].content,
-        "Current order status.\n\nCheck facts."
+        "Check facts.\n\nCurrent order status."
     );
     assert_eq!(
-        request.metadata["system_prompt_sources"],
-        json!({
-            "agent_instructions": "agent.instructions",
-            "runtime_context": "test"
+        request
+            .prompt_bundle
+            .sections
+            .iter()
+            .map(|section| section.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["agent_instructions", "runtime_context"]
+    );
+    assert_eq!(request.messages[0].content, request.prompt_bundle.flatten());
+    assert!(request.metadata.get("system_prompt_sections").is_none());
+    assert!(request.metadata.get("system_prompt_sources").is_none());
+    assert!(request.metadata.get("system_prompt_stable_hash").is_none());
+}
+
+struct CountingProvider {
+    calls: Arc<AtomicUsize>,
+}
+
+impl ContextProvider for CountingProvider {
+    fn fragments(
+        &self,
+        _request: &ContextRequest<'_>,
+    ) -> Result<Vec<ContextFragment>, ContextError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(vec![
+            ContextFragment::new("runtime_hint", "Runtime hint.")
+                .priority(40)
+                .stable(false)
+                .source("provider.runtime"),
+            ContextFragment::new("policy", "Policy first.")
+                .priority(20)
+                .stable(true)
+                .source("provider.policy"),
+        ])
+    }
+}
+
+#[tokio::test]
+async fn runner_resolves_prompt_producers_once_per_run_and_reuses_the_bundle_across_cycles() {
+    let instruction_calls = Arc::new(AtomicUsize::new(0));
+    let instruction_calls_for_agent = Arc::clone(&instruction_calls);
+    let context_calls = Arc::new(AtomicUsize::new(0));
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let steps = (0..6)
+        .map(|request_index| {
+            let captured_requests = Arc::clone(&captured);
+            ScriptStep::callback(move |request| {
+                captured_requests
+                    .lock()
+                    .expect("requests")
+                    .push(request.clone());
+                if request_index % 3 == 2 {
+                    let args = BTreeMap::from([("message".to_string(), json!("done"))]);
+                    Ok(LLMResponse::with_tool_calls(
+                        "",
+                        vec![ToolCall::new("finish", "task_finish", args)],
+                    ))
+                } else {
+                    Ok(LLMResponse::new("continue"))
+                }
+            })
         })
+        .collect();
+    let provider = ScriptedModelProvider::from_steps("scripted", "demo-model", steps);
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace("./workspace")
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("ops")
+        .dynamic_prompt_bundle(move |_context, _agent| {
+            let run_index = instruction_calls_for_agent.fetch_add(1, Ordering::SeqCst);
+            PromptBundle::new(vec![
+                PromptSection::new("identity", "Identity first.", true)
+                    .source("agent.instructions"),
+                PromptSection::new("run_data", "Request scoped data.", false)
+                    .source("agent.instructions"),
+                PromptSection::new(
+                    "current_time",
+                    format!("2026-07-25T00:00:0{run_index}Z"),
+                    false,
+                )
+                .source("run.clock"),
+            ])
+            .expect("instruction bundle")
+        })
+        .model(ModelRef::named("demo-model"))
+        .no_tool_policy(NoToolPolicy::Continue)
+        .sub_agent(
+            "researcher",
+            SubAgentConfig::new("demo-model", "Finds source evidence."),
+        )
+        .build()
+        .expect("agent");
+    let config = || {
+        RunConfig::builder()
+            .context_provider(Arc::new(CountingProvider {
+                calls: Arc::clone(&context_calls),
+            }))
+            .max_cycles(3)
+            .build()
+    };
+
+    runner
+        .run_with_config(&agent, "first run", config())
+        .await
+        .expect("first run");
+    runner
+        .run_with_config(&agent, "second run", config())
+        .await
+        .expect("second run");
+
+    assert_eq!(instruction_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(context_calls.load(Ordering::SeqCst), 2);
+    let requests = captured.lock().expect("requests");
+    assert_eq!(requests.len(), 6);
+    assert!(requests[..3]
+        .iter()
+        .all(|request| request.prompt_bundle == requests[0].prompt_bundle));
+    assert!(requests[3..]
+        .iter()
+        .all(|request| request.prompt_bundle == requests[3].prompt_bundle));
+    assert_ne!(requests[0].prompt_bundle, requests[3].prompt_bundle);
+    assert_eq!(
+        requests[0].prompt_bundle.stable_hash,
+        requests[3].prompt_bundle.stable_hash
     );
     assert_eq!(
-        request.metadata["system_prompt_sections"][0]["id"],
-        json!("runtime_context")
+        requests[0]
+            .prompt_bundle
+            .sections
+            .iter()
+            .map(|section| section.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "identity",
+            "run_data",
+            "current_time",
+            "configured_sub_agents",
+            "policy",
+            "runtime_hint",
+        ]
     );
-    assert!(request.metadata["system_prompt_stable_hash"].is_string());
+    for request in requests.iter() {
+        assert_eq!(request.messages[0].content, request.prompt_bundle.flatten());
+        assert!(request.metadata.get("system_prompt_sections").is_none());
+    }
 }

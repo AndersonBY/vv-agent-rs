@@ -126,14 +126,8 @@ fn real_child_run_projects_capabilities_identity_model_and_filtered_workspace() 
                         .expect("known hidden path remains readable"),
                 );
                 ToolExecutionResult {
-                    tool_call_id: String::new(),
-                    content: json!({"ok": true}).to_string(),
-                    status: ToolResultStatus::Success,
-                    directive: ToolDirective::Continue,
-                    error_code: None,
-                    metadata: BTreeMap::new(),
                     image_url: Some("memory://child-image".to_string()),
-                    image_path: None,
+                    ..ToolExecutionResult::success("", json!({"ok": true}).to_string())
                 }
             }),
         ))
@@ -148,7 +142,13 @@ fn real_child_run_projects_capabilities_identity_model_and_filtered_workspace() 
     let manager = SubTaskManager::default();
     let mut runtime = AgentRuntime::new(shared_llm).with_tool_registry(registry);
     runtime.workspace_backend = backend;
-    let mut parent = AgentTask::new("parent-task", "parent-model", "Parent prompt", "Delegate");
+    let mut parent = AgentTask::new(
+        "parent-task",
+        "parent-model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+            .expect("prompt bundle"),
+        "Delegate",
+    );
     parent.max_cycles = 4;
     parent.extra_tool_names = vec!["inspect_child_context".to_string()];
     parent.model_settings = Some(ModelSettings {
@@ -326,7 +326,13 @@ fn runtime_boundary_reports_fixture_validation_errors_and_pairs_lifecycle() {
             ),
         ]);
         let runtime = AgentRuntime::new(llm);
-        let mut parent = AgentTask::new("parent-task", "parent-model", "Parent prompt", "Delegate");
+        let mut parent = AgentTask::new(
+            "parent-task",
+            "parent-model",
+            vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+                .expect("prompt bundle"),
+            "Delegate",
+        );
         parent.max_cycles = 3;
         parent
             .sub_agents

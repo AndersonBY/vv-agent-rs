@@ -18,6 +18,7 @@ pub(super) fn apply_prompt_cache_to_chat_request(
     endpoint_type: &str,
     model: &str,
     metadata: &Value,
+    prompt_bundle: &crate::prompt::PromptBundle,
     chat_request: &mut vv_llm::ChatRequest,
 ) {
     let messages = chat_request
@@ -36,6 +37,7 @@ pub(super) fn apply_prompt_cache_to_chat_request(
         &messages,
         &tools,
         Some(&chat_request.extra_body),
+        prompt_bundle,
         Some(metadata),
     );
     apply_planned_message_content(&mut chat_request.messages, planned_messages);

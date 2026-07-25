@@ -747,7 +747,8 @@ fn explicit_backend_and_resolved_limits_reach_real_child_request_and_run_context
         let mut parent = AgentTask::new(
             format!("explicit-backend-parent-{label}"),
             "parent-model",
-            "Parent prompt",
+            vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+                .expect("prompt bundle"),
             "Delegate",
         );
         parent.max_cycles = 3;
@@ -875,7 +876,13 @@ fn lifecycle_starts_before_model_resolution_failure_and_remains_paired() {
             )],
         )),
     ]);
-    let mut parent = AgentTask::new("parent-task", "parent-model", "Parent prompt", "Delegate");
+    let mut parent = AgentTask::new(
+        "parent-task",
+        "parent-model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+            .expect("prompt bundle"),
+        "Delegate",
+    );
     parent.max_cycles = 2;
     let mut child = SubAgentConfig::new("child-model", "Research");
     child.backend = Some(

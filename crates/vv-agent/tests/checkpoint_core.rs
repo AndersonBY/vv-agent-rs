@@ -138,7 +138,7 @@ fn rfc8785_definition_operation_and_event_vectors_match() {
             payload["tool_call_id"].as_str().unwrap(),
             payload["tool_name"].as_str().unwrap(),
             &payload["arguments"],
-            payload["idempotency_key"].as_str().unwrap(),
+            payload["idempotency_key"].as_str(),
         )
         .unwrap(),
         tool["sha256"]
@@ -157,7 +157,7 @@ fn codec_round_trips_canonical_payload_and_rejects_invalid_input() {
     let checkpoint = checkpoint_from_value(&expected, 262_144).unwrap();
     assert_eq!(checkpoint_to_value(&checkpoint, 262_144).unwrap(), expected);
 
-    let unknown_schema = json!({"schema_version": "vv-agent.checkpoint.v4"});
+    let unknown_schema = json!({"schema_version": "vv-agent.checkpoint.v5"});
     let error = checkpoint_from_value(&unknown_schema, 262_144).unwrap_err();
     assert_eq!(error.code(), "checkpoint_schema_unsupported");
 

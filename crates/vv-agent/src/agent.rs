@@ -12,6 +12,7 @@ use crate::output_validation::{
     HostOutputValidator, OutputRepair, OutputRepairRequest, OutputValidationContext,
     OutputValidationResult,
 };
+use crate::prompt::PromptBundle;
 use crate::runtime::RuntimeHook;
 use crate::tools::common::trim_portable_whitespace;
 use crate::tools::{AgentToolBuilder, BackgroundAgentTaskBuilder};
@@ -20,13 +21,17 @@ use crate::types::{Metadata, NoToolPolicy, SubAgentConfig};
 
 pub type InstructionProvider =
     Arc<dyn Fn(&crate::context::RunContext, &Agent) -> String + Send + Sync>;
+pub type PromptBundleProvider =
+    Arc<dyn Fn(&crate::context::RunContext, &Agent) -> PromptBundle + Send + Sync>;
 pub type OutputValidator = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct Agent {
     name: String,
     instructions: String,
+    prompt_bundle: Option<PromptBundle>,
     instruction_provider: Option<InstructionProvider>,
+    prompt_bundle_provider: Option<PromptBundleProvider>,
     model: Option<ModelRef>,
     model_settings: ModelSettings,
     tools: Vec<Arc<dyn Tool>>,
@@ -56,7 +61,9 @@ impl Agent {
             agent: Self {
                 name: name.into(),
                 instructions: String::new(),
+                prompt_bundle: None,
                 instruction_provider: None,
+                prompt_bundle_provider: None,
                 model: None,
                 model_settings: ModelSettings::default(),
                 tools: Vec::new(),
@@ -93,14 +100,32 @@ impl Agent {
     }
 
     pub(crate) fn has_dynamic_instructions(&self) -> bool {
-        self.instruction_provider.is_some()
+        self.instruction_provider.is_some() || self.prompt_bundle_provider.is_some()
     }
 
     pub fn resolve_instructions(&self, context: &crate::context::RunContext) -> String {
-        self.instruction_provider
-            .as_ref()
-            .map(|provider| provider(context, self))
-            .unwrap_or_else(|| self.instructions.clone())
+        self.resolve_prompt_bundle(context)
+            .map(|bundle| bundle.flatten())
+            .unwrap_or_default()
+    }
+
+    pub fn resolve_prompt_bundle(
+        &self,
+        context: &crate::context::RunContext,
+    ) -> Result<PromptBundle, String> {
+        if let Some(provider) = self.prompt_bundle_provider.as_ref() {
+            let bundle = provider(context, self);
+            bundle.validate()?;
+            return Ok(bundle);
+        }
+        if let Some(provider) = self.instruction_provider.as_ref() {
+            return PromptBundle::from_instruction_text(provider(context, self));
+        }
+        if let Some(bundle) = self.prompt_bundle.as_ref() {
+            bundle.validate()?;
+            return Ok(bundle.clone());
+        }
+        PromptBundle::from_instruction_text(self.instructions.clone())
     }
 
     pub fn model(&self) -> Option<&ModelRef> {
@@ -208,7 +233,17 @@ pub struct AgentBuilder {
 impl AgentBuilder {
     pub fn instructions(mut self, instructions: impl Into<String>) -> Self {
         self.agent.instructions = instructions.into();
+        self.agent.prompt_bundle = None;
         self.agent.instruction_provider = None;
+        self.agent.prompt_bundle_provider = None;
+        self
+    }
+
+    pub fn prompt_bundle(mut self, prompt_bundle: PromptBundle) -> Self {
+        self.agent.instructions = prompt_bundle.flatten();
+        self.agent.prompt_bundle = Some(prompt_bundle);
+        self.agent.instruction_provider = None;
+        self.agent.prompt_bundle_provider = None;
         self
     }
 
@@ -217,7 +252,20 @@ impl AgentBuilder {
         provider: impl Fn(&crate::context::RunContext, &Agent) -> String + Send + Sync + 'static,
     ) -> Self {
         self.agent.instructions.clear();
+        self.agent.prompt_bundle = None;
         self.agent.instruction_provider = Some(Arc::new(provider));
+        self.agent.prompt_bundle_provider = None;
+        self
+    }
+
+    pub fn dynamic_prompt_bundle(
+        mut self,
+        provider: impl Fn(&crate::context::RunContext, &Agent) -> PromptBundle + Send + Sync + 'static,
+    ) -> Self {
+        self.agent.instructions.clear();
+        self.agent.prompt_bundle = None;
+        self.agent.instruction_provider = None;
+        self.agent.prompt_bundle_provider = Some(Arc::new(provider));
         self
     }
 
@@ -374,7 +422,10 @@ impl AgentBuilder {
         if self.agent.name.trim().is_empty() {
             return Err("agent name cannot be empty".to_string());
         }
-        if self.agent.instructions.trim().is_empty() && self.agent.instruction_provider.is_none() {
+        if self.agent.instructions.trim().is_empty()
+            && self.agent.instruction_provider.is_none()
+            && self.agent.prompt_bundle_provider.is_none()
+        {
             return Err("agent instructions cannot be empty".to_string());
         }
         if let Some(error) = self.sub_agent_error {

@@ -6,13 +6,22 @@ use std::time::Duration;
 
 use futures_util::stream;
 use serde_json::{json, Value};
-use vv_agent::llm::{PROMPT_CACHE_ENABLED_KEY, SYSTEM_PROMPT_SECTIONS_KEY};
+use vv_agent::llm::PROMPT_CACHE_ENABLED_KEY;
+use vv_agent::prompt::{PromptBundle, PromptSection};
 use vv_agent::types::AgentTask;
 use vv_agent::{
     AgentRuntime, AgentStatus, ExecutionContext, LlmClient, LlmRequest, LlmStreamCallback, Message,
     ModelSettings, ResponseFormat, RunEvent, RunEventPayload, RuntimeRunControls, ToolChoice,
     VvLlmClient,
 };
+
+fn prompt_bundle() -> PromptBundle {
+    PromptBundle::from_instruction_text("system").expect("prompt bundle")
+}
+
+fn llm_request(model: impl Into<String>, messages: Vec<Message>) -> LlmRequest {
+    LlmRequest::new(model, messages, prompt_bundle())
+}
 
 #[derive(Clone, Default)]
 struct StreamingChatClient {

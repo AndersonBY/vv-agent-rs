@@ -61,9 +61,9 @@ fn bash_tool_executes_command_in_workspace() {
         .expect("bash tool");
 
     assert_eq!(result.status, ToolResultStatus::Success);
-    assert!(result.content.contains("\"exit_code\":0"));
-    assert!(result.content.contains("hello"));
-    assert!(!result.content.contains("\"command\""));
+    assert_eq!(result.content, "hello\n");
+    assert_eq!(result.metadata["exit_code"], 0);
+    assert_eq!(result.metadata["cwd"], ".");
 }
 
 #[test]
@@ -180,7 +180,8 @@ fn background_command_lifecycle_can_be_polled() {
     assert_eq!(start_payload["status"], "running");
     assert!(start_payload.get("command").is_none());
 
-    let final_payload = wait_for_background_payload("background command finished", || {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let final_result = loop {
         let probe = registry
             .execute(
                 &ToolCall::new(
@@ -191,21 +192,17 @@ fn background_command_lifecycle_can_be_polled() {
                 &mut context,
             )
             .expect("check background command");
-        let payload: Value = serde_json::from_str(&probe.content).expect("probe payload");
-        if probe.status != ToolResultStatus::Running {
-            assert_eq!(probe.status, ToolResultStatus::Success);
-            assert_eq!(probe.metadata["status"], json!("completed"));
-            assert_eq!(probe.metadata["exit_code"], json!(0));
+        if probe.status == ToolResultStatus::Running {
+            assert!(Instant::now() < deadline, "background command timed out");
+            thread::sleep(Duration::from_millis(50));
+            continue;
         }
-        payload
-    });
-    assert_eq!(final_payload["status"], "completed");
-    assert_eq!(final_payload["exit_code"], 0);
-    assert!(final_payload["command"]
-        .as_str()
-        .expect("command")
-        .contains("printf start"));
-    assert_eq!(final_payload["output"], "startdone");
+        break probe;
+    };
+    assert_eq!(final_result.status, ToolResultStatus::Success);
+    assert_eq!(final_result.metadata["status"], json!("completed"));
+    assert_eq!(final_result.metadata["exit_code"], json!(0));
+    assert_eq!(final_result.content, "startdone");
 }
 
 #[test]
@@ -514,9 +511,8 @@ fn bash_tool_passes_stdin_to_command() {
         .expect("bash stdin");
 
     assert_eq!(result.status, ToolResultStatus::Success);
-    let payload: Value = serde_json::from_str(&result.content).expect("stdin payload");
-    assert_eq!(payload["exit_code"], 0);
-    assert_eq!(payload["output"], "hello from stdin\n");
+    assert_eq!(result.metadata["exit_code"], 0);
+    assert_eq!(result.content, "hello from stdin\n");
 }
 
 #[test]
@@ -581,8 +577,7 @@ fn bash_tool_uses_environment_from_metadata() {
         .expect("bash env");
 
     assert_eq!(result.status, ToolResultStatus::Success);
-    let payload: Value = serde_json::from_str(&result.content).expect("env payload");
-    assert_eq!(payload["output"], "from-metadata");
+    assert_eq!(result.content, "from-metadata");
 }
 
 #[test]
@@ -660,7 +655,141 @@ fn bash_tool_allows_absolute_exec_dir_when_enabled() {
         .expect("bash tool");
 
     assert_eq!(result.status, ToolResultStatus::Success);
-    let payload: Value = serde_json::from_str(&result.content).expect("bash payload");
-    assert_eq!(payload["cwd"], json!(outside.path().to_string_lossy()));
-    assert_eq!(payload["output"], json!("outside"));
+    assert_eq!(
+        result.metadata["cwd"],
+        json!(outside.path().to_string_lossy())
+    );
+    assert_eq!(result.content, "outside");
+}
+
+#[test]
+fn foreground_bash_uses_exact_preview_boundary_and_persists_complete_artifact() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.task_id = "task-7".to_string();
+
+    let exact = registry
+        .execute(
+            &ToolCall::new(
+                "bash_exact",
+                "bash",
+                BTreeMap::from([("command".to_string(), json!("printf '%012000d' 0"))]),
+            ),
+            &mut context,
+        )
+        .expect("exact boundary");
+    assert_eq!(exact.content.chars().count(), 12_000);
+    assert!(!exact.truncated);
+    assert!(exact.artifact.is_none());
+
+    let truncated = registry
+        .execute(
+            &ToolCall::new(
+                "bash_truncated",
+                "bash",
+                BTreeMap::from([(
+                    "command".to_string(),
+                    json!(concat!(
+                        "printf '%*s' 6000 '' | tr ' ' A; ",
+                        "printf '%*s' 48 '' | tr ' ' M; ",
+                        "printf '%*s' 5953 '' | tr ' ' Z"
+                    )),
+                )]),
+            ),
+            &mut context,
+        )
+        .expect("truncated output");
+
+    assert!(truncated.truncated);
+    assert_eq!(truncated.content.chars().count(), 12_000);
+    assert_eq!(
+        truncated.content,
+        format!(
+            "{}\n... output omitted; full text in artifact ...\n{}",
+            "A".repeat(6_000),
+            "Z".repeat(5_953)
+        )
+    );
+    assert_eq!(truncated.original_bytes, Some(12_001));
+    assert_eq!(truncated.visible_bytes, Some(12_000));
+    let artifact = truncated.artifact.expect("artifact");
+    assert!(artifact.path.starts_with(".vv-agent/artifacts/task-7/"));
+    assert_eq!(artifact.size_bytes, 12_001);
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join(&artifact.path)).expect("artifact text"),
+        format!(
+            "{}{}{}",
+            "A".repeat(6_000),
+            "M".repeat(48),
+            "Z".repeat(5_953)
+        )
+    );
+}
+
+#[test]
+fn background_bash_reuses_terminal_artifact_across_polls() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    context.task_id = "background-task".to_string();
+    let start = registry
+        .execute(
+            &ToolCall::new(
+                "background-large",
+                "bash",
+                BTreeMap::from([
+                    ("command".to_string(), json!("printf '%012001d' 0")),
+                    ("run_in_background".to_string(), json!(true)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("background start");
+    let session_id = serde_json::from_str::<Value>(&start.content).expect("start payload")
+        ["session_id"]
+        .as_str()
+        .expect("session id")
+        .to_string();
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let first = loop {
+        let result = registry
+            .execute(
+                &ToolCall::new(
+                    "background-large-check",
+                    "check_background_command",
+                    BTreeMap::from([("session_id".to_string(), json!(session_id))]),
+                ),
+                &mut context,
+            )
+            .expect("background check");
+        if result.status != ToolResultStatus::Running {
+            break result;
+        }
+        assert!(Instant::now() < deadline, "background artifact timed out");
+        thread::sleep(Duration::from_millis(50));
+    };
+    let first_artifact = first.artifact.clone().expect("first artifact");
+    assert!(first.truncated);
+
+    let second = registry
+        .execute(
+            &ToolCall::new(
+                "background-large-check-again",
+                "check_background_command",
+                BTreeMap::from([("session_id".to_string(), json!(session_id))]),
+            ),
+            &mut context,
+        )
+        .expect("second background check");
+    assert_eq!(second.artifact.as_ref(), Some(&first_artifact));
+    assert_eq!(second.content, first.content);
+    assert_eq!(
+        std::fs::read_to_string(workspace.path().join(first_artifact.path))
+            .expect("background artifact")
+            .chars()
+            .count(),
+        12_001
+    );
 }

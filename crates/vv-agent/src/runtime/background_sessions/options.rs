@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Child;
+use std::sync::Arc;
 use std::time::Instant;
+
+use crate::workspace::WorkspaceBackend;
 
 #[derive(Debug, Clone, Default)]
 pub struct BackgroundSessionStartOptions {
@@ -20,6 +23,9 @@ pub struct BackgroundSessionAdoptOptions {
     pub output_path: PathBuf,
     pub shell: Option<String>,
     pub started_at: Option<Instant>,
+    pub artifact_backend: Option<Arc<dyn WorkspaceBackend>>,
+    pub artifact_task_id: String,
+    pub artifact_tool_call_id: String,
 }
 
 impl BackgroundSessionAdoptOptions {
@@ -38,6 +44,9 @@ impl BackgroundSessionAdoptOptions {
             output_path: output_path.into(),
             shell: None,
             started_at: None,
+            artifact_backend: None,
+            artifact_task_id: String::new(),
+            artifact_tool_call_id: String::new(),
         }
     }
 
@@ -48,6 +57,18 @@ impl BackgroundSessionAdoptOptions {
 
     pub fn with_started_at(mut self, started_at: Instant) -> Self {
         self.started_at = Some(started_at);
+        self
+    }
+
+    pub fn with_artifact_context(
+        mut self,
+        backend: Arc<dyn WorkspaceBackend>,
+        task_id: impl Into<String>,
+        tool_call_id: impl Into<String>,
+    ) -> Self {
+        self.artifact_backend = Some(backend);
+        self.artifact_task_id = task_id.into();
+        self.artifact_tool_call_id = tool_call_id.into();
         self
     }
 }

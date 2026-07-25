@@ -21,7 +21,8 @@ fn configured_parent(extra_tool_names: &[&str], child_exclusions: &[&str]) -> Ag
     let mut parent = AgentTask::new(
         "parent-policy-task",
         SHARED_MODEL,
-        "Delegate to the configured child.",
+        vv_agent::prompt::PromptBundle::from_instruction_text("Delegate to the configured child.")
+            .expect("prompt bundle"),
         "Exercise the child tool policy.",
     );
     parent.max_cycles = 2;

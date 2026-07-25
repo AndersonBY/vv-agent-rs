@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 use vv_agent::config::build_vv_llm_from_local_settings;
-use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
+use vv_agent::prompt::{build_system_prompt_bundle_with_options, BuildSystemPromptOptions};
 use vv_agent::types::AgentTask;
 use vv_agent::{
     build_default_registry, AgentRuntime, RunEvent, RunEventHandler, RuntimeRunControls,
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (llm, resolved) = build_vv_llm_from_local_settings(&settings_file, &backend, &model, 90.0)?;
     let runtime = AgentRuntime::new(llm).with_tool_registry(build_default_registry());
 
-    let system_prompt = build_system_prompt_with_options(
+    let system_prompt = build_system_prompt_bundle_with_options(
         "You are a reliable execution agent. Use tools explicitly and give clear final outputs.",
         BuildSystemPromptOptions {
             language: "zh-CN".to_string(),

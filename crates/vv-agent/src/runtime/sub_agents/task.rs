@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::config::project_resolved_model_limits;
 use crate::prompt::{
     build_raw_system_prompt_sections, build_system_prompt_bundle_with_options,
-    BuildSystemPromptOptions,
+    BuildSystemPromptOptions, PromptBundle,
 };
 use crate::runtime::tool_planner::project_tool_policy;
 use crate::types::{AgentTask, NoToolPolicy, SubAgentConfig, SubTaskRequest};
@@ -21,12 +21,9 @@ pub(super) fn build_sub_agent_task(
     let parent_task = &context.parent_task;
     let sub_agent = inputs.sub_agent;
     let request = inputs.request;
-    let (system_prompt, generated_sections) = if let Some(system_prompt) = &sub_agent.system_prompt
-    {
-        (
-            system_prompt.clone(),
-            build_raw_system_prompt_sections(system_prompt),
-        )
+    let prompt_bundle = if let Some(system_prompt) = &sub_agent.system_prompt {
+        PromptBundle::new(build_raw_system_prompt_sections(system_prompt))
+            .expect("validated sub-agent system prompt produces a bundle")
     } else {
         let language = parent_task
             .metadata
@@ -39,7 +36,7 @@ pub(super) fn build_sub_agent_task(
             .get("available_skills")
             .filter(|value| value.is_array())
             .cloned();
-        let prompt_bundle = build_system_prompt_bundle_with_options(
+        build_system_prompt_bundle_with_options(
             &sub_agent.description,
             BuildSystemPromptOptions {
                 language,
@@ -51,8 +48,7 @@ pub(super) fn build_sub_agent_task(
                 workspace: Some(context.workspace_path.clone()),
                 ..BuildSystemPromptOptions::default()
             },
-        );
-        (prompt_bundle.prompt, prompt_bundle.sections)
+        )
     };
     let mut user_prompt = request.task_description.clone();
     if !request.output_requirements.is_empty() {
@@ -72,7 +68,7 @@ pub(super) fn build_sub_agent_task(
     let mut sub_task = AgentTask::new(
         &inputs.lifecycle.task_id,
         inputs.resolved_model_id.to_string(),
-        system_prompt,
+        prompt_bundle,
         user_prompt,
     );
     sub_task.max_cycles = sub_agent.max_cycles.max(1);
@@ -94,7 +90,6 @@ pub(super) fn build_sub_agent_task(
         inputs.lifecycle,
         request,
         &context.workspace_path,
-        generated_sections,
         sub_agent.session_memory_enabled,
     );
     project_resolved_model_limits(
@@ -123,7 +118,6 @@ fn build_sub_task_metadata(
     lifecycle: &SubRunLifecycle,
     request: &SubTaskRequest,
     workspace_path: &Path,
-    system_prompt_sections: Vec<Value>,
     session_memory_enabled: bool,
 ) -> BTreeMap<String, Value> {
     let mut metadata = BTreeMap::from([
@@ -167,11 +161,6 @@ fn build_sub_task_metadata(
     metadata.extend(request.metadata.clone());
     for key in RESERVED_SUB_AGENT_METADATA_KEYS {
         metadata.remove(key);
-    }
-    if !system_prompt_sections.is_empty() {
-        metadata
-            .entry("system_prompt_sections".to_string())
-            .or_insert(Value::Array(system_prompt_sections));
     }
     metadata.extend(BTreeMap::from([
         ("is_sub_task".to_string(), Value::Bool(true)),
@@ -353,7 +342,7 @@ mod parity_tests {
         let mut parent = AgentTask::new(
             "parent-task",
             "parent-model",
-            "Parent prompt",
+            crate::prompt::PromptBundle::from_instruction_text("Parent prompt").unwrap(),
             "Parent task",
         );
         parent.max_cycles = 6;

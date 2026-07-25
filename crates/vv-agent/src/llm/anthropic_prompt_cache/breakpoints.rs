@@ -1,23 +1,23 @@
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 use super::blocks::{
     block_type, content_blocks, ensure_content_blocks, is_thinking_block_type, set_cache_control,
 };
+use super::cache_control_ephemeral;
 use super::estimate::{estimate_block_chars, estimate_tokens, estimate_tool_chars};
-use super::sections::normalize_system_prompt_sections;
-use super::{cache_control_ephemeral, SYSTEM_PROMPT_SECTIONS_KEY};
+use crate::prompt::PromptBundle;
 
 const MAX_BREAKPOINTS: usize = 4;
 
 pub(super) fn apply_cache_breakpoints(
     messages: &mut [Value],
     tools: &mut [Value],
-    metadata: Option<&Map<String, Value>>,
+    prompt_bundle: &PromptBundle,
     token_threshold: usize,
 ) {
     let mut breakpoint_budget = MAX_BREAKPOINTS;
     let system_char_count =
-        apply_system_cache_breakpoint(messages, metadata, token_threshold, &mut breakpoint_budget);
+        apply_system_cache_breakpoint(messages, prompt_bundle, &mut breakpoint_budget);
     let tool_char_count = apply_tool_cache_breakpoint(
         tools,
         system_char_count,
@@ -34,8 +34,7 @@ pub(super) fn apply_cache_breakpoints(
 
 fn apply_system_cache_breakpoint(
     messages: &mut [Value],
-    metadata: Option<&Map<String, Value>>,
-    token_threshold: usize,
+    prompt_bundle: &PromptBundle,
     breakpoint_budget: &mut usize,
 ) -> usize {
     if messages.is_empty() || *breakpoint_budget == 0 {
@@ -55,37 +54,31 @@ fn apply_system_cache_breakpoint(
         return 0;
     };
 
-    let sections = normalize_system_prompt_sections(
-        metadata.and_then(|metadata| metadata.get(SYSTEM_PROMPT_SECTIONS_KEY)),
-    );
-    let mut blocks = if sections.is_empty() {
-        ensure_content_blocks(system_message)
-    } else {
-        sections
-            .iter()
-            .map(|section| json!({"type": "text", "text": section.text}))
-            .collect::<Vec<_>>()
-    };
+    let mut blocks = prompt_bundle
+        .sections
+        .iter()
+        .enumerate()
+        .map(|(index, section)| {
+            let separator = if index + 1 == prompt_bundle.sections.len() {
+                ""
+            } else {
+                "\n\n"
+            };
+            json!({"type": "text", "text": format!("{}{separator}", section.text)})
+        })
+        .collect::<Vec<_>>();
     if blocks.is_empty() {
         return 0;
     }
 
     let prefix_char_count = blocks.iter().map(estimate_block_chars).sum();
-    if estimate_tokens(prefix_char_count) < token_threshold {
-        system_message.insert("content".to_string(), Value::Array(blocks));
-        return prefix_char_count;
-    }
-
-    let stable_indexes = if sections.is_empty() {
-        (0..blocks.len()).collect::<Vec<_>>()
-    } else {
-        sections
-            .iter()
-            .enumerate()
-            .filter_map(|(index, section)| section.stable.then_some(index))
-            .collect::<Vec<_>>()
-    };
-    if let Some(index) = stable_indexes.last().copied() {
+    let stable_boundary = prompt_bundle
+        .sections
+        .iter()
+        .take_while(|section| section.stable)
+        .count()
+        .checked_sub(1);
+    if let Some(index) = stable_boundary {
         set_cache_control(&mut blocks[index]);
         *breakpoint_budget = breakpoint_budget.saturating_sub(1);
     }

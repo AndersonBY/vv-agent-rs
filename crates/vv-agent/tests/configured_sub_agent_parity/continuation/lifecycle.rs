@@ -17,7 +17,12 @@ fn cancelling_a_child_token_does_not_cancel_its_parent() {
 
 #[test]
 fn agent_task_wire_preserves_effective_model_settings_messages_and_state() {
-    let mut task = AgentTask::new("task", "model", "system", "input");
+    let mut task = AgentTask::new(
+        "task",
+        "model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "input",
+    );
     task.model_settings = Some(vv_agent::ModelSettings {
         temperature: Some(0.25),
         max_tokens: Some(512),
@@ -168,7 +173,13 @@ fn real_continuation_preserves_complete_history_state_and_lineage() {
         .expect("register child state tool");
     let manager = SubTaskManager::default();
     let runtime = AgentRuntime::new(shared_llm).with_tool_registry(registry);
-    let mut parent = AgentTask::new("parent-task", "shared-model", "Parent prompt", "Delegate");
+    let mut parent = AgentTask::new(
+        "parent-task",
+        "shared-model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+            .expect("prompt bundle"),
+        "Delegate",
+    );
     parent.max_cycles = 4;
     parent.extra_tool_names = vec!["child_state".to_string()];
     let mut child = SubAgentConfig::new("shared-model", "Research");

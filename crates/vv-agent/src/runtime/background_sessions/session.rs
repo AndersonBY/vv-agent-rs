@@ -4,12 +4,16 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::runtime::processes::{kill_process_tree, read_captured_output, remove_captured_output};
+use crate::runtime::processes::{
+    kill_process_tree, read_captured_output_all, remove_captured_output,
+};
+use crate::types::ToolArtifactRef;
+use crate::workspace::{
+    artifact_write_error_code, bounded_text_preview, persist_text_artifact, WorkspaceBackend,
+};
 
 use super::listeners::BackgroundSessionListener;
 use super::options::BackgroundSessionAdoptOptions;
-
-const OUTPUT_LIMIT: usize = 50_000;
 
 pub(in crate::runtime::background_sessions) struct BackgroundSession {
     session_id: String,
@@ -22,6 +26,12 @@ pub(in crate::runtime::background_sessions) struct BackgroundSession {
     output_path: PathBuf,
     status: BackgroundStatus,
     output: String,
+    artifact: Option<ToolArtifactRef>,
+    artifact_error: Option<String>,
+    artifact_error_code: Option<String>,
+    artifact_backend: Option<std::sync::Arc<dyn WorkspaceBackend>>,
+    artifact_task_id: String,
+    artifact_tool_call_id: String,
     exit_code: Option<i32>,
     listeners: BTreeMap<u64, BackgroundSessionListener>,
 }
@@ -42,6 +52,12 @@ impl BackgroundSession {
             output_path: options.output_path,
             status: BackgroundStatus::Running,
             output: String::new(),
+            artifact: None,
+            artifact_error: None,
+            artifact_error_code: None,
+            artifact_backend: options.artifact_backend,
+            artifact_task_id: options.artifact_task_id,
+            artifact_tool_call_id: options.artifact_tool_call_id,
             exit_code: None,
             listeners: BTreeMap::new(),
         }
@@ -98,14 +114,21 @@ impl BackgroundSession {
     }
 
     pub(in crate::runtime::background_sessions) fn snapshot(&self) -> Value {
+        let preview = bounded_text_preview(&self.output);
         json!({
             "status": self.status.as_str(),
             "session_id": self.session_id,
             "command": self.command,
             "cwd": display_path(&self.cwd),
             "exit_code": self.exit_code,
-            "output": self.output,
+            "output": preview.content,
             "shell": self.shell,
+            "output_truncated": preview.truncated,
+            "output_original_bytes": preview.truncated.then_some(preview.original_bytes),
+            "output_visible_bytes": preview.truncated.then_some(preview.visible_bytes),
+            "artifact": self.artifact,
+            "artifact_error": self.artifact_error,
+            "artifact_error_code": self.artifact_error_code,
         })
     }
 
@@ -116,8 +139,7 @@ impl BackgroundSession {
         } else {
             BackgroundStatus::Failed
         };
-        self.output = read_captured_output(&self.output_path, OUTPUT_LIMIT);
-        remove_captured_output(&self.output_path);
+        self.capture_terminal_output(String::new());
         self.child = None;
     }
 
@@ -128,7 +150,7 @@ impl BackgroundSession {
     ) {
         self.status = BackgroundStatus::Failed;
         self.exit_code = Some(exit_code);
-        self.output = output;
+        self.capture_terminal_output(output);
         self.child = None;
     }
 
@@ -147,12 +169,55 @@ impl BackgroundSession {
             self.exit_code = Some(-9);
         }
         self.status = BackgroundStatus::Timeout;
-        self.output = read_captured_output(&self.output_path, OUTPUT_LIMIT);
+        self.capture_terminal_output(String::new());
         if self.output.is_empty() {
             self.output = "Command timed out in background session".to_string();
         }
-        remove_captured_output(&self.output_path);
         self.child = None;
+    }
+
+    pub(in crate::runtime::background_sessions) fn ensure_artifact(
+        &mut self,
+        fallback_backend: std::sync::Arc<dyn WorkspaceBackend>,
+        fallback_task_id: &str,
+        fallback_tool_call_id: &str,
+    ) {
+        if !self.is_terminal() || !bounded_text_preview(&self.output).truncated {
+            return;
+        }
+        if self.artifact.is_some() {
+            return;
+        }
+        let backend = self.artifact_backend.clone().unwrap_or(fallback_backend);
+        let task_id = if self.artifact_task_id.trim().is_empty() {
+            fallback_task_id
+        } else {
+            &self.artifact_task_id
+        };
+        let tool_call_id = if self.artifact_tool_call_id.trim().is_empty() {
+            fallback_tool_call_id
+        } else {
+            &self.artifact_tool_call_id
+        };
+        match persist_text_artifact(backend, task_id, tool_call_id, &self.output) {
+            Ok(artifact) => {
+                self.artifact = Some(artifact);
+                self.artifact_error = None;
+                self.artifact_error_code = None;
+                remove_captured_output(&self.output_path);
+            }
+            Err(error) => {
+                self.artifact_error_code = Some(artifact_write_error_code(&error).to_string());
+                self.artifact_error = Some(error.to_string());
+            }
+        }
+    }
+
+    fn capture_terminal_output(&mut self, fallback: String) {
+        self.output = read_captured_output_all(&self.output_path).unwrap_or(fallback);
+        if !bounded_text_preview(&self.output).truncated {
+            remove_captured_output(&self.output_path);
+        }
     }
 
     pub(in crate::runtime::background_sessions) fn take_listeners(

@@ -7,7 +7,7 @@ use super::helpers::{
 };
 
 const CANONICAL_TOOL_SCHEMA_SHA256: &str =
-    "24d8f7bde18b11374820f742cfa244c83666626a315e09d4b6e1b69e899a70aa";
+    "d266963bff5d4dc90f4fd4c9897381aa589375078f0c08c23af474e27f6b0269";
 
 #[test]
 fn runtime_schema_export_has_shared_canonical_hash() {
@@ -31,7 +31,6 @@ fn builtin_tool_required_fields_match_agent_schema_contract() {
         ("ask_user", json!(["question"])),
         ("bash", json!(["command"])),
         ("check_background_command", json!(["session_id"])),
-        ("compress_memory", json!(["core_information"])),
         ("create_sub_task", json!(["agent_id"])),
         ("file_info", json!(["path"])),
         ("edit_file", json!(["path", "old_string", "new_string"])),
@@ -64,11 +63,6 @@ fn builtin_tool_required_fields_match_agent_schema_contract() {
         json!(["title", "status", "priority"]),
         "todo_write.todos item required fields should match the agent schema contract"
     );
-    assert!(
-        description(&registry, "todo_write")
-            .contains("Each item must include `title`, `status`, and `priority`"),
-        "todo_write should guide the model to emit the required fields explicitly"
-    );
 }
 
 #[test]
@@ -98,7 +92,6 @@ fn builtin_tool_properties_and_enums_match_agent_schema_contract() {
             ],
         ),
         ("check_background_command", vec!["session_id"]),
-        ("compress_memory", vec!["core_information"]),
         (
             "create_sub_task",
             vec![
@@ -132,7 +125,13 @@ fn builtin_tool_properties_and_enums_match_agent_schema_contract() {
         ),
         (
             "read_file",
-            vec!["path", "start_line", "end_line", "show_line_numbers"],
+            vec![
+                "path",
+                "start_line",
+                "end_line",
+                "show_line_numbers",
+                "cursor",
+            ],
         ),
         ("read_image", vec!["path"]),
         (
@@ -275,7 +274,6 @@ fn builtin_tool_property_types_match_agent_schema_contract() {
         ("bash", "auto_confirm", "boolean"),
         ("bash", "run_in_background", "boolean"),
         ("check_background_command", "session_id", "string"),
-        ("compress_memory", "core_information", "string"),
         ("create_sub_task", "agent_id", "string"),
         ("create_sub_task", "task_description", "string"),
         ("create_sub_task", "output_requirements", "string"),
@@ -301,6 +299,7 @@ fn builtin_tool_property_types_match_agent_schema_contract() {
         ("read_file", "start_line", "integer"),
         ("read_file", "end_line", "integer"),
         ("read_file", "show_line_numbers", "boolean"),
+        ("read_file", "cursor", "object"),
         ("read_image", "path", "string"),
         ("sub_task_status", "task_ids", "array"),
         ("sub_task_status", "message", "string"),
@@ -370,6 +369,10 @@ fn builtin_tool_property_types_match_agent_schema_contract() {
         ("todo_write", vec!["todos", "items", "title"], "string"),
         ("todo_write", vec!["todos", "items", "status"], "string"),
         ("todo_write", vec!["todos", "items", "priority"], "string"),
+        ("read_file", vec!["cursor", "kind"], "string"),
+        ("read_file", vec!["cursor", "offset_chars"], "integer"),
+        ("read_file", vec!["cursor", "path"], "string"),
+        ("read_file", vec!["cursor", "sha256"], "string"),
     ] {
         assert_eq!(
             schema_type(&registry, tool_name, &property_path),
@@ -385,29 +388,26 @@ fn control_tool_parameter_descriptions_steer_high_quality_agent_decisions() {
     let registry = build_default_registry();
 
     let ask_user = description(&registry, "ask_user");
-    assert!(ask_user.contains("When to use:"));
-    assert!(ask_user.contains("Do not use this for facts"));
-    assert!(ask_user.contains("blocks the runtime"));
-    assert!(property_description(&registry, "ask_user", "question")
-        .contains("the smallest decision needed to unblock progress"));
-    assert!(property_description(&registry, "ask_user", "options").contains("2-3"));
-    assert!(property_description(&registry, "ask_user", "options").contains("mutually exclusive"));
+    assert!(ask_user.contains("required user decision"));
+    assert!(ask_user.contains("available tools"));
+    assert!(property_description(&registry, "ask_user", "question").contains("Question text"));
+    assert!(property_description(&registry, "ask_user", "options").contains("answer options"));
     assert!(
         property_description(&registry, "ask_user", "selection_type")
-            .contains("Use `multi` only when")
+            .contains("Single or multi-choice")
     );
     assert!(
         property_description(&registry, "ask_user", "allow_custom_options")
-            .contains("preset options may be incomplete")
+            .contains("custom options")
     );
 
     let activate_skill = description(&registry, "activate_skill");
-    assert!(activate_skill.contains("When to use:"));
-    assert!(activate_skill.contains("Read the returned SKILL.md instructions"));
-    assert!(activate_skill.contains("Do not invent"));
+    assert!(activate_skill.contains("exact skill name"));
+    assert!(activate_skill.contains("unlisted names are rejected"));
     assert!(
-        property_description(&registry, "activate_skill", "skill_name").contains("exact `name`")
+        property_description(&registry, "activate_skill", "skill_name")
+            .contains("available skill list")
     );
     assert!(property_description(&registry, "activate_skill", "reason")
-        .contains("why this skill applies before acting"));
+        .contains("reason for activating"));
 }

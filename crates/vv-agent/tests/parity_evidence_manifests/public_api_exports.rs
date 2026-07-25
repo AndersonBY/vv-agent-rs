@@ -20,6 +20,12 @@ fn public_export_path(id: &str) -> &'static str {
             vv_agent::BackgroundAgentTask,
             "vv_agent::BackgroundAgentTask"
         ),
+        "agent.prompt_bundle" => {
+            export_type!(vv_agent::PromptBundle, "vv_agent::PromptBundle")
+        }
+        "agent.prompt_section" => {
+            export_type!(vv_agent::PromptSection, "vv_agent::PromptSection")
+        }
         "agent.guardrail_outcome" => {
             export_type!(
                 vv_agent::GuardrailOutcome<String>,
@@ -239,6 +245,16 @@ fn public_export_path(id: &str) -> &'static str {
         }
         "tools.exposure" => export_type!(vv_agent::ToolExposure, "vv_agent::ToolExposure"),
         "tools.output" => export_type!(vv_agent::ToolOutput, "vv_agent::ToolOutput"),
+        "tools.execution_result" => export_type!(
+            vv_agent::ToolExecutionResult,
+            "vv_agent::ToolExecutionResult"
+        ),
+        "tools.artifact_ref" => {
+            export_type!(vv_agent::ToolArtifactRef, "vv_agent::ToolArtifactRef")
+        }
+        "tools.result_cursor" => {
+            export_type!(vv_agent::ToolResultCursor, "vv_agent::ToolResultCursor")
+        }
         "tools.spec_executor" => {
             export_type!(vv_agent::ToolSpecExecutor, "vv_agent::ToolSpecExecutor")
         }

@@ -68,7 +68,13 @@ fn parent_cancellation_is_derived_by_runtime_sub_agent_session() {
     };
     let token = CancellationToken::default();
     let token_for_run = token.clone();
-    let mut task = AgentTask::new("parent-cancel", "demo", "parent system", "delegate");
+    let mut task = AgentTask::new(
+        "parent-cancel",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("parent system")
+            .expect("prompt bundle"),
+        "delegate",
+    );
     task.sub_agents.insert(
         "researcher".to_string(),
         SubAgentConfig::new("demo", "research profile"),
@@ -246,7 +252,13 @@ fn run_with_blocked_configured_children(
     let token_for_run = token.clone();
     let manager = SubTaskManager::default();
     let manager_for_run = manager.clone();
-    let mut task = AgentTask::new("parent-cancel", "demo", "parent system", "delegate");
+    let mut task = AgentTask::new(
+        "parent-cancel",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("parent system")
+            .expect("prompt bundle"),
+        "delegate",
+    );
     task.sub_agents.insert(
         "researcher".to_string(),
         SubAgentConfig::new("demo", "research profile"),

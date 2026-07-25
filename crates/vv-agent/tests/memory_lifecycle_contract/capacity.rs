@@ -6,7 +6,13 @@ fn memory_capacity_defaults_match_contract_without_rewriting_explicit_values() {
     let expected = &contract["capacity_contract"];
 
     assert_eq!(
-        AgentTask::new("task", "model", "system", "user").memory_compact_threshold,
+        AgentTask::new(
+            "task",
+            "model",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+            "user"
+        )
+        .memory_compact_threshold,
         expected["configured_default_threshold"].as_u64().unwrap()
     );
     assert_eq!(
@@ -14,7 +20,12 @@ fn memory_capacity_defaults_match_contract_without_rewriting_explicit_values() {
         expected["configured_default_threshold"].as_u64().unwrap()
     );
 
-    let mut explicit = AgentTask::new("task", "model", "system", "user");
+    let mut explicit = AgentTask::new(
+        "task",
+        "model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "user",
+    );
     explicit.memory_compact_threshold = 128_000;
     let restored: AgentTask =
         serde_json::from_value(serde_json::to_value(&explicit).expect("serialize task"))
@@ -77,7 +88,7 @@ fn runtime_context_window_resolution_matches_contract_cases_and_zero_capability(
         let mut task = AgentTask::new(
             format!("context-resolution-{}", case["name"].as_str().unwrap()),
             "deepseek-v4-pro",
-            "system",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
             "continue",
         );
         task.max_cycles = 1;
@@ -149,7 +160,7 @@ fn runtime_capacity_resolution_matches_every_contract_case() {
         let mut task = AgentTask::new(
             format!("capacity-{}", case["name"].as_str().unwrap()),
             "capacity-model",
-            "system",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
             "continue",
         );
         task.initial_messages = vec![

@@ -68,7 +68,7 @@ pub(crate) enum ModelOperationOutcome {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ToolOperationPlan {
-    pub idempotency_key: String,
+    pub idempotency_key: Option<String>,
     pub replay_result: Option<ToolExecutionResult>,
 }
 

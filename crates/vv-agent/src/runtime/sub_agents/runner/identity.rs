@@ -104,7 +104,12 @@ mod tests {
             tool_registry: build_default_registry(),
             workspace_backend: Arc::new(MemoryWorkspaceBackend::default()),
             workspace_path: std::path::PathBuf::from("."),
-            parent_task: AgentTask::new("parent-task", "parent-model", "Parent prompt", "Delegate"),
+            parent_task: AgentTask::new(
+                "parent-task",
+                "parent-model",
+                crate::prompt::PromptBundle::from_instruction_text("Parent prompt").unwrap(),
+                "Delegate",
+            ),
             parent_shared_state: Default::default(),
             sub_task_manager: SubTaskManager::default(),
             parent_cancellation_token: None,

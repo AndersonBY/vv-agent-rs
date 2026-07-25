@@ -722,8 +722,7 @@ fn read_and_edit_preserve_utf8_bom_and_crlf() {
             &mut context,
         )
         .expect("read_file");
-    let read_payload: Value = serde_json::from_str(&read.content).expect("read payload");
-    assert_eq!(read_payload["content"], "first\n第二行");
+    assert_eq!(read.content, "first\r\n第二行\r\n");
 
     let edit = registry
         .execute(

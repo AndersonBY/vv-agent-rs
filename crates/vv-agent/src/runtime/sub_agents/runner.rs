@@ -339,8 +339,12 @@ mod parity_event_tests {
                 finish_arguments,
             )],
         )]);
-        let mut parent_task =
-            AgentTask::new("parent-task", "child-model", "Parent prompt", "Parent task");
+        let mut parent_task = AgentTask::new(
+            "parent-task",
+            "child-model",
+            crate::prompt::PromptBundle::from_instruction_text("Parent prompt").unwrap(),
+            "Parent task",
+        );
         parent_task.sub_agents.insert(
             "researcher".to_string(),
             SubAgentConfig::new("child-model", "Research"),
@@ -364,8 +368,12 @@ mod parity_event_tests {
 
         assert_eq!(outcome.status, AgentStatus::Completed);
 
-        let mut invalid_parent_task =
-            AgentTask::new("parent-task", "child-model", "Parent prompt", "Parent task");
+        let mut invalid_parent_task = AgentTask::new(
+            "parent-task",
+            "child-model",
+            crate::prompt::PromptBundle::from_instruction_text("Parent prompt").unwrap(),
+            "Parent task",
+        );
         let mut invalid_sub_agent = SubAgentConfig::new("child-model", "Research");
         invalid_sub_agent.system_prompt = Some(" \n ".to_string());
         invalid_parent_task
@@ -444,7 +452,7 @@ mod parity_event_tests {
         let mut parent_task = AgentTask::new(
             "parent-task",
             "parent-model",
-            "Parent prompt",
+            crate::prompt::PromptBundle::from_instruction_text("Parent prompt").unwrap(),
             "Parent task",
         );
         parent_task.sub_agents.insert(
@@ -488,8 +496,12 @@ mod parity_event_tests {
 
     #[test]
     fn validation_failure_maps_error_code_and_omits_unavailable_usage() {
-        let mut parent_task =
-            AgentTask::new("parent-task", "child-model", "Parent prompt", "Parent task");
+        let mut parent_task = AgentTask::new(
+            "parent-task",
+            "child-model",
+            crate::prompt::PromptBundle::from_instruction_text("Parent prompt").unwrap(),
+            "Parent task",
+        );
         parent_task.sub_agents.insert(
             "researcher".to_string(),
             SubAgentConfig::new(" ", "Research"),
@@ -527,8 +539,12 @@ mod parity_event_tests {
 
     #[test]
     fn session_setup_failure_still_pairs_started_and_completed() {
-        let mut parent_task =
-            AgentTask::new("parent-task", "child-model", "Parent prompt", "Parent task");
+        let mut parent_task = AgentTask::new(
+            "parent-task",
+            "child-model",
+            crate::prompt::PromptBundle::from_instruction_text("Parent prompt").unwrap(),
+            "Parent task",
+        );
         parent_task.sub_agents.insert(
             "researcher".to_string(),
             SubAgentConfig::new("child-model", "Research"),
@@ -596,8 +612,12 @@ mod parity_event_tests {
         ];
 
         for (expected_status, llm, cancel_parent) in cases {
-            let mut parent_task =
-                AgentTask::new("parent-task", "child-model", "Parent prompt", "Parent task");
+            let mut parent_task = AgentTask::new(
+                "parent-task",
+                "child-model",
+                crate::prompt::PromptBundle::from_instruction_text("Parent prompt").unwrap(),
+                "Parent task",
+            );
             let mut sub_agent = SubAgentConfig::new("child-model", "Research");
             sub_agent.max_cycles = 1;
             if expected_status == "wait_user" {

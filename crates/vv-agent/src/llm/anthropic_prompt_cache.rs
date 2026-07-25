@@ -4,9 +4,7 @@ mod blocks;
 mod breakpoints;
 mod estimate;
 mod model;
-mod sections;
 
-pub const SYSTEM_PROMPT_SECTIONS_KEY: &str = "system_prompt_sections";
 pub const PROMPT_CACHE_ENABLED_KEY: &str = "anthropic_prompt_cache_enabled";
 
 pub fn cache_control_ephemeral() -> Value {
@@ -24,6 +22,7 @@ pub fn apply_claude_prompt_cache(
     messages: &[Value],
     tools: &[Value],
     extra_body: Option<&Value>,
+    prompt_bundle: &crate::prompt::PromptBundle,
     metadata: Option<&Value>,
 ) -> (Vec<Value>, Vec<Value>, Option<Value>) {
     let normalized_endpoint = endpoint_type.trim().to_ascii_lowercase();
@@ -54,7 +53,7 @@ pub fn apply_claude_prompt_cache(
     breakpoints::apply_cache_breakpoints(
         &mut planned_messages,
         &mut planned_tools,
-        request_metadata,
+        prompt_bundle,
         model::minimum_cacheable_tokens(&normalized_model),
     );
 

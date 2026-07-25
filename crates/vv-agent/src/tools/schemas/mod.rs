@@ -5,7 +5,6 @@ use serde_json::Value;
 mod command;
 mod control;
 mod media;
-mod memory;
 mod sub_agents;
 mod todo;
 mod workspace;
@@ -17,7 +16,6 @@ pub const WORKSPACE_TOOLS: &[&str] = &[
     "write_file",
     "edit_file",
     "search_files",
-    "compress_memory",
     "todo_write",
 ];
 
@@ -33,7 +31,6 @@ pub fn default_tool_schemas() -> BTreeMap<String, Value> {
         ("file_info", workspace::file_info_schema()),
         ("search_files", workspace::search_files_schema()),
         ("edit_file", workspace::edit_file_schema()),
-        ("compress_memory", memory::compress_memory_schema()),
         ("todo_write", todo::todo_write_schema()),
         ("bash", command::bash_schema()),
         (

@@ -87,7 +87,13 @@ fn parent_cancellation_reaches_configured_sub_agent_continuation() {
                 .push((name.to_string(), payload.clone()));
         }
     });
-    let mut parent = AgentTask::new("parent-task", "shared-model", "Parent prompt", "Delegate");
+    let mut parent = AgentTask::new(
+        "parent-task",
+        "shared-model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+            .expect("prompt bundle"),
+        "Delegate",
+    );
     parent.max_cycles = 3;
     let mut child = SubAgentConfig::new("shared-model", "Research");
     child.system_prompt = Some("Child prompt".to_string());

@@ -7,23 +7,23 @@
 
 ## 安装
 
-当前稳定版本为 `0.8.0`。它实现语言无关的 Contract `3.0.0`；另一套实现读取同一
-契约，两边可观察能力一致，只保留符合各自语言习惯的 API 写法。
+当前 crate 版本为 `0.9.0`。仓库 `HEAD` 采用语言无关的 Contract `4.0.5`；当前跨仓采用
+状态和已验证 revision 以中央 support matrix 为准。
 
 ```bash
-cargo add vv-agent@0.8.0
+cargo add vv-agent@0.9.0
 ```
 
 需要 Apalis adapter 时使用：
 
 ```bash
-cargo add vv-agent@0.8.0 --features apalis
+cargo add vv-agent@0.9.0 --features apalis
 ```
 
-Contract 3 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
+Contract 4 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
 公共 API 与传输数据结构。需要旧协议的应用应固定旧 crate 版本。
 
-### 0.8.0 重点能力
+### 0.9.0 重点能力
 
 - 每次真正进入模型调用边界的尝试都会写入
   `result.token_usage().model_calls`，包括 Agent 主循环、Session Memory、完整上下文
@@ -33,9 +33,13 @@ Contract 3 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取�
   校验。无效调用返回结构化的 `invalid_tool_arguments`，不会执行工具 handler。
 - 可选的宿主输出校验默认关闭；开启后最多执行一次不携带任何工具的修复回调，之后
   才提交终态结果。
-- 持久化执行统一使用 `vv-agent.checkpoint.v3`、
-  `vv-agent.run-definition.v2`、`vv-agent.distributed-run.v2` 和
-  `vv-agent.distributed-worker-response.v1`，严格限定恢复与分布式 controller 边界。
+- 已解析的 instructions 和 context 统一通过不可变 `PromptBundle` 传递；metadata 不再
+  传递 prompt section，checkpoint resume 也不会重新执行 producer。
+- 被截断的命令和文件结果通过稀疏 artifact 或 cursor 字段恢复。模型可见的
+  `compress_memory` 工具和 deferred exposure 已删除，自动内存压缩仍由框架内部执行。
+- 持久化执行统一使用 `vv-agent.checkpoint.v4`、
+  `vv-agent.run-definition.v3`、`vv-agent.distributed-run.v3` 和
+  `vv-agent.distributed-worker-response.v2`，严格限定恢复与分布式 controller 边界。
 
 详细规则见[输出校验](docs/output-validation.md)和
 [Checkpoint 与恢复](docs/checkpoint-resume.md)。
@@ -335,7 +339,7 @@ runtime。新的嵌入式应用应从 `Agent` + `Runner` 开始。
 use std::path::PathBuf;
 
 use vv_agent::config::build_vv_llm_from_local_settings;
-use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
+use vv_agent::prompt::{build_system_prompt_bundle_with_options, BuildSystemPromptOptions};
 use vv_agent::types::AgentTask;
 use vv_agent::{build_default_registry, AgentRuntime, RuntimeRunControls};
 
@@ -347,7 +351,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         90.0,
     )?;
     let runtime = AgentRuntime::new(llm).with_tool_registry(build_default_registry());
-    let system_prompt = build_system_prompt_with_options(
+    let prompt_bundle = build_system_prompt_bundle_with_options(
         "You are a reliable execution agent.",
         BuildSystemPromptOptions {
             language: "zh-CN".to_string(),
@@ -360,7 +364,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut task = AgentTask::new(
         "demo",
         resolved.model_id,
-        system_prompt,
+        prompt_bundle,
         "读取 workspace README，并总结这个项目。",
     );
     task.max_cycles = 12;
@@ -385,7 +389,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | --- | --- |
 | Runtime | 多轮模型执行、显式终态、live `RunHandle`、取消、typed event、event replay 和 max-cycle 控制。 |
 | Tools | 内置工具，以及统一处理 policy、approval、dispatch、timeout、telemetry 的 `ToolOrchestrator` 路径。 |
-| SDK | `Agent`、`Runner`、`RunConfig`、`ModelSettings`、typed tool、`Agent::as_tool()`、`RunEvent`、provider 和 `Session`。 |
+| SDK | `Agent`、`Runner`、`RunConfig`、`ModelSettings`、`PromptBundle`、`PromptSection`、`ToolExecutionResult`、`ToolArtifactRef`、`ToolResultCursor`、typed tool、`Agent::as_tool()`、`RunEvent`、provider 和 `Session`。 |
 | Memory | Token 预算、prompt-too-long 重试、micro/full compaction、大型工具结果 artifact、图片裁剪、session memory 和外部 provider hook。 |
 | Hooks | 使用 Rust `RuntimeHook` 检查或修改 LLM 调用、工具调用、memory compaction 和运行生命周期。 |
 | Sub-agents | 基于 runtime 的子任务创建、批量提交、后台状态轮询、续跑、steering 和父级 streaming callback 继承。 |
@@ -482,7 +486,7 @@ vv-agent-rs/
       config/     # LLM settings 加载和模型解析
       llm/        # LLM trait、脚本化测试 client、vv-llm client bridge
       memory/     # compaction、artifact、session memory、token budget
-      prompt/     # system prompt section 和 prompt-cache metadata
+      prompt/     # system prompt section 和 provider cache 投影
       agent.rs    # public Agent builder
       runner.rs   # runtime execution 上的 public Runner
       run_config.rs

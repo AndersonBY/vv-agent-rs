@@ -1,7 +1,7 @@
 use std::env;
 use std::path::PathBuf;
 
-use vv_agent::{build_vv_llm_from_local_settings, LlmClient, LlmRequest, Message};
+use vv_agent::{build_vv_llm_from_local_settings, LlmClient, LlmRequest, Message, PromptBundle};
 
 #[test]
 #[ignore = "live API call; run with VV_AGENT_RUN_LIVE_TESTS=1 cargo test --test live_moonshot -- --ignored"]
@@ -26,10 +26,9 @@ fn live_moonshot_kimi_smoke_completion() {
     let response = llm
         .complete(LlmRequest::new(
             resolved.model_id.clone(),
-            vec![
-                Message::system("You are a concise assistant."),
-                Message::user("Reply with exactly one word: pong"),
-            ],
+            vec![Message::user("Reply with exactly one word: pong")],
+            PromptBundle::from_instruction_text("You are a concise assistant.")
+                .expect("prompt bundle"),
         ))
         .expect("run live Moonshot smoke completion");
 

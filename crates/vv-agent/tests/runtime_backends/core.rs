@@ -365,7 +365,7 @@ fn distributed_backend_without_dispatcher_keeps_inline_parallel_map_fallback() {
 #[test]
 fn inline_backend_execute_runs_agent_cycle_loop() {
     let backend = InlineBackend;
-    let task = AgentTask::new("backend-loop", "model", "system", "prompt");
+    let task = AgentTask::new("backend-loop", "model", vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"), "prompt");
     let initial_messages = vec![Message::user("hello")];
 
     let result = backend.execute(
@@ -405,7 +405,7 @@ fn inline_backend_execute_runs_agent_cycle_loop() {
 #[test]
 fn inline_backend_execute_returns_agent_max_cycles_result() {
     let backend = InlineBackend;
-    let task = AgentTask::new("backend-max", "model", "system", "prompt");
+    let task = AgentTask::new("backend-max", "model", vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"), "prompt");
 
     let result = backend.execute(
         &task,
@@ -436,7 +436,7 @@ fn inline_backend_execute_returns_agent_max_cycles_result() {
 #[test]
 fn thread_backend_execute_honors_cancellation_before_cycle() {
     let backend = ThreadBackend::default();
-    let task = AgentTask::new("backend-cancel", "model", "system", "prompt");
+    let task = AgentTask::new("backend-cancel", "model", vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"), "prompt");
     let token = CancellationToken::default();
     token.cancel();
 
@@ -459,7 +459,7 @@ fn thread_backend_execute_honors_cancellation_before_cycle() {
 #[test]
 fn distributed_backend_inline_execute_matches_inline_fallback() {
     let backend = DistributedBackend::inline_fallback();
-    let task = AgentTask::new("backend-distributed-inline", "model", "system", "prompt");
+    let task = AgentTask::new("backend-distributed-inline", "model", vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"), "prompt");
 
     let result = backend.execute(
         &task,

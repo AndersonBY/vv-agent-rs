@@ -2,9 +2,12 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::runtime::background_sessions::background_session_manager;
+use crate::runtime::background_sessions::{
+    background_session_manager, BackgroundSessionAdoptOptions,
+};
 use crate::runtime::processes::{
-    read_captured_output, remove_captured_output, start_captured_process_with_env, wait_for_child,
+    read_captured_output, read_captured_output_all, remove_captured_output,
+    start_captured_process_with_env, wait_for_child,
 };
 use crate::runtime::shell::prepare_shell_execution;
 use crate::tools::base::ToolContext;
@@ -13,6 +16,7 @@ use crate::tools::common::{
     tool_result_with_metadata, workspace_relative_path_or_absolute,
 };
 use crate::types::{Metadata, ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
+use crate::workspace::{artifact_write_error_code, bounded_text_preview, persist_text_artifact};
 
 use super::env::build_process_env;
 use super::shell_defaults::read_shell_defaults;
@@ -90,7 +94,8 @@ pub(super) fn execute_bash_command(
     };
 
     if run_in_background {
-        let session_id = background_session_manager().adopt_running_process(
+        let session_id = adopt_background_process(
+            context,
             command,
             cwd,
             timeout_seconds,
@@ -117,42 +122,27 @@ pub(super) fn execute_bash_command(
 
     match wait_for_child(&mut started.child, Duration::from_secs(timeout_seconds)) {
         Ok(Some(exit_status)) => {
-            let output = read_captured_output(&started.output_path, 50_000);
-            remove_captured_output(&started.output_path);
             let exit_code = exit_status.code().unwrap_or(-1);
-            let mut payload = json!({
-                "cwd": workspace_relative_path_or_absolute(&context.workspace, &cwd),
-                "exit_code": exit_code,
-                "output": output,
-            });
-            if let Some(shell) = configured_shell {
-                payload["shell"] = Value::String(shell);
+            let output = match read_captured_output_all(&started.output_path) {
+                Ok(output) => output,
+                Err(error) => {
+                    return tool_error_with_code(
+                        format!("failed to read command output: {error}"),
+                        "command_failed",
+                    )
+                }
+            };
+            let terminal =
+                terminal_output_result(context, &cwd, configured_shell, exit_code, output);
+            if terminal.remove_captured_output {
+                remove_captured_output(&started.output_path);
             }
-            let metadata = selected_metadata(&payload, &["cwd", "exit_code", "shell"]);
-            if exit_code == 0 {
-                tool_result_with_metadata(
-                    ToolResultStatus::Success,
-                    payload,
-                    None,
-                    ToolDirective::Continue,
-                    metadata,
-                )
-            } else {
-                payload["ok"] = Value::Bool(false);
-                payload["error"] = Value::String(format!("command exited with code {exit_code}"));
-                payload["error_code"] = Value::String("command_failed".to_string());
-                tool_result_with_metadata(
-                    ToolResultStatus::Error,
-                    payload,
-                    Some("command_failed"),
-                    ToolDirective::Continue,
-                    metadata,
-                )
-            }
+            terminal.result
         }
         Ok(None) => {
-            let output = read_captured_output(&started.output_path, 50_000);
-            let session_id = background_session_manager().adopt_running_process(
+            let output = read_captured_output(&started.output_path, 12_000);
+            let session_id = adopt_background_process(
+                context,
                 command,
                 cwd,
                 timeout_seconds,
@@ -192,6 +182,101 @@ pub(super) fn execute_bash_command(
             )
         }
         Err(error) => tool_error_with_code(error.to_string(), "command_failed"),
+    }
+}
+
+fn adopt_background_process(
+    context: &ToolContext,
+    command: String,
+    cwd: std::path::PathBuf,
+    timeout_seconds: u64,
+    child: std::process::Child,
+    output_path: std::path::PathBuf,
+    shell: Option<String>,
+) -> String {
+    let mut options =
+        BackgroundSessionAdoptOptions::new(command, cwd, timeout_seconds, child, output_path)
+            .with_artifact_context(
+                context.effective_workspace_backend(),
+                context.task_id.clone(),
+                context.tool_call_id.clone(),
+            );
+    options.shell = shell;
+    background_session_manager().adopt_running_process_with_options(options)
+}
+
+struct TerminalOutputResult {
+    result: ToolExecutionResult,
+    remove_captured_output: bool,
+}
+
+fn terminal_output_result(
+    context: &ToolContext,
+    cwd: &std::path::Path,
+    shell: Option<String>,
+    exit_code: i32,
+    mut output: String,
+) -> TerminalOutputResult {
+    if output.is_empty() && exit_code != 0 {
+        output = format!("command exited with code {exit_code}");
+    }
+    let preview = bounded_text_preview(&output);
+    let artifact = if preview.truncated {
+        match persist_text_artifact(
+            context.effective_workspace_backend(),
+            &context.task_id,
+            &context.tool_call_id,
+            &output,
+        ) {
+            Ok(artifact) => Some(artifact),
+            Err(error) => {
+                let error_code = artifact_write_error_code(&error);
+                return TerminalOutputResult {
+                    result: tool_error_with_code(
+                        format!("failed to persist complete command output: {error}"),
+                        error_code,
+                    ),
+                    remove_captured_output: false,
+                };
+            }
+        }
+    } else {
+        None
+    };
+    let mut metadata = Metadata::from([
+        (
+            "cwd".to_string(),
+            Value::String(workspace_relative_path_or_absolute(&context.workspace, cwd)),
+        ),
+        ("exit_code".to_string(), Value::from(exit_code)),
+    ]);
+    if let Some(shell) = shell {
+        metadata.insert("shell".to_string(), Value::String(shell));
+    }
+    if exit_code != 0 {
+        metadata.insert(
+            "error_code".to_string(),
+            Value::String("command_failed".to_string()),
+        );
+    }
+    let mut result = ToolExecutionResult::success("", preview.content);
+    result.status = if exit_code == 0 {
+        ToolResultStatus::Success
+    } else {
+        ToolResultStatus::Error
+    };
+    result.error_code = (exit_code != 0).then(|| "command_failed".to_string());
+    result.metadata = metadata;
+    if let Some(artifact) = artifact {
+        result.truncated = true;
+        result.truncation_reason = Some(crate::types::ToolTruncationReason::OutputLimit);
+        result.original_bytes = Some(preview.original_bytes);
+        result.visible_bytes = Some(preview.visible_bytes);
+        result.artifact = Some(artifact);
+    }
+    TerminalOutputResult {
+        result,
+        remove_captured_output: true,
     }
 }
 

@@ -38,7 +38,7 @@ pub mod tracing;
 pub mod types;
 pub mod workspace;
 
-pub use agent::{Agent, InstructionProvider, ToolUseBehavior};
+pub use agent::{Agent, InstructionProvider, PromptBundleProvider, ToolUseBehavior};
 pub use app_server::{
     AgentResolutionRequest, AppServerHost, AppServerHostError, DefaultAppServerHost,
     RunConfigResolutionRequest,
@@ -101,6 +101,7 @@ pub use output_validation::{
     HostOutputValidator, OutputRepair, OutputRepairRequest, OutputValidationContext,
     OutputValidationResult, OUTPUT_VALIDATION_FAILED,
 };
+pub use prompt::{PromptBundle, PromptSection};
 pub use result::{ApprovalSnapshot, FinalOutputError, RunResult, RunState};
 pub use run_config::{RunConfig, ToolRegistryFactory};
 pub use run_handle::{RunHandle, RunHandleState, RunHandleStatus};
@@ -161,11 +162,12 @@ pub use tools::{
 };
 pub use tracing::{JsonlTraceExporter, Span, TraceSink};
 pub use types::{
-    AgentResult, AgentStatus, CacheUsage, CacheUsageStatus, CompletionReason, CycleRecord,
-    CycleStatus, LLMResponse, Message, MessageRole, ModelCallOperation, ModelCallRecord,
-    ModelCallStatus, NoToolPolicy, SubAgentConfig, SubAgentConfigValidationError, SubTaskOutcome,
-    SubTaskRequest, TaskTokenUsage, TokenUsage, ToolCall, ToolDirective, ToolExecutionResult,
-    ToolResultStatus, UsageSource, INVALID_SUB_AGENT_MODEL_CODE, INVALID_SUB_AGENT_MODEL_MESSAGE,
+    AgentResult, AgentStatus, AgentTask, CacheUsage, CacheUsageStatus, CompletionReason,
+    CycleRecord, CycleStatus, LLMResponse, Message, MessageRole, ModelCallOperation,
+    ModelCallRecord, ModelCallStatus, NoToolPolicy, SubAgentConfig, SubAgentConfigValidationError,
+    SubTaskOutcome, SubTaskRequest, TaskTokenUsage, TokenUsage, ToolArtifactRef, ToolCall,
+    ToolDirective, ToolExecutionResult, ToolResultCursor, ToolResultStatus, ToolTruncationReason,
+    UsageSource, INVALID_SUB_AGENT_MODEL_CODE, INVALID_SUB_AGENT_MODEL_MESSAGE,
     INVALID_SUB_AGENT_SYSTEM_PROMPT_CODE, INVALID_SUB_AGENT_SYSTEM_PROMPT_MESSAGE,
 };
 pub use workspace::{

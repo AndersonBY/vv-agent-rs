@@ -3,8 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use super::{
-    current_utc_isoformat, glob_match, insert_parent_dirs, normalize_workspace_path,
-    normalized_glob_pattern, not_found, suffix_with_dot, FileInfo, WorkspaceBackend,
+    artifacts::is_reserved_artifact_path, current_utc_isoformat, glob_match, insert_parent_dirs,
+    normalize_workspace_path, normalized_glob_pattern, not_found, suffix_with_dot, FileInfo,
+    WorkspaceBackend,
 };
 
 #[derive(Debug, Clone)]
@@ -59,6 +60,12 @@ impl WorkspaceBackend for MemoryWorkspaceBackend {
     }
 
     fn write_text(&self, path: &str, content: &str, append: bool) -> std::io::Result<usize> {
+        if is_reserved_artifact_path(path) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "artifact paths are immutable",
+            ));
+        }
         let key = normalize_workspace_path(path);
         let mut files = self.files.lock().expect("memory workspace poisoned");
         let entry = files.entry(key.clone()).or_default();
@@ -67,6 +74,21 @@ impl WorkspaceBackend for MemoryWorkspaceBackend {
         } else {
             *entry = content.as_bytes().to_vec();
         }
+        drop(files);
+        self.ensure_parent_dirs(&key);
+        Ok(content.len())
+    }
+
+    fn write_text_exclusive(&self, path: &str, content: &str) -> std::io::Result<usize> {
+        let key = normalize_workspace_path(path);
+        let mut files = self.files.lock().expect("memory workspace poisoned");
+        if files.contains_key(&key) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("path already exists: {path}"),
+            ));
+        }
+        files.insert(key.clone(), content.as_bytes().to_vec());
         drop(files);
         self.ensure_parent_dirs(&key);
         Ok(content.len())

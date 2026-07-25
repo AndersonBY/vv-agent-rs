@@ -1,83 +1,10 @@
 use serde_json::{json, Value};
 
-const READ_FILE_DESCRIPTION: &str = r#"Read file contents from workspace.
+const READ_FILE_DESCRIPTION: &str = "Read bounded UTF-8 text from a workspace path. Use a line range for targeted reads or the returned cursor to continue an oversized read; stale cursors are rejected if the source changes.";
 
-When to use:
-- Inspect source files, configs, logs, docs, generated artifacts, or exact snippets without shelling out to cat/head/tail.
-- Read large files in chunks after using `file_info` or after a truncated response suggests a narrower line range.
-- Use `show_line_numbers=true` when you need to quote lines, plan precise edits, or coordinate with `edit_file`.
+const WRITE_FILE_DESCRIPTION: &str = "Create, overwrite, or append text in the workspace. Overwrite is the default; use append and newline controls only when preserving existing content is intentional.";
 
-Supported behavior:
-- Reads plain UTF-8 text files and returns a content slice.
-- Uses 1-based line numbers for `start_line` and `end_line`.
-- Can prepend line numbers with `show_line_numbers=true`.
-- Enforces read limits per request: max 2000 lines or 50000 characters.
-- Large reads return file info payload instead of full content.
-
-Guidance:
-- Prefer this tool instead of shell commands like cat/head/tail.
-- For large files, read in chunks by line range.
-- By default, paths are workspace-relative.
-- If runtime metadata enables outside-workspace access, absolute local paths are allowed.
-
-Returns:
-- A UTF-8 text slice with path metadata, requested line range, actual returned range, and optional line numbers.
-- If the request exceeds safe limits, a file-info style payload with file statistics and suggested smaller ranges instead of flooding the LLM context.
-
-Safety and limits:
-- Uses 1-based inclusive line numbers for `start_line` and `end_line`.
-- Enforces max 2000 lines or 50000 characters per request.
-- Prefer `file_info` before reading unknown large or binary-looking paths.
-- Paths are workspace-relative by default; absolute local paths require explicit outside-workspace runtime permission."#;
-
-const WRITE_FILE_DESCRIPTION: &str = r#"Write content to a file in workspace.
-
-MODES:
-- Overwrite (default): Replaces entire file content.
-- Append: Adds to existing content (`append=true`).
-
-WARNING:
-- By default, this OVERWRITES the entire file.
-- Use `append=true` to add content instead.
-
-PARAMETERS:
-- `path` (required): Workspace-relative path by default. Absolute path is allowed when outside-workspace access is enabled.
-- `content` (required): Content to write.
-- `append` (optional): Set true to append instead of overwrite.
-- `leading_newline`/`trailing_newline` (optional): Add newlines when appending.
-
-When to use:
-- Create a new file, replace an entire generated artifact, or append a clearly bounded section to an existing file.
-- Use `append=true` only when preserving all existing content is intentional and the appended block boundary is clear.
-- Prefer `edit_file` for small or surgical edits to existing files.
-
-Do not use this for surgical edits to existing source files; prefer `edit_file` when current read context is known through `read_file`, a full `write_file`, or a previous successful `edit_file`.
-Appending to an unknown existing file does not create a full edit baseline; call `read_file` before editing after that case.
-
-Returns:
-- Structured write metadata including normalized path, append mode, character count, and newline flags.
-- Errors when the path escapes the workspace or the backend refuses the write.
-
-Safety and behavior:
-- Overwrite is the default and replaces the whole file.
-- This can create parent directories when the workspace backend supports it."#;
-
-const FILE_INFO_DESCRIPTION: &str = r#"Read file metadata in workspace, including size, modified time and type.
-
-Inspect file metadata in workspace without loading full contents.
-
-When to use:
-- Use before reading large or binary files.
-- Use before deciding read ranges, or before editing a path whose size/type is unknown.
-- Check whether a path is a file or directory and whether it has a suffix that suggests text, image, archive, or binary content.
-- Estimate whether `read_file`, `read_image`, or a narrower grep/search is the right next tool.
-
-Returns:
-- Normalized path, file/dir flags, byte size, modified time, suffix, and line count when it can be determined safely.
-- Structured errors for missing paths or paths outside the permitted workspace.
-
-Safety:
-- This is a metadata probe; it should be preferred over reading a whole unknown file just to decide what to do next."#;
+const FILE_INFO_DESCRIPTION: &str = "Inspect workspace path metadata without reading file contents. Returns normalized type, size, modified time, suffix, and line-count information when available.";
 
 pub(in crate::tools::schemas) fn read_file_schema() -> Value {
     json!({
@@ -88,10 +15,22 @@ pub(in crate::tools::schemas) fn read_file_schema() -> Value {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
-                    "start_line": {"type": "integer", "minimum": 1, "description": "Optional starting line number (1-based). Use with `end_line` to read a chunk from a large file instead of loading the whole file."},
-                    "end_line": {"type": "integer", "minimum": 1, "description": "Optional ending line number (1-based, inclusive). Pair with `start_line` to keep large-file reads bounded."},
-                    "show_line_numbers": {"type": "boolean", "description": "When true, prefixes each output line with its source line number. Enable when you need to quote precise lines, plan edits, or compare snippets."}
+                    "path": {"type": "string", "description": "Workspace path to read."},
+                    "start_line": {"type": "integer", "minimum": 1, "description": "Optional 1-based first line; incompatible with cursor."},
+                    "end_line": {"type": "integer", "minimum": 1, "description": "Optional 1-based inclusive last line; incompatible with cursor."},
+                    "show_line_numbers": {"type": "boolean", "description": "Prefix returned lines with source line numbers."},
+                    "cursor": {
+                        "type": "object",
+                        "description": "Continuation state returned by a previous read of this path.",
+                        "properties": {
+                            "kind": {"type": "string", "const": "read_file"},
+                            "path": {"type": "string", "minLength": 1},
+                            "offset_chars": {"type": "integer", "minimum": 0},
+                            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+                        },
+                        "required": ["kind", "offset_chars", "path", "sha256"],
+                        "additionalProperties": false
+                    }
                 },
                 "required": ["path"]
             }
@@ -109,10 +48,10 @@ pub(in crate::tools::schemas) fn write_file_schema() -> Value {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Target file path (workspace-relative by default; absolute path allowed when outside-workspace access is enabled)."},
-                    "content": {"type": "string", "description": "The complete file body for overwrite mode, or the exact block to append when `append=true`. When overwriting, preserve existing content yourself; use `append=true` only when the existing file should remain intact."},
-                    "append": {"type": "boolean", "description": "Set true to append instead of overwrite. Default is false (overwrite). Use append only when existing content must be preserved."},
-                    "leading_newline": {"type": "boolean", "description": "Add a leading newline when appending. Default is false. Use as a separator from existing content when needed."},
-                    "trailing_newline": {"type": "boolean", "description": "Add a trailing newline when appending. Default is false. Use to preserve a line boundary before the next append or shell read."}
+                    "content": {"type": "string", "description": "The complete file body for overwrite mode, or the exact block to append when `append=true`."},
+                    "append": {"type": "boolean", "description": "Set true to append instead of overwrite."},
+                    "leading_newline": {"type": "boolean", "description": "Add a leading newline when appending."},
+                    "trailing_newline": {"type": "boolean", "description": "Add a trailing newline when appending."}
                 },
                 "required": ["path", "content"]
             }

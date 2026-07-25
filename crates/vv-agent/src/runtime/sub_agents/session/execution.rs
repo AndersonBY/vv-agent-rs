@@ -542,7 +542,7 @@ mod capability_projection_tests {
             task_template: AgentTask::new(
                 "child-task",
                 "child-model",
-                "Child prompt",
+                crate::prompt::PromptBundle::from_instruction_text("Child prompt").unwrap(),
                 "Child task",
             ),
             agent_name: "researcher".to_string(),

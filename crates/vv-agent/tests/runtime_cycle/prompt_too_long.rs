@@ -5,7 +5,12 @@ fn runtime_retries_prompt_too_long_with_emergency_compaction() {
     let llm = PromptTooLongRetryLlmClient::default();
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm);
-    let mut task = AgentTask::new("ptl_task", "demo", "system", "finish after retry");
+    let mut task = AgentTask::new(
+        "ptl_task",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "finish after retry",
+    );
     task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
     task.memory_compact_threshold = 10_000;
     task.metadata
@@ -35,7 +40,12 @@ fn runtime_returns_compaction_exhausted_after_prompt_too_long_retries() {
     let llm = AlwaysPromptTooLongLlmClient::default();
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm);
-    let mut task = AgentTask::new("ptl_exhausted", "demo", "system", "never fits");
+    let mut task = AgentTask::new(
+        "ptl_exhausted",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "never fits",
+    );
     task.memory_compact_threshold = 10_000;
     task.metadata
         .insert("model_context_window".to_string(), json!(20_000));

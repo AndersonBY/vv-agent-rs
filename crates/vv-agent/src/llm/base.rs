@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use crate::memory::CompactionExhaustedError;
 use crate::model_settings::ModelSettings;
+use crate::prompt::PromptBundle;
 use crate::types::{LLMResponse, Message};
 
 pub type LlmStreamCallback = Arc<dyn Fn(&BTreeMap<String, Value>) + Send + Sync + 'static>;
@@ -18,16 +19,22 @@ pub struct LlmRequest {
     pub tools: Vec<Value>,
     pub metadata: Value,
     pub model_settings: Option<ModelSettings>,
+    pub prompt_bundle: PromptBundle,
 }
 
 impl LlmRequest {
-    pub fn new(model: impl Into<String>, messages: Vec<Message>) -> Self {
+    pub fn new(
+        model: impl Into<String>,
+        messages: Vec<Message>,
+        prompt_bundle: PromptBundle,
+    ) -> Self {
         Self {
             model: model.into(),
             messages,
             tools: Vec::new(),
             metadata: Value::Null,
             model_settings: None,
+            prompt_bundle,
         }
     }
 }

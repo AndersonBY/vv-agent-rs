@@ -15,7 +15,7 @@ fn vv_llm_client_converts_extra_minimax_system_messages() {
     memory_summary.name = Some("memory_summary".to_string());
 
     let _ = llm
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "MiniMax-M2.5",
             vec![
                 Message::system("base system"),
@@ -53,7 +53,7 @@ fn vv_llm_client_omits_empty_optional_request_fields() {
     user.image_url = Some(String::new());
 
     let _ = llm
-        .complete(LlmRequest::new("demo-model", vec![user]))
+        .complete(llm_request("demo-model", vec![user]))
         .expect("request with empty optional fields");
 
     let messages = probe.messages();
@@ -88,7 +88,7 @@ fn vv_llm_client_preserves_reasoning_and_tool_extra_content_through_vv_llm() {
     assistant.tool_calls = vec![call];
 
     let response = llm
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "deepseek-chat",
             vec![Message::user("continue"), assistant],
         ))
@@ -137,7 +137,7 @@ fn vv_llm_client_preserves_reasoning_chain_for_deepseek_tool_turns() {
     let assistant_without_reasoning = Message::assistant("second");
 
     let _ = llm
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "deepseek-v5-pro",
             vec![
                 Message::user("start"),
@@ -175,7 +175,7 @@ fn vv_llm_client_applies_deepseek_reasoning_profile() {
     );
 
     let _ = llm
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "deepseek-v5-pro",
             vec![Message::user("use reasoning profile")],
         ))
@@ -208,7 +208,7 @@ fn vv_llm_client_applies_kimi_k3_profile_to_the_real_chat_request() {
         message.reasoning_content = Some("latest-thought".to_string());
         message
     };
-    let mut request = LlmRequest::new(
+    let mut request = llm_request(
         "kimi-k3",
         vec![
             Message::user("start"),
@@ -271,7 +271,7 @@ fn vv_llm_client_projects_model_settings_into_the_real_chat_request() {
         Box::new(chat_client),
         90.0,
     );
-    let mut request = LlmRequest::new("demo-model", vec![Message::user("inspect settings")]);
+    let mut request = llm_request("demo-model", vec![Message::user("inspect settings")]);
     request.tools = vec![
         json!({
             "type": "function",
@@ -326,7 +326,7 @@ fn vv_llm_client_applies_none_and_rejects_unknown_named_tool_choice() {
         90.0,
     )
     .with_retry_policy(1, 0.0);
-    let mut none_request = LlmRequest::new("demo-model", vec![Message::user("no tools")]);
+    let mut none_request = llm_request("demo-model", vec![Message::user("no tools")]);
     none_request.tools = vec![json!({
         "type": "function",
         "function": {"name": "lookup", "description": "lookup", "parameters": {"type": "object"}}
@@ -352,7 +352,7 @@ fn vv_llm_client_applies_none_and_rejects_unknown_named_tool_choice() {
         90.0,
     )
     .with_retry_policy(1, 0.0);
-    let mut unknown_request = LlmRequest::new("demo-model", vec![Message::user("missing tool")]);
+    let mut unknown_request = llm_request("demo-model", vec![Message::user("missing tool")]);
     unknown_request.tools = vec![json!({
         "type": "function",
         "function": {"name": "lookup", "description": "lookup", "parameters": {"type": "object"}}
@@ -379,7 +379,7 @@ fn vv_llm_client_rejects_per_request_extra_headers() {
         Box::new(RecordingMessagesChatClient::default()),
         90.0,
     );
-    let mut request = LlmRequest::new("demo-model", vec![Message::user("inspect settings")]);
+    let mut request = llm_request("demo-model", vec![Message::user("inspect settings")]);
     request.model_settings = Some(
         ModelSettings::builder()
             .extra_header("x-request", "value")
@@ -392,7 +392,7 @@ fn vv_llm_client_rejects_per_request_extra_headers() {
 
     assert!(error.to_string().contains("extra_headers is not supported"));
 
-    let mut request = LlmRequest::new("demo-model", vec![Message::user("inspect settings")]);
+    let mut request = llm_request("demo-model", vec![Message::user("inspect settings")]);
     request.model_settings = Some(
         ModelSettings::builder()
             .extra_arg("extra_query", json!({"region": "test"}))
@@ -417,10 +417,7 @@ fn provider_timeout_is_default_and_model_settings_override_it() {
     )
     .with_retry_policy(1, 0.0);
     let error = timed_out
-        .complete(LlmRequest::new(
-            "demo-model",
-            vec![Message::user("timeout")],
-        ))
+        .complete(llm_request("demo-model", vec![Message::user("timeout")]))
         .expect_err("provider timeout must apply");
     assert!(error.to_string().contains("timed out after 0.005"));
 
@@ -434,7 +431,7 @@ fn provider_timeout_is_default_and_model_settings_override_it() {
         0.005,
     )
     .with_retry_policy(1, 0.0);
-    let mut request = LlmRequest::new("demo-model", vec![Message::user("override")]);
+    let mut request = llm_request("demo-model", vec![Message::user("override")]);
     request.model_settings = Some(
         ModelSettings::builder()
             .timeout(Duration::from_millis(100))
@@ -457,7 +454,7 @@ fn vv_llm_client_normalizes_supported_thinking_model_options() {
         90.0,
     );
     let _ = claude
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "claude-opus-4-7-thinking",
             vec![Message::user("think")],
         ))
@@ -482,10 +479,7 @@ fn vv_llm_client_normalizes_supported_thinking_model_options() {
         90.0,
     );
     let _ = gemini
-        .complete(LlmRequest::new(
-            "gemini-3-pro",
-            vec![Message::user("think")],
-        ))
+        .complete(llm_request("gemini-3-pro", vec![Message::user("think")]))
         .expect("gemini thinking request");
 
     let gemini_request = gemini_probe.last_request().expect("gemini request");
@@ -516,19 +510,20 @@ fn vv_llm_client_applies_claude_prompt_cache_through_vv_llm_types() {
     system_message
         .metadata
         .insert(PROMPT_CACHE_ENABLED_KEY.to_string(), json!(false));
-    let mut request = LlmRequest::new(
+    let mut request = llm_request(
         "claude-sonnet-4-6",
         vec![
             system_message,
             Message::user("latest user turn ".repeat(350)),
         ],
     );
-    request.metadata = json!({
-        PROMPT_CACHE_ENABLED_KEY: true,
-        SYSTEM_PROMPT_SECTIONS_KEY: [
-            {"id": "stable", "text": "stable section ".repeat(400), "stable": true}
-        ]
-    });
+    request.prompt_bundle = PromptBundle::new(vec![PromptSection::new(
+        "stable",
+        "stable section ".repeat(400),
+        true,
+    )])
+    .expect("cache prompt bundle");
+    request.metadata = json!({PROMPT_CACHE_ENABLED_KEY: true});
     request.tools = vec![json!({
         "type": "function",
         "function": {
@@ -595,14 +590,16 @@ fn explicit_request_metadata_disables_system_prompt_cache_default() {
     system_message
         .metadata
         .insert(PROMPT_CACHE_ENABLED_KEY.to_string(), json!(true));
-    system_message.metadata.insert(
-        SYSTEM_PROMPT_SECTIONS_KEY.to_string(),
-        json!([{"id": "stable", "text": "stable section ".repeat(400), "stable": true}]),
-    );
-    let mut request = LlmRequest::new(
+    let mut request = llm_request(
         "claude-sonnet-4-6",
         vec![system_message, Message::user("hello")],
     );
+    request.prompt_bundle = PromptBundle::new(vec![PromptSection::new(
+        "stable",
+        "stable section ".repeat(400),
+        true,
+    )])
+    .expect("cache prompt bundle");
     request.metadata = json!({PROMPT_CACHE_ENABLED_KEY: false});
 
     let _ = llm.complete(request).expect("uncached request");
@@ -632,7 +629,7 @@ fn vv_llm_client_normalizes_more_provider_model_aliases() {
         90.0,
     );
     let _ = qwen
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "qwen3-32b-thinking",
             vec![Message::user("think")],
         ))
@@ -656,7 +653,7 @@ fn vv_llm_client_normalizes_more_provider_model_aliases() {
         90.0,
     );
     let _ = qwen_keep
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "qwen3-next-80b-a3b-thinking",
             vec![Message::user("keep suffix")],
         ))
@@ -679,7 +676,7 @@ fn vv_llm_client_normalizes_more_provider_model_aliases() {
         90.0,
     );
     let _ = glm
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "glm-5-air-thinking",
             vec![Message::user("think")],
         ))
@@ -703,7 +700,7 @@ fn vv_llm_client_normalizes_more_provider_model_aliases() {
         90.0,
     );
     let _ = gpt
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "gpt-5-high",
             vec![Message::user("high effort")],
         ))
@@ -727,7 +724,7 @@ fn vv_llm_client_normalizes_more_provider_model_aliases() {
         90.0,
     );
     let _ = o3
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "o3-mini-high",
             vec![Message::user("high effort")],
         ))
@@ -753,7 +750,7 @@ fn vv_llm_client_normalizes_tool_call_ids_and_names() {
     );
 
     let response = llm
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "demo-model",
             vec![Message::user("call a tool")],
         ))
@@ -776,7 +773,7 @@ fn vv_llm_stream_collects_raw_content_blocks() {
     );
 
     let response = llm
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "kimi-k2.5",
             vec![Message::user("collect raw blocks")],
         ))
@@ -807,7 +804,7 @@ fn vv_llm_client_debug_dump_writes_request_messages() {
     .with_debug_dump_dir(dump_dir.path());
 
     let response = llm
-        .complete(LlmRequest::new("gpt/4o-mini", vec![Message::user("hello")]))
+        .complete(llm_request("gpt/4o-mini", vec![Message::user("hello")]))
         .expect("debug dump request");
 
     assert_eq!(response.content, "recorded");

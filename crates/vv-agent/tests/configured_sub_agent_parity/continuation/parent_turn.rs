@@ -168,7 +168,8 @@ fn current_turn_parent_task(turn: &str) -> AgentTask {
     let mut parent = AgentTask::new(
         format!("parent-task-{turn}"),
         "shared-model",
-        format!("Parent prompt {turn}"),
+        vv_agent::prompt::PromptBundle::from_instruction_text(format!("Parent prompt {turn}"))
+            .expect("prompt bundle"),
         format!("parent input {turn}"),
     );
     parent.max_cycles = 3;

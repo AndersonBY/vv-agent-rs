@@ -11,6 +11,7 @@ use crate::checkpoint::{
 use crate::config::ResolvedModelConfig;
 use crate::constants::WORKSPACE_TOOLS;
 use crate::model_settings::{ModelSettings, ResponseFormat};
+use crate::prompt::PromptBundle;
 use crate::run_config::RunConfig;
 use crate::runtime::backends::{
     CapabilityRef, DistributedRunEnvelope, ResolvedDistributedCapabilities,
@@ -112,7 +113,7 @@ pub(crate) fn build_run_definition(
             "type": request.task.agent_type,
         },
         "root_input": request.root_input,
-        "compiled_prompt": request.task.system_prompt,
+        "prompt_bundle": request.task.prompt_bundle,
         "initial_messages": request.initial_messages.iter().map(Message::to_dict).collect::<Vec<_>>(),
         "initial_shared_state": request.task.initial_shared_state,
         "run_metadata": behavior_metadata(request.agent, request.run_config),
@@ -211,12 +212,21 @@ pub(crate) fn build_frozen_task(
             )
         })?;
 
-    let compiled_prompt = required_string(definition, "compiled_prompt")?;
+    let prompt_bundle = definition
+        .get("prompt_bundle")
+        .ok_or_else(|| definition_invalid("prompt_bundle is missing"))
+        .and_then(|value| {
+            PromptBundle::from_value(value)
+                .map_err(|error| definition_invalid(format!("prompt_bundle is invalid: {error}")))
+        })?;
     if !agent.has_dynamic_instructions() {
         let instructions = agent.instructions().trim();
         if !instructions.is_empty()
-            && compiled_prompt.trim() != instructions
-            && !compiled_prompt.trim_start().starts_with(instructions)
+            && prompt_bundle.flatten().trim() != instructions
+            && !prompt_bundle
+                .flatten()
+                .trim_start()
+                .starts_with(instructions)
         {
             return Err(CheckpointError::new(
                 "checkpoint_definition_mismatch",
@@ -299,7 +309,7 @@ pub(crate) fn build_frozen_task(
     let mut task = AgentTask::new(
         checkpoint.task_id.clone(),
         required_string(model, "model_id")?,
-        compiled_prompt,
+        prompt_bundle,
         required_string(definition, "root_input")?,
     );
     task.max_cycles = required_u32(controls, "max_cycles")?;
@@ -380,8 +390,7 @@ pub(crate) fn validate_distributed_run_definition(
         .ok_or_else(|| definition_invalid("model must be an object"))?;
     let task = &envelope.task;
 
-    let task_matches = definition.get("compiled_prompt").and_then(Value::as_str)
-        == Some(task.system_prompt.as_str())
+    let task_matches = definition.get("prompt_bundle") == Some(&task.prompt_bundle.to_value())
         && definition.get("root_input").and_then(Value::as_str) == Some(task.user_prompt.as_str())
         && model.get("model_id").and_then(Value::as_str) == Some(task.model.as_str())
         && controls.get("max_cycles").and_then(Value::as_u64) == Some(u64::from(task.max_cycles))

@@ -8,25 +8,25 @@ for model-driven automation.
 
 ## Install
 
-The current stable release is `0.8.0`. It implements language-neutral Contract
-`3.0.0` while keeping a Rust-idiomatic API; the sibling implementation consumes
-the same contract.
+The current crate version is `0.9.0`. Repository `HEAD` adopts language-neutral
+Contract `4.0.5` while keeping a Rust-idiomatic API. The current cross-repository
+adoption state and verified revisions live in the central support matrix.
 
 ```bash
-cargo add vv-agent@0.8.0
+cargo add vv-agent@0.9.0
 ```
 
 Enable the Apalis adapter with:
 
 ```bash
-cargo add vv-agent@0.8.0 --features apalis
+cargo add vv-agent@0.9.0 --features apalis
 ```
 
-Contract 3 and repository `HEAD` are forward-only: current readers accept only
+Contract 4 and repository `HEAD` are forward-only: current readers accept only
 the current strict public and wire shapes. Pin an older crate release when an
 application must retain an older protocol.
 
-### 0.8.0 Highlights
+### 0.9.0 Highlights
 
 - Every admitted model dispatch is recorded in
   `result.token_usage().model_calls`, including agent cycles, Session Memory,
@@ -38,9 +38,15 @@ application must retain an older protocol.
   `invalid_tool_arguments` details without invoking the handler.
 - Optional host output validation is disabled by default and can make at most
   one tools-free repair callback before a terminal result is committed.
-- Durable execution uses `vv-agent.checkpoint.v3`,
-  `vv-agent.run-definition.v2`, `vv-agent.distributed-run.v2`, and
-  `vv-agent.distributed-worker-response.v1` for strict recovery and
+- Resolved instructions and context travel as one immutable `PromptBundle`;
+  metadata is not a prompt-section transport, and checkpoint resume reuses the
+  frozen bundle without rerunning producers.
+- Truncated command and file results use sparse artifact or cursor recovery
+  fields. The model-visible `compress_memory` tool and deferred exposure mode
+  are removed; automatic memory compaction remains internal.
+- Durable execution uses `vv-agent.checkpoint.v4`,
+  `vv-agent.run-definition.v3`, `vv-agent.distributed-run.v3`, and
+  `vv-agent.distributed-worker-response.v2` for strict recovery and
   distributed-controller boundaries.
 
 See [output validation](docs/output-validation.md) and
@@ -369,7 +375,7 @@ should start with `Agent` + `Runner`.
 use std::path::PathBuf;
 
 use vv_agent::config::build_vv_llm_from_local_settings;
-use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
+use vv_agent::prompt::{build_system_prompt_bundle_with_options, BuildSystemPromptOptions};
 use vv_agent::types::AgentTask;
 use vv_agent::{build_default_registry, AgentRuntime, RuntimeRunControls};
 
@@ -381,7 +387,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         90.0,
     )?;
     let runtime = AgentRuntime::new(llm).with_tool_registry(build_default_registry());
-    let system_prompt = build_system_prompt_with_options(
+    let prompt_bundle = build_system_prompt_bundle_with_options(
         "You are a reliable execution agent.",
         BuildSystemPromptOptions {
             language: "zh-CN".to_string(),
@@ -394,7 +400,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut task = AgentTask::new(
         "demo",
         resolved.model_id,
-        system_prompt,
+        prompt_bundle,
         "Read the workspace README and summarize the project.",
     );
     task.max_cycles = 12;
@@ -420,7 +426,7 @@ runtime version with event logging.
 | --- | --- |
 | Runtime | Multi-cycle model execution, explicit terminal states, live `RunHandle`, cancellation, typed events, event replay, and max-cycle handling. |
 | Tools | Built-in tools plus a `ToolOrchestrator` path for policy, approval, dispatch, timeout, and telemetry. |
-| SDK | `Agent`, `Runner`, `RunConfig`, `ModelSettings`, typed tools, `Agent::as_tool()`, `RunEvent`, providers, and `Session`. |
+| SDK | `Agent`, `Runner`, `RunConfig`, `ModelSettings`, `PromptBundle`, `PromptSection`, `ToolExecutionResult`, `ToolArtifactRef`, `ToolResultCursor`, typed tools, `Agent::as_tool()`, `RunEvent`, providers, and `Session`. |
 | Memory | Token budgeting, prompt-too-long retries, micro and full compaction, artifact-backed large tool results, image trimming, session memory, and external provider hooks. |
 | Hooks | Rust `RuntimeHook` implementations can inspect or patch LLM calls, tool calls, memory compaction, and run lifecycle behavior. |
 | Sub-agents | Runtime-backed sub-task creation, batch submission, background status queries with wait-for-completion support, continuation, steering, and inherited streaming callbacks. |
@@ -528,7 +534,7 @@ vv-agent-rs/
       config/     # LLM settings loading and model resolution
       llm/        # LLM trait, scripted test client, vv-llm client bridge
       memory/     # compaction, artifacts, session memory, token budgeting
-      prompt/     # system prompt sections and prompt-cache metadata
+      prompt/     # system prompt sections and provider cache projection
       agent.rs    # public Agent builder
       runner.rs   # public Runner over runtime execution
       run_config.rs

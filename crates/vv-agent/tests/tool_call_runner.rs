@@ -34,7 +34,12 @@ fn tool_call_runner_skips_remaining_calls_after_finish() {
         ))
         .expect("never tool");
     let runner = ToolCallRunner::new(registry);
-    let task = vv_agent::types::AgentTask::new("tool_runner", "demo", "system", "prompt");
+    let task = vv_agent::types::AgentTask::new(
+        "tool_runner",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "prompt",
+    );
     let mut context = ToolContext::new(workspace.path());
     let tool_calls = vec![
         ToolCall::new("finish_call", "_finish", BTreeMap::new()),
@@ -101,7 +106,12 @@ fn tool_call_runner_applies_stop_on_first_success_to_all_registered_tools() {
             .expect("tool");
     }
     let runner = ToolCallRunner::new(registry);
-    let mut task = vv_agent::types::AgentTask::new("tool_runner", "demo", "system", "prompt");
+    let mut task = vv_agent::types::AgentTask::new(
+        "tool_runner",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "prompt",
+    );
     task.metadata.insert(
         "_vv_agent_tool_use_behavior".to_string(),
         json!("stop_on_first_tool"),
@@ -151,7 +161,12 @@ fn tool_call_runner_stops_only_at_named_successful_tools() {
             .expect("tool");
     }
     let runner = ToolCallRunner::new(registry);
-    let mut task = vv_agent::types::AgentTask::new("tool_runner", "demo", "system", "prompt");
+    let mut task = vv_agent::types::AgentTask::new(
+        "tool_runner",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "prompt",
+    );
     task.metadata.insert(
         "_vv_agent_tool_use_behavior".to_string(),
         json!("stop_at_tool_names"),
@@ -205,7 +220,12 @@ fn tool_call_runner_short_circuit_result_keeps_original_tool_call_id_after_call_
         ToolCallRunner::new(registry).with_hook_manager(RuntimeHookManager::new(vec![Arc::new(
             PatchedCallAndBlankResultHook,
         )]));
-    let task = vv_agent::types::AgentTask::new("tool_runner_hook", "demo", "system", "prompt");
+    let task = vv_agent::types::AgentTask::new(
+        "tool_runner_hook",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "prompt",
+    );
     let mut context = ToolContext::new(workspace.path());
     let tool_calls = vec![ToolCall::new(
         "original_call",

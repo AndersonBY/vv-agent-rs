@@ -48,6 +48,52 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 denied_cost_dimensions,
             ]
         ),
+        ("prompt_bundle", "vv_agent::PromptBundle", "field") => {
+            compile_fields!(name, vv_agent::PromptBundle, [sections, stable_hash])
+        }
+        ("prompt_bundle", "vv_agent::PromptBundle", "method") => {
+            compile_methods!(name, vv_agent::PromptBundle, [flatten])
+        }
+        ("prompt_section", "vv_agent::PromptSection", "field") => compile_fields!(
+            name,
+            vv_agent::PromptSection,
+            [id, text, stable, source, cache_hint, metadata]
+        ),
+        ("agent_task", "vv_agent::AgentTask", "field") => compile_fields!(
+            name,
+            vv_agent::AgentTask,
+            [task_id, model, prompt_bundle, user_prompt]
+        ),
+        ("tool_execution_result", "vv_agent::ToolExecutionResult", "field") => compile_fields!(
+            name,
+            vv_agent::ToolExecutionResult,
+            [
+                tool_call_id,
+                content,
+                status,
+                directive,
+                error_code,
+                metadata,
+                image_url,
+                image_path,
+                truncated,
+                truncation_reason,
+                original_bytes,
+                visible_bytes,
+                artifact,
+                cursor,
+            ]
+        ),
+        ("tool_artifact_ref", "vv_agent::ToolArtifactRef", "field") => compile_fields!(
+            name,
+            vv_agent::ToolArtifactRef,
+            [path, media_type, encoding, size_bytes, sha256]
+        ),
+        ("tool_result_cursor", "vv_agent::ToolResultCursor", "field") => compile_fields!(
+            name,
+            vv_agent::ToolResultCursor,
+            [kind, path, offset_chars, sha256]
+        ),
         ("runner", "vv_agent::Runner", "method") => match name {
             "run" => {
                 let reference =
@@ -445,7 +491,7 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
         ("llm_request", "vv_agent::LlmRequest", "field") => compile_fields!(
             name,
             vv_agent::LlmRequest,
-            [model, messages, tools, metadata, model_settings,]
+            [model, messages, tools, metadata, model_settings, prompt_bundle,]
         ),
         ("llm_client", "vv_agent::LlmClient", "method") => {
             compile_methods!(
@@ -491,8 +537,8 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
 #[test]
 fn public_api_manifest_compiles_real_rust_exports() {
     let fixture = load_fixture("public_api.json");
-    assert_eq!(fixture["contract"], "vv-agent-public-api-v1");
-    assert_eq!(fixture["schema_version"], 1);
+    assert_eq!(fixture["contract"], "vv-agent-public-api-v2");
+    assert_eq!(fixture["schema_version"], 2);
 
     let domains = fixture["domains"].as_array().expect("public API domains");
     let domain_ids = domains
@@ -517,7 +563,7 @@ fn public_api_manifest_compiles_real_rust_exports() {
             );
         }
     }
-    assert_eq!(capability_ids.len(), 151);
+    assert_eq!(capability_ids.len(), 156);
 
     let surfaces = fixture["surfaces"].as_array().expect("public API surfaces");
     let surface_map = surfaces
