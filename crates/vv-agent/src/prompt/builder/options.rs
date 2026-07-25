@@ -3,13 +3,6 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BuiltSystemPrompt {
-    pub prompt: String,
-    pub sections: Vec<Value>,
-    pub stable_hash: String,
-}
-
 #[derive(Clone)]
 pub struct BuildSystemPromptOptions {
     pub language: String,

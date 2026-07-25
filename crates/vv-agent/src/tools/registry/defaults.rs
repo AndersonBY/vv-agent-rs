@@ -3,7 +3,6 @@ use crate::tools::handlers::{
     bash::bash_tool,
     control::{ask_user_tool, task_finish_tool},
     image::read_image_tool,
-    memory::compress_memory_tool,
     search::search_files_tool,
     skills::activate_skill_tool,
     sub_agents::create_sub_task_tool,
@@ -31,9 +30,6 @@ pub fn build_default_registry() -> ToolRegistry {
     registry
         .register(todo_write_tool())
         .expect("default todo_write registration");
-    registry
-        .register(compress_memory_tool())
-        .expect("default compress_memory registration");
     registry
         .register(find_files_tool())
         .expect("default find_files registration");

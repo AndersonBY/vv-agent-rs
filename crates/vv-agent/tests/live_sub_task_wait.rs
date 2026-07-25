@@ -3,7 +3,7 @@ use std::env;
 use std::path::PathBuf;
 
 use serde_json::{json, Value};
-use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
+use vv_agent::prompt::{build_system_prompt_bundle_with_options, BuildSystemPromptOptions};
 use vv_agent::types::AgentTask;
 use vv_agent::{
     build_default_registry, build_vv_llm_from_local_settings, AgentRuntime, AgentStatus,
@@ -42,7 +42,7 @@ fn live_agent_waits_for_background_sub_task_completion() {
         "slow-researcher".to_string(),
         "Sleeps briefly, then returns the requested token.".to_string(),
     );
-    let parent_prompt = build_system_prompt_with_options(
+    let parent_prompt = build_system_prompt_bundle_with_options(
         "You are testing sub-agent orchestration. Follow these exact steps and do not answer directly. \
 Step 1: call create_sub_task with agent_id='slow-researcher', task_description asking the child \
 to sleep briefly then return the token WAIT-SUBTASK-OK, and wait_for_completion=false. \

@@ -613,7 +613,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     {
                         context.idempotency_key = checkpoint_plan
                             .as_ref()
-                            .map(|plan| plan.idempotency_key.clone());
+                            .and_then(|plan| plan.idempotency_key.clone());
                         tool_orchestrator.observe_result_without_execution(
                             patched_call.clone(),
                             result,
@@ -624,7 +624,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             tool_run_options.clone().idempotency_key(
                                 checkpoint_plan
                                     .as_ref()
-                                    .map(|plan| plan.idempotency_key.clone()),
+                                    .and_then(|plan| plan.idempotency_key.clone()),
                             ),
                             cycle_index,
                         );

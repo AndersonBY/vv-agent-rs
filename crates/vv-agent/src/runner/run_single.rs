@@ -310,21 +310,20 @@ impl Runner {
                 frozen_definition_messages(checkpoint).map_err(|error| error.to_string())?;
             (task, initial_messages)
         } else {
-            let (instructions, context_bundle) =
-                self.build_instructions_with_context(InstructionBuildRequest {
-                    agent,
-                    run_context: &run_context,
-                    input_text: &input_text,
-                    config: &config,
-                    model: &resolved.model_id,
-                    trace_id: &trace_id,
-                    session: session.clone(),
-                    workspace: &workspace,
-                })?;
+            let prompt_bundle = self.build_instructions_with_context(InstructionBuildRequest {
+                agent,
+                run_context: &run_context,
+                input_text: &input_text,
+                config: &config,
+                model: &resolved.model_id,
+                trace_id: &trace_id,
+                session: session.clone(),
+                workspace: &workspace,
+            })?;
             let mut task = AgentTask::new(
                 run_id,
                 resolved.model_id.clone(),
-                instructions,
+                prompt_bundle,
                 input_text.clone(),
             );
             task.max_cycles = max_cycles;
@@ -339,9 +338,6 @@ impl Runner {
                 Value::Bool(config.session_memory_enabled),
             );
             task.metadata.remove(INITIAL_BUDGET_USAGE_METADATA_KEY);
-            if let Some(context_bundle) = context_bundle {
-                insert_context_metadata(&mut task.metadata, &context_bundle);
-            }
             task.model_settings = Some(settings.clone());
             task.initial_shared_state = self.default_run_config.initial_shared_state.clone();
             task.initial_shared_state

@@ -8,10 +8,11 @@ use serde_json::{json, Value};
 use vv_agent::{
     tool_request_digest, AfterCycleDecision, AfterCycleSnapshot, Agent, AgentStatus, CapabilityRef,
     Checkpoint, CheckpointConfig, CheckpointError, CheckpointStatus, CheckpointStore, ClaimMode,
-    CycleDispatchResult, CycleDispatcher, DistributedBackend, DistributedCapabilities,
-    DistributedCapabilityRegistry, DistributedCycleWorker, EventCursor, FunctionTool,
-    InMemoryCheckpointStore, LLMResponse, MemorySession, ModelCallOperation, ModelRef,
-    NoToolPolicy, OperationJournalEntry, OperationState, ResumePolicy, RunBudgetLimits, RunConfig,
+    ContextError, ContextFragment, ContextProvider, ContextRequest, CycleDispatchResult,
+    CycleDispatcher, DistributedBackend, DistributedCapabilities, DistributedCapabilityRegistry,
+    DistributedCycleWorker, EventCursor, FunctionTool, InMemoryCheckpointStore, LLMResponse,
+    MemorySession, ModelCallOperation, ModelRef, NoToolPolicy, OperationJournalEntry,
+    OperationState, PromptBundle, PromptSection, ResumePolicy, RunBudgetLimits, RunConfig,
     RunEventPayload, Runner, RuntimeRecipe, ScriptStep, ScriptedLlmClient, ScriptedModelProvider,
     Session, TokenUsage, ToolCall, ToolIdempotency, ToolMetadata, ToolOutput, UsageSource,
 };

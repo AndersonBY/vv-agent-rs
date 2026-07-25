@@ -375,6 +375,12 @@ fn approval_resolution_error_result(
         ]),
         image_url: None,
         image_path: None,
+        truncated: false,
+        truncation_reason: None,
+        original_bytes: None,
+        visible_bytes: None,
+        artifact: None,
+        cursor: None,
     }
 }
 
@@ -399,6 +405,12 @@ pub(super) fn approval_error_result(
         metadata: BTreeMap::new(),
         image_url: None,
         image_path: None,
+        truncated: false,
+        truncation_reason: None,
+        original_bytes: None,
+        visible_bytes: None,
+        artifact: None,
+        cursor: None,
     }
 }
 
@@ -429,6 +441,12 @@ fn approval_required_result(call: &ToolCall) -> ToolExecutionResult {
         ]),
         image_url: None,
         image_path: None,
+        truncated: false,
+        truncation_reason: None,
+        original_bytes: None,
+        visible_bytes: None,
+        artifact: None,
+        cursor: None,
     }
 }
 

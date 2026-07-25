@@ -1,3 +1,4 @@
+mod artifacts;
 pub mod base;
 mod discovery_filter;
 pub mod local;
@@ -9,6 +10,9 @@ use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+pub(crate) use artifacts::{
+    artifact_write_error_code, bounded_text_preview, persist_text_artifact,
+};
 pub use base::{FileInfo, WorkspaceBackend};
 pub use discovery_filter::{
     validate_portable_exclude_pattern, DiscoveryFilteredWorkspaceBackend, PortableRegexError,
@@ -154,6 +158,10 @@ pub(super) fn object_store_error_to_io(error: object_store::Error) -> Error {
         object_store::Error::NotFound { path, source } => Error::new(
             ErrorKind::NotFound,
             format!("path not found: {path}: {source}"),
+        ),
+        object_store::Error::AlreadyExists { path, source } => Error::new(
+            ErrorKind::AlreadyExists,
+            format!("path already exists: {path}: {source}"),
         ),
         other => Error::other(other.to_string()),
     }

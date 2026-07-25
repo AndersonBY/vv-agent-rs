@@ -230,7 +230,7 @@ pub fn checkpoint_from_value(
     if object.get("schema_version").and_then(Value::as_str) != Some(CHECKPOINT_SCHEMA) {
         return Err(CheckpointError::new(
             "checkpoint_schema_unsupported",
-            "checkpoint schema_version is not vv-agent.checkpoint.v3",
+            "checkpoint schema_version is not vv-agent.checkpoint.v4",
         ));
     }
     let run_definition_schema = required_string(

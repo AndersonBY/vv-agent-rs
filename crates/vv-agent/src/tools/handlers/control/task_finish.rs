@@ -73,6 +73,12 @@ pub(crate) fn task_finish_tool() -> ToolSpec {
                         metadata: BTreeMap::new(),
                         image_url: None,
                         image_path: None,
+                        truncated: false,
+                        truncation_reason: None,
+                        original_bytes: None,
+                        visible_bytes: None,
+                        artifact: None,
+                        cursor: None,
                     };
                 }
             }
@@ -97,6 +103,12 @@ pub(crate) fn task_finish_tool() -> ToolSpec {
                 metadata,
                 image_url: None,
                 image_path: None,
+                truncated: false,
+                truncation_reason: None,
+                original_bytes: None,
+                visible_bytes: None,
+                artifact: None,
+                cursor: None,
             }
         }),
     );

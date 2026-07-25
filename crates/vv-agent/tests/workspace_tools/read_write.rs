@@ -5,7 +5,7 @@ fn read_file_counts_unicode_characters_and_preserves_result_contract() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
-    let content = "中".repeat(20_000);
+    let content = "中".repeat(10_000);
     std::fs::write(workspace.path().join("cjk.txt"), &content).expect("cjk file");
 
     let result = registry
@@ -18,22 +18,13 @@ fn read_file_counts_unicode_characters_and_preserves_result_contract() {
             &mut context,
         )
         .expect("read_file");
-    let payload: Value = serde_json::from_str(&result.content).expect("payload");
-
     assert_eq!(result.status, ToolResultStatus::Success);
     assert_eq!(result.directive, vv_agent::ToolDirective::Continue);
     assert_eq!(result.error_code, None);
     assert!(result.metadata.is_empty());
-    assert_eq!(
-        payload,
-        json!({
-            "path": "cjk.txt",
-            "start_line": 1,
-            "end_line": 1,
-            "show_line_numbers": false,
-            "content": content,
-        })
-    );
+    assert_eq!(result.content, content);
+    assert!(!result.truncated);
+    assert!(result.cursor.is_none());
 }
 
 #[test]
@@ -41,8 +32,8 @@ fn read_file_too_large_counts_unicode_characters() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
-    std::fs::write(workspace.path().join("large-cjk.txt"), "中".repeat(50_001))
-        .expect("large cjk file");
+    let content = "中".repeat(12_001);
+    std::fs::write(workspace.path().join("large-cjk.txt"), &content).expect("large cjk file");
 
     let result = registry
         .execute(
@@ -54,21 +45,67 @@ fn read_file_too_large_counts_unicode_characters() {
             &mut context,
         )
         .expect("read_file");
-    let payload: Value = serde_json::from_str(&result.content).expect("payload");
-
     assert_eq!(result.status, ToolResultStatus::Success);
     assert_eq!(result.directive, vv_agent::ToolDirective::Continue);
     assert_eq!(result.error_code, None);
     assert!(result.metadata.is_empty());
-    assert_eq!(payload["content"], Value::Null);
-    assert_eq!(
-        payload["file_info"],
-        json!({"total_lines": 1, "total_chars": 50_001})
-    );
-    assert_eq!(
-        payload["requested"],
-        json!({"line_count": 1, "char_count": 50_001})
-    );
+    assert!(result.truncated);
+    assert_eq!(result.content, "中".repeat(12_000));
+    assert_eq!(result.content.chars().count(), 12_000);
+    assert_eq!(result.original_bytes, Some(content.len() as u64));
+    assert_eq!(result.visible_bytes, Some(result.content.len() as u64));
+    let cursor = result.cursor.expect("continuation cursor");
+    assert_eq!(cursor.kind, "read_file");
+    assert_eq!(cursor.path, "large-cjk.txt");
+    assert_eq!(cursor.offset_chars, 12_000);
+}
+
+#[test]
+fn read_file_numbered_truncation_keeps_valid_sizes_and_advances_cursor() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let registry = build_default_registry();
+    let mut context = ToolContext::new(workspace.path());
+    let content = "x\n".repeat(3_000);
+    std::fs::write(workspace.path().join("numbered.txt"), &content).expect("numbered file");
+
+    let first = registry
+        .execute(
+            &ToolCall::new(
+                "read_numbered_first",
+                "read_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("numbered.txt")),
+                    ("show_line_numbers".to_string(), json!(true)),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("first numbered read");
+    first.validate().expect("valid first bounded result");
+    assert!(first.truncated);
+    assert!(first.original_bytes.expect("original bytes") > content.len() as u64);
+    let first_cursor = first.cursor.expect("first cursor");
+    assert!(first_cursor.offset_chars > 0);
+
+    let second = registry
+        .execute(
+            &ToolCall::new(
+                "read_numbered_second",
+                "read_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("numbered.txt")),
+                    ("show_line_numbers".to_string(), json!(true)),
+                    ("cursor".to_string(), json!(first_cursor.clone())),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("second numbered read");
+    second.validate().expect("valid second bounded result");
+    assert!(second
+        .cursor
+        .as_ref()
+        .is_none_or(|cursor| cursor.offset_chars > first_cursor.offset_chars));
 }
 
 #[test]
@@ -176,15 +213,12 @@ fn write_file_reports_utf8_bytes_and_compatible_unicode_chars() {
 }
 
 #[test]
-fn read_file_returns_file_info_when_requested_slice_exceeds_limits() {
+fn read_file_returns_cursor_when_requested_slice_exceeds_line_limit() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
-    let large_content = (0..2_001)
-        .map(|line| format!("line-{line}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    std::fs::write(workspace.path().join("large.txt"), large_content).expect("large file");
+    let large_content = "x\n".repeat(2_001);
+    std::fs::write(workspace.path().join("large.txt"), &large_content).expect("large file");
 
     let result = registry
         .execute(
@@ -198,25 +232,40 @@ fn read_file_returns_file_info_when_requested_slice_exceeds_limits() {
         .expect("read tool");
 
     assert_eq!(result.status, ToolResultStatus::Success);
-    let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["content"], Value::Null);
-    assert_eq!(payload["file_info"]["total_lines"], 2_001);
-    assert_eq!(payload["limits"]["max_lines"], 2_000);
-    assert_eq!(payload["suggested_range"]["start_line"], 1);
-    assert_eq!(payload["suggested_range"]["end_line"], 2_000);
-    assert!(payload["message"]
-        .as_str()
-        .expect("message")
-        .contains("exceeds limits"));
+    assert!(result.truncated);
+    assert_eq!(result.content, "x\n".repeat(2_000));
+    let cursor = result.cursor.clone().expect("line continuation cursor");
+    assert_eq!(cursor.offset_chars, 4_000);
+
+    let continued = registry
+        .execute(
+            &ToolCall::new(
+                "read_large_continue",
+                "read_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("large.txt")),
+                    (
+                        "cursor".to_string(),
+                        serde_json::to_value(cursor).expect("cursor"),
+                    ),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("continued read");
+    assert_eq!(continued.content, "x\n");
+    assert!(!continued.truncated);
+    assert!(continued.cursor.is_none());
 }
 
 #[test]
-fn read_file_returns_file_info_when_char_limit_exceeded() {
+fn read_file_cursor_rejects_path_mismatch_and_changed_source() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
-    std::fs::write(workspace.path().join("chars.txt"), "a".repeat(50_001))
+    std::fs::write(workspace.path().join("chars.txt"), "a".repeat(12_001))
         .expect("large char file");
+    std::fs::write(workspace.path().join("other.txt"), "other").expect("other file");
 
     let result = registry
         .execute(
@@ -229,16 +278,74 @@ fn read_file_returns_file_info_when_char_limit_exceeded() {
         )
         .expect("read tool");
 
-    assert_eq!(result.status, ToolResultStatus::Success);
-    let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["content"], Value::Null);
-    assert_eq!(payload["file_info"]["total_chars"], 50_001);
-    assert_eq!(payload["requested"]["char_count"], 50_001);
-    assert_eq!(payload["limits"]["max_chars"], 50_000);
-    assert!(payload["message"]
-        .as_str()
-        .expect("message")
-        .contains("exceeds limits"));
+    let cursor = result.cursor.expect("cursor");
+
+    let mismatch = registry
+        .execute(
+            &ToolCall::new(
+                "read_mismatch",
+                "read_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("other.txt")),
+                    (
+                        "cursor".to_string(),
+                        serde_json::to_value(&cursor).expect("cursor"),
+                    ),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("path mismatch");
+    assert_eq!(mismatch.status, ToolResultStatus::Error);
+    assert_eq!(mismatch.error_code.as_deref(), Some("cursor_path_mismatch"));
+
+    let mut invalid_offset_cursor = cursor.clone();
+    invalid_offset_cursor.offset_chars = vv_agent::budget::MAX_WIRE_INTEGER;
+    let invalid_offset = registry
+        .execute(
+            &ToolCall::new(
+                "read_invalid_offset",
+                "read_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("chars.txt")),
+                    (
+                        "cursor".to_string(),
+                        serde_json::to_value(invalid_offset_cursor).expect("cursor"),
+                    ),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("invalid cursor offset");
+    assert_eq!(invalid_offset.status, ToolResultStatus::Error);
+    assert_eq!(
+        invalid_offset.error_code.as_deref(),
+        Some("cursor_offset_invalid")
+    );
+
+    std::fs::write(
+        workspace.path().join("chars.txt"),
+        format!("{}b", "a".repeat(12_001)),
+    )
+    .expect("changed source");
+    let stale = registry
+        .execute(
+            &ToolCall::new(
+                "read_stale",
+                "read_file",
+                BTreeMap::from([
+                    ("path".to_string(), json!("chars.txt")),
+                    (
+                        "cursor".to_string(),
+                        serde_json::to_value(cursor).expect("cursor"),
+                    ),
+                ]),
+            ),
+            &mut context,
+        )
+        .expect("stale cursor");
+    assert_eq!(stale.status, ToolResultStatus::Error);
+    assert_eq!(stale.error_code.as_deref(), Some("stale_cursor"));
 }
 
 #[test]
@@ -311,10 +418,9 @@ fn read_file_preserves_requested_start_line_for_empty_out_of_range_slice() {
         .expect("read tool");
 
     assert_eq!(result.status, ToolResultStatus::Success);
-    let payload: Value = serde_json::from_str(&result.content).expect("payload");
-    assert_eq!(payload["start_line"], 10);
-    assert_eq!(payload["end_line"], 9);
-    assert_eq!(payload["content"], "");
+    assert_eq!(result.content, "");
+    assert!(!result.truncated);
+    assert!(result.cursor.is_none());
 }
 
 #[test]

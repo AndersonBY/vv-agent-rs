@@ -23,4 +23,6 @@ pub use token_usage::{
     CacheUsage, CacheUsageStatus, ModelCallOperation, ModelCallRecord, ModelCallStatus,
     TaskTokenUsage, TokenUsage, UsageSource,
 };
-pub use tool_calls::{ToolCall, ToolExecutionResult};
+pub use tool_calls::{
+    ToolArtifactRef, ToolCall, ToolExecutionResult, ToolResultCursor, ToolTruncationReason,
+};

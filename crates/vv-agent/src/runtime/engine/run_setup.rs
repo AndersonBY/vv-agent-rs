@@ -223,6 +223,7 @@ where
         Arc::new(runtime.llm_client.clone()),
         backend,
         model,
+        task.prompt_bundle.clone(),
         checkpoint.clone(),
         model_call_coordinator.clone(),
         memory_budget_snapshot,

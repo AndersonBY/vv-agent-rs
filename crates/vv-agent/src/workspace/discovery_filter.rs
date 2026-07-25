@@ -208,6 +208,10 @@ impl WorkspaceBackend for DiscoveryFilteredWorkspaceBackend {
         self.inner.write_text(path, content, append)
     }
 
+    fn write_text_exclusive(&self, path: &str, content: &str) -> std::io::Result<usize> {
+        self.inner.write_text_exclusive(path, content)
+    }
+
     fn file_info(&self, path: &str) -> std::io::Result<Option<FileInfo>> {
         self.inner.file_info(path)
     }

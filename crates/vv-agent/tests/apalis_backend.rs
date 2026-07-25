@@ -299,7 +299,8 @@ async fn apalis_worker_task_recovers_retry_without_blocking_async_runtime() {
     let mut retry_task = AgentTask::new(
         "apalis-v2-retry-task",
         "test-model",
-        "You are a careful assistant.",
+        vv_agent::prompt::PromptBundle::from_instruction_text("You are a careful assistant.")
+            .expect("prompt bundle"),
         "Summarize the status.",
     );
     retry_task.max_cycles = 10;

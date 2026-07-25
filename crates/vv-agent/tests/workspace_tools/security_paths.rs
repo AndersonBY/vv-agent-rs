@@ -181,10 +181,7 @@ fn workspace_paths_expand_home() {
         .expect("read_file");
 
     assert_eq!(result.status, ToolResultStatus::Success);
-    assert_eq!(
-        serde_json::from_str::<Value>(&result.content).expect("payload")["content"],
-        "home expanded"
-    );
+    assert_eq!(result.content, "home expanded");
 }
 #[test]
 fn local_workspace_backend_enforces_root_and_reports_allowed_outside_paths() {

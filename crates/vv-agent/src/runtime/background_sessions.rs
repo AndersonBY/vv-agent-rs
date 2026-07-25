@@ -15,6 +15,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::runtime::processes::start_captured_process_with_env;
+use crate::workspace::WorkspaceBackend;
 
 use listeners::notify_background_listeners;
 use session::BackgroundSession;
@@ -201,5 +202,27 @@ impl BackgroundSessionManager {
                 payload
             }
         }
+    }
+
+    pub(crate) fn check_for_tool(
+        &self,
+        session_id: &str,
+        fallback_backend: std::sync::Arc<dyn WorkspaceBackend>,
+        fallback_task_id: &str,
+        fallback_tool_call_id: &str,
+    ) -> Value {
+        let payload = self.check(session_id);
+        if payload.get("status").and_then(Value::as_str) == Some("running") {
+            return payload;
+        }
+        let mut sessions = self
+            .sessions
+            .lock()
+            .expect("background session manager poisoned");
+        let Some(session) = sessions.get_mut(session_id) else {
+            return payload;
+        };
+        session.ensure_artifact(fallback_backend, fallback_task_id, fallback_tool_call_id);
+        session.snapshot()
     }
 }

@@ -39,6 +39,11 @@ pub fn read_captured_output(path: &Path, limit_chars: usize) -> String {
         .collect()
 }
 
+pub(crate) fn read_captured_output_all(path: &Path) -> std::io::Result<String> {
+    let bytes = fs::read(path)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
 pub fn remove_captured_output(path: &Path) {
     let _ = fs::remove_file(path);
 }

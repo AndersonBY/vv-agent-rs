@@ -1,8 +1,4 @@
 use std::collections::BTreeMap;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
 
 use serde_json::json;
 use vv_agent::prompt::{
@@ -42,50 +38,44 @@ Review code.
     };
 
     let bundle = build_system_prompt_bundle_with_options("You are careful.", options.clone());
-    assert!(bundle
-        .prompt
-        .contains("<Agent Definition>\nYou are careful."));
-    assert!(bundle.prompt.contains("<Session Memory>"));
-    assert!(bundle.prompt.contains("<Tools>"));
-    assert!(bundle.prompt.contains("ask_user"));
-    assert!(bundle.prompt.contains("create_sub_task"));
-    assert!(bundle.prompt.contains("review-code"));
-    assert!(bundle.prompt.contains("task_finish"));
-    assert!(bundle.prompt.contains("<Current Time>"));
-    assert!(bundle.prompt.contains("2026-05-26T00:00:00Z"));
-    assert!(bundle.prompt.contains(
-        "You can operate workspace files with tools: find_files, file_info, read_file, write_file, edit_file, search_files, compress_memory, todo_write."
-    ));
-    assert!(bundle
-        .prompt
-        .contains("Find candidate files with `find_files`"));
+    let flat_prompt = bundle.flatten();
+    assert!(flat_prompt.contains("<Agent Definition>\nYou are careful."));
+    assert!(flat_prompt.contains("<Session Memory>"));
+    assert!(flat_prompt.contains("<Tools>"));
+    assert!(flat_prompt.contains("Ask the user only for a required decision"));
+    assert!(flat_prompt.contains("agent_id=`reviewer`"));
+    assert!(flat_prompt.contains("review-code"));
+    assert!(flat_prompt.contains("task_finish"));
+    assert!(flat_prompt.contains("<Current Time>"));
+    assert!(flat_prompt.contains("2026-05-26T00:00:00Z"));
+    assert!(flat_prompt.contains("Prefer specialized workspace tools for direct file operations"));
     assert_eq!(bundle.stable_hash.len(), 64);
 
     let section_ids = bundle
         .sections
         .iter()
-        .map(|section| section["id"].as_str().unwrap_or_default())
+        .map(|section| section.id.as_str())
         .collect::<Vec<_>>();
     assert_eq!(
         section_ids,
         vec![
             "agent_definition",
-            "session_memory",
             "tools",
+            "session_memory",
             "current_time"
         ]
     );
-    assert_eq!(bundle.sections[1]["stable"], false);
+    assert!(!bundle.sections[2].stable);
 
     let prompt = build_system_prompt_with_options("You are careful.", options.clone());
-    assert_eq!(prompt, bundle.prompt);
+    assert_eq!(prompt, flat_prompt);
     let sections = build_system_prompt_sections_with_options("You are careful.", options);
     assert_eq!(sections, bundle.sections);
 
     let raw = build_raw_system_prompt_sections("  raw system  ");
-    assert_eq!(raw[0]["id"], "raw_system_prompt");
-    assert_eq!(raw[0]["text"], "raw system");
-    assert_eq!(raw[0]["stable"], true);
+    assert_eq!(raw[0].id, "raw_system_prompt");
+    assert_eq!(raw[0].text, "raw system");
+    assert!(raw[0].stable);
 }
 
 #[test]
@@ -104,12 +94,13 @@ fn model_visible_system_prompt_stays_capability_focused() {
     };
 
     let bundle = build_system_prompt_bundle_with_options("You are careful.", options);
-    assert!(!bundle.prompt.contains("<Session Memory>"));
+    let flat_prompt = bundle.flatten();
+    assert!(!flat_prompt.contains("<Session Memory>"));
     for forbidden in prompt_forbidden_terms() {
         assert!(
-            !contains_forbidden_term(&bundle.prompt, forbidden.as_str()),
+            !contains_forbidden_term(&flat_prompt, forbidden.as_str()),
             "model-visible system prompt should not include internal implementation wording `{forbidden}`:\n{}",
-            bundle.prompt
+            flat_prompt
         );
     }
 }
@@ -171,62 +162,31 @@ fn join_words(first: &str, rest: &str) -> String {
 
 #[test]
 fn prompt_public_api_tracks_section_and_tool_cache_breaks() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let calls_for_section = Arc::clone(&calls);
-    let stable = PromptSection::new(
-        "stable",
-        move || {
-            calls_for_section.fetch_add(1, Ordering::SeqCst);
-            "stable body".to_string()
-        },
-        true,
-    )
-    .source("agent.instructions")
-    .cache_hint("ephemeral")
-    .metadata("priority", json!(0));
-    assert_eq!(stable.get_value(), "stable body");
-    assert_eq!(stable.get_value(), "stable body");
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert_eq!(stable.to_metadata().expect("metadata")["id"], "stable");
-    assert_eq!(
-        stable.to_metadata().expect("metadata")["source"],
-        "agent.instructions"
-    );
-    assert_eq!(
-        stable.to_metadata().expect("metadata")["cache_hint"],
-        "ephemeral"
-    );
-    assert_eq!(
-        stable.to_metadata().expect("metadata")["metadata"]["priority"],
-        0
-    );
-    stable.invalidate();
-    assert_eq!(stable.get_value(), "stable body");
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let stable = PromptSection::new(" stable ", " stable body ", true)
+        .source("agent.instructions")
+        .cache_hint("ephemeral")
+        .metadata("priority", json!(0));
+    assert_eq!(stable.id, "stable");
+    assert_eq!(stable.text, "stable body");
+    assert_eq!(stable.source.as_deref(), Some("agent.instructions"));
+    assert_eq!(stable.cache_hint.as_deref(), Some("ephemeral"));
+    assert_eq!(stable.metadata["priority"], 0);
 
-    let volatile_calls = Arc::new(AtomicUsize::new(0));
-    let volatile_calls_for_section = Arc::clone(&volatile_calls);
-    let volatile = PromptSection::new(
-        "volatile",
-        move || {
-            volatile_calls_for_section.fetch_add(1, Ordering::SeqCst);
-            "volatile body".to_string()
-        },
-        false,
-    );
+    let volatile = PromptSection::new("volatile", "volatile body", false);
 
     let mut builder = SystemPromptBuilder::default();
     builder.add_section(stable);
     builder.add_section(volatile);
-    assert!(builder.build().contains("stable body"));
-    assert_eq!(volatile_calls.load(Ordering::SeqCst), 1);
-    assert!(builder.build().contains("volatile body"));
-    assert_eq!(volatile_calls.load(Ordering::SeqCst), 2);
-    assert_eq!(builder.metadata_sections().len(), 2);
-    assert_eq!(builder.stable_hash().len(), 64);
+    assert_eq!(builder.build(), "stable body\n\nvolatile body");
     let result = builder.build_result();
-    assert!(result.prompt.contains("stable body"));
+    assert_eq!(result.flatten(), "stable body\n\nvolatile body");
     assert_eq!(result.sections.len(), 2);
+    assert_eq!(result.stable_hash.len(), 64);
+    assert_eq!(
+        serde_json::from_value::<vv_agent::prompt::PromptBundle>(result.to_value())
+            .expect("strict prompt bundle round trip"),
+        result
+    );
 
     let system_sections = vec![
         json!({"id": "a", "text": " hello ", "stable": true}),

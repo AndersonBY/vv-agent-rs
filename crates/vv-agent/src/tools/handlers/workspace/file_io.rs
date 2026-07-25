@@ -10,4 +10,4 @@ pub use write::write_file;
 pub(crate) use write::write_file_tool;
 
 pub(super) const READ_FILE_MAX_LINES: usize = 2_000;
-pub(super) const READ_FILE_MAX_CHARS: usize = 50_000;
+pub(super) const READ_FILE_MAX_CHARS: usize = 12_000;

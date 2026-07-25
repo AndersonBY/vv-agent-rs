@@ -4,6 +4,7 @@ use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::model_settings::ModelSettings;
+use crate::prompt::PromptBundle;
 use crate::tools::common::trim_portable_whitespace;
 use crate::tools::{ToolPolicy, ToolSideEffect};
 
@@ -194,7 +195,7 @@ impl SubAgentConfig {
 pub struct AgentTask {
     pub task_id: String,
     pub model: String,
-    pub system_prompt: String,
+    pub prompt_bundle: PromptBundle,
     pub user_prompt: String,
     pub max_cycles: u32,
     pub memory_compact_threshold: u64,
@@ -218,7 +219,7 @@ pub struct AgentTask {
 struct AgentTaskWire {
     task_id: String,
     model: String,
-    system_prompt: String,
+    prompt_bundle: PromptBundle,
     user_prompt: String,
     #[serde(default = "default_agent_task_max_cycles")]
     max_cycles: u32,
@@ -265,7 +266,7 @@ impl<'de> Deserialize<'de> for AgentTask {
         Ok(Self {
             task_id: wire.task_id,
             model: wire.model,
-            system_prompt: wire.system_prompt,
+            prompt_bundle: wire.prompt_bundle,
             user_prompt: wire.user_prompt,
             max_cycles: wire.max_cycles,
             memory_compact_threshold: wire.memory_compact_threshold,
@@ -390,13 +391,13 @@ impl AgentTask {
     pub fn new(
         task_id: impl Into<String>,
         model: impl Into<String>,
-        system_prompt: impl Into<String>,
+        prompt_bundle: PromptBundle,
         user_prompt: impl Into<String>,
     ) -> Self {
         Self {
             task_id: task_id.into(),
             model: model.into(),
-            system_prompt: system_prompt.into(),
+            prompt_bundle,
             user_prompt: user_prompt.into(),
             max_cycles: 8,
             memory_compact_threshold: default_memory_compact_threshold(),

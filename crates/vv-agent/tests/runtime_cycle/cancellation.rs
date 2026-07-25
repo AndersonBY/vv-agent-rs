@@ -17,7 +17,13 @@ fn cancellation_token_propagates_to_children_and_runtime() {
     )]));
     let result = runtime
         .run_with_controls(
-            AgentTask::new("cancel_task", "demo", "system", "start"),
+            AgentTask::new(
+                "cancel_task",
+                "demo",
+                vv_agent::prompt::PromptBundle::from_instruction_text("system")
+                    .expect("prompt bundle"),
+                "start",
+            ),
             RuntimeRunControls {
                 cancellation_token: Some(parent),
                 ..RuntimeRunControls::default()
@@ -100,7 +106,13 @@ fn execution_context_cancellation_token_is_honored_by_runtime() {
 
     let result = runtime
         .run_with_controls(
-            AgentTask::new("ctx_cancel_task", "demo", "system", "start"),
+            AgentTask::new(
+                "ctx_cancel_task",
+                "demo",
+                vv_agent::prompt::PromptBundle::from_instruction_text("system")
+                    .expect("prompt bundle"),
+                "start",
+            ),
             RuntimeRunControls {
                 execution_context: Some(context),
                 ..RuntimeRunControls::default()
@@ -129,7 +141,12 @@ fn cancellation_token_cancelled_by_before_cycle_provider_stops_before_llm() {
         }),
     ]);
     let runtime = AgentRuntime::new(llm);
-    let mut task = AgentTask::new("cancel_between_cycles", "demo", "system", "start");
+    let mut task = AgentTask::new(
+        "cancel_between_cycles",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "start",
+    );
     task.max_cycles = 3;
     task.no_tool_policy = vv_agent::NoToolPolicy::Continue;
     let token = CancellationToken::default();

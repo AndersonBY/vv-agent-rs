@@ -11,7 +11,12 @@ fn runtime_compacts_memory_before_large_follow_up_cycle() {
     runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
         workspace.path(),
     ));
-    let mut task = AgentTask::new("memory_task", "demo", "system", "inspect memory");
+    let mut task = AgentTask::new(
+        "memory_task",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "inspect memory",
+    );
     task.memory_compact_threshold = 20;
     task.metadata
         .insert("model_context_window".to_string(), json!(120));
@@ -42,7 +47,12 @@ fn runtime_uses_previous_prompt_tokens_for_memory_compaction() {
     let llm = PromptTokenCompactionInspectingLlmClient::default();
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm);
-    let mut task = AgentTask::new("usage_memory_task", "demo", "system", "short request");
+    let mut task = AgentTask::new(
+        "usage_memory_task",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "short request",
+    );
     task.max_cycles = 2;
     task.metadata
         .insert("model_context_window".to_string(), json!(120));
@@ -76,7 +86,12 @@ fn runtime_hooks_can_patch_messages_before_memory_compaction() {
         workspace.path(),
     ));
     runtime.hooks.push(hook.clone());
-    let mut task = AgentTask::new("pre_compact_hook_task", "demo", "system", "inspect memory");
+    let mut task = AgentTask::new(
+        "pre_compact_hook_task",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "inspect memory",
+    );
     task.memory_compact_threshold = 20;
     task.metadata
         .insert("model_context_window".to_string(), json!(120));
@@ -109,7 +124,12 @@ fn runtime_injects_session_memory_context_after_compaction() {
     runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
         workspace.path(),
     ));
-    let mut task = AgentTask::new("session_memory_task", "demo", "system", "inspect memory");
+    let mut task = AgentTask::new(
+        "session_memory_task",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "inspect memory",
+    );
     task.memory_compact_threshold = 20;
     task.metadata
         .insert("model_context_window".to_string(), json!(120));

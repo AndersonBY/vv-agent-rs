@@ -90,6 +90,7 @@ impl VvLlmClient {
             &endpoint_type_for_prompt_cache(&self.backend, endpoint.chat_client.provider_name()),
             &request_model,
             &request_metadata,
+            &request.prompt_bundle,
             &mut chat_request,
         );
         chat_request.messages = prepare_messages_for_model(chat_request.messages, &request_model);

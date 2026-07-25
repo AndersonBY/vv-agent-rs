@@ -23,7 +23,13 @@ fn runtime_execution_context_observes_typed_stream_events() {
 
     let result = runtime
         .run_with_controls(
-            AgentTask::new("stream_ctx_task", "demo", "system", "finish via stream"),
+            AgentTask::new(
+                "stream_ctx_task",
+                "demo",
+                vv_agent::prompt::PromptBundle::from_instruction_text("system")
+                    .expect("prompt bundle"),
+                "finish via stream",
+            ),
             RuntimeRunControls {
                 execution_context: Some(
                     ExecutionContext::default().with_event_handler(event_handler),
@@ -66,7 +72,7 @@ fn structured_stream_tool_events_preserve_provider_tool_call_index() {
 
     let response = llm
         .complete_with_stream(
-            LlmRequest::new("kimi-k2.5", vec![Message::user("stream tool index")]),
+            llm_request("kimi-k2.5", vec![Message::user("stream tool index")]),
             Some(stream_callback),
         )
         .expect("multi-tool index streaming completion");
@@ -111,7 +117,7 @@ fn structured_stream_events_estimate_tokens_from_char_count() {
 
     let response = llm
         .complete_with_stream(
-            LlmRequest::new(
+            llm_request(
                 "deepseek-v4-pro",
                 vec![Message::user("stream unicode content")],
             ),
@@ -149,7 +155,7 @@ fn vv_llm_client_estimates_usage_when_provider_omits_usage() {
     );
 
     let response = llm
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "demo-model",
             vec![Message::user("hello from usage estimator")],
         ))
@@ -188,7 +194,7 @@ fn vv_llm_client_auto_streams_deepseek_v4_models() {
     );
 
     let response = llm
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "deepseek-v4-pro",
             vec![Message::user("finish via automatic stream")],
         ))

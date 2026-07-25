@@ -17,8 +17,8 @@ use vv_agent::{
     AmbiguousToolPolicy, CheckpointExtension, CheckpointStatus, CheckpointStore, ClaimMode,
     CycleDispatchResult, EventOutboxEntry, ExtensionStateEntry, InMemoryCheckpointStore,
     InMemoryRunEventStore, LLMResponse, ModelCallRecord, ModelCallStatus, ModelSettings,
-    OperationJournalEntry, OperationState, ResumePolicy, RunBudgetLimits, RunEvent, RuntimeRecipe,
-    ScriptedLlmClient, TokenUsage, ToolIdempotency,
+    OperationJournalEntry, OperationState, PromptBundle, ResumePolicy, RunBudgetLimits, RunEvent,
+    RuntimeRecipe, ScriptedLlmClient, TokenUsage, ToolIdempotency,
 };
 
 const ENVELOPE_FIXTURE: &str = include_str!("fixtures/parity/distributed_run_envelope.json");
@@ -240,7 +240,8 @@ fn envelope(
     let mut task = AgentTask::new(
         checkpoint.task_id.clone(),
         "test-model",
-        "You are a careful assistant.",
+        PromptBundle::from_instruction_text("You are a careful assistant.")
+            .expect("valid prompt bundle"),
         "Summarize the status.",
     );
     task.max_cycles = 10;
@@ -318,6 +319,14 @@ fn distributed_envelope_accepts_only_the_current_wire_shape() {
     let envelope = DistributedRunEnvelope::from_dict(&canonical).unwrap();
     assert_eq!(envelope.to_dict(), canonical);
     assert_eq!(serde_json::to_value(&envelope).unwrap(), canonical);
+    assert!(canonical["task"].get("prompt_bundle").is_some());
+    assert!(canonical["task"].get("system_prompt").is_none());
+
+    let mut legacy_task = canonical.clone();
+    legacy_task["task"]["system_prompt"] = json!("legacy prompt");
+    assert!(DistributedRunEnvelope::from_dict(&legacy_task)
+        .unwrap_err()
+        .contains("unknown field `system_prompt`"));
 
     for case in contract["invalid_cases"].as_array().unwrap() {
         if matches!(
@@ -818,7 +827,8 @@ fn definition_and_resume_attempt_mismatch_fail_before_claim() {
     );
 
     let mut wrong_task = envelope(&checkpoint, 1, ClaimMode::Continue, 1_000, false);
-    wrong_task.task.system_prompt = "tampered prompt".to_string();
+    wrong_task.task.prompt_bundle = PromptBundle::from_instruction_text("tampered prompt")
+        .expect("valid tampered prompt bundle");
     assert!(worker
         .run_cycle(wrong_task)
         .unwrap_err()

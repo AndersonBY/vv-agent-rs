@@ -23,11 +23,16 @@ pub fn tool_request_digest(
     tool_call_id: &str,
     tool_name: &str,
     arguments: &Value,
-    idempotency_key: &str,
+    idempotency_key: Option<&str>,
 ) -> CheckpointResult<String> {
     require_non_empty(tool_call_id, "tool_call_id")?;
     require_non_empty(tool_name, "tool_name")?;
-    require_non_empty(idempotency_key, "idempotency_key")?;
+    if idempotency_key.is_some_and(str::is_empty) {
+        return Err(CheckpointError::new(
+            "operation_request_invalid",
+            "idempotency_key must be null or non-empty",
+        ));
+    }
     if !arguments.is_object() {
         return Err(CheckpointError::new(
             "operation_request_invalid",
@@ -152,7 +157,7 @@ pub fn validate_run_definition(definition: &Value) -> CheckpointResult<()> {
         "schema_version",
         "agent",
         "root_input",
-        "compiled_prompt",
+        "prompt_bundle",
         "initial_messages",
         "initial_shared_state",
         "run_metadata",
@@ -189,10 +194,18 @@ pub fn validate_run_definition(definition: &Value) -> CheckpointResult<()> {
     }
     require_object(object.get("agent"), "run_definition.agent")?;
     require_string(object.get("root_input"), "run_definition.root_input")?;
-    require_string(
-        object.get("compiled_prompt"),
-        "run_definition.compiled_prompt",
-    )?;
+    crate::prompt::PromptBundle::from_value(object.get("prompt_bundle").ok_or_else(|| {
+        CheckpointError::new(
+            "checkpoint_definition_invalid",
+            "run_definition.prompt_bundle is missing",
+        )
+    })?)
+    .map_err(|error| {
+        CheckpointError::new(
+            "checkpoint_definition_invalid",
+            format!("run_definition.prompt_bundle is invalid: {error}"),
+        )
+    })?;
     require_array(
         object.get("initial_messages"),
         "run_definition.initial_messages",

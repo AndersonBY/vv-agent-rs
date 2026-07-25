@@ -36,7 +36,7 @@ pub(super) enum CheckpointModelDispatch {
 }
 
 pub(super) enum CheckpointToolPlan {
-    Continue(Option<ToolOperationPlan>),
+    Continue(Option<Box<ToolOperationPlan>>),
     Stop(Box<AgentResult>),
 }
 
@@ -227,7 +227,7 @@ impl CheckpointCoordinator {
         });
         match outcome {
             Ok((_plan, Some(result))) => CheckpointToolPlan::Stop(Box::new(result)),
-            Ok((plan, None)) => CheckpointToolPlan::Continue(Some(plan)),
+            Ok((plan, None)) => CheckpointToolPlan::Continue(Some(Box::new(plan))),
             Err(error) => CheckpointToolPlan::Stop(Box::new(self.failure(
                 error,
                 messages,

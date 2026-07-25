@@ -9,10 +9,7 @@ impl AgentTask {
         Value::Object(serde_json::Map::from_iter([
             ("task_id".to_string(), Value::String(self.task_id.clone())),
             ("model".to_string(), Value::String(self.model.clone())),
-            (
-                "system_prompt".to_string(),
-                Value::String(self.system_prompt.clone()),
-            ),
+            ("prompt_bundle".to_string(), self.prompt_bundle.to_value()),
             (
                 "user_prompt".to_string(),
                 Value::String(self.user_prompt.clone()),

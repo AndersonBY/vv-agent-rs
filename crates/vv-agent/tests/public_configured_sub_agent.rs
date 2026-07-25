@@ -120,32 +120,20 @@ fn configured_sub_agent_fragment_matches_the_shared_projection_fixture() {
         ],
     )
     .expect("configured sub-agent context bundle");
-    let sections = bundle
-        .sections
-        .iter()
-        .map(|section| {
-            json!({
-                "id": section.id,
-                "text": section.text,
-                "stable": section.stable,
-                "priority": section.priority,
-                "source": section.source,
-            })
-        })
-        .collect::<Vec<_>>();
-
     assert_eq!(
         json!({
             "id": "configured_sub_agents",
             "text": fragment_text,
             "stable": true,
-            "priority": 10,
             "source": "agent.sub_agents",
         }),
         contract["projection"]["fragment"]
     );
     assert_eq!(bundle.prompt, contract["projection"]["prompt"]);
-    assert_eq!(Value::Array(sections), contract["projection"]["sections"]);
+    assert_eq!(
+        Value::Array(bundle.metadata_sections()),
+        contract["projection"]["sections"]
+    );
     assert_eq!(
         serde_json::to_value(&bundle.sources).expect("bundle sources"),
         contract["projection"]["sources"]
@@ -327,28 +315,26 @@ async fn public_runner_projects_and_executes_a_configured_child() {
             .collect::<Vec<_>>(),
         expected_tool_names
     );
+    parent_request
+        .prompt_bundle
+        .validate()
+        .expect("parent prompt bundle");
     assert_eq!(
-        parent_request.metadata["system_prompt_sources"],
-        contract["projection"]["sources"]
+        serde_json::to_value(&parent_request.prompt_bundle.sections)
+            .expect("parent prompt sections"),
+        contract["projection"]["sections"]
     );
     assert_eq!(
-        parent_request.metadata["system_prompt_stable_hash"],
-        contract["projection"]["stable_hash"]
+        parent_request.prompt_bundle.flatten(),
+        contract["projection"]["prompt"]
     );
-    let mut expected_metadata_sections = contract["projection"]["sections"]
-        .as_array()
-        .expect("fixture sections")
-        .clone();
-    for section in &mut expected_metadata_sections {
-        section
-            .as_object_mut()
-            .expect("fixture section object")
-            .remove("priority");
+    for stale_key in [
+        "system_prompt_sections",
+        "system_prompt_sources",
+        "system_prompt_stable_hash",
+    ] {
+        assert!(parent_request.metadata.get(stale_key).is_none());
     }
-    assert_eq!(
-        parent_request.metadata["system_prompt_sections"],
-        Value::Array(expected_metadata_sections)
-    );
     assert_eq!(
         parent_request.messages[0].content.chars().count(),
         max_context_chars

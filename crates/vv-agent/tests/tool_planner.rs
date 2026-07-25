@@ -7,7 +7,12 @@ use vv_agent::{build_default_registry, SubAgentConfig};
 #[test]
 fn planned_tool_schemas_respect_task_capability_flags() {
     let registry = build_default_registry();
-    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    let mut task = AgentTask::new(
+        "task_planner",
+        "dummy",
+        vv_agent::prompt::PromptBundle::from_instruction_text("sys").expect("prompt bundle"),
+        "user",
+    );
     task.allow_interruption = false;
     task.use_workspace = false;
 
@@ -21,7 +26,12 @@ fn planned_tool_schemas_respect_task_capability_flags() {
 #[test]
 fn planned_tool_schemas_include_todo_write_workspace_tools() {
     let registry = build_default_registry();
-    let task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    let task = AgentTask::new(
+        "task_planner",
+        "dummy",
+        vv_agent::prompt::PromptBundle::from_instruction_text("sys").expect("prompt bundle"),
+        "user",
+    );
 
     let names = registry.planned_tool_names(&task);
 
@@ -35,7 +45,12 @@ fn planned_tool_schemas_include_todo_write_workspace_tools() {
 #[test]
 fn planned_tool_schemas_add_computer_sub_agent_skill_and_multimodal_tools() {
     let registry = build_default_registry();
-    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    let mut task = AgentTask::new(
+        "task_planner",
+        "dummy",
+        vv_agent::prompt::PromptBundle::from_instruction_text("sys").expect("prompt bundle"),
+        "user",
+    );
     task.agent_type = Some("computer".to_string());
     task.native_multimodal = true;
     task.sub_agents.insert(
@@ -60,7 +75,12 @@ fn planned_tool_schemas_add_computer_sub_agent_skill_and_multimodal_tools() {
 #[test]
 fn planned_tool_names_skip_activate_skill_for_empty_available_skills() {
     for available_skills in [json!(false), json!(""), json!(0), json!([]), json!({})] {
-        let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+        let mut task = AgentTask::new(
+            "task_planner",
+            "dummy",
+            vv_agent::prompt::PromptBundle::from_instruction_text("sys").expect("prompt bundle"),
+            "user",
+        );
         task.metadata
             .insert("available_skills".to_string(), available_skills);
 
@@ -73,7 +93,12 @@ fn planned_tool_names_skip_activate_skill_for_empty_available_skills() {
 #[test]
 fn planned_tool_schemas_exclude_tools() {
     let registry = build_default_registry();
-    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    let mut task = AgentTask::new(
+        "task_planner",
+        "dummy",
+        vv_agent::prompt::PromptBundle::from_instruction_text("sys").expect("prompt bundle"),
+        "user",
+    );
     task.exclude_tools = vec!["read_file".to_string(), "write_file".to_string()];
 
     let schemas = registry.planned_openai_schemas(&task);
@@ -96,7 +121,12 @@ fn planned_tool_schemas_exclude_tools() {
 #[test]
 fn planned_tool_names_respect_allowed_tool_policy_metadata() {
     let registry = build_default_registry();
-    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    let mut task = AgentTask::new(
+        "task_planner",
+        "dummy",
+        vv_agent::prompt::PromptBundle::from_instruction_text("sys").expect("prompt bundle"),
+        "user",
+    );
     task.extra_tool_names = vec!["allowed_custom".to_string(), "blocked_custom".to_string()];
     task.metadata.insert(
         "_vv_agent_allowed_tools".to_string(),
@@ -111,7 +141,12 @@ fn planned_tool_names_respect_allowed_tool_policy_metadata() {
 
 #[test]
 fn planned_tool_names_respect_disallowed_tool_policy_metadata() {
-    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    let mut task = AgentTask::new(
+        "task_planner",
+        "dummy",
+        vv_agent::prompt::PromptBundle::from_instruction_text("sys").expect("prompt bundle"),
+        "user",
+    );
     task.extra_tool_names = vec!["allowed_custom".to_string(), "blocked_custom".to_string()];
     task.metadata.insert(
         "_vv_agent_disallowed_tools".to_string(),
@@ -128,7 +163,12 @@ fn planned_tool_names_respect_disallowed_tool_policy_metadata() {
 #[test]
 fn planned_tool_names_keep_unregistered_extra_tools() {
     let registry = build_default_registry();
-    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    let mut task = AgentTask::new(
+        "task_planner",
+        "dummy",
+        vv_agent::prompt::PromptBundle::from_instruction_text("sys").expect("prompt bundle"),
+        "user",
+    );
     task.extra_tool_names
         .push("external_custom_tool".to_string());
 
@@ -146,7 +186,12 @@ fn planned_tool_names_keep_unregistered_extra_tools() {
 #[test]
 fn planned_tool_schemas_inject_runtime_shell_hint_for_bash() {
     let registry = build_default_registry();
-    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    let mut task = AgentTask::new(
+        "task_planner",
+        "dummy",
+        vv_agent::prompt::PromptBundle::from_instruction_text("sys").expect("prompt bundle"),
+        "user",
+    );
     task.agent_type = Some("computer".to_string());
     task.metadata
         .insert("bash_shell".to_string(), json!("powershell"));
@@ -172,7 +217,12 @@ fn planned_tool_schemas_inject_runtime_shell_hint_for_bash() {
 #[test]
 fn planned_tool_schemas_reports_invalid_windows_shell_priority_config() {
     let registry = build_default_registry();
-    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    let mut task = AgentTask::new(
+        "task_planner",
+        "dummy",
+        vv_agent::prompt::PromptBundle::from_instruction_text("sys").expect("prompt bundle"),
+        "user",
+    );
     task.agent_type = Some("computer".to_string());
     task.metadata.insert(
         "windows_shell_priority".to_string(),
@@ -194,7 +244,12 @@ fn planned_tool_schemas_reports_invalid_windows_shell_priority_config() {
 
 #[test]
 fn freeze_dynamic_tool_schema_hints_caches_computer_shell_hint() {
-    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    let mut task = AgentTask::new(
+        "task_planner",
+        "dummy",
+        vv_agent::prompt::PromptBundle::from_instruction_text("sys").expect("prompt bundle"),
+        "user",
+    );
     task.agent_type = Some("computer".to_string());
     task.metadata
         .insert("bash_shell".to_string(), json!("bash"));
@@ -212,7 +267,12 @@ fn freeze_dynamic_tool_schema_hints_caches_computer_shell_hint() {
 
 #[test]
 fn freeze_dynamic_tool_schema_hints_preserves_existing_shell_hint() {
-    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    let mut task = AgentTask::new(
+        "task_planner",
+        "dummy",
+        vv_agent::prompt::PromptBundle::from_instruction_text("sys").expect("prompt bundle"),
+        "user",
+    );
     task.agent_type = Some("computer".to_string());
     task.metadata.insert(
         "_vv_agent_bash_runtime_hint".to_string(),
@@ -233,7 +293,12 @@ fn freeze_dynamic_tool_schema_hints_preserves_existing_shell_hint() {
 
 #[test]
 fn freeze_dynamic_tool_schema_hints_also_caches_explicit_bash_tool() {
-    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    let mut task = AgentTask::new(
+        "task_planner",
+        "dummy",
+        vv_agent::prompt::PromptBundle::from_instruction_text("sys").expect("prompt bundle"),
+        "user",
+    );
     task.agent_type = Some("assistant".to_string());
     task.extra_tool_names.push("bash".to_string());
 
@@ -244,7 +309,12 @@ fn freeze_dynamic_tool_schema_hints_also_caches_explicit_bash_tool() {
 
 #[test]
 fn freeze_dynamic_tool_schema_hints_skips_tasks_without_bash_access() {
-    let mut task = AgentTask::new("task_planner", "dummy", "sys", "user");
+    let mut task = AgentTask::new(
+        "task_planner",
+        "dummy",
+        vv_agent::prompt::PromptBundle::from_instruction_text("sys").expect("prompt bundle"),
+        "user",
+    );
 
     freeze_dynamic_tool_schema_hints(&mut task);
 

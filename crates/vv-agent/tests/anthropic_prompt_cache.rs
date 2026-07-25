@@ -1,8 +1,10 @@
 use serde_json::json;
-use vv_agent::llm::{
-    apply_claude_prompt_cache, CACHE_CONTROL_EPHEMERAL, PROMPT_CACHE_ENABLED_KEY,
-    SYSTEM_PROMPT_SECTIONS_KEY,
-};
+use vv_agent::llm::{apply_claude_prompt_cache, CACHE_CONTROL_EPHEMERAL, PROMPT_CACHE_ENABLED_KEY};
+use vv_agent::prompt::{PromptBundle, PromptSection};
+
+fn prompt_bundle(text: impl Into<String>) -> PromptBundle {
+    PromptBundle::new(vec![PromptSection::new("core_identity", text, true)]).expect("prompt bundle")
+}
 
 #[test]
 fn claude_prompt_cache_exports_agent_ephemeral_cache_control() {
@@ -11,6 +13,7 @@ fn claude_prompt_cache_exports_agent_ephemeral_cache_control() {
 
 #[test]
 fn claude_prompt_cache_vertex_marks_history_boundary_and_skips_thinking() {
+    let prompt_bundle = prompt_bundle("stable section ".repeat(400));
     let (planned_messages, planned_tools, planned_extra_body) = apply_claude_prompt_cache(
         "anthropic_vertex",
         "claude-sonnet-4-5-20250929",
@@ -27,12 +30,8 @@ fn claude_prompt_cache_vertex_marks_history_boundary_and_skips_thinking() {
         ],
         &[],
         None,
-        Some(&json!({
-            PROMPT_CACHE_ENABLED_KEY: true,
-            SYSTEM_PROMPT_SECTIONS_KEY: [
-                {"id": "core_identity", "text": "stable section ".repeat(400), "stable": true}
-            ]
-        })),
+        &prompt_bundle,
+        Some(&json!({PROMPT_CACHE_ENABLED_KEY: true})),
     );
 
     assert_eq!(planned_extra_body, None);
@@ -59,6 +58,7 @@ fn claude_prompt_cache_vertex_marks_history_boundary_and_skips_thinking() {
 
 #[test]
 fn claude_prompt_cache_uses_sonnet_4_6_threshold() {
+    let prompt_bundle = prompt_bundle("stable system ".repeat(350));
     let (planned_messages, planned_tools, planned_extra_body) = apply_claude_prompt_cache(
         "anthropic",
         "claude-sonnet-4-6",
@@ -68,6 +68,7 @@ fn claude_prompt_cache_uses_sonnet_4_6_threshold() {
         ],
         &[],
         None,
+        &prompt_bundle,
         Some(&json!({PROMPT_CACHE_ENABLED_KEY: true})),
     );
 
@@ -96,6 +97,7 @@ fn claude_prompt_cache_is_skipped_for_disabled_or_non_claude_requests() {
     let messages = vec![json!({"role": "system", "content": "stable system ".repeat(350)})];
     let tools = vec![json!({"type": "function", "function": {"name": "search_docs"}})];
     let extra_body = json!({"extra_body": {"trace": true}});
+    let prompt_bundle = prompt_bundle("stable system ".repeat(350));
 
     let (planned_messages, planned_tools, planned_extra_body) = apply_claude_prompt_cache(
         "anthropic",
@@ -103,6 +105,7 @@ fn claude_prompt_cache_is_skipped_for_disabled_or_non_claude_requests() {
         &messages,
         &tools,
         Some(&extra_body),
+        &prompt_bundle,
         Some(&json!({PROMPT_CACHE_ENABLED_KEY: false})),
     );
 
@@ -116,6 +119,7 @@ fn claude_prompt_cache_is_skipped_for_disabled_or_non_claude_requests() {
         &messages,
         &tools,
         Some(&extra_body),
+        &prompt_bundle,
         None,
     );
 

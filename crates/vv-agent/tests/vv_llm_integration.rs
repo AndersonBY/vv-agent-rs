@@ -5,8 +5,8 @@ use std::thread;
 use std::time::Duration;
 
 use vv_agent::{
-    build_vv_llm_from_local_settings, load_llm_settings_from_file, resolve_model_endpoint,
-    CacheUsageStatus, LlmClient, LlmRequest, Message, UsageSource,
+    build_vv_llm_from_local_settings, load_llm_settings_from_file, prompt::PromptBundle,
+    resolve_model_endpoint, CacheUsageStatus, LlmClient, LlmRequest, Message, UsageSource,
 };
 
 #[test]
@@ -173,7 +173,11 @@ fn moonshot_stream_normalizes_omitted_cache_usage_as_observed_zero() {
         build_vv_llm_from_local_settings(settings_file.path(), "moonshot", "kimi-k3", 5.0)
             .expect("build llm");
     let response = client
-        .complete(LlmRequest::new("kimi-k3", vec![Message::user("hello")]))
+        .complete(LlmRequest::new(
+            "kimi-k3",
+            vec![Message::user("hello")],
+            PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        ))
         .expect("stream completion");
     server.join().expect("completion server");
 

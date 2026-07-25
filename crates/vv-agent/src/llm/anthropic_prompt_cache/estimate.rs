@@ -42,17 +42,6 @@ pub(super) fn value_to_string(value: Option<&Value>) -> String {
     }
 }
 
-pub(super) fn value_truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(value) => *value,
-        Value::Number(number) => number.as_f64().is_some_and(|value| value != 0.0),
-        Value::String(text) => !text.is_empty(),
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(object) => !object.is_empty(),
-    }
-}
-
 fn json_string(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_default()
 }

@@ -9,7 +9,12 @@ fn runtime_hooks_can_patch_llm_request_and_tool_result_flow() {
     runtime.hooks.push(hook.clone());
 
     let result = runtime
-        .run(AgentTask::new("hook_task", "demo", "system", "original"))
+        .run(AgentTask::new(
+            "hook_task",
+            "demo",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+            "original",
+        ))
         .expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
@@ -55,7 +60,7 @@ fn runtime_hooks_normalize_pending_tool_call_ids() {
         .run(AgentTask::new(
             "pending_hook_task",
             "demo",
-            "system",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
             "finish",
         ))
         .expect("run");
@@ -93,7 +98,7 @@ fn before_tool_call_patch_accepts_direct_result_and_call_conversions() {
         .run(AgentTask::new(
             "direct_result_hook_task",
             "demo",
-            "system",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
             "go",
         ))
         .expect("run");
@@ -120,7 +125,7 @@ fn before_tool_call_patch_accepts_direct_result_and_call_conversions() {
         .run(AgentTask::new(
             "patch_call_hook_task",
             "demo",
-            "system",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
             "go",
         ))
         .expect("run");
@@ -150,7 +155,7 @@ fn runtime_short_circuit_tool_result_keeps_original_tool_call_id_after_call_patc
         .run(AgentTask::new(
             "patched_short_circuit_task",
             "demo",
-            "system",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
             "go",
         ))
         .expect("run");
@@ -183,7 +188,12 @@ fn runtime_emits_typed_lifecycle_events() {
     runtime.event_handler = Some(event_handler);
 
     let result = runtime
-        .run(AgentTask::new("log_task", "demo", "system", "finish"))
+        .run(AgentTask::new(
+            "log_task",
+            "demo",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+            "finish",
+        ))
         .expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
@@ -269,7 +279,7 @@ fn runtime_diagnostic_events_include_agent_previews() {
         .run(AgentTask::new(
             "preview_task",
             "demo",
-            "system",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
             "finish with previews",
         ))
         .expect("run");
@@ -325,7 +335,12 @@ fn runtime_tool_result_event_keeps_full_content_by_default() {
     let mut runtime = AgentRuntime::new(llm);
     runtime.event_handler = Some(event_handler);
 
-    let mut task = AgentTask::new("task_long_tool_result", "demo", "system", "go");
+    let mut task = AgentTask::new(
+        "task_long_tool_result",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "go",
+    );
     task.max_cycles = 4;
     let result = runtime.run(task).expect("run");
 
@@ -350,7 +365,12 @@ fn runtime_emits_run_max_cycles_diagnostic_with_final_answer() {
     let (events, event_handler) = run_event_collector();
     let mut runtime = AgentRuntime::new(llm);
     runtime.event_handler = Some(event_handler);
-    let mut task = AgentTask::new("max_cycles_log", "demo", "system", "keep going");
+    let mut task = AgentTask::new(
+        "max_cycles_log",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "keep going",
+    );
     task.max_cycles = 2;
 
     let result = runtime.run(task).expect("run");
@@ -382,7 +402,13 @@ fn runtime_controls_can_inject_messages_before_each_cycle() {
 
     let result = runtime
         .run_with_controls(
-            AgentTask::new("before_cycle_task", "demo", "system", "start"),
+            AgentTask::new(
+                "before_cycle_task",
+                "demo",
+                vv_agent::prompt::PromptBundle::from_instruction_text("system")
+                    .expect("prompt bundle"),
+                "start",
+            ),
             RuntimeRunControls {
                 before_cycle_messages: Some(Arc::new(|cycle_index, messages, shared_state| {
                     assert_eq!(cycle_index, 1);
@@ -437,7 +463,12 @@ fn runtime_interruption_provider_skips_remaining_tools() {
     let provider_used = used.clone();
     let (events, event_handler) = run_event_collector();
 
-    let mut task = AgentTask::new("steer_skip", "demo", "system", "go");
+    let mut task = AgentTask::new(
+        "steer_skip",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "go",
+    );
     task.max_cycles = 4;
     task.extra_tool_names = vec!["_demo_noop".to_string()];
 

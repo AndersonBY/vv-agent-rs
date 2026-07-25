@@ -54,6 +54,10 @@ impl WorkspaceBackend for RawPathWorkspaceBackend {
         self.fallback.write_text(path, content, append)
     }
 
+    fn write_text_exclusive(&self, path: &str, content: &str) -> std::io::Result<usize> {
+        self.fallback.write_text_exclusive(path, content)
+    }
+
     fn file_info(&self, path: &str) -> std::io::Result<Option<vv_agent::FileInfo>> {
         self.fallback.file_info(path)
     }

@@ -78,7 +78,8 @@ fn capture_task_metadata_continuation_trace(
     let mut parent = AgentTask::new(
         format!("trace-parent-{suffix}"),
         "shared-model",
-        "Parent prompt",
+        vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+            .expect("prompt bundle"),
         "Continue retained child",
     );
     parent.max_cycles = 3;

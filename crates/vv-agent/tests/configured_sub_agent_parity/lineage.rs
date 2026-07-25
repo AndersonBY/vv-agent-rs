@@ -287,7 +287,13 @@ fn run_real_identity_case(
             )],
         )),
     ]);
-    let mut parent = AgentTask::new("parent-task", "shared-model", "Parent prompt", "Delegate");
+    let mut parent = AgentTask::new(
+        "parent-task",
+        "shared-model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+            .expect("prompt bundle"),
+        "Delegate",
+    );
     parent.max_cycles = 3;
     parent.extra_tool_names = vec![
         "identity_delegate".to_string(),
@@ -472,7 +478,8 @@ fn real_async_initial_lineage_ignores_parent_task_runtime_identity_metadata() {
     let mut parent = AgentTask::new(
         "lineage-parent",
         "shared-model",
-        "Parent prompt",
+        vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+            .expect("prompt bundle"),
         "Delegate",
     );
     parent.max_cycles = 3;

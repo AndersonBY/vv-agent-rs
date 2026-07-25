@@ -3,7 +3,7 @@ mod common;
 use common::{
     build_direct_runtime, make_task_id, print_agent_result, runtime_log_handler, ExampleConfig,
 };
-use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
+use vv_agent::prompt::{build_system_prompt_bundle_with_options, BuildSystemPromptOptions};
 use vv_agent::types::AgentTask;
 use vv_agent::{DistributedBackend, RuntimeRunControls};
 
@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let distributed_backend = DistributedBackend::inline_fallback();
     let runtime = runtime.with_execution_backend(distributed_backend.clone());
 
-    let system_prompt = build_system_prompt_with_options(
+    let system_prompt = build_system_prompt_bundle_with_options(
         "You are a helpful agent.",
         BuildSystemPromptOptions {
             language: "zh-CN".to_string(),

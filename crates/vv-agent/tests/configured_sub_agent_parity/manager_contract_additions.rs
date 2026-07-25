@@ -309,7 +309,12 @@ fn same_model_parent_client_inherits_fixture_token_limits() {
             )],
         )),
     ]);
-    let mut parent = AgentTask::new("limit-parent", "shared-model", "Parent", "Delegate");
+    let mut parent = AgentTask::new(
+        "limit-parent",
+        "shared-model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("Parent").expect("prompt bundle"),
+        "Delegate",
+    );
     parent.max_cycles = 2;
     parent.metadata.insert(
         "model_context_window".to_string(),

@@ -14,7 +14,12 @@ fn runtime_executes_tool_calls_until_task_finish() {
     let runtime = AgentRuntime::new(llm);
 
     let result = runtime
-        .run(AgentTask::new("task_1", "demo", "system", "finish now"))
+        .run(AgentTask::new(
+            "task_1",
+            "demo",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+            "finish now",
+        ))
         .expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
@@ -41,7 +46,12 @@ fn runtime_preserves_reasoning_content_on_assistant_messages() {
         .raw
         .insert("reasoning_content".to_string(), json!("private analysis"));
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![response]));
-    let mut task = AgentTask::new("reasoning_task", "demo", "system", "prompt");
+    let mut task = AgentTask::new(
+        "reasoning_task",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "prompt",
+    );
     task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
 
     let result = runtime.run(task).expect("run");
@@ -99,7 +109,12 @@ fn runtime_collects_cycle_and_total_token_usage_from_llm_responses() {
         planning_response,
         finish_response,
     ]));
-    let mut task = AgentTask::new("task_usage", "demo", "system", "go");
+    let mut task = AgentTask::new(
+        "task_usage",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "go",
+    );
     task.max_cycles = 4;
 
     let result = runtime.run(task).expect("run");
@@ -187,7 +202,12 @@ fn runtime_preserves_shared_state_when_task_finishes() {
     let runtime = AgentRuntime::new(llm);
 
     let result = runtime
-        .run(AgentTask::new("task_state", "demo", "system", "finish"))
+        .run(AgentTask::new(
+            "task_state",
+            "demo",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+            "finish",
+        ))
         .expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
@@ -205,7 +225,12 @@ fn runtime_waits_when_ask_user_tool_requests_input() {
     let runtime = AgentRuntime::new(llm);
 
     let result = runtime
-        .run(AgentTask::new("task_1", "demo", "system", "ask"))
+        .run(AgentTask::new(
+            "task_1",
+            "demo",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+            "ask",
+        ))
         .expect("run");
 
     assert_eq!(result.status, AgentStatus::WaitUser);
@@ -229,7 +254,12 @@ fn runtime_marks_remaining_tool_calls_skipped_after_wait_user() {
     let runtime = AgentRuntime::new(llm);
 
     let result = runtime
-        .run(AgentTask::new("task_skip_wait", "demo", "system", "ask"))
+        .run(AgentTask::new(
+            "task_skip_wait",
+            "demo",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+            "ask",
+        ))
         .expect("run");
 
     assert_eq!(result.status, AgentStatus::WaitUser);
@@ -268,7 +298,12 @@ fn runtime_injects_image_message_after_read_image() {
         vv_agent::workspace::LocalWorkspaceBackend::new(workspace.path()),
     );
 
-    let mut task = AgentTask::new("task_img", "demo", "system", "read image");
+    let mut task = AgentTask::new(
+        "task_img",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "read image",
+    );
     task.native_multimodal = true;
     let result = runtime.run(task).expect("run");
 
@@ -303,7 +338,12 @@ fn runtime_does_not_inject_image_message_for_text_only_task() {
         vv_agent::workspace::LocalWorkspaceBackend::new(workspace.path()),
     );
 
-    let task = AgentTask::new("task_img_text_only", "demo", "system", "read image");
+    let task = AgentTask::new(
+        "task_img_text_only",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "read image",
+    );
     let result = runtime.run(task).expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
@@ -345,7 +385,12 @@ fn runtime_keeps_tool_results_adjacent_before_image_notifications() {
     );
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm).with_tool_registry(registry);
-    let mut task = AgentTask::new("task_image_order", "demo", "system", "go");
+    let mut task = AgentTask::new(
+        "task_image_order",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "go",
+    );
     task.max_cycles = 4;
     task.native_multimodal = true;
     task.extra_tool_names = vec!["_demo_image".to_string()];
@@ -405,7 +450,12 @@ fn runtime_skips_custom_image_notifications_when_multimodal_disabled() {
     );
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm).with_tool_registry(registry);
-    let mut task = AgentTask::new("task_no_multimodal", "demo", "system", "go");
+    let mut task = AgentTask::new(
+        "task_no_multimodal",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "go",
+    );
     task.max_cycles = 4;
     task.extra_tool_names = vec!["_demo_image".to_string()];
 
@@ -453,7 +503,13 @@ fn runtime_tool_context_uses_execution_context_metadata() {
 
     let result = runtime
         .run_with_controls(
-            AgentTask::new("task_ctx_metadata", "demo", "system", "read"),
+            AgentTask::new(
+                "task_ctx_metadata",
+                "demo",
+                vv_agent::prompt::PromptBundle::from_instruction_text("system")
+                    .expect("prompt bundle"),
+                "read",
+            ),
             controls,
         )
         .expect("run");
@@ -492,7 +548,12 @@ fn runtime_allows_outside_workspace_paths_from_integer_metadata() {
     runtime.workspace_backend = std::sync::Arc::new(
         vv_agent::workspace::LocalWorkspaceBackend::new(workspace.path()),
     );
-    let mut task = AgentTask::new("task_metadata_outside", "demo", "system", "read");
+    let mut task = AgentTask::new(
+        "task_metadata_outside",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "read",
+    );
     task.metadata
         .insert("allow_outside_workspace_paths".to_string(), json!(1));
 

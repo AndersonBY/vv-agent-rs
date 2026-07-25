@@ -4,7 +4,7 @@ use common::{
     build_direct_runtime, env_f64, make_task_id, print_agent_result, runtime_log_handler,
     ExampleConfig,
 };
-use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
+use vv_agent::prompt::{build_system_prompt_bundle_with_options, BuildSystemPromptOptions};
 use vv_agent::types::AgentTask;
 use vv_agent::{CancellationToken, ExecutionContext, RuntimeRunControls, ThreadBackend};
 
@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (runtime, resolved) = build_direct_runtime(&config, 90.0)?;
     let runtime = runtime.with_execution_backend(ThreadBackend::new(2));
 
-    let system_prompt = build_system_prompt_with_options(
+    let system_prompt = build_system_prompt_bundle_with_options(
         "You are a helpful agent. Complete the task step by step.",
         BuildSystemPromptOptions {
             language: "zh-CN".to_string(),

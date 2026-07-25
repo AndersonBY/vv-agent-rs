@@ -26,25 +26,6 @@ pub(crate) fn property_description(
         .unwrap_or_default()
 }
 
-pub(crate) fn nested_property_description(
-    registry: &vv_agent::ToolRegistry,
-    tool_name: &str,
-    property_path: &[&str],
-) -> String {
-    let mut cursor =
-        &registry.get_schema(tool_name).expect("schema")["function"]["parameters"]["properties"];
-    for (index, segment) in property_path.iter().enumerate() {
-        if index > 0 && *segment != "items" {
-            cursor = &cursor["properties"];
-        }
-        cursor = &cursor[*segment];
-    }
-    cursor["description"]
-        .as_str()
-        .map(str::to_string)
-        .unwrap_or_default()
-}
-
 pub(crate) fn property_names(
     registry: &vv_agent::ToolRegistry,
     tool_name: &str,
@@ -127,57 +108,4 @@ pub(crate) fn collect_rust_files(root: &Path) -> Vec<std::path::PathBuf> {
         }
     }
     files
-}
-
-pub(crate) fn assert_description_contains(
-    registry: &vv_agent::ToolRegistry,
-    tool_name: &str,
-    expected_fragments: &[&str],
-) {
-    let actual = description(registry, tool_name);
-    for expected in expected_fragments {
-        assert!(
-            actual.contains(expected),
-            "{tool_name} description should preserve expected schema guidance:\n{expected}\n\nactual:\n{actual}"
-        );
-    }
-}
-
-pub(crate) fn assert_property_contains(
-    registry: &vv_agent::ToolRegistry,
-    tool_name: &str,
-    property_name: &str,
-    expected_fragments: &[&str],
-) {
-    let actual = property_description(registry, tool_name, property_name);
-    for expected in expected_fragments {
-        assert!(
-            actual.contains(expected),
-            "{tool_name}.{property_name} description should preserve expected schema guidance:\n{expected}\n\nactual:\n{actual}"
-        );
-    }
-}
-
-pub(crate) fn assert_nested_property_contains(
-    registry: &vv_agent::ToolRegistry,
-    tool_name: &str,
-    property_path: &[&str],
-    expected_fragments: &[&str],
-) {
-    let schema = registry.get_schema(tool_name).expect("schema");
-    let mut cursor = &schema["function"]["parameters"]["properties"];
-    for (index, segment) in property_path.iter().enumerate() {
-        if index > 0 && *segment != "items" {
-            cursor = &cursor["properties"];
-        }
-        cursor = &cursor[*segment];
-    }
-    let actual = cursor["description"].as_str().unwrap_or_default();
-    for expected in expected_fragments {
-        assert!(
-            actual.contains(expected),
-            "{tool_name}.{} description should preserve expected schema guidance:\n{expected}\n\nactual:\n{actual}",
-            property_path.join("."),
-        );
-    }
 }

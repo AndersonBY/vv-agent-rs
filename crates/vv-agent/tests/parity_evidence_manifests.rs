@@ -5,18 +5,19 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use vv_agent::prompt::{
-    build_system_prompt_bundle_with_options, BuildSystemPromptOptions, BuiltSystemPrompt,
-    PromptSection, SystemPromptBuilder,
+    build_system_prompt_bundle_with_options, BuildSystemPromptOptions, PromptBundle, PromptSection,
+    SystemPromptBuilder,
 };
 use vv_agent::{
     ApprovalRequirement, ToolApprovalRule, ToolExposure, ToolSpecContext, ToolSpecKind,
 };
 
 const FIXTURE_DIR: &str = "tests/fixtures/parity";
-const CANONICAL_FIXTURES: [&str; 3] = [
+const CANONICAL_FIXTURES: [&str; 4] = [
     "public_api.json",
     "prompt_bundle.json",
     "builtin_tools.json",
+    "bounded_tool_result.json",
 ];
 const EXPECTED_DOMAINS: [&str; 14] = [
     "agent",

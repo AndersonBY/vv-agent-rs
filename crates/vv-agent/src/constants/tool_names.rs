@@ -11,7 +11,6 @@ pub const EDIT_FILE_TOOL_NAME: &str = "edit_file";
 pub const SEARCH_FILES_TOOL_NAME: &str = "search_files";
 pub const BASH_TOOL_NAME: &str = "bash";
 pub const CHECK_BACKGROUND_COMMAND_TOOL_NAME: &str = "check_background_command";
-pub const COMPRESS_MEMORY_TOOL_NAME: &str = "compress_memory";
 pub const TODO_WRITE_TOOL_NAME: &str = "todo_write";
 pub const READ_IMAGE_TOOL_NAME: &str = "read_image";
 pub const FILE_INFO_TOOL_NAME: &str = "file_info";

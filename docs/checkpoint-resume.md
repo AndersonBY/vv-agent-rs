@@ -1,6 +1,6 @@
 # Durable Checkpoint And Resume
 
-Checkpoint v3 is an opt-in Runner capability. It preserves the last committed
+Checkpoint v4 is an opt-in Runner capability. It preserves the last committed
 cycle, operation receipts, budget usage, extension state, event cursor, claim,
 lease, and retained terminal result. The language-neutral behavior is defined
 by the locked `vv-agent-contract`; this document records the Rust producer and
@@ -14,10 +14,10 @@ used by the scheduler process. A distributed worker resolves the same logical
 store through `RuntimeRecipe.capabilities.checkpoint_store_ref` and its
 `DistributedCapabilityRegistry`.
 
-Enabled records require `schema_version=vv-agent.checkpoint.v3` and
-`run_definition_schema=vv-agent.run-definition.v2`. Distributed workers accept
-only `vv-agent.distributed-run.v2` and return only
-`vv-agent.distributed-worker-response.v1`; no other current record or envelope
+Enabled records require `schema_version=vv-agent.checkpoint.v4` and
+`run_definition_schema=vv-agent.run-definition.v3`. Distributed workers accept
+only `vv-agent.distributed-run.v3` and return only
+`vv-agent.distributed-worker-response.v2`; no other current record or envelope
 shape is read or repaired.
 
 `CheckpointConfig` intentionally keeps concrete `store` and reconstructable
@@ -42,7 +42,7 @@ synthesized and no stored definition or digest is rewritten.
 
 Execution telemetry is not a durable receipt. A `tool_call_started` event may
 exist without `tool_call_completed` after cancellation, process loss, or an
-exception. The checkpoint v3 operation journal remains authoritative for
+exception. The checkpoint v4 operation journal remains authoritative for
 whether an operation is planned, started, committed, replayable, or ambiguous;
 neither `duration_ms` nor a lifecycle observer provides exactly-once effects.
 
@@ -102,7 +102,7 @@ transition share the same checkpoint progress boundary.
 
 ## Worker Reconstruction
 
-`DistributedCycleWorker::new()` has a production checkpoint-v3 executor. It
+`DistributedCycleWorker::new()` has a production checkpoint-v4 executor. It
 resolves the declared model, workspace, toolset, policy, hooks, observers,
 budget meter, extensions, and reconciliation provider, then rebuilds an inline
 single-cycle `AgentRuntime`. `with_checkpoint_executor()` remains available for

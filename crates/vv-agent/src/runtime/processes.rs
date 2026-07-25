@@ -6,5 +6,6 @@ mod termination;
 pub use capture::{
     start_captured_process, start_captured_process_with_env, wait_for_child, CapturedProcess,
 };
+pub(crate) use output::read_captured_output_all;
 pub use output::{read_captured_output, remove_captured_output};
 pub use termination::kill_process_tree;

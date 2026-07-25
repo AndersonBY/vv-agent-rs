@@ -158,8 +158,11 @@ impl<C: LlmClient> CycleRunner<C> {
             if let Some(context) = request.execution_context {
                 check_context_cancelled(context)?;
             }
-            let mut llm_request =
-                LlmRequest::new(request.task.model.clone(), request_messages.clone());
+            let mut llm_request = LlmRequest::new(
+                request.task.model.clone(),
+                request_messages.clone(),
+                request.task.prompt_bundle.clone(),
+            );
             llm_request.tools = request_tool_schemas.clone();
             llm_request.metadata =
                 Value::Object(request.task.metadata.clone().into_iter().collect());

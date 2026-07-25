@@ -32,7 +32,7 @@ pub enum ToolLifecycleEvent {
     },
     Completed {
         call: ToolCall,
-        result: ToolExecutionResult,
+        result: Box<ToolExecutionResult>,
         execution_started: bool,
         duration_ms: Option<u64>,
         tool_metadata: Option<ToolMetadata>,
@@ -495,7 +495,7 @@ fn emit_completed(
         callback,
         ToolLifecycleEvent::Completed {
             call: call.clone(),
-            result: result.clone(),
+            result: Box::new(result.clone()),
             execution_started,
             duration_ms,
             tool_metadata,
@@ -555,6 +555,12 @@ fn tool_error(
         metadata,
         image_url: None,
         image_path: None,
+        truncated: false,
+        truncation_reason: None,
+        original_bytes: None,
+        visible_bytes: None,
+        artifact: None,
+        cursor: None,
     }
 }
 

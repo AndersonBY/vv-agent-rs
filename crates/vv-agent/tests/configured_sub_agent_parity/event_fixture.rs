@@ -69,8 +69,13 @@ fn real_configured_sub_agent_producer_matches_locked_event_fixture_line_by_line(
         registry
     };
     let build_parent = |sub_agent: SubAgentConfig| {
-        let mut parent =
-            AgentTask::new("parent-task", "child-model", "Parent prompt", "Parent task");
+        let mut parent = AgentTask::new(
+            "parent-task",
+            "child-model",
+            vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+                .expect("prompt bundle"),
+            "Parent task",
+        );
         parent.max_cycles = 3;
         parent.extra_tool_names = vec!["contract_delegate".to_string()];
         parent

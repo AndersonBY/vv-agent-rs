@@ -18,6 +18,7 @@ pub trait WorkspaceBackend: Any + Send + Sync {
     fn read_text(&self, path: &str) -> std::io::Result<String>;
     fn read_bytes(&self, path: &str) -> std::io::Result<Vec<u8>>;
     fn write_text(&self, path: &str, content: &str, append: bool) -> std::io::Result<usize>;
+    fn write_text_exclusive(&self, path: &str, content: &str) -> std::io::Result<usize>;
     fn file_info(&self, path: &str) -> std::io::Result<Option<FileInfo>>;
     fn exists(&self, path: &str) -> bool;
     fn is_file(&self, path: &str) -> bool;

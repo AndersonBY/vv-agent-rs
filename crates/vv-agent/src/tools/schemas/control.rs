@@ -1,28 +1,8 @@
 use serde_json::{json, Value};
 
-const TASK_FINISH_DESCRIPTION: &str = r#"When task goals are fully complete, call this tool to end the task and return final message.
+const TASK_FINISH_DESCRIPTION: &str = "Explicitly finish the run with a user-facing result when the requested work is complete. This tool is optional when the configured no-tool policy allows natural completion; the runtime still enforces unfinished-TODO checks.";
 
-Finish the current task and return the final response.
-
-When to use:
-- Only call this when the user's requested work is genuinely complete, verified, and no unfinished TODO remains.
-- Use it after implementation, review, test output, and any required artifact paths are ready to report.
-- Use `exposed_files` to list concrete deliverables the user should inspect.
-
-Completion protocol:
-- Do not call this tool if work is partially complete, blocked, waiting for user input, or still needs verification.
-- If `todo_write` has pending or in-progress work, the runtime rejects premature finish by default.
-- `require_all_todos_completed=false` can bypass the TODO guard only when the user explicitly accepts unfinished TODOs or the remaining items are intentionally deferred.
-- The message should include concise outcome, important verification evidence, and any remaining caveats."#;
-
-const ASK_USER_DESCRIPTION: &str = r#"Pause execution and ask the user for required clarification or decision.
-
-When to use:
-- The task cannot be completed safely because a real user preference, permission, credential, destructive action, or ambiguous scope decision is missing.
-- A reasonable default would risk doing the wrong work or violating the user's stated constraints.
-- Multiple clear options exist and user choice changes the implementation or operational outcome.
-
-Do not use this for facts you can discover with available tools, files, command output, documentation, or local configuration. This blocks the runtime until the user responds, so keep the question concrete, include 2-3 options when possible, and ask only for the decision needed to proceed."#;
+const ASK_USER_DESCRIPTION: &str = "Pause for a required user decision that cannot be discovered safely with available tools. Ask one concrete question and provide concise options when useful.";
 
 pub(super) fn task_finish_schema() -> Value {
     json!({
@@ -35,16 +15,16 @@ pub(super) fn task_finish_schema() -> Value {
                 "properties": {
                     "message": {
                         "type": "string",
-                        "description": "Final response shown to user. Include the result, important verification evidence, and any remaining caveats."
+                        "description": "Final user-facing result."
                     },
                     "require_all_todos_completed": {
                         "type": "boolean",
-                        "description": "Default true. When true, finish is rejected while TODO items remain pending or in_progress. Set false only when intentionally finishing with remaining TODOs, such as when the user explicitly accepts deferred work."
+                        "description": "Reject finish while TODOs remain unless false."
                     },
                     "exposed_files": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional workspace-relative paths for created or modified deliverables the user should inspect. Include concrete artifact paths, not transient logs, prose descriptions, or unrelated files."
+                        "description": "Workspace-relative deliverable paths to expose to the user."
                     }
                 },
                 "required": []
@@ -64,21 +44,21 @@ pub(super) fn ask_user_schema() -> Value {
                 "properties": {
                     "question": {
                         "type": "string",
-                        "description": "Question text to ask the user. Ask the smallest decision needed to unblock progress, include relevant context, and avoid bundling unrelated questions."
+                        "description": "Question text to ask the user."
                     },
                     "options": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional answer options shown to the user. Prefer 2-3 concise, mutually exclusive choices when the decision has clear outcomes."
+                        "description": "Optional answer options shown to the user."
                     },
                     "selection_type": {
                         "type": "string",
                         "enum": ["single", "multi"],
-                        "description": "Single or multi-choice mode when options are provided. Use `multi` only when several choices may validly apply at the same time."
+                        "description": "Single or multi-choice mode when options are provided."
                     },
                     "allow_custom_options": {
                         "type": "boolean",
-                        "description": "Whether users can add custom options. Set true when preset options may be incomplete or the user may need to provide a custom path, credential label, or preference."
+                        "description": "Whether users can add custom options."
                     }
                 },
                 "required": ["question"]
@@ -92,17 +72,17 @@ pub(super) fn activate_skill_schema() -> Value {
         "type": "function",
         "function": {
             "name": "activate_skill",
-            "description": "Activate a skill from the current task's available skill list.\n\nWhen to use:\n- A listed skill directly applies to the current task, workflow, domain, or required process discipline.\n- The skill may contain repository-specific instructions, validation steps, tool constraints, or templates that should guide the next action.\n\nProtocol:\n- Use this tool only for skills explicitly listed in <available_skills>.\n- Do not invent skill names or activate unrelated skills.\n- Read the returned SKILL.md instructions before acting, then follow any mandatory workflow.\n\nThe skill metadata follows the Agent Skills specification (https://github.com/agentskills/agentskills): name/description are exposed in <available_skills>, and skill instructions are loaded from SKILL.md when location is provided.",
+            "description": "Load one skill listed in the current available-skills metadata. Use the exact skill name and follow the returned instructions; unlisted names are rejected.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "skill_name": {
                         "type": "string",
-                        "description": "Skill identifier from available skill list. The exact `name` from the available skill list. Do not pass a path, title, or inferred alias."
+                        "description": "Skill identifier from available skill list."
                     },
                     "reason": {
                         "type": "string",
-                        "description": "Optional reason for activating this skill. Explain briefly why this skill applies before acting."
+                        "description": "Optional reason for activating this skill."
                     }
                 },
                 "required": ["skill_name"]

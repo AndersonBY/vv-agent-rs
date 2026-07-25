@@ -6,7 +6,9 @@ use common::{
     build_direct_runtime, env_string, make_task_id, print_agent_result, runtime_log_handler,
     ExampleConfig,
 };
-use vv_agent::prompt::{build_system_prompt_with_options, BuildSystemPromptOptions};
+use vv_agent::prompt::{
+    build_system_prompt_bundle_with_options, BuildSystemPromptOptions, PromptBundle,
+};
 use vv_agent::types::AgentTask;
 use vv_agent::{
     FileInfo, LocalWorkspaceBackend, MemoryWorkspaceBackend, RuntimeRunControls,
@@ -45,6 +47,10 @@ impl WorkspaceBackend for PrefixedBackend {
         self.inner.write_text(path, &tagged, append)
     }
 
+    fn write_text_exclusive(&self, path: &str, content: &str) -> std::io::Result<usize> {
+        self.inner.write_text_exclusive(path, content)
+    }
+
     fn file_info(&self, path: &str) -> std::io::Result<Option<FileInfo>> {
         self.inner.file_info(path)
     }
@@ -67,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     config.ensure_workspace()?;
     let mode = env_string("VV_AGENT_EXAMPLE_WS_MODE", "all").to_ascii_lowercase();
     let (runtime, resolved) = build_direct_runtime(&config, 90.0)?;
-    let system_prompt = build_system_prompt_with_options(
+    let system_prompt = build_system_prompt_bundle_with_options(
         "You are a helpful agent. Use workspace tools to complete tasks.",
         BuildSystemPromptOptions {
             language: "zh-CN".to_string(),
@@ -155,7 +161,7 @@ fn run_backend_demo(
     runtime: &vv_agent::AgentRuntime<vv_agent::VvLlmClient>,
     config: &ExampleConfig,
     model_id: &str,
-    system_prompt: &str,
+    system_prompt: &PromptBundle,
     workspace_backend: Option<Arc<dyn WorkspaceBackend>>,
     prompt: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -163,7 +169,7 @@ fn run_backend_demo(
     let mut task = AgentTask::new(
         make_task_id("ws_backend"),
         model_id.to_string(),
-        system_prompt.to_string(),
+        system_prompt.clone(),
         prompt,
     );
     task.max_cycles = 5;

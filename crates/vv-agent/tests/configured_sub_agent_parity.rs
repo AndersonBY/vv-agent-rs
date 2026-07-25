@@ -17,8 +17,8 @@ use vv_agent::{
     AgentRuntime, AgentStatus, DiscoveryFilteredWorkspaceBackend, LLMResponse, LlmClient, LlmError,
     LlmRequest, LlmStreamCallback, LocalWorkspaceBackend, ModelError, ModelProvider, ModelRef,
     ModelSettings, ResolvedModelConfig, RunContext, RunEventPayload, ScriptStep, ScriptedLlmClient,
-    SubAgentConfig, SubTaskOutcome, SubTaskRequest, TokenUsage, ToolCall, ToolDirective,
-    ToolExecutionResult, ToolResultStatus, WorkspaceBackend,
+    SubAgentConfig, SubTaskOutcome, SubTaskRequest, TokenUsage, ToolCall, ToolExecutionResult,
+    ToolResultStatus, WorkspaceBackend,
 };
 
 #[path = "configured_sub_agent_parity/async_lifecycle.rs"]

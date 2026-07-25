@@ -49,15 +49,8 @@ fn dispatcher_normalizes_tool_call_id_and_wait_response_status() {
         .register(ToolSpec::new(
             "pending_id",
             "returns a pending tool call id",
-            Arc::new(|_context, _arguments| ToolExecutionResult {
-                tool_call_id: "pending".to_string(),
-                content: json!({"ok": true}).to_string(),
-                status: ToolResultStatus::Success,
-                directive: ToolDirective::Continue,
-                error_code: None,
-                metadata: BTreeMap::new(),
-                image_url: None,
-                image_path: None,
+            Arc::new(|_context, _arguments| {
+                ToolExecutionResult::success("pending", json!({"ok": true}).to_string())
             }),
         ))
         .expect("register");
@@ -73,15 +66,8 @@ fn dispatcher_normalizes_tool_call_id_and_wait_response_status() {
         .register(ToolSpec::new(
             "blank_id",
             "returns a blank tool call id",
-            Arc::new(|_context, _arguments| ToolExecutionResult {
-                tool_call_id: "   ".to_string(),
-                content: json!({"ok": true}).to_string(),
-                status: ToolResultStatus::Success,
-                directive: ToolDirective::Continue,
-                error_code: None,
-                metadata: BTreeMap::new(),
-                image_url: None,
-                image_path: None,
+            Arc::new(|_context, _arguments| {
+                ToolExecutionResult::success("   ", json!({"ok": true}).to_string())
             }),
         ))
         .expect("register blank id tool");

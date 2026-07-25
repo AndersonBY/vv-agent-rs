@@ -24,7 +24,7 @@ fn vv_llm_client_fails_over_to_next_endpoint_client() {
     .with_retry_policy(1, 0.0);
 
     let response = llm
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "gpt-4o-alias",
             vec![Message::user("fall over to backup endpoint")],
         ))
@@ -62,7 +62,7 @@ fn unknown_provider_error_fails_over_without_same_endpoint_retry() {
     .with_retry_policy(3, 0.0);
 
     let response = llm
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "gpt-4o-mini",
             vec![Message::user("fail over once")],
         ))
@@ -96,7 +96,7 @@ fn configuration_error_aborts_without_trying_backup_endpoint() {
     .with_retry_policy(3, 0.0);
 
     let error = llm
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "gpt-4o-mini",
             vec![Message::user("invalid config")],
         ))
@@ -131,13 +131,10 @@ fn vv_llm_client_prefers_last_successful_endpoint() {
     .with_retry_policy(1, 0.0);
 
     let first = llm
-        .complete(LlmRequest::new("gpt-4o-mini", vec![Message::user("first")]))
+        .complete(llm_request("gpt-4o-mini", vec![Message::user("first")]))
         .expect("first fallback completion");
     let second = llm
-        .complete(LlmRequest::new(
-            "gpt-4o-mini",
-            vec![Message::user("second")],
-        ))
+        .complete(llm_request("gpt-4o-mini", vec![Message::user("second")]))
         .expect("second preferred completion");
 
     assert_eq!(first.raw["used_endpoint_id"], json!("backup-endpoint"));
@@ -185,7 +182,7 @@ fn vv_llm_client_retries_endpoint_before_failover() {
     .with_retry_policy(2, 0.0);
 
     let response = llm
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "gpt-4o-mini",
             vec![Message::user("retry once")],
         ))
@@ -210,7 +207,7 @@ fn vv_llm_client_uses_endpoint_model_for_selected_alias() {
     );
 
     let response = llm
-        .complete(LlmRequest::new(
+        .complete(llm_request(
             "gpt-alias",
             vec![Message::user("use provider model id")],
         ))

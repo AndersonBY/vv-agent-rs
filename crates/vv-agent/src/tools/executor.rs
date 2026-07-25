@@ -14,12 +14,6 @@ pub type ToolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ToolError>> +
 pub enum ToolExposure {
     /// Model-visible and executable through the runtime.
     Direct,
-    /// Reserved for deferred discovery. It currently has the same visibility and execution
-    /// semantics as `Direct` under the shared SDK contract.
-    Deferred,
-    /// Reserved for model-origin-only invocation. It currently has the same visibility and
-    /// execution semantics as `Direct` under the shared SDK contract.
-    DirectModelOnly,
     /// Not model-visible, but still available for explicit runtime invocation.
     Hidden,
 }

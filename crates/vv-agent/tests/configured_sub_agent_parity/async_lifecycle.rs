@@ -126,7 +126,13 @@ fn configured_async_child_panic_cleans_up_and_retained_session_can_continue() {
                 .push((name.to_string(), payload.clone()));
         }
     });
-    let mut parent = AgentTask::new("panic-parent", "shared-model", "Parent prompt", "Delegate");
+    let mut parent = AgentTask::new(
+        "panic-parent",
+        "shared-model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+            .expect("prompt bundle"),
+        "Delegate",
+    );
     parent.max_cycles = 3;
     let mut child = SubAgentConfig::new("shared-model", "Research");
     child.system_prompt = Some("Child prompt".to_string());
@@ -299,7 +305,13 @@ fn start_blocking_async_configured_child() -> RunningAsyncConfiguredChild {
                 .push((name.to_string(), payload.clone()));
         }
     });
-    let mut parent = AgentTask::new("async-parent", "shared-model", "Parent prompt", "Delegate");
+    let mut parent = AgentTask::new(
+        "async-parent",
+        "shared-model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+            .expect("prompt bundle"),
+        "Delegate",
+    );
     parent.max_cycles = 3;
     let mut child = SubAgentConfig::new("shared-model", "Research");
     child.system_prompt = Some("Child prompt".to_string());
@@ -436,7 +448,13 @@ fn synchronous_configured_child_stays_running_and_rejects_racing_continuation() 
                 .push((name.to_string(), payload.clone()));
         }
     });
-    let mut parent = AgentTask::new("sync-parent", "shared-model", "Parent prompt", "Delegate");
+    let mut parent = AgentTask::new(
+        "sync-parent",
+        "shared-model",
+        vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+            .expect("prompt bundle"),
+        "Delegate",
+    );
     parent.max_cycles = 3;
     let mut child = SubAgentConfig::new("shared-model", "Research");
     child.system_prompt = Some("Child prompt".to_string());
@@ -602,7 +620,8 @@ fn panic_after_completed_cycle_preserves_cycles_and_token_usage() {
     let mut parent = AgentTask::new(
         "progress-parent",
         "shared-model",
-        "Parent prompt",
+        vv_agent::prompt::PromptBundle::from_instruction_text("Parent prompt")
+            .expect("prompt bundle"),
         "Delegate",
     );
     parent.max_cycles = 3;

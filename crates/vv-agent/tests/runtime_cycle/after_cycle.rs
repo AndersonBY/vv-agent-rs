@@ -42,7 +42,12 @@ fn after_cycle_steer_defers_native_no_tool_completion() {
         LLMResponse::new("checked answer"),
     ]);
     let runtime = AgentRuntime::new(llm).with_after_cycle_hooks(vec![hook.clone()]);
-    let mut task = AgentTask::new("steer_task", "demo", "system", "answer");
+    let mut task = AgentTask::new(
+        "steer_task",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "answer",
+    );
     task.no_tool_policy = NoToolPolicy::Finish;
     task.max_cycles = 3;
 
@@ -92,7 +97,12 @@ fn after_cycle_stop_cannot_project_tool_completion_as_success() {
         .with_after_cycle_hooks(vec![hook]);
 
     let result = runtime
-        .run(AgentTask::new("stop_task", "demo", "system", "finish"))
+        .run(AgentTask::new(
+            "stop_task",
+            "demo",
+            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+            "finish",
+        ))
         .expect("run");
 
     assert_eq!(result.status, AgentStatus::Failed);
@@ -113,7 +123,12 @@ fn after_cycle_steer_at_max_cycles_fails_closed() {
     });
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new("partial")]))
         .with_after_cycle_hooks(vec![hook]);
-    let mut task = AgentTask::new("max_task", "demo", "system", "work");
+    let mut task = AgentTask::new(
+        "max_task",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "work",
+    );
     task.no_tool_policy = NoToolPolicy::Continue;
     task.max_cycles = 1;
 
@@ -169,7 +184,12 @@ fn after_cycle_permission_narrowing_hides_schema_and_blocks_dispatch() {
         ScriptStep::response(finish),
     ]);
     let runtime = AgentRuntime::new(llm).with_after_cycle_hooks(vec![hook]);
-    let mut task = AgentTask::new("deny_task", "demo", "system", "work");
+    let mut task = AgentTask::new(
+        "deny_task",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "work",
+    );
     task.no_tool_policy = NoToolPolicy::Continue;
     task.max_cycles = 4;
     task.use_workspace = true;
@@ -193,7 +213,12 @@ fn after_cycle_permission_narrowing_hides_schema_and_blocks_dispatch() {
 #[test]
 fn invalid_after_cycle_control_state_fails_before_model_call() {
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![LLMResponse::new("unused")]));
-    let mut task = AgentTask::new("invalid_state", "demo", "system", "work");
+    let mut task = AgentTask::new(
+        "invalid_state",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "work",
+    );
     task.initial_shared_state.insert(
         AFTER_CYCLE_CONTROL_STATE_KEY.to_string(),
         json!({

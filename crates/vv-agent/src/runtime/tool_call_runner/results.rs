@@ -65,6 +65,12 @@ pub(crate) fn skipped_tool_result(
         metadata: BTreeMap::new(),
         image_url: None,
         image_path: None,
+        truncated: false,
+        truncation_reason: None,
+        original_bytes: None,
+        visible_bytes: None,
+        artifact: None,
+        cursor: None,
     }
 }
 

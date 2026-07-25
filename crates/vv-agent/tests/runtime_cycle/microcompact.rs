@@ -11,7 +11,12 @@ fn runtime_microcompacts_before_full_memory_compaction() {
     runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
         workspace.path(),
     ));
-    let mut task = AgentTask::new("microcompact_task", "demo", "system", "inspect memory");
+    let mut task = AgentTask::new(
+        "microcompact_task",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "inspect memory",
+    );
     task.extra_tool_names.push("bash".to_string());
     task.memory_compact_threshold = 10_000;
     task.metadata
@@ -104,7 +109,7 @@ fn runtime_respects_configured_microcompact_tool_allowlist() {
     let mut task = AgentTask::new(
         "microcompact_allowlist_task",
         "demo",
-        "system",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
         "inspect memory",
     );
     task.extra_tool_names.push("bash".to_string());
@@ -158,7 +163,7 @@ fn runtime_parses_string_float_microcompact_ratio() {
     let mut task = AgentTask::new(
         "microcompact_string_ratio_task",
         "demo",
-        "system",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
         "inspect memory",
     );
     task.extra_tool_names.push("bash".to_string());

@@ -1,25 +1,6 @@
 use serde_json::{json, Value};
 
-const TODO_WRITE_DESCRIPTION: &str = r#"Create and manage structured TODO list for multi-step execution.
-
-Protocol:
-- Send the complete `todos` array each time.
-- The payload is a replacement payload, not a patch.
-- Existing items with matching `id` are updated.
-- Matching items keep their original `created_at`.
-- Items omitted from the new array are removed.
-- Missing `id` values are generated automatically as short stable ids.
-- Each item must include `title`, `status`, and `priority`.
-- Only one item may have `status=in_progress`.
-
-When to use:
-- Track multi-step implementation, verification, review, release, or incident recovery work.
-- Make progress state explicit before delegating, running long commands, or switching from investigation to edits.
-
-Returns:
-- The current TODO list with generated ids, timestamps, and validation errors when statuses conflict.
-
-Use this tool to keep task planning explicit and machine-readable."#;
+const TODO_WRITE_DESCRIPTION: &str = "Replace the current structured TODO list. Send the complete list, keep at most one item in_progress, and use stable ids when updating existing items.";
 
 pub(super) fn todo_write_schema() -> Value {
     json!({
@@ -32,7 +13,7 @@ pub(super) fn todo_write_schema() -> Value {
                 "properties": {
                     "todos": {
                         "type": "array",
-                        "description": "Complete TODO list replacement payload. Send every item that should remain; omitted existing ids are removed.",
+                        "description": "Complete TODO list replacement payload.",
                         "items": {
                             "type": "object",
                             "properties": {

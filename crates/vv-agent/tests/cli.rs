@@ -76,7 +76,7 @@ fn cli_help_exits_successfully() {
 }
 
 #[test]
-fn cli_task_uses_prompt_bundle_and_metadata_sections() {
+fn cli_task_uses_explicit_prompt_bundle_without_metadata_side_channel() {
     let args = parse_cli_args_from_with_default_settings(
         [
             "vv-agent",
@@ -96,10 +96,11 @@ fn cli_task_uses_prompt_bundle_and_metadata_sections() {
     assert_eq!(task.max_cycles, 80);
     assert_eq!(task.user_prompt, "inspect screenshot");
     assert!(task
-        .system_prompt
+        .prompt_bundle
+        .flatten()
         .contains("Vector Vein agent runtime demo"));
     assert_eq!(task.metadata["language"], "zh-CN");
-    assert!(task.metadata["system_prompt_sections"].is_array());
+    assert!(!task.metadata.contains_key("system_prompt_sections"));
 }
 
 #[test]

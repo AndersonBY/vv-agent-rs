@@ -48,7 +48,13 @@ fn runtime_executes_configured_sub_agent_with_real_runner() {
         ),
     ]);
     let runtime = AgentRuntime::new(llm);
-    let mut task = AgentTask::new("parent", "demo", "parent system", "delegate");
+    let mut task = AgentTask::new(
+        "parent",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("parent system")
+            .expect("prompt bundle"),
+        "delegate",
+    );
     task.sub_agents.insert(
         "researcher".to_string(),
         SubAgentConfig::new("demo", "research profile"),
@@ -132,7 +138,13 @@ fn configured_sub_agent_inherits_limits_with_fresh_counters_and_without_parent_m
         child_finish,
         parent_finish,
     ]));
-    let mut task = AgentTask::new("parent-budget", "demo", "parent system", "delegate");
+    let mut task = AgentTask::new(
+        "parent-budget",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("parent system")
+            .expect("prompt bundle"),
+        "delegate",
+    );
     task.sub_agents.insert(
         "researcher".to_string(),
         SubAgentConfig::new("demo", "research profile"),
@@ -198,7 +210,13 @@ fn runtime_forwards_typed_events_from_runtime_backed_sub_agent() {
         .contains(&json!("event_sink")));
     let (events, event_handler) = run_event_collector();
     let runtime = AgentRuntime::new(StreamingSubAgentLlmClient::default());
-    let mut task = AgentTask::new("parent_stream", "demo", "parent system", "delegate");
+    let mut task = AgentTask::new(
+        "parent_stream",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("parent system")
+            .expect("prompt bundle"),
+        "delegate",
+    );
     task.sub_agents.insert(
         "researcher".to_string(),
         SubAgentConfig::new("demo", "research profile"),
@@ -304,7 +322,8 @@ fn runtime_rejects_sub_agent_model_mismatch_without_settings_file() {
     let mut task = AgentTask::new(
         "parent_mismatch",
         "parent-model",
-        "parent system",
+        vv_agent::prompt::PromptBundle::from_instruction_text("parent system")
+            .expect("prompt bundle"),
         "delegate",
     );
     task.sub_agents.insert(
@@ -335,7 +354,7 @@ fn runtime_rejects_sub_agent_model_mismatch_without_settings_file() {
 }
 
 #[test]
-fn runtime_adds_generated_prompt_sections_to_sub_agent_metadata() {
+fn runtime_carries_generated_sub_agent_prompt_as_an_explicit_bundle() {
     let mut sub_task_args = BTreeMap::new();
     sub_task_args.insert("agent_id".to_string(), json!("researcher"));
     sub_task_args.insert(
@@ -365,7 +384,13 @@ fn runtime_adds_generated_prompt_sections_to_sub_agent_metadata() {
     ]);
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm);
-    let mut task = AgentTask::new("parent_prompt", "demo", "parent system", "delegate");
+    let mut task = AgentTask::new(
+        "parent_prompt",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("parent system")
+            .expect("prompt bundle"),
+        "delegate",
+    );
     task.metadata.insert("language".to_string(), json!("zh-CN"));
     task.metadata.insert(
         "available_skills".to_string(),
@@ -379,20 +404,25 @@ fn runtime_adds_generated_prompt_sections_to_sub_agent_metadata() {
     let result = runtime.run(task).expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
-    let metadata = inspector
-        .child_system_metadata()
-        .expect("child system metadata");
-    let sections = metadata["system_prompt_sections"]
-        .as_array()
-        .expect("system prompt sections");
-    assert!(sections
+    let prompt_bundle = inspector
+        .child_prompt_bundle()
+        .expect("child prompt bundle");
+    assert!(prompt_bundle
+        .sections
         .iter()
-        .any(|section| section["id"] == "agent_definition"));
-    assert!(sections.iter().any(|section| section["id"] == "tools"));
+        .any(|section| section.id == "agent_definition"));
+    assert!(prompt_bundle
+        .sections
+        .iter()
+        .any(|section| section.id == "tools"));
+    assert!(!inspector
+        .child_system_metadata()
+        .expect("child system metadata")
+        .contains_key("system_prompt_sections"));
 }
 
 #[test]
-fn runtime_preserves_sub_agent_prompt_cache_metadata() {
+fn runtime_ignores_sub_agent_prompt_metadata_side_channel() {
     let mut sub_task_args = BTreeMap::new();
     sub_task_args.insert("agent_id".to_string(), json!("researcher"));
     sub_task_args.insert(
@@ -428,7 +458,8 @@ fn runtime_preserves_sub_agent_prompt_cache_metadata() {
     let mut task = AgentTask::new(
         "parent_prompt_configured",
         "demo",
-        "parent system",
+        vv_agent::prompt::PromptBundle::from_instruction_text("parent system")
+            .expect("prompt bundle"),
         "delegate",
     );
     let mut sub_agent = SubAgentConfig::new("demo", "research profile");
@@ -450,11 +481,14 @@ fn runtime_preserves_sub_agent_prompt_cache_metadata() {
         .child_system_metadata()
         .expect("child system metadata");
     assert_eq!(metadata["anthropic_prompt_cache_enabled"], json!(true));
-    let sections = metadata["system_prompt_sections"]
-        .as_array()
-        .expect("system prompt sections");
-    assert_eq!(sections.len(), 1);
-    assert_eq!(sections[0]["id"], json!("core_identity"));
+    let prompt_bundle = inspector
+        .child_prompt_bundle()
+        .expect("child prompt bundle");
+    assert!(prompt_bundle
+        .sections
+        .iter()
+        .all(|section| section.id != "core_identity"));
+    assert!(!prompt_bundle.flatten().contains("stable section"));
 }
 
 #[test]
@@ -488,7 +522,13 @@ fn runtime_sub_agent_identity_metadata_cannot_be_overridden_by_request() {
     ]);
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm);
-    let mut task = AgentTask::new("parent_identity", "demo", "parent system", "delegate");
+    let mut task = AgentTask::new(
+        "parent_identity",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("parent system")
+            .expect("prompt bundle"),
+        "delegate",
+    );
     let mut sub_agent = SubAgentConfig::new("demo", "research profile");
     sub_agent
         .metadata
@@ -536,6 +576,7 @@ fn runtime_sub_agent_identity_metadata_cannot_be_overridden_by_request() {
 struct InspectingSubAgentPromptLlmClient {
     responses: Arc<Mutex<VecDeque<LLMResponse>>>,
     child_system_metadata: Arc<Mutex<Option<BTreeMap<String, serde_json::Value>>>>,
+    child_prompt_bundle: Arc<Mutex<Option<vv_agent::prompt::PromptBundle>>>,
 }
 
 impl InspectingSubAgentPromptLlmClient {
@@ -543,6 +584,7 @@ impl InspectingSubAgentPromptLlmClient {
         Self {
             responses: Arc::new(Mutex::new(VecDeque::from(responses))),
             child_system_metadata: Arc::new(Mutex::new(None)),
+            child_prompt_bundle: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -550,6 +592,13 @@ impl InspectingSubAgentPromptLlmClient {
         self.child_system_metadata
             .lock()
             .expect("child metadata poisoned")
+            .clone()
+    }
+
+    fn child_prompt_bundle(&self) -> Option<vv_agent::prompt::PromptBundle> {
+        self.child_prompt_bundle
+            .lock()
+            .expect("child prompt bundle poisoned")
             .clone()
     }
 }
@@ -561,6 +610,10 @@ impl LlmClient for InspectingSubAgentPromptLlmClient {
             .first()
             .is_some_and(|message| message.content.contains("research profile"));
         if is_child_request {
+            *self
+                .child_prompt_bundle
+                .lock()
+                .expect("child prompt bundle poisoned") = Some(request.prompt_bundle.clone());
             let metadata = request
                 .messages
                 .first()

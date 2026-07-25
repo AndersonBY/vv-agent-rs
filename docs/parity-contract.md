@@ -18,9 +18,10 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock selects contract `3.0.0` at revision
-`a0c7c22e4416446f66712cf4484583fcfe2c4969`. The central support matrix records
-this adoption as `verified`. Treat
+The current lock selects contract `4.0.5` at revision
+`c903234f1374de85ddda44608c4a7e259f13e6c3`, release artifact SHA-256
+`92aaa062cdbd62513b2ee1d28e71c33d66f616e9884f09d8d18fc9753b113ff4`.
+The current adoption state is not duplicated in this document. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
 as the machine-readable source for the current verified Python and Rust
 revisions, verification timestamp, and cross-repository run URL.
@@ -71,7 +72,10 @@ Never repair a contract failure by editing a file under
 | --- | --- |
 | Public API inventory | `crates/vv-agent/src/lib.rs`, `crates/vv-agent/tests/parity_evidence_manifests.rs` |
 | System prompt | `crates/vv-agent/src/prompt/`, `crates/vv-agent/tests/prompt_public_api.rs` |
+| Resolved PromptBundle and one-run producer scope | `crates/vv-agent/src/agent.rs`, `crates/vv-agent/src/runner.rs`, `crates/vv-agent/src/runner/run_single.rs`, `crates/vv-agent/src/runtime/engine/model_request.rs`, `crates/vv-agent/src/llm/`; `crates/vv-agent/tests/context_providers.rs`, `crates/vv-agent/tests/runner_checkpoint.rs`, `crates/vv-agent/tests/parity_evidence_manifests.rs` |
 | Built-in tool specification | `crates/vv-agent/src/tools/`, `crates/vv-agent/tests/tool_schema_contract.rs` |
+| Canonical 15-tool surface and removed model memory tool | `crates/vv-agent/src/tools/registry/defaults.rs`, `crates/vv-agent/src/constants/tool_names.rs`, `crates/vv-agent/src/tools/executor.rs`; `crates/vv-agent/tests/parity_evidence_manifests.rs`, `crates/vv-agent/tests/tool_schema_contract.rs`, `crates/vv-agent/tests/builtin_tool_behavior_contract.rs` |
+| Sparse bounded tool results, artifact recovery, and read cursor | `crates/vv-agent/src/types/tool_calls.rs`, `crates/vv-agent/src/types/dict/tools.rs`, `crates/vv-agent/src/workspace/artifacts.rs`, `crates/vv-agent/src/tools/handlers/bash/execution.rs`, `crates/vv-agent/src/tools/handlers/background.rs`, `crates/vv-agent/src/tools/handlers/workspace/file_io/read.rs`; `crates/vv-agent/tests/bounded_tool_result_contract.rs`, `crates/vv-agent/tests/bash_tools.rs`, `crates/vv-agent/tests/workspace_tools.rs` |
 | Typed tool declaration and public propagation | `crates/vv-agent/src/tools/metadata.rs`, `crates/vv-agent/src/tools/function.rs`, `crates/vv-agent/src/tools/public_tool.rs`, `crates/vv-agent/src/tools/base/spec.rs`, `crates/vv-agent/src/tools/executor.rs`, `crates/vv-agent/src/tools/registry/mod.rs`; `crates/vv-agent/tests/tool_metadata_contract.rs`, `crates/vv-agent/tests/parity_evidence_manifests.rs`, `crates/vv-agent/tests/tool_orchestrator.rs`, `crates/vv-agent/tests/tool_schema_contract.rs` |
 | Metadata denial policy and delegation | `crates/vv-agent/src/tools/policy.rs`, `crates/vv-agent/src/runner/support.rs`, `crates/vv-agent/src/runtime/tool_planner.rs`, `crates/vv-agent/src/runtime/sub_agents/`, `crates/vv-agent/src/runner/handoff.rs`, `crates/vv-agent/src/runtime/backends/distributed/`; `crates/vv-agent/tests/runner_tool_policy.rs`, `crates/vv-agent/tests/configured_sub_agent_parity.rs`, `crates/vv-agent/tests/agent_tool_contract.rs`, `crates/vv-agent/tests/handoff_contract.rs`, `crates/vv-agent/tests/distributed_checkpoint.rs` |
 | Agent, Runner, result, live control | `crates/vv-agent/src/agent.rs`, `crates/vv-agent/src/runner/`, `crates/vv-agent/src/run_handle.rs` |
@@ -96,7 +100,41 @@ A fixture parser or private helper test cannot replace a real public producer
 test. A field that is declared but ignored by a planner, executor, provider, or
 store remains a contract failure.
 
-## Contract 3.0 Boundaries
+## Contract 4.0.5 Boundaries
+
+### Prompt Bundle And Provider Projection
+
+`PromptBundle` is the only resolved system-prompt representation after a run
+starts. `AgentTask`, `LlmRequest`, run definitions, checkpoints, and
+distributed envelopes carry it explicitly. Generic metadata does not carry
+prompt sections, sources, or stable hashes. Non-section-aware providers receive
+one flattened system message; Anthropic projection may retain section
+boundaries only to place canonical cache breakpoints.
+
+Instruction providers, context providers, and the run clock execute once while
+compiling a new run. All model cycles reuse that immutable bundle. Checkpoint
+resume and terminal replay restore `prompt_bundle` from the frozen run
+definition without calling those producers or reading the clock again. A
+separately started run compiles its own volatile sections while the stable hash
+continues to cover only stable section objects.
+
+### Bounded Tool Results And Tool Surface
+
+Ordinary `ToolExecutionResult` values serialize only required fields and
+present optional fields. A truncated result additionally carries its reason,
+byte counts, and either an artifact or cursor. Bash keeps a deterministic
+12,000-character head/tail preview and writes complete output below
+`.vv-agent/artifacts/`; background polling reuses the same terminal artifact.
+`read_file` returns bounded text plus a `read_file` cursor containing the
+normalized path, source SHA-256, and Unicode-scalar offset. Cursor recovery
+rejects path mismatches, changed content, and out-of-range offsets.
+
+The current built-in manifest is `vv-agent-builtin-tools-v2` with 15
+model-visible tools. Its fixture schema version is `2`; the canonical
+distributed `ToolsetRef.version` remains `1`. `ToolExposure` contains only
+`direct` and `hidden`. The model-visible `compress_memory` tool,
+`memory_notes` state, and `deferred` exposure do not exist; framework-owned
+automatic compaction remains internal.
 
 ### Model Calls And Events
 
@@ -115,11 +153,12 @@ an older decoder.
 
 ### Durable Accounting
 
-Checkpoints require `vv-agent.checkpoint.v3`, and run definitions require
-`vv-agent.run-definition.v2`. The checkpoint owns the complete ordered
-run-level model-call ledger. A started model journal entry and started event
-become durable together. After dispatch, the terminal journal state, ledger
-record, budget observation, provider response receipt, and terminal event
+Checkpoints require `vv-agent.checkpoint.v4`, and run definitions require
+`vv-agent.run-definition.v3`. The run definition stores `prompt_bundle` and
+never stores an independent flattened prompt. The checkpoint owns the complete
+ordered run-level model-call ledger. A started model journal entry and started
+event become durable together. After dispatch, the terminal journal state,
+ledger record, budget observation, provider response receipt, and terminal event
 become durable together and must agree on identity.
 
 Receipt replay returns the stored model response without another provider
@@ -155,8 +194,10 @@ camel-cases the complete task usage object, including `modelCalls` and
 `cacheUsage`, while opaque provider-native keys inside `providerUsage` remain
 unchanged.
 
-Distributed workers and dispatchers exchange only the closed
-`vv-agent.distributed-worker-response.v1` wire. The implementation in
+Distributed workers accept only `vv-agent.distributed-run.v3`; its `task`
+contains `prompt_bundle` and has no `system_prompt` field. Workers and
+dispatchers exchange only the closed
+`vv-agent.distributed-worker-response.v2` wire. The implementation in
 `runtime/backends/distributed/dispatch.rs` has exactly `pending`, `committed`,
 `terminal_candidate`, and `terminal_replay` variants. The replaced `finished`
 and terminal boolean combination is neither produced nor accepted. A candidate

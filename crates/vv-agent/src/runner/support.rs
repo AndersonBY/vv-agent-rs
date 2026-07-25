@@ -2,13 +2,12 @@ use std::collections::HashSet;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio::sync::broadcast;
 
 use crate::agent::Agent;
 use crate::budget::BudgetUsageSnapshot;
 use crate::context::RunContext;
-use crate::context_providers::ContextBundle;
 use crate::events::RunEvent;
 use crate::guardrails::GuardrailOutcome;
 use crate::output_validation::{
@@ -436,45 +435,6 @@ pub(super) fn capture_event(
         let _ = sender.send(event);
     }
     Ok(())
-}
-
-pub(super) fn insert_context_metadata(
-    metadata: &mut crate::types::Metadata,
-    bundle: &ContextBundle,
-) {
-    metadata.insert(
-        "system_prompt_sections".to_string(),
-        Value::Array(bundle.metadata_sections()),
-    );
-    metadata.insert(
-        "system_prompt_sources".to_string(),
-        json!(bundle.sources.clone()),
-    );
-    metadata.insert(
-        "system_prompt_stable_hash".to_string(),
-        Value::String(bundle.stable_hash.clone()),
-    );
-    metadata.insert(
-        "system_prompt_omitted_sections".to_string(),
-        json!(bundle.omitted_section_ids.clone()),
-    );
-    metadata.insert(
-        "context_section_ids".to_string(),
-        json!(bundle
-            .sections
-            .iter()
-            .map(|section| section.id.clone())
-            .collect::<Vec<_>>()),
-    );
-    metadata.insert("context_sources".to_string(), json!(bundle.sources.clone()));
-    metadata.insert(
-        "context_stable_hash".to_string(),
-        Value::String(bundle.stable_hash.clone()),
-    );
-    metadata.insert(
-        "context_omitted_section_ids".to_string(),
-        json!(bundle.omitted_section_ids.clone()),
-    );
 }
 
 pub(super) fn extract_handoff(result: &AgentResult) -> Option<HandoffRequest> {

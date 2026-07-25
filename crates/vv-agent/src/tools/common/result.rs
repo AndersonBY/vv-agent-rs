@@ -47,6 +47,12 @@ pub(crate) fn tool_result_with_metadata(
         metadata,
         image_url: None,
         image_path: None,
+        truncated: false,
+        truncation_reason: None,
+        original_bytes: None,
+        visible_bytes: None,
+        artifact: None,
+        cursor: None,
     }
 }
 

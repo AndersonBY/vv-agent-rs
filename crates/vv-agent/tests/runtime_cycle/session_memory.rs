@@ -33,7 +33,7 @@ fn runtime_does_not_load_session_memory_by_default() {
     let mut task = AgentTask::new(
         "session_memory_default_task",
         "demo",
-        "system",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
         "inspect memory",
     );
     task.max_cycles = 1;
@@ -87,7 +87,12 @@ fn runtime_rejects_non_boolean_session_memory_control() {
     runtime.workspace_backend = Arc::new(vv_agent::workspace::LocalWorkspaceBackend::new(
         workspace.path(),
     ));
-    let mut task = AgentTask::new("int_disabled_task", "demo", "system", "inspect memory");
+    let mut task = AgentTask::new(
+        "int_disabled_task",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "inspect memory",
+    );
     task.max_cycles = 1;
     task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
     task.metadata
@@ -136,7 +141,7 @@ fn runtime_scopes_session_memory_by_session_id_metadata() {
     let mut task = AgentTask::new(
         "fresh_task_id_for_same_session",
         "demo",
-        "system",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
         "inspect scoped memory",
     );
     task.max_cycles = 1;
@@ -184,7 +189,7 @@ fn runtime_does_not_reuse_main_client_for_metadata_memory_route_without_provider
     let mut task = AgentTask::new(
         "summary_model_priority_task",
         "task-model",
-        "system",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
         "inspect memory",
     );
     task.memory_compact_threshold = 1;
@@ -244,7 +249,7 @@ fn runtime_uses_settings_model_token_limits_for_direct_runtime_memory() {
     let mut task = AgentTask::new(
         "direct_runtime_limits",
         "deepseek-v4-pro",
-        "system",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
         "Please remember this direct runtime token-limit check.",
     );
     task.max_cycles = 1;
@@ -283,7 +288,7 @@ fn runtime_uses_main_client_for_default_memory_extraction_route() {
     let mut task = AgentTask::new(
         "session_memory_extract_task",
         "demo",
-        "system",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
         "inspect memory",
     );
     task.memory_compact_threshold = 20;
@@ -338,7 +343,12 @@ fn runtime_accounts_session_memory_usage_and_cache_before_agent_cycle() {
     let inspector = llm.clone();
     let mut runtime = AgentRuntime::new(llm);
     runtime.default_workspace = Some(workspace.path().to_path_buf());
-    let mut task = AgentTask::new("accounted-session", "demo", "system", "remember this");
+    let mut task = AgentTask::new(
+        "accounted-session",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "remember this",
+    );
     task.max_cycles = 1;
     task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
     task.memory_compact_threshold = 10_000;
@@ -384,7 +394,12 @@ fn runtime_emits_content_free_diagnostic_for_invalid_session_memory_output() {
     let mut runtime = AgentRuntime::new(llm);
     runtime.default_workspace = Some(workspace.path().to_path_buf());
     runtime.event_handler = Some(event_handler);
-    let mut task = AgentTask::new("invalid-session", "demo", "system", "remember this");
+    let mut task = AgentTask::new(
+        "invalid-session",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "remember this",
+    );
     task.max_cycles = 1;
     task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
     task.memory_compact_threshold = 10_000;
@@ -419,7 +434,12 @@ fn session_memory_budget_exhaustion_stops_before_agent_cycle() {
     let (events, event_handler) = run_event_collector();
     let mut runtime = AgentRuntime::new(llm);
     runtime.default_workspace = Some(workspace.path().to_path_buf());
-    let mut task = AgentTask::new("budgeted-session", "demo", "system", "remember this");
+    let mut task = AgentTask::new(
+        "budgeted-session",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "remember this",
+    );
     task.max_cycles = 1;
     task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
     task.memory_compact_threshold = 10_000;

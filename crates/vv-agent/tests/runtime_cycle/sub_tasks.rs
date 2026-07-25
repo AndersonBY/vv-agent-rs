@@ -13,7 +13,12 @@ fn runtime_seeds_skill_state_from_task_metadata() {
         )],
     )]);
     let runtime = AgentRuntime::new(llm);
-    let mut task = AgentTask::new("skill_state", "demo", "system", "finish");
+    let mut task = AgentTask::new(
+        "skill_state",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "finish",
+    );
     task.metadata.insert(
         "available_skills".to_string(),
         json!([{"name": "demo", "description": "Demo skill"}]),
@@ -47,7 +52,12 @@ fn runtime_keeps_initial_skill_state_over_task_metadata() {
         )],
     )]);
     let runtime = AgentRuntime::new(llm);
-    let mut task = AgentTask::new("initial_skill_state", "demo", "system", "finish");
+    let mut task = AgentTask::new(
+        "initial_skill_state",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "finish",
+    );
     task.metadata.insert(
         "available_skills".to_string(),
         json!([{"name": "metadata-skill", "description": "Metadata skill"}]),
@@ -93,7 +103,13 @@ fn runtime_can_poll_async_configured_sub_agent_status() {
     )]);
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm);
-    let mut task = AgentTask::new("parent_async", "demo", "parent system", "delegate async");
+    let mut task = AgentTask::new(
+        "parent_async",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("parent system")
+            .expect("prompt bundle"),
+        "delegate async",
+    );
     task.max_cycles = 50;
     task.sub_agents.insert(
         "researcher".to_string(),
@@ -135,7 +151,8 @@ fn runtime_can_continue_completed_async_sub_agent_session() {
     let mut task = AgentTask::new(
         "parent_async_continue",
         "demo",
-        "parent system",
+        vv_agent::prompt::PromptBundle::from_instruction_text("parent system")
+            .expect("prompt bundle"),
         "delegate async",
     );
     task.max_cycles = 50;

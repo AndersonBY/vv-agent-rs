@@ -15,7 +15,11 @@ pub(super) fn build_model_request(
     messages: &[Message],
     tool_schemas: &[Value],
 ) -> LlmRequest {
-    let mut request = LlmRequest::new(task.model.clone(), messages.to_vec());
+    let mut request = LlmRequest::new(
+        task.model.clone(),
+        messages.to_vec(),
+        task.prompt_bundle.clone(),
+    );
     request.tools = tool_schemas.to_vec();
     let mut request_metadata = task.metadata.clone();
     if let Some(execution_context) = controls.execution_context.as_ref() {
