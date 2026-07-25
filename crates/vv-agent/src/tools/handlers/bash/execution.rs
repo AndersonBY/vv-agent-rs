@@ -6,8 +6,7 @@ use crate::runtime::background_sessions::{
     background_session_manager, BackgroundSessionAdoptOptions,
 };
 use crate::runtime::processes::{
-    read_captured_output, read_captured_output_all, remove_captured_output,
-    start_captured_process_with_env, wait_for_child,
+    read_captured_output, remove_captured_output, start_captured_process_with_env, wait_for_child,
 };
 use crate::runtime::shell::prepare_shell_execution;
 use crate::tools::base::ToolContext;
@@ -16,7 +15,10 @@ use crate::tools::common::{
     tool_result_with_metadata, workspace_relative_path_or_absolute,
 };
 use crate::types::{Metadata, ToolArguments, ToolDirective, ToolExecutionResult, ToolResultStatus};
-use crate::workspace::{artifact_write_error_code, bounded_text_preview, persist_text_artifact};
+use crate::workspace::{
+    artifact_write_error_code, bounded_captured_text_preview, bounded_text_preview,
+    persist_captured_text_artifact,
+};
 
 use super::env::build_process_env;
 use super::shell_defaults::read_shell_defaults;
@@ -123,17 +125,13 @@ pub(super) fn execute_bash_command(
     match wait_for_child(&mut started.child, Duration::from_secs(timeout_seconds)) {
         Ok(Some(exit_status)) => {
             let exit_code = exit_status.code().unwrap_or(-1);
-            let output = match read_captured_output_all(&started.output_path) {
-                Ok(output) => output,
-                Err(error) => {
-                    return tool_error_with_code(
-                        format!("failed to read command output: {error}"),
-                        "command_failed",
-                    )
-                }
-            };
-            let terminal =
-                terminal_output_result(context, &cwd, configured_shell, exit_code, output);
+            let terminal = terminal_output_result(
+                context,
+                &cwd,
+                configured_shell,
+                exit_code,
+                &started.output_path,
+            );
             if terminal.remove_captured_output {
                 remove_captured_output(&started.output_path);
             }
@@ -215,18 +213,29 @@ fn terminal_output_result(
     cwd: &std::path::Path,
     shell: Option<String>,
     exit_code: i32,
-    mut output: String,
+    output_path: &std::path::Path,
 ) -> TerminalOutputResult {
-    if output.is_empty() && exit_code != 0 {
-        output = format!("command exited with code {exit_code}");
+    let mut preview = match bounded_captured_text_preview(output_path) {
+        Ok(preview) => preview,
+        Err(error) => {
+            return TerminalOutputResult {
+                result: tool_error_with_code(
+                    format!("failed to read command output: {error}"),
+                    "command_failed",
+                ),
+                remove_captured_output: false,
+            }
+        }
+    };
+    if preview.content.is_empty() && exit_code != 0 {
+        preview = bounded_text_preview(&format!("command exited with code {exit_code}"));
     }
-    let preview = bounded_text_preview(&output);
     let artifact = if preview.truncated {
-        match persist_text_artifact(
+        match persist_captured_text_artifact(
             context.effective_workspace_backend(),
             &context.task_id,
             &context.tool_call_id,
-            &output,
+            output_path,
         ) {
             Ok(artifact) => Some(artifact),
             Err(error) => {

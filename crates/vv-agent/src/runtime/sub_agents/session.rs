@@ -33,6 +33,8 @@ pub(in crate::runtime::sub_agents) struct RuntimeSubAgentSession {
     workspace_path: PathBuf,
     workspace_backend: Arc<dyn WorkspaceBackend>,
     pub(in crate::runtime::sub_agents) task_template: AgentTask,
+    pub(in crate::runtime::sub_agents) prompt_bundle_factory:
+        Arc<dyn Fn() -> crate::prompt::PromptBundle + Send + Sync>,
     task_id: String,
     agent_name: String,
     session_id: String,
@@ -70,6 +72,7 @@ impl RuntimeSubAgentSession {
             workspace_path: parts.workspace_path,
             workspace_backend: parts.workspace_backend,
             task_template: parts.task_template,
+            prompt_bundle_factory: parts.prompt_bundle_factory,
             task_id,
             agent_name: parts.agent_name,
             session_id: parts.session_id,

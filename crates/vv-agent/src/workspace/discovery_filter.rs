@@ -212,6 +212,14 @@ impl WorkspaceBackend for DiscoveryFilteredWorkspaceBackend {
         self.inner.write_text_exclusive(path, content)
     }
 
+    fn write_text_chunks_exclusive(
+        &self,
+        path: &str,
+        chunks: &mut dyn Iterator<Item = std::io::Result<String>>,
+    ) -> std::io::Result<usize> {
+        self.inner.write_text_chunks_exclusive(path, chunks)
+    }
+
     fn file_info(&self, path: &str) -> std::io::Result<Option<FileInfo>> {
         self.inner.file_info(path)
     }

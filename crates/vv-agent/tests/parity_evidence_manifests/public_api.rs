@@ -404,8 +404,8 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 name,
                 dyn vv_agent::WorkspaceBackend,
                 [
-                    list_files, read_text, read_bytes, write_text, file_info, exists, is_file,
-                    mkdir,
+                    list_files, read_text, read_bytes, write_text, write_text_exclusive,
+                    write_text_chunks_exclusive, file_info, exists, is_file, mkdir,
                 ]
             )
         }

@@ -216,28 +216,7 @@ pub(super) fn finalize_terminal_projection<C: LlmClient>(
 
 pub(crate) fn build_initial_messages(task: &AgentTask) -> Vec<Message> {
     if !task.initial_messages.is_empty() {
-        let mut messages = task.initial_messages.clone();
-        let starts_with_system = messages
-            .first()
-            .is_some_and(|message| message.role == MessageRole::System);
-        if !starts_with_system {
-            messages.insert(0, system_message_from_task(task));
-        } else if starts_with_system && !task.metadata.is_empty() {
-            if let Some(system_message) = messages.first_mut() {
-                let mut metadata = task.metadata.clone();
-                metadata.extend(system_message.metadata.clone());
-                if task.metadata.get("is_sub_task") == Some(&Value::Bool(true)) {
-                    for key in crate::runtime::sub_agents::RESERVED_SUB_AGENT_METADATA_KEYS {
-                        if let Some(value) = task.metadata.get(key) {
-                            metadata.insert(key.to_string(), value.clone());
-                        } else {
-                            metadata.remove(key);
-                        }
-                    }
-                }
-                system_message.metadata = metadata;
-            }
-        }
+        let mut messages = canonicalize_initial_messages(task, task.initial_messages.clone());
         if !task.user_prompt.is_empty() {
             messages.push(Message::user(task.user_prompt.clone()));
         }
@@ -248,6 +227,18 @@ pub(crate) fn build_initial_messages(task: &AgentTask) -> Vec<Message> {
         system_message_from_task(task),
         Message::user(task.user_prompt.clone()),
     ]
+}
+
+pub(super) fn canonicalize_initial_messages(
+    task: &AgentTask,
+    messages: Vec<Message>,
+) -> Vec<Message> {
+    let mut canonical = messages
+        .into_iter()
+        .filter(|message| message.role != MessageRole::System)
+        .collect::<Vec<_>>();
+    canonical.insert(0, system_message_from_task(task));
+    canonical
 }
 
 fn system_message_from_task(task: &AgentTask) -> Message {

@@ -58,6 +58,14 @@ impl WorkspaceBackend for RawPathWorkspaceBackend {
         self.fallback.write_text_exclusive(path, content)
     }
 
+    fn write_text_chunks_exclusive(
+        &self,
+        path: &str,
+        chunks: &mut dyn Iterator<Item = std::io::Result<String>>,
+    ) -> std::io::Result<usize> {
+        self.fallback.write_text_chunks_exclusive(path, chunks)
+    }
+
     fn file_info(&self, path: &str) -> std::io::Result<Option<vv_agent::FileInfo>> {
         self.fallback.file_info(path)
     }

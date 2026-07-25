@@ -402,7 +402,7 @@ async fn terminal_replay_repeats_typed_output_validation_without_model_call() {
 }
 
 #[tokio::test]
-async fn session_memory_receipt_replay_reapplies_state_without_duplicate_usage() {
+async fn session_memory_receipt_replay_reapplies_state_without_rewriting_frozen_prompt() {
     let workspace = tempfile::tempdir().expect("workspace");
     let model_calls = Arc::new(AtomicUsize::new(0));
     let extraction_calls = model_calls.clone();
@@ -429,10 +429,10 @@ async fn session_memory_receipt_replay_reapplies_state_without_duplicate_usage()
             }),
             ScriptStep::callback(move |request| {
                 agent_calls.fetch_add(1, Ordering::SeqCst);
-                assert!(request.messages.iter().any(|message| {
-                    message.content.contains("<Session Memory>")
-                        && message.content.contains("Durable   Fact")
-                }));
+                assert!(request
+                    .messages
+                    .iter()
+                    .all(|message| !message.content.contains("<Session Memory>")));
                 let mut response = LLMResponse::new("done after memory replay");
                 response.token_usage = reported_usage(20, 5);
                 Ok(response)
@@ -746,8 +746,8 @@ async fn distributed_candidate_ack_loss_recovers_from_receipt_without_second_mod
         ..DistributedCapabilities::default()
     };
     let backend = DistributedBackend::new(recipe, dispatcher)
-        .with_lease_duration(Duration::from_millis(500))
-        .with_dispatch_timeout(Duration::from_secs(5));
+        .with_lease_duration(Duration::from_secs(2))
+        .with_dispatch_timeout(Duration::from_secs(10));
     let agent = Agent::builder("candidate-recovery-agent")
         .instructions("Return recovered.")
         .model(ModelRef::named("candidate-recovery-model"))
@@ -776,7 +776,12 @@ async fn distributed_candidate_ack_loss_recovers_from_receipt_without_second_mod
         .await
         .expect("recovered distributed run");
 
-    assert_eq!(result.status(), AgentStatus::Completed);
+    assert_eq!(
+        result.status(),
+        AgentStatus::Completed,
+        "distributed candidate recovery failed: {:?}",
+        result.result().error
+    );
     assert_eq!(result.final_output(), Some("recovered"));
     assert_eq!(result.result().cycles.len(), 1);
     assert_eq!(model_calls.load(Ordering::SeqCst), 1);

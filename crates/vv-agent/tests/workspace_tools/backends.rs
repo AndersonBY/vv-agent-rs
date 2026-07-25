@@ -29,6 +29,51 @@ fn workspace_backends_report_utf8_bytes_written() {
 }
 
 #[test]
+fn workspace_backends_stream_exclusive_artifacts_and_hide_them_from_discovery() {
+    fn assert_backend<B: WorkspaceBackend>(backend: &B) {
+        let path = ".vv-agent/artifacts/task-7/call-bash.txt";
+        let mut chunks = vec![Ok("first ".to_string()), Ok("second".to_string())].into_iter();
+
+        assert_eq!(
+            backend
+                .write_text_chunks_exclusive(path, &mut chunks)
+                .expect("streamed artifact"),
+            "first second".len()
+        );
+        assert_eq!(
+            backend.read_text(path).expect("artifact read"),
+            "first second"
+        );
+        assert!(backend
+            .list_files(".", "**/*")
+            .expect("discovery")
+            .is_empty());
+        assert!(backend
+            .list_files(".vv-agent/artifacts", "**/*")
+            .expect("artifact discovery")
+            .is_empty());
+    }
+
+    let workspace = tempfile::tempdir().expect("workspace");
+    let local = LocalWorkspaceBackend::new(workspace.path());
+    assert_backend(&local);
+    assert!(
+        !workspace
+            .path()
+            .join(".vv-agent/artifacts/task-7/call-bash.txt")
+            .exists(),
+        "local artifact storage must be outside the shell workspace"
+    );
+
+    let memory = MemoryWorkspaceBackend::default();
+    assert_backend(&memory);
+
+    let s3 = S3WorkspaceBackend::from_object_store(InMemory::new(), "tenant/workspace")
+        .expect("s3 backend");
+    assert_backend(&s3);
+}
+
+#[test]
 fn workspace_backends_enforce_canonical_dot_segment_rules() {
     let workspace = tempfile::tempdir().expect("workspace");
     let local = LocalWorkspaceBackend::new(workspace.path());

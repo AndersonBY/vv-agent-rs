@@ -257,7 +257,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     &task,
                     &active_after_cycle_denials,
                 );
-                let llm_messages = memory_manager.apply_session_memory_context(&compacted_messages);
+                let llm_messages = compacted_messages.clone();
                 let (request_messages, request_tool_schemas) = hook_manager.apply_before_llm(
                     &task,
                     cycle_index,
@@ -418,8 +418,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                     &task,
                                     &active_after_cycle_denials,
                                 );
-                            let llm_messages =
-                                memory_manager.apply_session_memory_context(&compacted_messages);
+                            let llm_messages = compacted_messages.clone();
                             (request_messages, request_tool_schemas) = hook_manager
                                 .apply_before_llm(
                                     &task,

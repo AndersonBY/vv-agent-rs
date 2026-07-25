@@ -21,9 +21,9 @@ use crate::runtime::tool_planner::plan_tool_schemas;
 use crate::tools::{ApprovalPolicy, ApprovalRequirement, ToolApprovalRule, ToolRegistry};
 use crate::types::{AgentTask, Message, MessageRole, NoToolPolicy};
 
+mod frozen_prompt;
 mod projection;
 mod tool_policy;
-
 use projection::{behavior_metadata, output_schema, require_declared_credential_headers};
 
 pub(crate) use tool_policy::tool_idempotency_for;
@@ -219,6 +219,7 @@ pub(crate) fn build_frozen_task(
             PromptBundle::from_value(value)
                 .map_err(|error| definition_invalid(format!("prompt_bundle is invalid: {error}")))
         })?;
+    frozen_prompt::validate_frozen_checkpoint_messages(&checkpoint.messages, &prompt_bundle)?;
     if !agent.has_dynamic_instructions() {
         let instructions = agent.instructions().trim();
         if !instructions.is_empty()

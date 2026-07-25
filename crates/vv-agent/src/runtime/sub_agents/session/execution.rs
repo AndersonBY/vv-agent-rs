@@ -122,6 +122,7 @@ impl RuntimeSubAgentSession {
         );
 
         let mut task = self.task_template.clone();
+        task.prompt_bundle = (self.prompt_bundle_factory)();
         task.user_prompt = prompt.to_string();
         task.initial_messages = initial_messages;
         task.initial_shared_state = shared_state;
@@ -471,7 +472,9 @@ fn panic_payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
 #[cfg(test)]
 mod capability_projection_tests {
     use std::any::Any;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -493,7 +496,7 @@ mod capability_projection_tests {
     };
     use crate::tools::{build_default_registry, ApprovalDecision};
     use crate::types::{
-        AgentResult, AgentStatus, AgentTask, CompletionReason, LLMResponse, TokenUsage,
+        AgentResult, AgentStatus, AgentTask, CompletionReason, LLMResponse, TokenUsage, ToolCall,
     };
     use crate::workspace::MemoryWorkspaceBackend;
 
@@ -534,17 +537,35 @@ mod capability_projection_tests {
         llm_client: ScriptedLlmClient,
         parent_cancellation_token: Option<CancellationToken>,
     ) -> RuntimeSubAgentSession {
+        let prompt_bundle_factory = Arc::new(|| {
+            crate::prompt::PromptBundle::from_instruction_text("Child prompt")
+                .expect("child prompt bundle")
+        });
+        runtime_session_with_client_and_prompt_bundle_factory(
+            llm_client,
+            parent_cancellation_token,
+            prompt_bundle_factory,
+        )
+    }
+
+    fn runtime_session_with_client_and_prompt_bundle_factory(
+        llm_client: ScriptedLlmClient,
+        parent_cancellation_token: Option<CancellationToken>,
+        prompt_bundle_factory: Arc<dyn Fn() -> crate::prompt::PromptBundle + Send + Sync>,
+    ) -> RuntimeSubAgentSession {
+        let task_template = AgentTask::new(
+            "child-task",
+            "child-model",
+            crate::prompt::PromptBundle::from_instruction_text("Child prompt").unwrap(),
+            "Child task",
+        );
         RuntimeSubAgentSession::new(RuntimeSubAgentSessionParts {
             llm_client: Arc::new(llm_client),
             tool_registry: build_default_registry(),
             workspace_path: PathBuf::from("/contract/workspace"),
             workspace_backend: Arc::new(MemoryWorkspaceBackend::default()),
-            task_template: AgentTask::new(
-                "child-task",
-                "child-model",
-                crate::prompt::PromptBundle::from_instruction_text("Child prompt").unwrap(),
-                "Child task",
-            ),
+            task_template,
+            prompt_bundle_factory,
             agent_name: "researcher".to_string(),
             session_id: "child-session".to_string(),
             resolved: Default::default(),
@@ -569,6 +590,52 @@ mod capability_projection_tests {
                 model: "child-model".to_string(),
             },
         })
+    }
+
+    #[test]
+    fn configured_sub_agent_rebuilds_its_prompt_bundle_for_each_continuation() {
+        let factory_calls = Arc::new(AtomicUsize::new(0));
+        let calls = factory_calls.clone();
+        let prompt_bundle_factory = Arc::new(move || {
+            let run_index = calls.fetch_add(1, Ordering::SeqCst);
+            crate::prompt::PromptBundle::from_instruction_text(format!(
+                "Child prompt run {run_index}"
+            ))
+            .expect("child prompt bundle")
+        });
+        let session = runtime_session_with_client_and_prompt_bundle_factory(
+            ScriptedLlmClient::new(vec![
+                LLMResponse::with_tool_calls(
+                    "first",
+                    vec![ToolCall::new(
+                        "finish-one",
+                        "task_finish",
+                        BTreeMap::from([("message".to_string(), json!("first"))]),
+                    )],
+                ),
+                LLMResponse::with_tool_calls(
+                    "second",
+                    vec![ToolCall::new(
+                        "finish-two",
+                        "task_finish",
+                        BTreeMap::from([("message".to_string(), json!("second"))]),
+                    )],
+                ),
+            ]),
+            None,
+            prompt_bundle_factory,
+        );
+
+        let first = session
+            .run_prompt("first continuation", None)
+            .expect("first run");
+        let second = session
+            .run_prompt("second continuation", None)
+            .expect("second run");
+
+        assert_eq!(first.status, AgentStatus::Completed);
+        assert_eq!(second.status, AgentStatus::Completed);
+        assert_eq!(factory_calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]

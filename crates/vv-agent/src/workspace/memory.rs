@@ -3,9 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use super::{
-    artifacts::is_reserved_artifact_path, current_utc_isoformat, glob_match, insert_parent_dirs,
-    normalize_workspace_path, normalized_glob_pattern, not_found, suffix_with_dot, FileInfo,
-    WorkspaceBackend,
+    artifacts::is_reserved_artifact_path, current_utc_isoformat, exclusive_workspace_path,
+    glob_match, insert_parent_dirs, normalize_workspace_path, normalized_glob_pattern, not_found,
+    suffix_with_dot, FileInfo, WorkspaceBackend,
 };
 
 #[derive(Debug, Clone)]
@@ -32,6 +32,9 @@ impl WorkspaceBackend for MemoryWorkspaceBackend {
 
     fn list_files(&self, base: &str, glob: &str) -> std::io::Result<Vec<String>> {
         let base = normalize_workspace_path(base);
+        if is_reserved_artifact_path(&base) {
+            return Ok(Vec::new());
+        }
         let glob = normalized_glob_pattern(glob);
         let pattern = if base.is_empty() {
             glob
@@ -41,6 +44,7 @@ impl WorkspaceBackend for MemoryWorkspaceBackend {
         let files = self.files.lock().expect("memory workspace poisoned");
         let mut matches = files
             .keys()
+            .filter(|path| !is_reserved_artifact_path(path))
             .filter(|path| glob_match(path, &pattern))
             .cloned()
             .collect::<Vec<_>>();
@@ -80,18 +84,48 @@ impl WorkspaceBackend for MemoryWorkspaceBackend {
     }
 
     fn write_text_exclusive(&self, path: &str, content: &str) -> std::io::Result<usize> {
-        let key = normalize_workspace_path(path);
+        let mut chunks = std::iter::once(Ok(content.to_string()));
+        self.write_text_chunks_exclusive(path, &mut chunks)
+    }
+
+    fn write_text_chunks_exclusive(
+        &self,
+        path: &str,
+        chunks: &mut dyn Iterator<Item = std::io::Result<String>>,
+    ) -> std::io::Result<usize> {
+        let key = exclusive_workspace_path(path)?;
+        let mut data = Vec::new();
+        for chunk in chunks {
+            data.extend_from_slice(chunk?.as_bytes());
+        }
+        let size = data.len();
         let mut files = self.files.lock().expect("memory workspace poisoned");
-        if files.contains_key(&key) {
+        let dirs = self.dirs.lock().expect("memory workspace poisoned");
+        if files.contains_key(&key) || dirs.contains(&key) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
                 format!("path already exists: {path}"),
             ));
         }
-        files.insert(key.clone(), content.as_bytes().to_vec());
+        for parent in key.split('/').scan(String::new(), |current, segment| {
+            if !current.is_empty() {
+                current.push('/');
+            }
+            current.push_str(segment);
+            Some(current.clone())
+        }) {
+            if parent != key && files.contains_key(&parent) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotADirectory,
+                    format!("exclusive path parent is not a directory: {parent}"),
+                ));
+            }
+        }
+        files.insert(key.clone(), data);
+        drop(dirs);
         drop(files);
         self.ensure_parent_dirs(&key);
-        Ok(content.len())
+        Ok(size)
     }
 
     fn file_info(&self, path: &str) -> std::io::Result<Option<FileInfo>> {

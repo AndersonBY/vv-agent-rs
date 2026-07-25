@@ -275,7 +275,7 @@ fn runtime_uses_settings_model_token_limits_for_direct_runtime_memory() {
     );
 }
 #[test]
-fn runtime_uses_main_client_for_default_memory_extraction_route() {
+fn runtime_uses_main_client_for_default_memory_extraction_without_rewriting_the_current_run() {
     let workspace = tempfile::tempdir().expect("workspace");
     let large_tool_payload = "tool output ".repeat(300);
     let llm = SessionMemoryExtractingLlmClient::new(large_tool_payload);
@@ -313,11 +313,8 @@ fn runtime_uses_main_client_for_default_memory_extraction_route() {
     assert!(
         second_request
             .iter()
-            .any(|message| message.content.contains("<Session Memory>")
-                && message
-                    .content
-                    .contains("default callback preserved this fact")),
-        "default session-memory route did not reuse the main client: {second_request:#?}"
+            .all(|message| !message.content.contains("<Session Memory>")),
+        "session-memory extraction rewrote the current run: {second_request:#?}"
     );
     assert_eq!(
         result

@@ -716,8 +716,15 @@ fn foreground_bash_uses_exact_preview_boundary_and_persists_complete_artifact() 
     let artifact = truncated.artifact.expect("artifact");
     assert!(artifact.path.starts_with(".vv-agent/artifacts/task-7/"));
     assert_eq!(artifact.size_bytes, 12_001);
+    assert!(
+        !workspace.path().join(&artifact.path).exists(),
+        "logical artifacts must not be shell-visible workspace files"
+    );
     assert_eq!(
-        std::fs::read_to_string(workspace.path().join(&artifact.path)).expect("artifact text"),
+        context
+            .workspace_backend
+            .read_text(&artifact.path)
+            .expect("artifact text"),
         format!(
             "{}{}{}",
             "A".repeat(6_000),
@@ -786,7 +793,9 @@ fn background_bash_reuses_terminal_artifact_across_polls() {
     assert_eq!(second.artifact.as_ref(), Some(&first_artifact));
     assert_eq!(second.content, first.content);
     assert_eq!(
-        std::fs::read_to_string(workspace.path().join(first_artifact.path))
+        context
+            .workspace_backend
+            .read_text(&first_artifact.path)
             .expect("background artifact")
             .chars()
             .count(),

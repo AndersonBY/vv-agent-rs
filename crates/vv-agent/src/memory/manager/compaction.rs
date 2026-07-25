@@ -40,15 +40,14 @@ impl MemoryManager {
         cycle_index: Option<u32>,
         runtime_callback: Option<&RuntimeMemoryCallback>,
     ) -> Result<(Vec<Message>, bool), RuntimeMemoryCallbackError> {
-        let messages = self.strip_session_memory_context(messages);
         if messages.len() <= 2 {
-            return Ok((messages, false));
+            return Ok((messages.to_vec(), false));
         }
         let system_message = messages
             .iter()
             .find(|message| message.role == MessageRole::System)
             .cloned();
-        let (messages_for_summary, _normalized) = self.normalize_compaction_messages(&messages);
+        let (messages_for_summary, _normalized) = self.normalize_compaction_messages(messages);
         let (messages_for_summary, artifacts, _compacted_tools) = compact_tool_results(
             &messages_for_summary,
             &ToolResultArtifactConfig {
@@ -61,7 +60,7 @@ impl MemoryManager {
             },
             cycle_index,
         );
-        let original_request = extract_original_user_request(&messages).unwrap_or_default();
+        let original_request = extract_original_user_request(messages).unwrap_or_default();
         let summary_prompt = self.build_compress_memory_prompt(&messages_for_summary);
         let artifact_facts = artifacts
             .iter()

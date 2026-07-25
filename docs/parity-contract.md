@@ -18,9 +18,9 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock selects contract `4.0.5` at revision
-`c903234f1374de85ddda44608c4a7e259f13e6c3`, release artifact SHA-256
-`92aaa062cdbd62513b2ee1d28e71c33d66f616e9884f09d8d18fc9753b113ff4`.
+The current lock selects contract `4.1.0` at revision
+`0611a95012ce40ca4e70acc0b695e6cf4ddd7eee`, release artifact SHA-256
+`376ffe70d497fa8b36667fe929e5241aede94e72091a12261f76286287124d23`.
 The current adoption state is not duplicated in this document. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
 as the machine-readable source for the current verified Python and Rust
@@ -100,7 +100,7 @@ A fixture parser or private helper test cannot replace a real public producer
 test. A field that is declared but ignored by a planner, executor, provider, or
 store remains a contract failure.
 
-## Contract 4.0.5 Boundaries
+## Contract 4.1.0 Boundaries
 
 ### Prompt Bundle And Provider Projection
 
@@ -128,6 +128,13 @@ byte counts, and either an artifact or cursor. Bash keeps a deterministic
 `read_file` returns bounded text plus a `read_file` cursor containing the
 normalized path, source SHA-256, and Unicode-scalar offset. Cursor recovery
 rejects path mismatches, changed content, and out-of-range offsets.
+
+For a local workspace, `.vv-agent/artifacts/` is a logical recovery namespace
+mapped to private storage outside the shell working directory. Complete
+truncated terminal output is streamed into one exclusive immutable artifact;
+the runtime does not materialize the full capture in application memory, and
+shell commands cannot mutate recovery bytes. Recovery still passes through the
+normal workspace and `read_file` policy boundary.
 
 The current built-in manifest is `vv-agent-builtin-tools-v2` with 15
 model-visible tools. Its fixture schema version is `2`; the canonical
@@ -185,6 +192,12 @@ client only when that route is the default; explicit backend selection never
 silently reuses an unrelated direct client. Cancellation, budget exhaustion,
 checkpoint interruption, and checkpoint integrity errors propagate through the
 runtime control path instead of being swallowed by memory fail-soft behavior.
+
+When enabled, a newly compiled run reads persisted entries once and freezes
+them into its `PromptBundle`. Extraction during that run may persist new entries
+but never rewrites the active bundle; those entries become model-visible only
+in a later newly compiled run. Checkpoint resume restores the frozen section
+without rereading the store.
 
 ### App Server
 

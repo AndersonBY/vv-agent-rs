@@ -6,12 +6,13 @@ use futures_util::TryStreamExt;
 use object_store::aws::AmazonS3Builder;
 use object_store::memory::InMemory;
 use object_store::path::Path as ObjectPath;
-use object_store::{ObjectStore, ObjectStoreExt, PutMode, PutPayload};
+use object_store::{ObjectStore, ObjectStoreExt, PutMode, PutPayload, PutPayloadMut};
 use tokio::runtime::Runtime;
 
 use crate::workspace::{
-    artifacts::is_reserved_artifact_path, glob_match, non_empty_option, normalize_workspace_path,
-    normalized_glob_pattern, object_store_error_to_io, suffix_with_dot, FileInfo, WorkspaceBackend,
+    artifacts::is_reserved_artifact_path, exclusive_workspace_path, glob_match, non_empty_option,
+    normalize_workspace_path, normalized_glob_pattern, object_store_error_to_io, suffix_with_dot,
+    FileInfo, WorkspaceBackend,
 };
 
 use super::config::S3WorkspaceConfig;
@@ -127,6 +128,9 @@ impl WorkspaceBackend for S3WorkspaceBackend {
 
     fn list_files(&self, base: &str, glob: &str) -> std::io::Result<Vec<String>> {
         let base = normalize_workspace_path(base);
+        if is_reserved_artifact_path(&base) {
+            return Ok(Vec::new());
+        }
         let pattern = if base.is_empty() {
             normalized_glob_pattern(glob)
         } else {
@@ -143,6 +147,7 @@ impl WorkspaceBackend for S3WorkspaceBackend {
             .into_iter()
             .filter_map(|object| self.relative_key(object.location.as_ref()))
             .filter(|path| !path.is_empty() && !path.ends_with('/'))
+            .filter(|path| !is_reserved_artifact_path(path))
             .filter(|path| glob_match(path, &pattern))
             .collect::<Vec<_>>();
         files.sort();
@@ -187,15 +192,30 @@ impl WorkspaceBackend for S3WorkspaceBackend {
     }
 
     fn write_text_exclusive(&self, path: &str, content: &str) -> std::io::Result<usize> {
-        let key = ObjectPath::from(self.object_key(path));
-        let len = content.len();
+        let mut chunks = std::iter::once(Ok(content.to_string()));
+        self.write_text_chunks_exclusive(path, &mut chunks)
+    }
+
+    fn write_text_chunks_exclusive(
+        &self,
+        path: &str,
+        chunks: &mut dyn Iterator<Item = std::io::Result<String>>,
+    ) -> std::io::Result<usize> {
+        let normalized = exclusive_workspace_path(path)?;
+        let mut payload = PutPayloadMut::new();
+        let mut len = 0usize;
+        for chunk in chunks {
+            let chunk = chunk?;
+            len = len.checked_add(chunk.len()).ok_or_else(|| {
+                Error::new(ErrorKind::InvalidData, "artifact output is too large")
+            })?;
+            payload.extend_from_slice(chunk.as_bytes());
+        }
+        let key = ObjectPath::from(self.object_key(&normalized));
+        let payload: PutPayload = payload.into();
         self.block_on(async {
             self.store
-                .put_opts(
-                    &key,
-                    PutPayload::from(content.as_bytes().to_vec()),
-                    PutMode::Create.into(),
-                )
+                .put_opts(&key, payload, PutMode::Create.into())
                 .await
                 .map(|_| ())
         })?;

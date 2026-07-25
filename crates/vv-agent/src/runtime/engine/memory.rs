@@ -188,7 +188,6 @@ where
         messages.to_vec(),
         shared_state,
     );
-    let pre_compact_messages = memory_manager.apply_session_memory_context(&pre_compact_messages);
     let (previous_prompt_tokens, recent_tool_call_ids) = previous_cycle_memory_usage(
         cycles,
         model_call_ledger.previous_agent_input_tokens(cycle_index),

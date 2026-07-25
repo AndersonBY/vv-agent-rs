@@ -1,25 +1,37 @@
 use std::any::Any;
 use std::fs;
-use std::io::{Error, ErrorKind};
+use std::io::{Error, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
+
 use super::{
-    absolutize_path, artifacts::is_reserved_artifact_path, expand_home_path, glob_match,
-    normalize_path_lexically, normalized_glob_pattern, path_to_posix, suffix_with_dot,
-    system_time_to_utc_isoformat, FileInfo, WorkspaceBackend,
+    absolutize_path, artifacts::is_reserved_artifact_path, exclusive_workspace_path,
+    expand_home_path, glob_match, normalize_path_lexically, normalize_workspace_path,
+    normalized_glob_pattern, path_to_posix, suffix_with_dot, system_time_to_utc_isoformat,
+    FileInfo, WorkspaceBackend,
 };
+
+const PRIVATE_ARTIFACT_ROOT_ENV: &str = "VV_AGENT_PRIVATE_ARTIFACT_ROOT";
+const PRIVATE_ARTIFACT_ROOT_NAME: &str = "vv-agent-artifacts";
 
 #[derive(Debug, Clone)]
 pub struct LocalWorkspaceBackend {
     pub root: PathBuf,
     pub allow_outside_root: bool,
+    artifact_root: PathBuf,
 }
 
 impl LocalWorkspaceBackend {
     pub fn new(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
+        let normalized_root = root
+            .canonicalize()
+            .unwrap_or_else(|_| absolutize_path(&root));
         Self {
-            root: root.into(),
+            root,
             allow_outside_root: false,
+            artifact_root: private_artifact_root(&normalized_root),
         }
     }
 
@@ -60,6 +72,61 @@ impl LocalWorkspaceBackend {
             path.to_string_lossy().to_string()
         }
     }
+
+    fn artifact_segments(&self, path: &str) -> std::io::Result<Option<Vec<String>>> {
+        if Path::new(path).is_absolute() || path.starts_with('\\') {
+            return Ok(None);
+        }
+        let normalized = normalize_workspace_path(path);
+        if !is_reserved_artifact_path(&normalized) {
+            return Ok(None);
+        }
+        let canonical = exclusive_workspace_path(path)?;
+        Ok(Some(canonical.split('/').map(str::to_string).collect()))
+    }
+
+    fn resolve_artifact_path(&self, path: &str) -> std::io::Result<Option<(PathBuf, String)>> {
+        let Some(segments) = self.artifact_segments(path)? else {
+            return Ok(None);
+        };
+        ensure_existing_private_directory(&self.artifact_root)?;
+        let mut target = self.artifact_root.clone();
+        for segment in segments {
+            target.push(segment);
+            match fs::symlink_metadata(&target) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(Error::new(ErrorKind::InvalidInput, "artifact_path_invalid"));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(Some((target, normalize_workspace_path(path))))
+    }
+
+    fn resolve_read_path(&self, path: &str) -> std::io::Result<(PathBuf, Option<String>)> {
+        if let Some((target, logical_path)) = self.resolve_artifact_path(path)? {
+            return Ok((target, Some(logical_path)));
+        }
+        Ok((self.resolve_path(path)?, None))
+    }
+
+    fn ensure_private_artifact_root(&self) -> std::io::Result<()> {
+        let Some(base) = self.artifact_root.parent() else {
+            return Err(Error::new(ErrorKind::InvalidInput, "artifact_path_invalid"));
+        };
+        ensure_private_directory(base)?;
+        ensure_private_directory(&self.artifact_root)
+    }
+
+    fn is_reserved_target(&self, target: &Path) -> bool {
+        target
+            .strip_prefix(self.normalized_root())
+            .ok()
+            .map(path_to_posix)
+            .is_some_and(|path| is_reserved_artifact_path(&path))
+    }
 }
 
 fn resolve_existing_or_parent(path: &Path) -> std::io::Result<PathBuf> {
@@ -78,12 +145,53 @@ fn resolve_existing_or_parent(path: &Path) -> std::io::Result<PathBuf> {
     })
 }
 
+fn private_artifact_root(workspace_root: &Path) -> PathBuf {
+    let base = std::env::var_os(PRIVATE_ARTIFACT_ROOT_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join(PRIVATE_ARTIFACT_ROOT_NAME));
+    let digest = format!(
+        "{:x}",
+        Sha256::digest(workspace_root.to_string_lossy().as_bytes())
+    );
+    base.join(digest)
+}
+
+fn ensure_existing_private_directory(path: &Path) -> std::io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            Err(Error::new(ErrorKind::InvalidInput, "artifact_path_invalid"))
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(path)?;
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(Error::new(ErrorKind::InvalidInput, "artifact_path_invalid"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
 impl WorkspaceBackend for LocalWorkspaceBackend {
     fn as_any(&self) -> &dyn Any {
         self
     }
 
     fn list_files(&self, base: &str, glob: &str) -> std::io::Result<Vec<String>> {
+        if self.artifact_segments(base)?.is_some() {
+            return Ok(Vec::new());
+        }
         let root = self.resolve_path(base)?;
         let mut files = Vec::new();
         if root.exists() && root.is_dir() {
@@ -96,7 +204,10 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
                     if !glob_match(&path_to_posix(relative_from_base), &pattern) {
                         continue;
                     }
-                    files.push(self.output_path(&entry));
+                    let path = self.output_path(&entry);
+                    if !is_reserved_artifact_path(&path) {
+                        files.push(path);
+                    }
                 }
             }
         }
@@ -105,12 +216,14 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
     }
 
     fn read_text(&self, path: &str) -> std::io::Result<String> {
-        let bytes = fs::read(self.resolve_path(path)?)?;
+        let (path, _) = self.resolve_read_path(path)?;
+        let bytes = fs::read(path)?;
         Ok(String::from_utf8_lossy(&bytes).to_string())
     }
 
     fn read_bytes(&self, path: &str) -> std::io::Result<Vec<u8>> {
-        fs::read(self.resolve_path(path)?)
+        let (path, _) = self.resolve_read_path(path)?;
+        fs::read(path)
     }
 
     fn write_text(&self, path: &str, content: &str, append: bool) -> std::io::Result<usize> {
@@ -121,6 +234,12 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
             ));
         }
         let target = self.resolve_path(path)?;
+        if self.is_reserved_target(&target) {
+            return Err(Error::new(
+                ErrorKind::PermissionDenied,
+                "artifact paths are immutable",
+            ));
+        }
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -139,11 +258,28 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
     }
 
     fn write_text_exclusive(&self, path: &str, content: &str) -> std::io::Result<usize> {
-        write_text_exclusive_below(&self.normalized_root(), path, content)
+        let mut chunks = std::iter::once(Ok(content.to_string()));
+        self.write_text_chunks_exclusive(path, &mut chunks)
+    }
+
+    fn write_text_chunks_exclusive(
+        &self,
+        path: &str,
+        chunks: &mut dyn Iterator<Item = std::io::Result<String>>,
+    ) -> std::io::Result<usize> {
+        let root = if self.artifact_segments(path)?.is_some() {
+            self.ensure_private_artifact_root()?;
+            self.artifact_root.clone()
+        } else {
+            let root = self.normalized_root();
+            fs::create_dir_all(&root)?;
+            root
+        };
+        write_text_chunks_exclusive_below(&root, path, chunks)
     }
 
     fn file_info(&self, path: &str) -> std::io::Result<Option<FileInfo>> {
-        let target = self.resolve_path(path)?;
+        let (target, logical_path) = self.resolve_read_path(path)?;
         if !target.exists() {
             return Ok(None);
         }
@@ -153,7 +289,7 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
             .map(system_time_to_utc_isoformat)
             .unwrap_or_else(|_| system_time_to_utc_isoformat(std::time::SystemTime::UNIX_EPOCH));
         Ok(Some(FileInfo {
-            path: self.output_path(&target),
+            path: logical_path.unwrap_or_else(|| self.output_path(&target)),
             is_file: metadata.is_file(),
             is_dir: metadata.is_dir(),
             size: metadata.len(),
@@ -163,50 +299,46 @@ impl WorkspaceBackend for LocalWorkspaceBackend {
     }
 
     fn exists(&self, path: &str) -> bool {
-        self.resolve_path(path)
-            .map(|path| path.exists())
+        self.resolve_read_path(path)
+            .map(|(path, _)| path.exists())
             .unwrap_or(false)
     }
 
     fn is_file(&self, path: &str) -> bool {
-        self.resolve_path(path)
-            .map(|path| path.is_file())
+        self.resolve_read_path(path)
+            .map(|(path, _)| path.is_file())
             .unwrap_or(false)
     }
 
     fn mkdir(&self, path: &str) -> std::io::Result<()> {
-        fs::create_dir_all(self.resolve_path(path)?)
+        if is_reserved_artifact_path(path) {
+            return Err(Error::new(
+                ErrorKind::PermissionDenied,
+                "artifact paths are immutable",
+            ));
+        }
+        let target = self.resolve_path(path)?;
+        if self.is_reserved_target(&target) {
+            return Err(Error::new(
+                ErrorKind::PermissionDenied,
+                "artifact paths are immutable",
+            ));
+        }
+        fs::create_dir_all(target)
     }
-}
-
-fn exclusive_path_segments(path: &str) -> std::io::Result<Vec<&str>> {
-    if Path::new(path).is_absolute() || path.contains(['\\', '\0']) {
-        return Err(Error::new(
-            ErrorKind::InvalidInput,
-            "exclusive path must be a normalized relative path",
-        ));
-    }
-    let segments = path.split('/').collect::<Vec<_>>();
-    if segments.is_empty()
-        || segments
-            .iter()
-            .any(|segment| segment.is_empty() || matches!(*segment, "." | ".."))
-    {
-        return Err(Error::new(
-            ErrorKind::InvalidInput,
-            "exclusive path contains an invalid segment",
-        ));
-    }
-    Ok(segments)
 }
 
 #[cfg(unix)]
-fn write_text_exclusive_below(root: &Path, path: &str, content: &str) -> std::io::Result<usize> {
+fn write_text_chunks_exclusive_below(
+    root: &Path,
+    path: &str,
+    chunks: &mut dyn Iterator<Item = std::io::Result<String>>,
+) -> std::io::Result<usize> {
     use std::ffi::CString;
-    use std::io::Write;
     use std::os::fd::{AsRawFd, FromRawFd};
 
-    let segments = exclusive_path_segments(path)?;
+    let canonical = exclusive_workspace_path(path)?;
+    let segments = canonical.split('/').collect::<Vec<_>>();
     let mut directory = fs::File::open(root)?;
     for segment in &segments[..segments.len() - 1] {
         let segment = CString::new(*segment)
@@ -252,17 +384,20 @@ fn write_text_exclusive_below(root: &Path, path: &str, content: &str) -> std::io
         return Err(Error::last_os_error());
     }
     let mut file = unsafe { fs::File::from_raw_fd(fd) };
-    file.write_all(content.as_bytes())?;
+    let written = write_chunks(&mut file, chunks)?;
     file.sync_all()?;
     directory.sync_all()?;
-    Ok(content.len())
+    Ok(written)
 }
 
 #[cfg(not(unix))]
-fn write_text_exclusive_below(root: &Path, path: &str, content: &str) -> std::io::Result<usize> {
-    use std::io::Write;
-
-    let segments = exclusive_path_segments(path)?;
+fn write_text_chunks_exclusive_below(
+    root: &Path,
+    path: &str,
+    chunks: &mut dyn Iterator<Item = std::io::Result<String>>,
+) -> std::io::Result<usize> {
+    let canonical = exclusive_workspace_path(path)?;
+    let segments = canonical.split('/').collect::<Vec<_>>();
     let mut parent = root.to_path_buf();
     for segment in &segments[..segments.len() - 1] {
         parent.push(segment);
@@ -289,9 +424,24 @@ fn write_text_exclusive_below(root: &Path, path: &str, content: &str) -> std::io
         .create_new(true)
         .write(true)
         .open(target)?;
-    file.write_all(content.as_bytes())?;
+    let written = write_chunks(&mut file, chunks)?;
     file.sync_all()?;
-    Ok(content.len())
+    Ok(written)
+}
+
+fn write_chunks(
+    file: &mut fs::File,
+    chunks: &mut dyn Iterator<Item = std::io::Result<String>>,
+) -> std::io::Result<usize> {
+    let mut written = 0usize;
+    for chunk in chunks {
+        let chunk = chunk?;
+        written = written
+            .checked_add(chunk.len())
+            .ok_or_else(|| Error::new(ErrorKind::InvalidData, "artifact output is too large"))?;
+        file.write_all(chunk.as_bytes())?;
+    }
+    Ok(written)
 }
 
 fn walk_recursive(root: &Path) -> std::io::Result<Vec<PathBuf>> {
