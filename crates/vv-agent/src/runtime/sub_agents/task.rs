@@ -21,35 +21,8 @@ pub(super) fn build_sub_agent_task(
     let parent_task = &context.parent_task;
     let sub_agent = inputs.sub_agent;
     let request = inputs.request;
-    let prompt_bundle = if let Some(system_prompt) = &sub_agent.system_prompt {
-        PromptBundle::new(build_raw_system_prompt_sections(system_prompt))
-            .expect("validated sub-agent system prompt produces a bundle")
-    } else {
-        let language = parent_task
-            .metadata
-            .get("language")
-            .and_then(Value::as_str)
-            .unwrap_or("zh-CN")
-            .to_string();
-        let available_skills = parent_task
-            .metadata
-            .get("available_skills")
-            .filter(|value| value.is_array())
-            .cloned();
-        build_system_prompt_bundle_with_options(
-            &sub_agent.description,
-            BuildSystemPromptOptions {
-                language,
-                allow_interruption: false,
-                use_workspace: parent_task.use_workspace,
-                enable_todo_management: true,
-                agent_type: parent_task.agent_type.clone(),
-                available_skills,
-                workspace: Some(context.workspace_path.clone()),
-                ..BuildSystemPromptOptions::default()
-            },
-        )
-    };
+    let prompt_bundle =
+        build_sub_agent_prompt_bundle(parent_task, sub_agent, &context.workspace_path);
     let mut user_prompt = request.task_description.clone();
     if !request.output_requirements.is_empty() {
         user_prompt.push_str("\n\n<Output Requirements>\n");
@@ -101,6 +74,42 @@ pub(super) fn build_sub_agent_task(
     effective_policy.extend_metadata_denials(&sub_agent.declared_tool_policy());
     project_tool_policy(&mut sub_task, &effective_policy);
     sub_task
+}
+
+pub(super) fn build_sub_agent_prompt_bundle(
+    parent_task: &AgentTask,
+    sub_agent: &SubAgentConfig,
+    workspace_path: &Path,
+) -> PromptBundle {
+    if let Some(system_prompt) = &sub_agent.system_prompt {
+        return PromptBundle::new(build_raw_system_prompt_sections(system_prompt))
+            .expect("validated sub-agent system prompt produces a bundle");
+    }
+
+    let language = parent_task
+        .metadata
+        .get("language")
+        .and_then(Value::as_str)
+        .unwrap_or("zh-CN")
+        .to_string();
+    let available_skills = parent_task
+        .metadata
+        .get("available_skills")
+        .filter(|value| value.is_array())
+        .cloned();
+    build_system_prompt_bundle_with_options(
+        &sub_agent.description,
+        BuildSystemPromptOptions {
+            language,
+            allow_interruption: false,
+            use_workspace: parent_task.use_workspace,
+            enable_todo_management: true,
+            agent_type: parent_task.agent_type.clone(),
+            available_skills,
+            workspace: Some(workspace_path.to_path_buf()),
+            ..BuildSystemPromptOptions::default()
+        },
+    )
 }
 
 fn merged_sub_task_exclusions(parent_task: &AgentTask, sub_agent: &SubAgentConfig) -> Vec<String> {

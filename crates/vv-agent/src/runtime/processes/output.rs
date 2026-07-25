@@ -1,7 +1,8 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use crate::workspace::read_captured_text_prefix;
 
 static PROCESS_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -23,25 +24,7 @@ pub(super) fn open_output_file(path: &Path) -> std::io::Result<File> {
 }
 
 pub fn read_captured_output(path: &Path, limit_chars: usize) -> String {
-    if limit_chars == 0 {
-        return String::new();
-    }
-    let Ok(mut file) = File::open(path) else {
-        return String::new();
-    };
-    let mut output = Vec::new();
-    if file.read_to_end(&mut output).is_err() {
-        return String::new();
-    }
-    String::from_utf8_lossy(&output)
-        .chars()
-        .take(limit_chars)
-        .collect()
-}
-
-pub(crate) fn read_captured_output_all(path: &Path) -> std::io::Result<String> {
-    let bytes = fs::read(path)?;
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    read_captured_text_prefix(path, limit_chars)
 }
 
 pub fn remove_captured_output(path: &Path) {

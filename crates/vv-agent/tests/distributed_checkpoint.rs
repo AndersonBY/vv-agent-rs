@@ -394,6 +394,9 @@ fn worker_restores_stateful_after_cycle_hook_before_next_cycle() {
         "run-stateful-lifecycle",
         "trace-stateful-lifecycle",
     );
+    let prompt_bundle = PromptBundle::from_value(&checkpoint.run_definition["prompt_bundle"])
+        .expect("frozen prompt bundle");
+    checkpoint.messages = vec![vv_agent::Message::system(prompt_bundle.flatten())];
     checkpoint.cycle_index = 1;
     checkpoint.run_definition["extensions"] = json!([{
         "namespace": "com.example.lifecycle",

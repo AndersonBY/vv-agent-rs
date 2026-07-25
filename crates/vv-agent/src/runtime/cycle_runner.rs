@@ -144,9 +144,7 @@ impl<C: LlmClient> CycleRunner<C> {
                 )
             });
         let (response, request_messages, request_tool_schemas) = loop {
-            let llm_messages = request
-                .memory_manager
-                .apply_session_memory_context(&compacted_messages);
+            let llm_messages = compacted_messages.clone();
             let tool_schemas = self.tool_registry.planned_openai_schemas(request.task);
             let (request_messages, request_tool_schemas) = self.hook_manager.apply_before_llm(
                 request.task,

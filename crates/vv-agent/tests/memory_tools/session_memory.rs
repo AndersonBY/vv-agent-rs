@@ -292,7 +292,7 @@ fn memory_manager_preserves_session_memory_across_compaction() {
 }
 
 #[test]
-fn memory_manager_compact_directly_applies_session_memory_context() {
+fn memory_manager_compact_does_not_rewrite_the_current_prompt_with_session_memory() {
     let mut session_memory = SessionMemory::new(SessionMemoryConfig {
         token_model: "demo".to_string(),
         ..SessionMemoryConfig::default()
@@ -318,13 +318,13 @@ fn memory_manager_compact_directly_applies_session_memory_context() {
 
     assert!(!changed);
     assert_eq!(updated.len(), 2);
-    assert!(updated[0].content.starts_with("sys"));
-    assert!(updated[0].content.contains("<Session Memory>"));
-    assert!(updated[0].content.contains("keep the Rust API small"));
+    assert_eq!(updated, messages);
+    assert!(!updated[0].content.contains("<Session Memory>"));
+    assert!(!updated[0].content.contains("keep the Rust API small"));
 }
 
 #[test]
-fn memory_manager_extracts_session_memory_before_returning_small_requests() {
+fn memory_manager_persists_extracted_session_memory_without_rewriting_current_prompt() {
     let calls = Arc::new(Mutex::new(0usize));
     let calls_for_callback = Arc::clone(&calls);
     let session_memory = SessionMemory::new(SessionMemoryConfig {
@@ -363,11 +363,11 @@ fn memory_manager_extracts_session_memory_before_returning_small_requests() {
     );
 
     assert_eq!(*calls.lock().expect("calls poisoned"), 1);
-    assert!(
-        messages
-            .first()
-            .is_some_and(|message| message.content.contains("<Session Memory>")
-                && message.content.contains("small request fact")),
-        "session memory should be extracted and injected before returning: {messages:#?}"
-    );
+    assert!(messages
+        .first()
+        .is_some_and(|message| !message.content.contains("<Session Memory>")
+            && !message.content.contains("small request fact")));
+    assert!(manager.session_memory().is_some_and(|memory| memory
+        .render_as_system_context()
+        .contains("small request fact")));
 }

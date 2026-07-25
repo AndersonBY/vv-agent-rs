@@ -428,7 +428,8 @@ fn runtime_routes_summary_through_configured_backend_model_pair() {
 }
 
 #[test]
-fn runtime_routes_session_extraction_through_its_own_backend_model_pair() {
+fn runtime_routes_session_extraction_through_its_own_backend_model_pair_and_freezes_new_memory_for_the_next_run(
+) {
     let contract = contract();
     let route = &contract["session_extraction_route"];
     let provider = RecordingModelProvider::responding_with(
@@ -470,6 +471,11 @@ fn runtime_routes_session_extraction_through_its_own_backend_model_pair() {
     task.metadata
         .insert("autocompact_buffer_tokens".to_string(), json!(0));
 
+    let mut follow_up_task = task.clone();
+    follow_up_task
+        .metadata
+        .insert("session_memory_min_tokens".to_string(), json!(100_000));
+
     let result = runtime
         .run_with_controls(
             task,
@@ -506,7 +512,36 @@ fn runtime_routes_session_extraction_through_its_own_backend_model_pair() {
     );
     let main_requests = main_inspector.requests.lock().expect("main requests");
     assert_eq!(main_requests.len(), 1);
-    assert!(main_requests[0].messages[0]
+    assert!(!main_requests[0].messages[0]
+        .content
+        .contains("route extraction separately"));
+    drop(main_requests);
+    drop(extraction_requests);
+    drop(resolutions);
+
+    let follow_up_result = runtime
+        .run_with_controls(
+            follow_up_task,
+            RuntimeRunControls {
+                model_provider: Some(Arc::new(inspector.clone())),
+                workspace: Some(workspace.path().to_path_buf()),
+                ..RuntimeRunControls::default()
+            },
+        )
+        .expect("follow-up runtime result");
+
+    assert_eq!(follow_up_result.status, AgentStatus::Completed);
+    let resolutions = inspector.resolutions.lock().expect("model resolutions");
+    assert_eq!(resolutions.len(), 1);
+    let extraction_requests = inspector
+        .summary_llm
+        .requests
+        .lock()
+        .expect("extraction requests");
+    assert_eq!(extraction_requests.len(), 1);
+    let main_requests = main_inspector.requests.lock().expect("main requests");
+    assert_eq!(main_requests.len(), 2);
+    assert!(main_requests[1].messages[0]
         .content
         .contains("route extraction separately"));
 }
@@ -837,7 +872,7 @@ fn memory_provider_attempt_errors_are_fail_open() {
 }
 
 #[test]
-fn session_memory_refreshes_in_place_and_resets_token_baseline() {
+fn session_memory_compaction_does_not_refresh_the_current_prompt() {
     let contract = contract();
     let expected = &contract["session_memory"];
     let mut session_memory = SessionMemory::new(SessionMemoryConfig::default());
@@ -862,7 +897,6 @@ fn session_memory_refreshes_in_place_and_resets_token_baseline() {
         Message::assistant("a".repeat(120)),
         Message::user("c".repeat(120)),
     ];
-    let stale = manager.apply_session_memory_context(&messages);
     manager
         .session_memory_mut()
         .expect("session memory")
@@ -874,23 +908,8 @@ fn session_memory_refreshes_in_place_and_resets_token_baseline() {
         5,
     )];
 
-    let refreshed = manager.apply_session_memory_context(&stale);
-
-    assert!(!refreshed[0]
-        .content
-        .contains(expected["stale_fact"].as_str().unwrap()));
-    assert!(refreshed[0]
-        .content
-        .contains(expected["fresh_fact"].as_str().unwrap()));
-    assert_eq!(
-        refreshed[0].content.matches("<Session Memory>").count() as u64,
-        expected["block_count"].as_u64().unwrap()
-    );
-
-    let (compacted, changed) = manager.compact_for_cycle(&refreshed, 3, true);
-    let reinjected = manager.apply_session_memory_context(&compacted);
-    let expected_baseline = count_messages_tokens(&reinjected, "main-model");
-    let compacted_tokens = count_messages_tokens(&compacted, "main-model");
+    let (compacted, changed) = manager.compact_for_cycle(&messages, 3, true);
+    let expected_baseline = count_messages_tokens(&compacted, "main-model");
     let state = &manager.session_memory().expect("session memory").state;
 
     assert!(changed);
@@ -899,5 +918,7 @@ fn session_memory_refreshes_in_place_and_resets_token_baseline() {
         expected["initialized_after_compaction"].as_bool().unwrap()
     );
     assert_eq!(state.tokens_at_last_extraction, expected_baseline);
-    assert!(expected_baseline > compacted_tokens);
+    assert!(!compacted[0]
+        .content
+        .contains(expected["fresh_fact"].as_str().unwrap()));
 }

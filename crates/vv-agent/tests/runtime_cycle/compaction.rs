@@ -114,7 +114,7 @@ fn runtime_hooks_can_patch_messages_before_memory_compaction() {
 }
 
 #[test]
-fn runtime_injects_session_memory_context_after_compaction() {
+fn runtime_preserves_session_memory_loaded_at_run_start_through_compaction() {
     let workspace = tempfile::tempdir().expect("workspace");
     let large_tool_payload = "tool output ".repeat(300);
     let llm = MemoryCompactionInspectingLlmClient::new(large_tool_payload);

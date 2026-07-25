@@ -164,10 +164,7 @@ impl MemoryManager {
         } else {
             MemoryCompactMode::None
         };
-        let mut working_messages = self.apply_session_memory_context(&sanitized);
-        if working_messages != sanitized {
-            mode = mode.max(MemoryCompactMode::Structural);
-        }
+        let mut working_messages = sanitized;
         let mut message_length =
             self.calculate_effective_length(&working_messages, total_tokens, recent_tool_call_ids);
         if let Some(session_memory) = self.session_memory.as_mut() {
@@ -184,8 +181,8 @@ impl MemoryManager {
                     .should_extract_with_runtime_callback(message_length, text_messages),
                 None => session_memory.should_extract(message_length, text_messages),
             };
-            let extracted = if should_extract {
-                match runtime_callback {
+            if should_extract {
+                let _ = match runtime_callback {
                     Some(callback) => session_memory.extract_with_runtime_callback(
                         &working_messages,
                         cycle_index as i32,
@@ -198,18 +195,7 @@ impl MemoryManager {
                         cycle_index as i32,
                         message_length,
                     ),
-                }
-            } else {
-                0
-            };
-            if extracted > 0 {
-                let before_refresh = working_messages;
-                working_messages = self.apply_session_memory_context(&sanitized);
-                if working_messages != before_refresh {
-                    mode = mode.max(MemoryCompactMode::Structural);
-                }
-                message_length =
-                    self.calculate_effective_length(&working_messages, None, recent_tool_call_ids);
+                };
             }
         }
         if !force && self.should_preemptive_microcompact(message_length) {
@@ -233,10 +219,7 @@ impl MemoryManager {
                 messages, warned, mode, changed,
             ));
         }
-        let mut summary_source = self.strip_session_memory_context(&working_messages);
-        if summary_source != working_messages {
-            mode = mode.max(MemoryCompactMode::Structural);
-        }
+        let mut summary_source = working_messages;
         if !force {
             let (image_compacted, image_changed) =
                 compact_processed_image_messages(&summary_source);
@@ -265,10 +248,7 @@ impl MemoryManager {
         )?;
         if summary_changed {
             mode = mode.max(MemoryCompactMode::Summary);
-            let post_compaction_tokens = count_messages_tokens(
-                &self.apply_session_memory_context(&compacted),
-                &self.config.model,
-            );
+            let post_compaction_tokens = count_messages_tokens(&compacted, &self.config.model);
             if let Some(session_memory) = self.session_memory.as_mut() {
                 session_memory.on_compaction(Some(post_compaction_tokens));
             }

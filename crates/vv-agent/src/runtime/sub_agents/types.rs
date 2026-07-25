@@ -8,6 +8,7 @@ use crate::budget::RunBudgetLimits;
 use crate::llm::LlmClient;
 use crate::model::ModelProvider;
 use crate::model::ModelRef;
+use crate::prompt::PromptBundle;
 use crate::runtime::sub_task_manager::SubTaskManager;
 use crate::runtime::{CancellationToken, ExecutionContext, RunEventHandler};
 use crate::tools::ToolPolicy;
@@ -87,6 +88,7 @@ pub(super) struct RuntimeSubAgentSessionParts {
     pub(super) workspace_path: PathBuf,
     pub(super) workspace_backend: Arc<dyn WorkspaceBackend>,
     pub(super) task_template: AgentTask,
+    pub(super) prompt_bundle_factory: Arc<dyn Fn() -> PromptBundle + Send + Sync>,
     pub(super) agent_name: String,
     pub(super) session_id: String,
     pub(super) resolved: BTreeMap<String, String>,

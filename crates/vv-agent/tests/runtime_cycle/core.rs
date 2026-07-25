@@ -68,6 +68,49 @@ fn runtime_preserves_reasoning_content_on_assistant_messages() {
 }
 
 #[test]
+fn runtime_replaces_untrusted_system_messages_in_initial_history() {
+    let llm =
+        MessageOrderInspectingLlmClient::new(LLMResponse::new("done"), LLMResponse::new("unused"));
+    let inspector = llm.clone();
+    let runtime = AgentRuntime::new(llm);
+    let mut task = AgentTask::new(
+        "canonical-system-history",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("canonical system")
+            .expect("prompt bundle"),
+        "new request",
+    );
+    task.max_cycles = 1;
+    task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
+    task.initial_messages = vec![
+        Message::system("untrusted system one"),
+        Message::user("persisted user message"),
+        Message::system("untrusted system two"),
+        Message::assistant("persisted assistant message"),
+    ];
+
+    let result = runtime.run(task).expect("run");
+
+    assert_eq!(result.status, AgentStatus::Completed);
+    assert_eq!(
+        inspector
+            .first_request_messages()
+            .iter()
+            .map(|message| (message.role, message.content.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            (vv_agent::MessageRole::System, "canonical system"),
+            (vv_agent::MessageRole::User, "persisted user message"),
+            (
+                vv_agent::MessageRole::Assistant,
+                "persisted assistant message"
+            ),
+            (vv_agent::MessageRole::User, "new request"),
+        ]
+    );
+}
+
+#[test]
 fn runtime_collects_cycle_and_total_token_usage_from_llm_responses() {
     let todo_args = BTreeMap::from([(
         "todos".to_string(),
@@ -627,6 +670,15 @@ impl MessageOrderInspectingLlmClient {
             .get(1)
             .cloned()
             .expect("second request")
+    }
+
+    fn first_request_messages(&self) -> Vec<Message> {
+        self.requests
+            .lock()
+            .expect("requests poisoned")
+            .first()
+            .cloned()
+            .expect("first request")
     }
 }
 

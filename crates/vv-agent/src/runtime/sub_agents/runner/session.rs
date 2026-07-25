@@ -10,6 +10,7 @@ use crate::runtime::sub_task_manager::{SubTaskLineage, SubTaskSessionAttachment}
 use crate::types::{AgentTask, SubTaskOutcome, SubTaskRequest};
 
 use super::super::session::RuntimeSubAgentSession;
+use super::super::task::build_sub_agent_prompt_bundle;
 use super::super::types::{
     ResolvedSubAgentClient, RuntimeSubAgentSessionParts, SubRunLifecycle, SubTaskRunContext,
 };
@@ -37,12 +38,28 @@ pub(super) fn run_attached_sub_agent_session(
     }
     let resolved_payload = resolved_client.payload.clone();
     let model_id = resolved_client.model_id.clone();
+    let prompt_parent_task = context.parent_task.clone();
+    let prompt_sub_agent = context
+        .parent_task
+        .sub_agents
+        .get(&request.agent_name)
+        .cloned()
+        .ok_or_else(|| format!("Sub-agent {:?} is not configured.", request.agent_name))?;
+    let prompt_workspace_path = context.workspace_path.clone();
+    let prompt_bundle_factory = Arc::new(move || {
+        build_sub_agent_prompt_bundle(
+            &prompt_parent_task,
+            &prompt_sub_agent,
+            &prompt_workspace_path,
+        )
+    });
     let session = Arc::new(RuntimeSubAgentSession::new(RuntimeSubAgentSessionParts {
         llm_client: resolved_client.llm_client,
         tool_registry: context.tool_registry.clone(),
         workspace_path: context.workspace_path.clone(),
         workspace_backend: context.workspace_backend.clone(),
         task_template: sub_task,
+        prompt_bundle_factory,
         agent_name: request.agent_name.clone(),
         session_id: lifecycle.session_id.clone(),
         resolved: resolved_client.payload,

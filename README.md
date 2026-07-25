@@ -9,7 +9,7 @@ for model-driven automation.
 ## Install
 
 The current crate version is `0.9.0`. Repository `HEAD` adopts language-neutral
-Contract `4.0.5` while keeping a Rust-idiomatic API. The current cross-repository
+Contract `4.1.0` while keeping a Rust-idiomatic API. The current cross-repository
 adoption state and verified revisions live in the central support matrix.
 
 ```bash
@@ -41,9 +41,14 @@ application must retain an older protocol.
 - Resolved instructions and context travel as one immutable `PromptBundle`;
   metadata is not a prompt-section transport, and checkpoint resume reuses the
   frozen bundle without rerunning producers.
+- Enabled Session Memory is loaded once while a new run is compiled. Entries
+  extracted during that run are persisted for the next new run and never
+  rewrite the active run's frozen prompt.
 - Truncated command and file results use sparse artifact or cursor recovery
-  fields. The model-visible `compress_memory` tool and deferred exposure mode
-  are removed; automatic memory compaction remains internal.
+  fields. Local artifacts live in private storage outside the shell working
+  directory and complete terminal captures are written as streams. The
+  model-visible `compress_memory` tool and deferred exposure mode are removed;
+  automatic memory compaction remains internal.
 - Durable execution uses `vv-agent.checkpoint.v4`,
   `vv-agent.run-definition.v3`, `vv-agent.distributed-run.v3`, and
   `vv-agent.distributed-worker-response.v2` for strict recovery and

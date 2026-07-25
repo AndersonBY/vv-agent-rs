@@ -4,12 +4,11 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::runtime::processes::{
-    kill_process_tree, read_captured_output_all, remove_captured_output,
-};
+use crate::runtime::processes::{kill_process_tree, remove_captured_output};
 use crate::types::ToolArtifactRef;
 use crate::workspace::{
-    artifact_write_error_code, bounded_text_preview, persist_text_artifact, WorkspaceBackend,
+    artifact_write_error_code, bounded_captured_text_preview, bounded_text_preview,
+    persist_captured_text_artifact, BoundedTextPreview, WorkspaceBackend,
 };
 
 use super::listeners::BackgroundSessionListener;
@@ -25,7 +24,7 @@ pub(in crate::runtime::background_sessions) struct BackgroundSession {
     child: Option<std::process::Child>,
     output_path: PathBuf,
     status: BackgroundStatus,
-    output: String,
+    preview: Option<BoundedTextPreview>,
     artifact: Option<ToolArtifactRef>,
     artifact_error: Option<String>,
     artifact_error_code: Option<String>,
@@ -51,7 +50,7 @@ impl BackgroundSession {
             child: Some(options.child),
             output_path: options.output_path,
             status: BackgroundStatus::Running,
-            output: String::new(),
+            preview: None,
             artifact: None,
             artifact_error: None,
             artifact_error_code: None,
@@ -114,7 +113,10 @@ impl BackgroundSession {
     }
 
     pub(in crate::runtime::background_sessions) fn snapshot(&self) -> Value {
-        let preview = bounded_text_preview(&self.output);
+        let preview = self
+            .preview
+            .clone()
+            .unwrap_or_else(|| bounded_text_preview(""));
         json!({
             "status": self.status.as_str(),
             "session_id": self.session_id,
@@ -170,8 +172,14 @@ impl BackgroundSession {
         }
         self.status = BackgroundStatus::Timeout;
         self.capture_terminal_output(String::new());
-        if self.output.is_empty() {
-            self.output = "Command timed out in background session".to_string();
+        if self
+            .preview
+            .as_ref()
+            .is_none_or(|preview| preview.content.is_empty())
+        {
+            self.preview = Some(bounded_text_preview(
+                "Command timed out in background session",
+            ));
         }
         self.child = None;
     }
@@ -182,7 +190,10 @@ impl BackgroundSession {
         fallback_task_id: &str,
         fallback_tool_call_id: &str,
     ) {
-        if !self.is_terminal() || !bounded_text_preview(&self.output).truncated {
+        let Some(preview) = self.preview.as_ref() else {
+            return;
+        };
+        if !self.is_terminal() || !preview.truncated {
             return;
         }
         if self.artifact.is_some() {
@@ -199,7 +210,7 @@ impl BackgroundSession {
         } else {
             &self.artifact_tool_call_id
         };
-        match persist_text_artifact(backend, task_id, tool_call_id, &self.output) {
+        match persist_captured_text_artifact(backend, task_id, tool_call_id, &self.output_path) {
             Ok(artifact) => {
                 self.artifact = Some(artifact);
                 self.artifact_error = None;
@@ -214,8 +225,15 @@ impl BackgroundSession {
     }
 
     fn capture_terminal_output(&mut self, fallback: String) {
-        self.output = read_captured_output_all(&self.output_path).unwrap_or(fallback);
-        if !bounded_text_preview(&self.output).truncated {
+        self.preview = Some(
+            bounded_captured_text_preview(&self.output_path)
+                .unwrap_or_else(|_| bounded_text_preview(&fallback)),
+        );
+        if self
+            .preview
+            .as_ref()
+            .is_some_and(|preview| !preview.truncated)
+        {
             remove_captured_output(&self.output_path);
         }
     }

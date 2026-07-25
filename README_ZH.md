@@ -7,7 +7,7 @@
 
 ## 安装
 
-当前 crate 版本为 `0.9.0`。仓库 `HEAD` 采用语言无关的 Contract `4.0.5`；当前跨仓采用
+当前 crate 版本为 `0.9.0`。仓库 `HEAD` 采用语言无关的 Contract `4.1.0`；当前跨仓采用
 状态和已验证 revision 以中央 support matrix 为准。
 
 ```bash
@@ -35,8 +35,11 @@ Contract 4 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取�
   才提交终态结果。
 - 已解析的 instructions 和 context 统一通过不可变 `PromptBundle` 传递；metadata 不再
   传递 prompt section，checkpoint resume 也不会重新执行 producer。
-- 被截断的命令和文件结果通过稀疏 artifact 或 cursor 字段恢复。模型可见的
-  `compress_memory` 工具和 deferred exposure 已删除，自动内存压缩仍由框架内部执行。
+- 开启 Session Memory 后，新 run 编译时只读取一次持久化记忆。当前 run 提取的新条目只
+  为下一个新 run 持久化，不会中途改写当前 run 已冻结的 prompt。
+- 被截断的命令和文件结果通过稀疏 artifact 或 cursor 字段恢复。本地 artifact 位于 shell
+  工作目录之外的私有存储，完整终端输出以流式方式写入。模型可见的 `compress_memory`
+  工具和 deferred exposure 已删除，自动内存压缩仍由框架内部执行。
 - 持久化执行统一使用 `vv-agent.checkpoint.v4`、
   `vv-agent.run-definition.v3`、`vv-agent.distributed-run.v3` 和
   `vv-agent.distributed-worker-response.v2`，严格限定恢复与分布式 controller 边界。

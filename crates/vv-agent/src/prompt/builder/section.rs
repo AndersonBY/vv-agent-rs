@@ -160,6 +160,36 @@ impl PromptBundle {
         .source("agent.instructions")])
     }
 
+    /// Freeze persisted Session Memory into the resolved bundle for one run.
+    ///
+    /// A bundle already containing the section is a frozen checkpoint/run
+    /// bundle, so it must be reused exactly rather than refreshed.
+    pub fn with_session_memory_context(
+        &self,
+        session_memory_context: impl AsRef<str>,
+    ) -> Result<Self, String> {
+        let context = trim_ascii_whitespace(session_memory_context.as_ref());
+        if context.is_empty()
+            || self
+                .sections
+                .iter()
+                .any(|section| section.id == "session_memory")
+        {
+            return Ok(self.clone());
+        }
+
+        let mut sections = self.sections.clone();
+        let insertion_index = sections
+            .iter()
+            .position(|section| section.id == "current_time")
+            .unwrap_or(sections.len());
+        sections.insert(
+            insertion_index,
+            PromptSection::new("session_memory", context, false).source("session.memory"),
+        );
+        Self::new(sections)
+    }
+
     pub fn flatten(&self) -> String {
         self.sections
             .iter()

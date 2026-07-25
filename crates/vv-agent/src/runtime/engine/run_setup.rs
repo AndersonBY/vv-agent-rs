@@ -6,6 +6,7 @@ use serde_json::Value;
 use crate::llm::{LlmClient, LlmError};
 use crate::memory::MemoryManager;
 use crate::model::{ModelProvider, VvLlmModelProvider};
+use crate::prompt::PromptBundle;
 use crate::runtime::model_calls::{ModelBudgetObserver, ModelCallCoordinator, ModelCallLedger};
 use crate::runtime::sub_task_manager::SubTaskManager;
 use crate::types::{AgentTask, CycleRecord, Message, Metadata};
@@ -13,7 +14,9 @@ use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
 use super::budget::{budget_snapshot, lock_budget, SharedRunBudgetController};
 use super::checkpoint::CheckpointCoordinator;
-use super::helpers::{build_initial_messages, seed_skill_state_from_task_metadata};
+use super::helpers::{
+    build_initial_messages, canonicalize_initial_messages, seed_skill_state_from_task_metadata,
+};
 use super::memory::{build_memory_manager, build_runtime_memory_callbacks};
 use super::{AgentRuntime, RuntimeRunControls};
 
@@ -53,22 +56,6 @@ where
     C: LlmClient + Clone + 'static,
 {
     let mut task = task;
-    let messages = controls
-        .initial_messages
-        .clone()
-        .unwrap_or_else(|| build_initial_messages(&task));
-    crate::runtime::tool_planner::freeze_dynamic_tool_schema_hints(&mut task);
-
-    let cycles = controls.initial_cycles.clone().unwrap_or_default();
-    let mut shared_state = controls
-        .initial_shared_state
-        .clone()
-        .unwrap_or_else(|| task.initial_shared_state.clone());
-    shared_state
-        .entry("todo_list".to_string())
-        .or_insert_with(|| Value::Array(Vec::new()));
-    seed_skill_state_from_task_metadata(&mut shared_state, &task.metadata);
-
     let workspace_path = runtime
         .default_workspace
         .clone()
@@ -101,6 +88,32 @@ where
         runtime.default_backend.as_deref(),
     )
     .map_err(crate::llm::LlmError::Request)?;
+    if controls.checkpoint_controller.is_none() {
+        freeze_loaded_session_memory_bundle(&mut task, &memory_manager)?;
+    }
+    let messages = match controls.initial_messages.clone() {
+        Some(messages) => {
+            if controls.checkpoint_controller.is_some() {
+                validate_frozen_checkpoint_messages(&messages, &task.prompt_bundle)
+                    .map_err(crate::llm::LlmError::Request)?;
+                messages
+            } else {
+                canonicalize_initial_messages(&task, messages)
+            }
+        }
+        None => build_initial_messages(&task),
+    };
+    crate::runtime::tool_planner::freeze_dynamic_tool_schema_hints(&mut task);
+
+    let cycles = controls.initial_cycles.clone().unwrap_or_default();
+    let mut shared_state = controls
+        .initial_shared_state
+        .clone()
+        .unwrap_or_else(|| task.initial_shared_state.clone());
+    shared_state
+        .entry("todo_list".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    seed_skill_state_from_task_metadata(&mut shared_state, &task.metadata);
 
     Ok(PreparedRun {
         task,
@@ -113,6 +126,46 @@ where
         memory_manager,
         memory_model_provider,
     })
+}
+
+fn freeze_loaded_session_memory_bundle(
+    task: &mut AgentTask,
+    memory_manager: &MemoryManager,
+) -> Result<(), LlmError> {
+    if !task.use_workspace {
+        return Ok(());
+    }
+    let context = memory_manager
+        .session_memory()
+        .map(crate::memory::SessionMemory::render_as_system_context)
+        .unwrap_or_default();
+    task.prompt_bundle = task
+        .prompt_bundle
+        .with_session_memory_context(context)
+        .map_err(LlmError::Request)?;
+    Ok(())
+}
+
+fn validate_frozen_checkpoint_messages(
+    messages: &[Message],
+    prompt_bundle: &PromptBundle,
+) -> Result<(), String> {
+    let Some(first) = messages.first() else {
+        return Err("checkpoint is missing its frozen system message".to_string());
+    };
+    if first.role != crate::types::MessageRole::System || first.content != prompt_bundle.flatten() {
+        return Err(
+            "checkpoint system message does not match the frozen prompt bundle".to_string(),
+        );
+    }
+    if messages
+        .iter()
+        .skip(1)
+        .any(|message| message.role == crate::types::MessageRole::System)
+    {
+        return Err("checkpoint contains a non-canonical system message".to_string());
+    }
+    Ok(())
 }
 
 pub(super) fn prepare_runtime_accounting<C>(

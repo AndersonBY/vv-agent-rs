@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 pub(crate) use artifacts::{
-    artifact_write_error_code, bounded_text_preview, persist_text_artifact,
+    artifact_write_error_code, bounded_captured_text_preview, bounded_text_preview,
+    persist_captured_text_artifact, read_captured_text_prefix, BoundedTextPreview,
 };
 pub use base::{FileInfo, WorkspaceBackend};
 pub use discovery_filter::{
@@ -113,6 +114,27 @@ pub(super) fn normalize_workspace_path(path: &str) -> String {
         }
     }
     parts.join("/")
+}
+
+pub(crate) fn exclusive_workspace_path(path: &str) -> std::io::Result<String> {
+    if Path::new(path).is_absolute() || path.contains(['\\', '\0']) {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "exclusive path must be a normalized relative path",
+        ));
+    }
+    let segments = path.split('/').collect::<Vec<_>>();
+    if segments.is_empty()
+        || segments
+            .iter()
+            .any(|segment| segment.is_empty() || matches!(*segment, "." | ".."))
+    {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "exclusive path contains an invalid segment",
+        ));
+    }
+    Ok(segments.join("/"))
 }
 
 pub(super) fn suffix_with_dot(path: &str) -> String {
