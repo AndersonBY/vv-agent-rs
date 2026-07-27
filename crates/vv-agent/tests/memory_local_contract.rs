@@ -4,12 +4,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use vv_agent::{
     memory::{
-        microcompact,
         token_utils::{count_messages_tokens, count_tokens},
-        LocalSummary, MicrocompactConfig,
+        LocalSummary, TOOL_RESULT_COMPACT_MARKER,
     },
-    MemoryManager, MemoryManagerConfig, Message, MessageRole, SessionMemory, SessionMemoryConfig,
-    ToolCall,
+    LocalWorkspaceBackend, MemoryManager, MemoryManagerConfig, MemoryWorkspaceBackend, Message,
+    MessageRole, MicrocompactionPolicy, SessionMemory, SessionMemoryConfig, ToolArtifactRef,
+    ToolCall, ToolResultRetention, WorkspaceBackend,
 };
 
 const FIXTURE_TEXT: &str = include_str!("fixtures/parity/memory_local.json");
@@ -63,17 +63,33 @@ struct FixtureToolCall {
 
 #[derive(Debug, Deserialize)]
 struct MicrocompactFixture {
+    schema_version: String,
     content_unit: String,
-    minimum_chars: usize,
-    keep_recent_cycles: usize,
+    trigger_ratio_default: f64,
+    target_ratio_default: f64,
+    min_result_chars_default: u32,
+    keep_recent_cycles_default: u32,
     cases: Vec<MicrocompactCase>,
 }
 
 #[derive(Debug, Deserialize)]
 struct MicrocompactCase {
-    repeat: usize,
-    cleared: bool,
-    original_chars: Option<usize>,
+    name: String,
+    tool_name: Option<String>,
+    result_retention: Option<ToolResultRetention>,
+    repeat: Option<usize>,
+    replaced_with_compact_marker: Option<bool>,
+    artifact_required: Option<bool>,
+    artifact_write_succeeds: Option<bool>,
+    existing_artifact_ref: Option<ToolArtifactRef>,
+    persisted_utf8_text: Option<String>,
+    original_message_preserved: Option<bool>,
+    planned_candidate_reclaim_tokens: Option<Vec<u64>>,
+    actual_replacement_reclaim_tokens: Option<Vec<u64>>,
+    tokens_before_application: Option<u64>,
+    target_tokens: Option<u64>,
+    applied_candidate_count: Option<usize>,
+    tokens_after_application: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -210,39 +226,140 @@ fn message_token_count_matches_text_block_and_image_rules() {
 #[test]
 fn microcompact_uses_unicode_code_point_boundaries() {
     let fixture = fixture().microcompact;
+    assert_eq!(fixture.schema_version, "vv-agent.microcompaction.v3");
     assert_eq!(fixture.content_unit.chars().count(), 1);
+    assert_eq!(fixture.trigger_ratio_default, 0.75);
+    assert_eq!(fixture.target_ratio_default, 0.60);
+    assert_eq!(fixture.keep_recent_cycles_default, 3);
+    assert_eq!(fixture.min_result_chars_default, 500);
 
     for case in fixture.cases {
+        let Some(repeat) = case.repeat else {
+            assert_eq!(case.name, "actual_replacement_delta_reaches_target");
+            let planned = case
+                .planned_candidate_reclaim_tokens
+                .expect("planned reclaim fixture");
+            let actual = case
+                .actual_replacement_reclaim_tokens
+                .expect("actual reclaim fixture");
+            let before = case
+                .tokens_before_application
+                .expect("tokens before application");
+            let target = case.target_tokens.expect("target tokens");
+            let after = case
+                .tokens_after_application
+                .expect("tokens after application");
+            assert!(planned.iter().sum::<u64>() > before - target);
+            assert_eq!(
+                case.applied_candidate_count
+                    .expect("applied candidate count"),
+                actual.len()
+            );
+            assert_eq!(after, before - actual.iter().sum::<u64>());
+            assert!(after <= target);
+            continue;
+        };
+        let expected = case
+            .replaced_with_compact_marker
+            .expect("repeat case replacement expectation");
+        let retention = case.result_retention.expect("repeat case result retention");
+        if retention == ToolResultRetention::Preserve {
+            assert_eq!(case.name, "preserved_tool_remains_inline");
+            assert!(!expected);
+            continue;
+        }
+
+        let backend = Arc::new(MemoryWorkspaceBackend::default());
         let messages = vec![
             Message::system("system"),
-            Message::user("start"),
             Message {
-                tool_calls: vec![ToolCall::new("call_old", "read_file", Default::default())],
-                ..Message::assistant("read")
+                tool_calls: vec![ToolCall::new(
+                    "call_old",
+                    case.tool_name.clone().expect("repeat case tool name"),
+                    Default::default(),
+                )],
+                ..Message::assistant("old tool call")
             },
-            Message::tool(fixture.content_unit.repeat(case.repeat), "call_old"),
-            Message::assistant("recent cycle"),
+            Message::tool(fixture.content_unit.repeat(repeat), "call_old"),
+            Message::assistant("recent reply 1"),
+            Message::assistant("recent reply 2"),
+            Message::assistant("recent reply 3"),
         ];
-        let (compacted, cleared) = microcompact(
-            &messages,
-            3,
-            &MicrocompactConfig {
-                keep_recent_cycles: fixture.keep_recent_cycles,
-                min_result_length: fixture.minimum_chars,
-                ..MicrocompactConfig::default()
-            },
-        );
+        let usage = count_messages_tokens(&messages, "");
+        let mut manager = MemoryManager::new(MemoryManagerConfig {
+            compact_threshold: usage + 10,
+            model_context_window: usage + 10,
+            reserved_output_tokens: 0,
+            autocompact_buffer_tokens: 0,
+            microcompaction_policy: MicrocompactionPolicy::new(
+                0.01,
+                0.005,
+                fixture.keep_recent_cycles_default,
+                fixture.min_result_chars_default,
+            )
+            .expect("policy"),
+            ..MemoryManagerConfig::default()
+        })
+        .with_recovery_tool_available(true);
+        let mut messages = messages;
+        if let Some(artifact) = case.existing_artifact_ref.clone() {
+            backend
+                .write_text_exclusive(
+                    &artifact.path,
+                    case.persisted_utf8_text
+                        .as_deref()
+                        .expect("persisted artifact text"),
+                )
+                .expect("fixture artifact");
+            messages[2].artifact_ref = Some(artifact);
+        }
+        if case.artifact_write_succeeds != Some(false) {
+            manager = manager.with_workspace_backend(backend.clone());
+        }
 
-        assert_eq!(cleared == 1, case.cleared, "repeat={}", case.repeat);
-        if let Some(original_chars) = case.original_chars {
-            assert_eq!(
-                compacted[3].metadata["microcompact_original_chars"],
-                json!(original_chars)
+        let original = messages[2].clone();
+        let (compacted, changed) = manager.compact_for_cycle(&messages, 5, false);
+        let archived = compacted[2].content.starts_with(TOOL_RESULT_COMPACT_MARKER);
+
+        assert_eq!(archived, expected, "{}", case.name);
+        assert_eq!(changed, expected, "{}", case.name);
+        if case.original_message_preserved == Some(true) {
+            assert_eq!(compacted[2], original, "{}", case.name);
+        }
+        if archived {
+            let artifact = compacted[2]
+                .artifact_ref
+                .as_ref()
+                .expect("compacted message artifact");
+            assert!(
+                artifact.path.starts_with(".vv-agent/artifacts/"),
+                "{}",
+                case.name
             );
-        } else {
-            assert!(!compacted[3]
-                .metadata
-                .contains_key("microcompact_original_chars"));
+            assert_eq!(
+                backend.read_text(&artifact.path).expect("archived content"),
+                case.persisted_utf8_text
+                    .as_deref()
+                    .unwrap_or(original.content.as_str()),
+                "{}",
+                case.name
+            );
+            assert!(compacted[2]
+                .content
+                .contains("retrieval_hint: use read_file on artifact_path if needed"));
+            for forbidden in [
+                "original_bytes",
+                "visible_bytes",
+                "size_bytes",
+                "sha256",
+                "total_chars",
+                "truncated_chars",
+            ] {
+                assert!(!compacted[2].content.contains(forbidden), "{forbidden}");
+            }
+        }
+        if case.artifact_required == Some(true) {
+            assert!(compacted[2].artifact_ref.is_some(), "{}", case.name);
         }
     }
 }
@@ -392,12 +509,15 @@ fn memory_manager_scans_prefixed_summary_json_for_restore() {
 #[test]
 fn memory_manager_local_summary_keeps_artifact_facts() {
     let workspace = tempfile::tempdir().expect("workspace");
+    let backend = Arc::new(LocalWorkspaceBackend::new(workspace.path()));
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         workspace: Some(workspace.path().to_path_buf()),
         tool_result_compact_threshold: 10,
         tool_result_keep_last: 0,
         ..MemoryManagerConfig::default()
-    });
+    })
+    .with_workspace_backend(backend)
+    .with_recovery_tool_available(true);
     let messages = vec![
         Message::system("system"),
         Message::user("read data.txt"),
@@ -421,8 +541,7 @@ fn memory_manager_local_summary_keeps_artifact_facts() {
     let facts = summary["key_facts"].as_array().expect("key facts");
     assert!(facts.iter().any(|fact| {
         fact.as_str().is_some_and(|fact| {
-            fact.contains(".memory/tool_results/cycle_3/call_artifact.txt")
-                && fact.ends_with("(tool=read_file)")
+            fact.contains(".vv-agent/artifacts/") && fact.ends_with("(tool=read_file)")
         })
     }));
 }

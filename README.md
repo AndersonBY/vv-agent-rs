@@ -8,25 +8,24 @@ for model-driven automation.
 
 ## Install
 
-The current crate version is `0.9.0`. Repository `HEAD` adopts language-neutral
-Contract `4.1.0` while keeping a Rust-idiomatic API. The current cross-repository
+The current crate version is `0.10.0`. Repository `HEAD` locks language-neutral
+Contract `6.0.1` while keeping a Rust-idiomatic API. The current cross-repository
 adoption state and verified revisions live in the central support matrix.
 
 ```bash
-cargo add vv-agent@0.9.0
+cargo add vv-agent@0.10.0
 ```
 
 Enable the Apalis adapter with:
 
 ```bash
-cargo add vv-agent@0.9.0 --features apalis
+cargo add vv-agent@0.10.0 --features apalis
 ```
 
-Contract 4 and repository `HEAD` are forward-only: current readers accept only
-the current strict public and wire shapes. Pin an older crate release when an
-application must retain an older protocol.
+Repository `HEAD` is forward-only: current readers accept only the current
+strict public and wire shapes.
 
-### 0.9.0 Highlights
+### 0.10.0 Highlights
 
 - Every admitted model dispatch is recorded in
   `result.token_usage().model_calls`, including agent cycles, Session Memory,
@@ -49,10 +48,16 @@ application must retain an older protocol.
   directory and complete terminal captures are written as streams. The
   model-visible `compress_memory` tool and deferred exposure mode are removed;
   automatic memory compaction remains internal.
-- Durable execution uses `vv-agent.checkpoint.v4`,
-  `vv-agent.run-definition.v3`, `vv-agent.distributed-run.v3`, and
-  `vv-agent.distributed-worker-response.v2` for strict recovery and
-  distributed-controller boundaries.
+- `MicrocompactionPolicy` controls the trigger ratio, target ratio, protected
+  recent cycles, and minimum result size. Old results from built-in and custom
+  tools default to archive retention; replacement requires a complete immutable
+  artifact and a model-visible `read_file` recovery path. Compact markers expose
+  only a bounded excerpt and logical recovery path.
+- Durable execution uses `vv-agent.checkpoint.v5`,
+  `vv-agent.run-definition.v5`, `vv-agent.distributed-run.v5`, and
+  `vv-agent.distributed-worker-response.v3` for strict recovery and
+  distributed-controller boundaries. `RunEvent` uses wire version `v2`, and
+  SQLite session stores use `PRAGMA user_version=2`.
 
 See [output validation](docs/output-validation.md) and
 [checkpoint/resume](docs/checkpoint-resume.md) for the detailed contracts.
@@ -261,7 +266,7 @@ while let Some(event) = events.next().await {
 let result = handle.result().await?;
 ```
 
-Each `RunEvent` is a v1 envelope with `event_id`, `run_id`, `trace_id`,
+Each `RunEvent` is a v2 envelope with `event_id`, `run_id`, `trace_id`,
 optional session and parent identifiers, timing, metadata, and a typed
 `RunEventPayload`. `JsonlRunEventStore` can append events and replay a run,
 including child events linked by parent run id.

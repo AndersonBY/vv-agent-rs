@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde_json::Value;
@@ -35,24 +35,6 @@ pub(super) fn read_usize_metadata(
     default: usize,
 ) -> usize {
     read_u64_metadata(metadata, key, default as u64) as usize
-}
-
-pub(super) fn read_f64_metadata(
-    metadata: &BTreeMap<String, Value>,
-    key: &str,
-    default: f64,
-    minimum: f64,
-    maximum: Option<f64>,
-) -> f64 {
-    let mut value = metadata
-        .get(key)
-        .and_then(parse_f64_metadata_value)
-        .unwrap_or(default)
-        .max(minimum);
-    if let Some(maximum) = maximum {
-        value = value.min(maximum);
-    }
-    value
 }
 
 pub(super) fn parse_f64_metadata_value(value: &Value) -> Option<f64> {
@@ -122,21 +104,6 @@ pub(super) fn read_optional_string_metadata(
             .filter(|value| !value.is_empty())
             .map(str::to_string)
     })
-}
-
-pub(super) fn read_string_set_metadata(
-    metadata: &BTreeMap<String, Value>,
-    key: &str,
-) -> Option<BTreeSet<String>> {
-    let values = metadata.get(key)?.as_array()?;
-    let values = values
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .collect::<BTreeSet<_>>();
-    (!values.is_empty()).then_some(values)
 }
 
 pub(super) fn metadata_path(

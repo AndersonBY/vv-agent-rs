@@ -24,6 +24,9 @@ pub(super) fn map_memory_compact_started(
         payload_u64(payload, "configured_threshold")?,
         payload_u64(payload, "effective_threshold")?,
         payload_u64(payload, "microcompact_threshold")?,
+        payload_u64(payload, "microcompact_target")?,
+        payload_usize(payload, "candidate_count")?,
+        payload_u64(payload, "estimated_reclaimable_tokens")?,
         payload_u64(payload, "model_context_window")?,
         payload_nullable_u64(payload, "model_max_output_tokens")?,
         payload_u64(payload, "reserved_output_tokens")?,
@@ -50,6 +53,9 @@ pub(super) fn map_memory_compact_completed(
         payload_optional_u64(payload, "summary_tokens")?,
         payload_enum::<MemoryCompactMode>(payload, "mode")?,
         payload.get("changed").and_then(Value::as_bool)?,
+        payload_usize(payload, "archived_count")?,
+        payload_u64(payload, "reclaimed_tokens")?,
+        payload_usize(payload, "artifact_failure_count")?,
     );
     with_observed_identity(
         with_selected_payload_metadata(event, payload, PROVIDER_METADATA_FIELDS),

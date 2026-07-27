@@ -37,6 +37,9 @@ fn memory_compaction_known_non_nullable_fields_reject_explicit_null() {
         "configured_threshold",
         "effective_threshold",
         "microcompact_threshold",
+        "microcompact_target",
+        "candidate_count",
+        "estimated_reclaimable_tokens",
         "model_context_window",
         "reserved_output_tokens",
         "reserved_output_source",
@@ -50,7 +53,13 @@ fn memory_compaction_known_non_nullable_fields_reject_explicit_null() {
         );
     }
 
-    for field in ["mode", "changed"] {
+    for field in [
+        "mode",
+        "changed",
+        "archived_count",
+        "reclaimed_tokens",
+        "artifact_failure_count",
+    ] {
         let mut value = current_memory_compact_completed();
         value[field] = Value::Null;
         assert!(
@@ -70,7 +79,7 @@ fn memory_compaction_model_output_capability_accepts_explicit_null() {
 
 fn current_memory_compact_started() -> Value {
     json!({
-        "version": "v1",
+        "version": "v2",
         "type": "memory_compact_started",
         "event_id": "evt_nullable_model_capability",
         "run_id": "run_nullable_model_capability",
@@ -81,6 +90,9 @@ fn current_memory_compact_started() -> Value {
         "configured_threshold": 250000,
         "effective_threshold": 250000,
         "microcompact_threshold": 187500,
+        "microcompact_target": 150000,
+        "candidate_count": 2,
+        "estimated_reclaimable_tokens": 80000,
         "model_context_window": 1000000,
         "model_max_output_tokens": null,
         "reserved_output_tokens": 16000,
@@ -91,7 +103,7 @@ fn current_memory_compact_started() -> Value {
 
 fn current_memory_compact_completed() -> Value {
     json!({
-        "version": "v1",
+        "version": "v2",
         "type": "memory_compact_completed",
         "event_id": "evt_invalid_memory_completed",
         "run_id": "run_invalid_memory",
@@ -100,6 +112,9 @@ fn current_memory_compact_completed() -> Value {
         "before_count": 3,
         "after_count": 2,
         "mode": "summary",
-        "changed": true
+        "changed": true,
+        "archived_count": 0,
+        "reclaimed_tokens": 0,
+        "artifact_failure_count": 0
     })
 }

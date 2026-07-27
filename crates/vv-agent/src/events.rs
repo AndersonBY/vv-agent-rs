@@ -29,8 +29,8 @@ use wire::{
 pub struct RunEventVersion(String);
 
 impl RunEventVersion {
-    pub fn v1() -> Self {
-        Self("v1".to_string())
+    pub fn v2() -> Self {
+        Self("v2".to_string())
     }
 
     pub fn as_str(&self) -> &str {
@@ -39,7 +39,7 @@ impl RunEventVersion {
 }
 impl Default for RunEventVersion {
     fn default() -> Self {
-        Self::v1()
+        Self::v2()
     }
 }
 
@@ -188,7 +188,7 @@ impl<'de> Deserialize<'de> for RunEvent {
         let value = Value::deserialize(deserializer)?;
         validate_event_wire_shape(&value).map_err(D::Error::custom)?;
         let wire: RunEventWire = serde_json::from_value(value.clone()).map_err(D::Error::custom)?;
-        if wire.version.as_str() != "v1" {
+        if wire.version.as_str() != "v2" {
             return Err(D::Error::custom(format!(
                 "unsupported run event version `{}`",
                 wire.version.as_str()
@@ -273,7 +273,7 @@ impl RunEvent {
         let mut extra_fields = Metadata::new();
         add_constructed_supplemental_fields(&payload, &mut extra_fields);
         Self {
-            version: RunEventVersion::v1(),
+            version: RunEventVersion::v2(),
             event_id: EventId::new(),
             run_id: run_id.into(),
             trace_id: trace_id.into(),
@@ -538,6 +538,9 @@ impl RunEvent {
         configured_threshold: u64,
         effective_threshold: u64,
         microcompact_threshold: u64,
+        microcompact_target: u64,
+        candidate_count: usize,
+        estimated_reclaimable_tokens: u64,
         model_context_window: u64,
         model_max_output_tokens: Option<u64>,
         reserved_output_tokens: u64,
@@ -556,6 +559,9 @@ impl RunEvent {
                 configured_threshold,
                 effective_threshold,
                 microcompact_threshold,
+                microcompact_target,
+                candidate_count,
+                estimated_reclaimable_tokens,
                 model_context_window,
                 model_max_output_tokens,
                 reserved_output_tokens,
@@ -576,6 +582,9 @@ impl RunEvent {
         summary_tokens: Option<u64>,
         mode: MemoryCompactMode,
         changed: bool,
+        archived_count: usize,
+        reclaimed_tokens: u64,
+        artifact_failure_count: usize,
     ) -> Self {
         Self::new(
             run_id,
@@ -588,6 +597,9 @@ impl RunEvent {
                 summary_tokens,
                 mode,
                 changed,
+                archived_count,
+                reclaimed_tokens,
+                artifact_failure_count,
             },
         )
     }

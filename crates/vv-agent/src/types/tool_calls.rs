@@ -194,7 +194,15 @@ impl ToolExecutionResult {
             content.push('\n');
             content.push_str(&encoded);
         }
-        Message::tool(content, self.tool_call_id.clone())
+        let mut message = Message::tool(content, self.tool_call_id.clone());
+        message.artifact_ref = self.artifact.clone();
+        if self.artifact.is_some() {
+            message.metadata.insert(
+                "_vv_agent_microcompact_excerpt".to_string(),
+                Value::String(self.content.clone()),
+            );
+        }
+        message
     }
 
     pub fn to_tool_message(&self) -> Message {

@@ -1,153 +1,89 @@
-use std::collections::{BTreeMap, BTreeSet};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 
-use serde_json::json;
-
-use crate::types::{Message, MessageRole};
-
-pub const CLEARED_MARKER: &str = "[Old tool result content cleared by microcompact]";
-
-pub const COMPACTABLE_TOOLS: &[&str] = &[
-    "read_file",
-    "write_file",
-    "edit_file",
-    "find_files",
-    "search_files",
-    "bash",
-    "file_info",
-];
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct MicrocompactConfig {
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct MicrocompactionPolicy {
     pub trigger_ratio: f64,
-    pub keep_recent_cycles: usize,
-    pub min_result_length: usize,
-    pub compactable_tools: Option<BTreeSet<String>>,
+    pub target_ratio: f64,
+    pub keep_recent_cycles: u32,
+    pub min_result_chars: u32,
 }
 
-impl Default for MicrocompactConfig {
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("microcompaction_policy_invalid: {message}")]
+pub struct MicrocompactionPolicyError {
+    message: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MicrocompactionPolicyWire {
+    trigger_ratio: f64,
+    target_ratio: f64,
+    keep_recent_cycles: u32,
+    min_result_chars: u32,
+}
+
+impl Default for MicrocompactionPolicy {
     fn default() -> Self {
         Self {
             trigger_ratio: 0.75,
+            target_ratio: 0.60,
             keep_recent_cycles: 3,
-            min_result_length: 500,
-            compactable_tools: None,
+            min_result_chars: 500,
         }
     }
 }
 
-pub fn microcompact(
-    messages: &[Message],
-    current_cycle: u32,
-    config: &MicrocompactConfig,
-) -> (Vec<Message>, usize) {
-    if messages.is_empty() {
-        return (Vec::new(), 0);
+impl<'de> Deserialize<'de> for MicrocompactionPolicy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = MicrocompactionPolicyWire::deserialize(deserializer)?;
+        let policy = Self {
+            trigger_ratio: wire.trigger_ratio,
+            target_ratio: wire.target_ratio,
+            keep_recent_cycles: wire.keep_recent_cycles,
+            min_result_chars: wire.min_result_chars,
+        };
+        policy.validate().map_err(D::Error::custom)?;
+        Ok(policy)
+    }
+}
+
+impl MicrocompactionPolicy {
+    pub fn new(
+        trigger_ratio: f64,
+        target_ratio: f64,
+        keep_recent_cycles: u32,
+        min_result_chars: u32,
+    ) -> Result<Self, MicrocompactionPolicyError> {
+        let policy = Self {
+            trigger_ratio,
+            target_ratio,
+            keep_recent_cycles,
+            min_result_chars,
+        };
+        policy.validate()?;
+        Ok(policy)
     }
 
-    let tool_call_names = build_tool_call_name_map(messages);
-    let inferred_cycles = infer_message_cycles(messages);
-    let max_inferred_cycle = inferred_cycles.last().copied().unwrap_or_default();
-    let effective_current_cycle = current_cycle.min(max_inferred_cycle.saturating_add(1));
-    let protected_cycle = effective_current_cycle.saturating_sub(config.keep_recent_cycles as u32);
-    let compactable_tools = config
-        .compactable_tools
-        .clone()
-        .unwrap_or_else(default_compactable_tools);
-
-    let mut cleared = 0;
-    let mut updated = Vec::with_capacity(messages.len());
-    for (message, inferred_cycle) in messages.iter().zip(inferred_cycles) {
-        if should_clear_message(
-            message,
-            inferred_cycle,
-            protected_cycle,
-            config.min_result_length,
-            &compactable_tools,
-            &tool_call_names,
-        ) {
-            updated.push(replace_content(message));
-            cleared += 1;
-        } else {
-            updated.push(message.clone());
+    pub fn validate(&self) -> Result<(), MicrocompactionPolicyError> {
+        if !self.trigger_ratio.is_finite()
+            || !self.target_ratio.is_finite()
+            || self.target_ratio <= 0.0
+            || self.target_ratio >= self.trigger_ratio
+            || self.trigger_ratio > 1.0
+        {
+            return Err(MicrocompactionPolicyError {
+                message: "expected 0 < target_ratio < trigger_ratio <= 1".to_string(),
+            });
         }
-    }
-    (updated, cleared)
-}
-
-pub fn is_microcompacted_tool_content(content: &str) -> bool {
-    content.starts_with(CLEARED_MARKER)
-}
-
-fn default_compactable_tools() -> BTreeSet<String> {
-    COMPACTABLE_TOOLS
-        .iter()
-        .map(|tool| (*tool).to_string())
-        .collect()
-}
-
-fn build_tool_call_name_map(messages: &[Message]) -> BTreeMap<String, String> {
-    let mut tool_call_names = BTreeMap::new();
-    for message in messages {
-        if message.role != MessageRole::Assistant {
-            continue;
+        if self.min_result_chars == 0 {
+            return Err(MicrocompactionPolicyError {
+                message: "min_result_chars must be at least 1".to_string(),
+            });
         }
-        for tool_call in &message.tool_calls {
-            tool_call_names.insert(tool_call.id.clone(), tool_call.name.clone());
-        }
+        Ok(())
     }
-    tool_call_names
-}
-
-fn infer_message_cycles(messages: &[Message]) -> Vec<u32> {
-    let mut current_cycle = 0;
-    let mut inferred = Vec::with_capacity(messages.len());
-    for message in messages {
-        if message.role == MessageRole::Assistant {
-            current_cycle += 1;
-        }
-        inferred.push(current_cycle);
-    }
-    inferred
-}
-
-fn should_clear_message(
-    message: &Message,
-    inferred_cycle: u32,
-    protected_cycle: u32,
-    min_result_length: usize,
-    compactable_tools: &BTreeSet<String>,
-    tool_call_names: &BTreeMap<String, String>,
-) -> bool {
-    if message.role != MessageRole::Tool {
-        return false;
-    }
-    if inferred_cycle >= protected_cycle {
-        return false;
-    }
-    if message.content.chars().count() <= min_result_length.max(1) {
-        return false;
-    }
-    if is_microcompacted_tool_content(&message.content) {
-        return false;
-    }
-    let Some(tool_call_id) = message.tool_call_id.as_deref() else {
-        return false;
-    };
-    let Some(tool_name) = tool_call_names.get(tool_call_id) else {
-        return false;
-    };
-    compactable_tools.contains(tool_name)
-}
-
-fn replace_content(message: &Message) -> Message {
-    let mut updated = message.clone();
-    updated
-        .metadata
-        .insert("microcompacted".to_string(), json!(true));
-    updated.metadata.insert(
-        "microcompact_original_chars".to_string(),
-        json!(message.content.chars().count()),
-    );
-    updated.content = CLEARED_MARKER.to_string();
-    updated
 }

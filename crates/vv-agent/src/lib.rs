@@ -92,8 +92,9 @@ pub use llm::{
 pub use memory::{
     sanitize_for_resume, CompactionExhaustedError, LocalSummary, MemoryError, MemoryFuture,
     MemoryManager, MemoryManagerConfig, MemoryProvider, MemoryProviderResult, MemorySaveRequest,
-    MemorySaveResult, MemorySearchRequest, MemorySearchResult, SessionMemory, SessionMemoryConfig,
-    SessionMemoryEntry, SessionMemoryState, SummaryCallback,
+    MemorySaveResult, MemorySearchRequest, MemorySearchResult, MicrocompactionPolicy,
+    MicrocompactionPolicyError, SessionMemory, SessionMemoryConfig, SessionMemoryEntry,
+    SessionMemoryState, SummaryCallback,
 };
 pub use model::{ModelError, ModelProvider, ModelRef, ScriptedModelProvider, VvLlmModelProvider};
 pub use model_settings::{ModelSettings, ResponseFormat, RetrySettings, ToolChoice};
@@ -157,8 +158,8 @@ pub use tools::{
     FunctionTool, StaticTool, Tool, ToolApprovalRule, ToolContext, ToolError, ToolExecutor,
     ToolExposure, ToolFuture, ToolHandler, ToolLifecycleCallback, ToolLifecycleEvent, ToolMetadata,
     ToolMetadataError, ToolNotFoundError, ToolOrchestrator, ToolOutput, ToolPolicy, ToolRegistry,
-    ToolRunContext, ToolRunOptions, ToolSideEffect, ToolSpec, ToolSpecContext, ToolSpecExecutor,
-    ToolSpecKind,
+    ToolResultRetention, ToolRunContext, ToolRunOptions, ToolSideEffect, ToolSpec, ToolSpecContext,
+    ToolSpecExecutor, ToolSpecKind,
 };
 pub use tracing::{JsonlTraceExporter, Span, TraceSink};
 pub use types::{

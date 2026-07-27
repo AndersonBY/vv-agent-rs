@@ -4,12 +4,15 @@ mod info;
 mod persist;
 mod render;
 
-use crate::types::Message;
+use std::sync::Arc;
 
-use self::content::{
-    build_compacted_tool_content, is_compacted_tool_content, kept_tool_message_indices,
-    should_compact_tool_message,
+use crate::types::Message;
+use crate::workspace::{read_validated_text_artifact, WorkspaceBackend};
+
+pub(crate) use self::content::{
+    build_compacted_tool_content, has_recovery_envelope, is_compacted_tool_content,
 };
+use self::content::{kept_tool_message_indices, should_compact_tool_message};
 use self::info::build_tool_call_info;
 use self::persist::persist_tool_content;
 
@@ -21,7 +24,7 @@ pub const TOOL_RESULT_COMPACT_MARKER: &str = "<Tool Result Compact>";
 pub fn compact_tool_results(
     messages: &[Message],
     config: &ToolResultArtifactConfig,
-    cycle_index: Option<u32>,
+    backend: Option<&Arc<dyn WorkspaceBackend>>,
 ) -> (Vec<Message>, Vec<PersistedArtifact>, bool) {
     if config.compact_threshold == 0 {
         return (messages.to_vec(), Vec::new(), false);
@@ -39,8 +42,8 @@ pub fn compact_tool_results(
             .and_then(|tool_call_id| tool_info.get(tool_call_id));
         if !should_compact_tool_message(message, index, &keep_indices, config.compact_threshold) {
             if is_compacted_tool_content(&message.content) {
-                if let Some(artifact) = persisted_artifact_from_compacted_content(
-                    &message.content,
+                if let Some(artifact) = persisted_artifact_from_compacted_message(
+                    message,
                     info.and_then(|item| item.tool_name.as_deref()),
                     info.and_then(|item| item.arguments.as_deref()),
                 ) {
@@ -51,48 +54,68 @@ pub fn compact_tool_results(
             continue;
         }
 
-        let artifact_path = persist_tool_content(
-            &message.content,
-            message.tool_call_id.as_deref(),
-            config,
-            cycle_index,
-        );
+        let Some(backend) = backend else {
+            compacted.push(message.clone());
+            continue;
+        };
+        let (artifact, excerpt_source) = if let Some(artifact) = message.artifact_ref.as_ref() {
+            let Ok(complete_content) = read_validated_text_artifact(backend.as_ref(), artifact)
+            else {
+                compacted.push(message.clone());
+                continue;
+            };
+            (artifact.clone(), complete_content)
+        } else {
+            if has_recovery_envelope(&message.content) {
+                compacted.push(message.clone());
+                continue;
+            }
+            let Some(artifact) = persist_tool_content(
+                &message.content,
+                message.tool_call_id.as_deref(),
+                backend,
+                &config.artifact_namespace,
+            ) else {
+                compacted.push(message.clone());
+                continue;
+            };
+            (artifact, message.content.clone())
+        };
+        let artifact_path = artifact.path.clone();
+        if artifact_path.is_empty() {
+            compacted.push(message.clone());
+            continue;
+        }
         let content = build_compacted_tool_content(
-            &message.content,
-            artifact_path.as_deref(),
-            info.and_then(|item| item.tool_name.as_deref()),
+            &excerpt_source,
+            &artifact_path,
+            info.and_then(|item| item.tool_name.as_deref())
+                .unwrap_or("unknown"),
             config,
         );
         let mut updated = message.clone();
         updated.content = content;
+        updated.artifact_ref = Some(artifact);
         compacted.push(updated);
-        if let Some(path) = artifact_path {
-            artifacts.push(PersistedArtifact {
-                path,
-                tool_name: info.and_then(|item| item.tool_name.clone()),
-                arguments: info.and_then(|item| item.arguments.clone()),
-            });
-        }
+        artifacts.push(PersistedArtifact {
+            path: artifact_path,
+            tool_name: info.and_then(|item| item.tool_name.clone()),
+            arguments: info.and_then(|item| item.arguments.clone()),
+        });
         changed = true;
     }
     (compacted, artifacts, changed)
 }
 
-fn persisted_artifact_from_compacted_content(
-    content: &str,
+fn persisted_artifact_from_compacted_message(
+    message: &Message,
     fallback_tool_name: Option<&str>,
     arguments: Option<&str>,
 ) -> Option<PersistedArtifact> {
-    let mut path = None;
     let mut tool_name = fallback_tool_name.map(str::to_string);
-    for line in content.lines() {
+    for line in message.content.lines() {
         let line = line.trim();
-        if let Some(value) = line.strip_prefix("artifact_path:") {
-            let value = value.trim();
-            if !value.is_empty() && value != "N/A" {
-                path = Some(value.to_string());
-            }
-        } else if tool_name.is_none() {
+        if tool_name.is_none() {
             tool_name = line
                 .strip_prefix("tool_name:")
                 .map(str::trim)
@@ -101,7 +124,7 @@ fn persisted_artifact_from_compacted_content(
         }
     }
     Some(PersistedArtifact {
-        path: path?,
+        path: message.artifact_ref.as_ref()?.path.clone(),
         tool_name,
         arguments: arguments.map(str::to_string),
     })

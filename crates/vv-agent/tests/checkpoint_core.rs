@@ -11,7 +11,7 @@ use vv_agent::{
     CapabilityRef, Checkpoint, CheckpointStatus, CheckpointStore, ClaimMode, CompletionReason,
     EventCursor, EventOutboxEntry, ExtensionStateEntry, InMemoryCheckpointStore, Message,
     OperationJournalEntry, OperationKind, OperationState, RedisCheckpointStore, ResumeObservation,
-    RunEvent, SqliteCheckpointStore, ToolIdempotency,
+    RunEvent, SqliteCheckpointStore, ToolArtifactRef, ToolIdempotency,
 };
 
 const CODEC_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec.json");
@@ -21,6 +21,84 @@ const STORE_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_store.json"
 
 fn fixture(raw: &str) -> Value {
     serde_json::from_str(raw).expect("valid parity fixture")
+}
+
+fn definition_case(name: &str) -> Value {
+    fixture(DEFINITION_FIXTURE)["golden_cases"]
+        .as_array()
+        .expect("definition golden cases")
+        .iter()
+        .find(|case| case["name"] == name)
+        .unwrap_or_else(|| panic!("missing run-definition golden case {name}"))["definition"]
+        .clone()
+}
+
+fn decode_pointer_token(token: &str) -> String {
+    token.replace("~1", "/").replace("~0", "~")
+}
+
+fn pointer_parent_mut<'a>(document: &'a mut Value, pointer: &str) -> (&'a mut Value, String) {
+    let (parent_pointer, token) = pointer
+        .rsplit_once('/')
+        .unwrap_or_else(|| panic!("invalid fixture JSON pointer {pointer}"));
+    let parent = if parent_pointer.is_empty() {
+        document
+    } else {
+        document
+            .pointer_mut(parent_pointer)
+            .unwrap_or_else(|| panic!("missing fixture JSON pointer parent {parent_pointer}"))
+    };
+    (parent, decode_pointer_token(token))
+}
+
+fn remove_pointer(document: &mut Value, pointer: &str) {
+    let (parent, token) = pointer_parent_mut(document, pointer);
+    let removed = match parent {
+        Value::Object(object) => object.remove(&token),
+        Value::Array(items) => Some(items.remove(token.parse::<usize>().expect("array index"))),
+        _ => panic!("fixture JSON pointer parent is not a container: {pointer}"),
+    };
+    assert!(
+        removed.is_some(),
+        "fixture JSON pointer is missing: {pointer}"
+    );
+}
+
+fn set_pointer(document: &mut Value, pointer: &str, value: Value) {
+    let (parent, token) = pointer_parent_mut(document, pointer);
+    match parent {
+        Value::Object(object) => {
+            object.insert(token, value);
+        }
+        Value::Array(items) => {
+            items[token.parse::<usize>().expect("array index")] = value;
+        }
+        _ => panic!("fixture JSON pointer parent is not a container: {pointer}"),
+    }
+}
+
+fn apply_definition_mutation(definition: &mut Value, mutation: &Value) {
+    if let Some(fields) = mutation.get("add").and_then(Value::as_object) {
+        definition
+            .as_object_mut()
+            .expect("definition object")
+            .extend(fields.clone());
+    }
+    if let Some(pointer) = mutation.get("remove_json_pointer").and_then(Value::as_str) {
+        remove_pointer(definition, pointer);
+    }
+    for operation in ["replace_json_pointer", "add_json_pointer"] {
+        if let Some(pointer) = mutation.get(operation).and_then(Value::as_str) {
+            set_pointer(definition, pointer, mutation["value"].clone());
+        }
+    }
+    if let Some(pointer) = mutation.get("append_json_pointer").and_then(Value::as_str) {
+        definition
+            .pointer_mut(pointer)
+            .and_then(Value::as_array_mut)
+            .unwrap_or_else(|| panic!("fixture append target is not an array: {pointer}"))
+            .push(mutation["value"].clone());
+    }
 }
 
 fn current_event(event_id: &str) -> Value {
@@ -45,6 +123,21 @@ fn codec_case(name: &str) -> Value {
         .find(|case| case["name"] == name)
         .unwrap_or_else(|| panic!("missing codec case {name}"))["payload"]
         .clone()
+}
+
+fn current_codec_case(name: &str) -> Value {
+    let mut payload = codec_case(name);
+    payload["run_definition_schema"] = json!("vv-agent.run-definition.v5");
+    payload["run_definition"]["schema_version"] = json!("vv-agent.run-definition.v5");
+    payload["run_definition"]["runtime_controls"]["microcompaction_policy"] = json!({
+        "trigger_ratio": 0.75,
+        "target_ratio": 0.60,
+        "keep_recent_cycles": 3,
+        "min_result_chars": 500
+    });
+    payload["run_definition_digest"] =
+        json!(run_definition_digest(&payload["run_definition"]).expect("current definition"));
+    payload
 }
 
 fn journal_case(name: &str) -> OperationJournalEntry {
@@ -152,12 +245,101 @@ fn rfc8785_definition_operation_and_event_vectors_match() {
 }
 
 #[test]
+fn run_definition_v5_rejects_invalid_microcompaction_policy_shapes() {
+    let fixture = fixture(DEFINITION_FIXTURE);
+    let definition = fixture["golden_cases"][0]["definition"].clone();
+
+    let mut missing = definition.clone();
+    missing["runtime_controls"]
+        .as_object_mut()
+        .expect("runtime controls")
+        .remove("microcompaction_policy");
+    assert_eq!(
+        run_definition_digest(&missing).unwrap_err().code(),
+        "checkpoint_definition_invalid"
+    );
+
+    let mut unknown = definition.clone();
+    unknown["runtime_controls"]["microcompaction_policy"]["future_behavior"] = json!(true);
+    assert_eq!(
+        run_definition_digest(&unknown).unwrap_err().code(),
+        "checkpoint_definition_invalid"
+    );
+
+    let mut invalid_ratio = definition;
+    invalid_ratio["runtime_controls"]["microcompaction_policy"]["target_ratio"] = json!(0.75);
+    assert_eq!(
+        run_definition_digest(&invalid_ratio).unwrap_err().code(),
+        "checkpoint_definition_invalid"
+    );
+}
+
+#[test]
+fn run_definition_v5_rejects_all_json_representable_fixture_invalid_cases() {
+    let fixture = fixture(DEFINITION_FIXTURE);
+    let producer_only = [
+        "unstable_process_local_capability",
+        "unstable_process_local_hook",
+        "unstable_process_local_after_cycle_hook",
+        "behavior_metadata_without_reference",
+        "non_finite_number",
+    ];
+    let mut covered = Vec::new();
+
+    for case in fixture["invalid_cases"]
+        .as_array()
+        .expect("definition invalid cases")
+    {
+        let name = case["name"].as_str().expect("invalid case name");
+        let expected = case["error_code"].as_str().expect("invalid case code");
+        let definition =
+            if let Some(base_name) = case.get("base_golden_case").and_then(Value::as_str) {
+                let mut definition = definition_case(base_name);
+                apply_definition_mutation(&mut definition, &case["mutation"]);
+                definition
+            } else {
+                match name {
+                    "extra_header_case_collision" => {
+                        let mut definition = definition_case("full_unicode_float_and_capabilities");
+                        definition["model"]["settings"]["extra_headers"]["Authorization"] =
+                            json!("second");
+                        definition
+                    }
+                    "unsafe_integer" => {
+                        let mut definition = definition_case("full_unicode_float_and_capabilities");
+                        let generated = &case["generated_input"];
+                        set_pointer(
+                            &mut definition,
+                            generated["json_pointer"].as_str().expect("integer pointer"),
+                            generated["value"].clone(),
+                        );
+                        definition
+                    }
+                    producer_only_name if producer_only.contains(&producer_only_name) => continue,
+                    other => panic!("unhandled run-definition invalid fixture case {other}"),
+                }
+            };
+
+        let error = run_definition_digest(&definition)
+            .expect_err(&format!("{name} unexpectedly produced a valid digest"));
+        assert_eq!(error.code(), expected, "{name}: {error:?}");
+        covered.push(name);
+    }
+
+    assert_eq!(
+        covered.len() + producer_only.len(),
+        fixture["invalid_cases"].as_array().unwrap().len()
+    );
+    assert!(serde_json::Number::from_f64(f64::NAN).is_none());
+}
+
+#[test]
 fn codec_round_trips_canonical_payload_and_rejects_invalid_input() {
     let expected = fixture(CODEC_FIXTURE)["canonical_checkpoint"].clone();
     let checkpoint = checkpoint_from_value(&expected, 262_144).unwrap();
     assert_eq!(checkpoint_to_value(&checkpoint, 262_144).unwrap(), expected);
 
-    let unknown_schema = json!({"schema_version": "vv-agent.checkpoint.v5"});
+    let unknown_schema = json!({"schema_version": "vv-agent.checkpoint.v4"});
     let error = checkpoint_from_value(&unknown_schema, 262_144).unwrap_err();
     assert_eq!(error.code(), "checkpoint_schema_unsupported");
 
@@ -197,6 +379,27 @@ fn codec_round_trips_canonical_payload_and_rejects_invalid_input() {
             .code(),
         "checkpoint_definition_digest_invalid"
     );
+}
+
+#[test]
+fn checkpoint_round_trips_message_artifact_ref() {
+    let artifact_ref = ToolArtifactRef {
+        path: ".vv-agent/artifacts/checkpoint/call.txt".to_string(),
+        media_type: "text/plain".to_string(),
+        encoding: "utf-8".to_string(),
+        size_bytes: 17,
+        sha256: "b".repeat(64),
+    };
+    let mut message = Message::tool("bounded preview", "call");
+    message.artifact_ref = Some(artifact_ref.clone());
+    let mut payload = current_codec_case("minimal_running");
+    payload["messages"] = json!([message.to_dict()]);
+
+    let checkpoint = checkpoint_from_value(&payload, 262_144).expect("checkpoint");
+    let encoded = checkpoint_to_value(&checkpoint, 262_144).expect("checkpoint wire");
+    let restored = checkpoint_from_value(&encoded, 262_144).expect("restored checkpoint");
+
+    assert_eq!(restored.messages[0].artifact_ref, Some(artifact_ref));
 }
 
 #[test]

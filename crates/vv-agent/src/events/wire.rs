@@ -155,6 +155,9 @@ pub(super) fn validate_event_wire_shape(value: &Value) -> Result<(), String> {
                 "configured_threshold",
                 "effective_threshold",
                 "microcompact_threshold",
+                "microcompact_target",
+                "candidate_count",
+                "estimated_reclaimable_tokens",
                 "model_context_window",
                 "model_max_output_tokens",
                 "reserved_output_tokens",
@@ -167,6 +170,9 @@ pub(super) fn validate_event_wire_shape(value: &Value) -> Result<(), String> {
                 "configured_threshold",
                 "effective_threshold",
                 "microcompact_threshold",
+                "microcompact_target",
+                "candidate_count",
+                "estimated_reclaimable_tokens",
                 "model_context_window",
                 "model_max_output_tokens",
                 "reserved_output_tokens",
@@ -181,8 +187,19 @@ pub(super) fn validate_event_wire_shape(value: &Value) -> Result<(), String> {
                 "summary_tokens",
                 "mode",
                 "changed",
+                "archived_count",
+                "reclaimed_tokens",
+                "artifact_failure_count",
             ],
-            &["before_count", "after_count", "mode", "changed"],
+            &[
+                "before_count",
+                "after_count",
+                "mode",
+                "changed",
+                "archived_count",
+                "reclaimed_tokens",
+                "artifact_failure_count",
+            ],
         ),
         "sub_run_started" => (
             &[
@@ -625,6 +642,9 @@ pub(super) fn validate_compaction_wire_fields(
             configured_threshold,
             effective_threshold,
             microcompact_threshold,
+            microcompact_target,
+            candidate_count,
+            estimated_reclaimable_tokens,
             model_context_window,
             model_max_output_tokens,
             reserved_output_tokens,
@@ -635,6 +655,12 @@ pub(super) fn validate_compaction_wire_fields(
                 ("configured_threshold", *configured_threshold),
                 ("effective_threshold", *effective_threshold),
                 ("microcompact_threshold", *microcompact_threshold),
+                ("microcompact_target", *microcompact_target),
+                ("candidate_count", *candidate_count as u64),
+                (
+                    "estimated_reclaimable_tokens",
+                    *estimated_reclaimable_tokens,
+                ),
                 ("model_context_window", *model_context_window),
                 ("reserved_output_tokens", *reserved_output_tokens),
                 ("autocompact_buffer_tokens", *autocompact_buffer_tokens),
@@ -652,7 +678,24 @@ pub(super) fn validate_compaction_wire_fields(
                 );
             }
         }
-        RunEventPayload::MemoryCompactCompleted { .. } => {}
+        RunEventPayload::MemoryCompactCompleted {
+            archived_count,
+            reclaimed_tokens,
+            artifact_failure_count,
+            ..
+        } => {
+            for (field, counter) in [
+                ("archived_count", *archived_count as u64),
+                ("reclaimed_tokens", *reclaimed_tokens),
+                ("artifact_failure_count", *artifact_failure_count as u64),
+            ] {
+                if counter > JSON_SAFE_INTEGER_MAX {
+                    return Err(format!(
+                        "run event {field} must be a non-negative JSON-safe integer"
+                    ));
+                }
+            }
+        }
         _ => {}
     }
     Ok(())

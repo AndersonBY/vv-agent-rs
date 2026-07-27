@@ -160,6 +160,77 @@ pub(crate) fn persist_captured_text_artifact(
     }))
 }
 
+pub(crate) fn persist_text_artifact(
+    backend: Arc<dyn WorkspaceBackend>,
+    task_id: &str,
+    tool_call_id: &str,
+    content: &str,
+) -> std::io::Result<ToolArtifactRef> {
+    let task = artifact_segment(task_id, "task");
+    let call = artifact_segment(tool_call_id, "call");
+    let size_bytes = content.len() as u64;
+    let sha256 = format!("{:x}", Sha256::digest(content.as_bytes()));
+    let mut last_collision = None;
+    for _ in 0..32 {
+        let suffix = Uuid::new_v4().simple().to_string();
+        let path = format!(".vv-agent/artifacts/{task}/{call}-{suffix}.txt");
+        match backend.write_text_exclusive(&path, content) {
+            Ok(written) => {
+                if written != content.len() {
+                    return Err(Error::new(
+                        ErrorKind::WriteZero,
+                        format!(
+                            "artifact write reported {written} of {} bytes",
+                            content.len()
+                        ),
+                    ));
+                }
+                return Ok(ToolArtifactRef {
+                    path,
+                    media_type: "text/plain".to_string(),
+                    encoding: "utf-8".to_string(),
+                    size_bytes,
+                    sha256,
+                });
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                last_collision = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_collision.unwrap_or_else(|| {
+        Error::new(
+            ErrorKind::AlreadyExists,
+            "could not allocate an exclusive artifact path",
+        )
+    }))
+}
+
+pub(crate) fn read_validated_text_artifact(
+    backend: &dyn WorkspaceBackend,
+    artifact: &ToolArtifactRef,
+) -> std::io::Result<String> {
+    artifact
+        .validate()
+        .map_err(|error| Error::new(ErrorKind::InvalidInput, error))?;
+    let bytes = backend.read_bytes(&artifact.path)?;
+    if bytes.len() as u64 != artifact.size_bytes {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "artifact size_bytes does not match stored bytes",
+        ));
+    }
+    let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    if sha256 != artifact.sha256 {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "artifact sha256 does not match stored bytes",
+        ));
+    }
+    String::from_utf8(bytes).map_err(|error| Error::new(ErrorKind::InvalidData, error))
+}
+
 pub(crate) fn artifact_write_error_code(error: &std::io::Error) -> &'static str {
     if error.kind() == ErrorKind::InvalidInput {
         "artifact_path_invalid"

@@ -1,4 +1,7 @@
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::fmt;
+use std::sync::Arc;
 
 mod compaction;
 mod config;
@@ -16,7 +19,9 @@ use crate::memory::message_sanitizer::filter_empty_assistant_messages;
 use crate::memory::session::SessionMemory;
 use crate::memory::token_utils::count_messages_tokens;
 use crate::memory::{RuntimeMemoryCallbackError, RuntimeMemoryCallbacks};
+use crate::tools::ToolResultRetention;
 use crate::types::{Message, MessageRole};
+use crate::workspace::WorkspaceBackend;
 
 pub use config::{MemoryManagerConfig, SummaryCallback};
 
@@ -24,13 +29,17 @@ use helpers::compact_processed_image_messages;
 
 const MEMORY_SUMMARY_NAME: &str = "memory_summary";
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MemoryManager {
     pub config: MemoryManagerConfig,
     session_memory: Option<SessionMemory>,
     model_max_output_tokens: Option<u64>,
     reserved_output_source: ReservedOutputSource,
     runtime_callbacks: RuntimeMemoryCallbacks,
+    workspace_backend: Option<Arc<dyn WorkspaceBackend>>,
+    artifact_namespace: String,
+    tool_result_retentions: BTreeMap<String, ToolResultRetention>,
+    recovery_tool_available: bool,
 }
 
 #[derive(Debug)]
@@ -38,10 +47,42 @@ pub(crate) struct MemoryCompactionOutcome {
     pub(crate) messages: Vec<Message>,
     pub(crate) changed: bool,
     pub(crate) mode: MemoryCompactMode,
+    pub(crate) archived_count: usize,
+    pub(crate) reclaimed_tokens: u64,
+    pub(crate) artifact_failure_count: usize,
+}
+
+struct CompactionRequest<'a> {
+    cycle_index: u32,
+    artifact_cycle_index: Option<u32>,
+    force: bool,
+    total_tokens: Option<u64>,
+    recent_tool_call_ids: Option<&'a BTreeSet<String>>,
+    microcompaction_plan: Option<microcompact::MicrocompactionPlan>,
+}
+
+impl fmt::Debug for MemoryManager {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MemoryManager")
+            .field("config", &self.config)
+            .field("has_session_memory", &self.session_memory.is_some())
+            .field("model_max_output_tokens", &self.model_max_output_tokens)
+            .field("reserved_output_source", &self.reserved_output_source)
+            .field("has_workspace_backend", &self.workspace_backend.is_some())
+            .field("artifact_namespace", &self.artifact_namespace)
+            .field("tool_result_retentions", &self.tool_result_retentions)
+            .field("recovery_tool_available", &self.recovery_tool_available)
+            .finish()
+    }
 }
 
 impl MemoryManager {
     pub fn new(mut config: MemoryManagerConfig) -> Self {
+        config
+            .microcompaction_policy
+            .validate()
+            .expect("MemoryManagerConfig has an invalid microcompaction policy");
         let session_memory = config.session_memory.take();
         Self {
             config,
@@ -49,7 +90,33 @@ impl MemoryManager {
             model_max_output_tokens: None,
             reserved_output_source: ReservedOutputSource::FrameworkFallback,
             runtime_callbacks: RuntimeMemoryCallbacks::default(),
+            workspace_backend: None,
+            artifact_namespace: "memory".to_string(),
+            tool_result_retentions: BTreeMap::new(),
+            recovery_tool_available: false,
         }
+    }
+
+    pub fn with_workspace_backend(mut self, backend: Arc<dyn WorkspaceBackend>) -> Self {
+        self.workspace_backend = Some(backend);
+        self
+    }
+
+    pub fn with_recovery_tool_available(mut self, available: bool) -> Self {
+        self.recovery_tool_available = available;
+        self
+    }
+
+    pub(crate) fn with_archive_context(
+        mut self,
+        artifact_namespace: impl Into<String>,
+        tool_result_retentions: BTreeMap<String, ToolResultRetention>,
+        recovery_tool_available: bool,
+    ) -> Self {
+        self.artifact_namespace = artifact_namespace.into();
+        self.tool_result_retentions = tool_result_retentions;
+        self.recovery_tool_available = recovery_tool_available;
+        self
     }
 
     pub(crate) fn with_capacity_observation(
@@ -76,9 +143,19 @@ impl MemoryManager {
     }
 
     pub fn compact(&mut self, messages: &[Message], force: bool) -> (Vec<Message>, bool) {
-        self.compact_for_cycle_with_usage_inner(messages, 0, None, force, None, None)
-            .expect("public memory compaction has no runtime callback control flow")
-            .into_tuple()
+        self.compact_for_cycle_with_usage_inner(
+            messages,
+            CompactionRequest {
+                cycle_index: 0,
+                artifact_cycle_index: None,
+                force,
+                total_tokens: None,
+                recent_tool_call_ids: None,
+                microcompaction_plan: None,
+            },
+        )
+        .expect("public memory compaction has no runtime callback control flow")
+        .into_tuple()
     }
 
     pub fn compact_for_cycle(
@@ -89,11 +166,14 @@ impl MemoryManager {
     ) -> (Vec<Message>, bool) {
         self.compact_for_cycle_with_usage_inner(
             messages,
-            cycle_index,
-            Some(cycle_index),
-            force,
-            None,
-            None,
+            CompactionRequest {
+                cycle_index,
+                artifact_cycle_index: Some(cycle_index),
+                force,
+                total_tokens: None,
+                recent_tool_call_ids: None,
+                microcompaction_plan: None,
+            },
         )
         .expect("public memory compaction has no runtime callback control flow")
         .into_tuple()
@@ -109,11 +189,14 @@ impl MemoryManager {
     ) -> (Vec<Message>, bool) {
         self.compact_for_cycle_with_usage_inner(
             messages,
-            cycle_index,
-            Some(cycle_index),
-            force,
-            total_tokens,
-            recent_tool_call_ids,
+            CompactionRequest {
+                cycle_index,
+                artifact_cycle_index: Some(cycle_index),
+                force,
+                total_tokens,
+                recent_tool_call_ids,
+                microcompaction_plan: None,
+            },
         )
         .expect("public memory compaction has no runtime callback control flow")
         .into_tuple()
@@ -126,32 +209,41 @@ impl MemoryManager {
         force: bool,
         total_tokens: Option<u64>,
         recent_tool_call_ids: Option<&BTreeSet<String>>,
+        microcompaction_plan: Option<microcompact::MicrocompactionPlan>,
     ) -> Result<MemoryCompactionOutcome, RuntimeMemoryCallbackError> {
         self.compact_for_cycle_with_usage_inner(
             messages,
-            cycle_index,
-            Some(cycle_index),
-            force,
-            total_tokens,
-            recent_tool_call_ids,
+            CompactionRequest {
+                cycle_index,
+                artifact_cycle_index: Some(cycle_index),
+                force,
+                total_tokens,
+                recent_tool_call_ids,
+                microcompaction_plan,
+            },
         )
     }
 
     fn compact_for_cycle_with_usage_inner(
         &mut self,
         messages: &[Message],
-        cycle_index: u32,
-        artifact_cycle_index: Option<u32>,
-        force: bool,
-        total_tokens: Option<u64>,
-        recent_tool_call_ids: Option<&BTreeSet<String>>,
+        request: CompactionRequest<'_>,
     ) -> Result<MemoryCompactionOutcome, RuntimeMemoryCallbackError> {
+        let CompactionRequest {
+            cycle_index,
+            artifact_cycle_index,
+            force,
+            total_tokens,
+            recent_tool_call_ids,
+            microcompaction_plan,
+        } = request;
         if messages.is_empty() {
             return Ok(MemoryCompactionOutcome::new(
                 messages,
                 Vec::new(),
                 MemoryCompactMode::None,
                 false,
+                microcompact::MicrocompactionApplication::default(),
             ));
         }
 
@@ -198,14 +290,17 @@ impl MemoryManager {
                 };
             }
         }
+        let mut microcompaction = microcompact::MicrocompactionApplication::default();
         if !force && self.should_preemptive_microcompact(message_length) {
-            let (microcompacted, cleared) =
-                self.microcompact_messages(&working_messages, cycle_index);
-            if cleared > 0 {
-                working_messages = microcompacted;
+            let plan = microcompaction_plan.unwrap_or_else(|| {
+                self.plan_microcompaction(&working_messages, cycle_index, message_length)
+            });
+            microcompaction = self.apply_microcompaction(&working_messages, &plan);
+            if microcompaction.archived_count > 0 {
+                working_messages = microcompaction.messages.clone();
                 mode = mode.max(MemoryCompactMode::Micro);
                 changed = true;
-                message_length = self.calculate_effective_length(&working_messages, None, None);
+                message_length = message_length.saturating_sub(microcompaction.reclaimed_tokens);
             }
         }
         if !force && message_length <= self.autocompact_threshold() {
@@ -216,24 +311,40 @@ impl MemoryManager {
                 changed = true;
             }
             return Ok(MemoryCompactionOutcome::new(
-                messages, warned, mode, changed,
+                messages,
+                warned,
+                mode,
+                changed,
+                microcompaction,
             ));
         }
         let mut summary_source = working_messages;
         if !force {
+            let before_structural_tokens =
+                count_messages_tokens(&summary_source, &self.config.model);
             let (image_compacted, image_changed) =
                 compact_processed_image_messages(&summary_source);
             let (artifact_compacted, artifact_changed) =
                 self.compact_large_tool_results(&image_compacted, artifact_cycle_index);
-            if (image_changed || artifact_changed)
-                && count_messages_tokens(&artifact_compacted, &self.config.model)
-                    <= self.autocompact_threshold()
+            let after_structural_tokens =
+                count_messages_tokens(&artifact_compacted, &self.config.model);
+            message_length = if after_structural_tokens >= before_structural_tokens {
+                message_length.saturating_add(
+                    after_structural_tokens.saturating_sub(before_structural_tokens),
+                )
+            } else {
+                message_length.saturating_sub(
+                    before_structural_tokens.saturating_sub(after_structural_tokens),
+                )
+            };
+            if (image_changed || artifact_changed) && message_length <= self.autocompact_threshold()
             {
                 return Ok(MemoryCompactionOutcome::new(
                     messages,
                     artifact_compacted,
                     mode.max(MemoryCompactMode::Structural),
                     true,
+                    microcompaction,
                 ));
             }
             if image_changed || artifact_changed {
@@ -258,6 +369,7 @@ impl MemoryManager {
             compacted,
             mode,
             changed || summary_changed,
+            microcompaction,
         ))
     }
 
@@ -279,6 +391,7 @@ impl MemoryCompactionOutcome {
         messages: Vec<Message>,
         mode: MemoryCompactMode,
         changed: bool,
+        microcompaction: microcompact::MicrocompactionApplication,
     ) -> Self {
         let content_changed = messages != original;
         let mode = if !content_changed {
@@ -292,6 +405,9 @@ impl MemoryCompactionOutcome {
             messages,
             changed,
             mode,
+            archived_count: microcompaction.archived_count,
+            reclaimed_tokens: microcompaction.reclaimed_tokens,
+            artifact_failure_count: microcompaction.artifact_failure_count,
         }
     }
 

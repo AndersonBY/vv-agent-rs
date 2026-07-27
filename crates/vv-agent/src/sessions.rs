@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::types::{Message, MessageRole, ToolCall};
+use crate::types::{Message, MessageRole, ToolArtifactRef, ToolCall};
 
 mod conformance;
 mod redis_store;
@@ -110,7 +110,7 @@ pub enum SessionItem {
         tool_call_id: String,
     },
     Message {
-        message: Message,
+        message: Box<Message>,
     },
 }
 
@@ -124,7 +124,7 @@ impl SessionItem {
                 content,
                 tool_call_id,
             } => Message::tool(content.clone(), tool_call_id.clone()),
-            Self::Message { message } => message.clone(),
+            Self::Message { message } => message.as_ref().clone(),
         }
     }
 
@@ -139,9 +139,10 @@ impl SessionItem {
             || message.reasoning_content.is_some()
             || message.image_url.is_some()
             || !message.metadata.is_empty()
+            || message.artifact_ref.is_some()
         {
             return Some(Self::Message {
-                message: message.clone(),
+                message: Box::new(message.clone()),
             });
         }
         match message.role {
@@ -203,6 +204,8 @@ struct SessionMessageInput {
     image_url: Option<String>,
     #[serde(default)]
     metadata: BTreeMap<String, Value>,
+    #[serde(default, deserialize_with = "deserialize_present_artifact_ref")]
+    artifact_ref: Option<ToolArtifactRef>,
 }
 
 impl SessionMessageInput {
@@ -219,6 +222,9 @@ impl SessionMessageInput {
             .into_iter()
             .map(SessionToolCallInput::into_tool_call)
             .collect::<Result<Vec<_>, _>>()?;
+        if let Some(artifact_ref) = &self.artifact_ref {
+            artifact_ref.validate()?;
+        }
         Ok(Message {
             role,
             content: self.content,
@@ -228,6 +234,7 @@ impl SessionMessageInput {
             reasoning_content: self.reasoning_content,
             image_url: self.image_url,
             metadata: self.metadata,
+            artifact_ref: self.artifact_ref,
         })
     }
 }
@@ -293,6 +300,15 @@ where
     BTreeMap::<String, Value>::deserialize(deserializer).map(Some)
 }
 
+fn deserialize_present_artifact_ref<'de, D>(
+    deserializer: D,
+) -> Result<Option<ToolArtifactRef>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    ToolArtifactRef::deserialize(deserializer).map(Some)
+}
+
 struct SessionMessageWire<'a>(&'a Message);
 
 impl Serialize for SessionMessageWire<'_> {
@@ -308,6 +324,7 @@ impl Serialize for SessionMessageWire<'_> {
         field_count += usize::from(message.reasoning_content.is_some());
         field_count += usize::from(message.image_url.is_some());
         field_count += usize::from(!message.metadata.is_empty());
+        field_count += usize::from(message.artifact_ref.is_some());
 
         let mut state = serializer.serialize_map(Some(field_count))?;
         state.serialize_entry("role", &message.role)?;
@@ -329,6 +346,9 @@ impl Serialize for SessionMessageWire<'_> {
         }
         if !message.metadata.is_empty() {
             state.serialize_entry("metadata", &message.metadata)?;
+        }
+        if let Some(artifact_ref) = &message.artifact_ref {
+            state.serialize_entry("artifact_ref", artifact_ref)?;
         }
         state.end()
     }
@@ -539,7 +559,7 @@ pub struct SqliteSessionStore {
     connection: Arc<Mutex<Connection>>,
 }
 
-const SQLITE_SESSION_SCHEMA_VERSION: i64 = 1;
+const SQLITE_SESSION_SCHEMA_VERSION: i64 = 2;
 const CANONICAL_SESSION_COLUMNS: [&str; 3] = ["session_id", "item_index", "payload"];
 const CANONICAL_SESSION_COMMIT_COLUMNS: [&str; 3] = ["session_id", "commit_id", "payload_digest"];
 const CREATE_SESSION_ITEMS_TABLE: &str = r#"
@@ -837,7 +857,7 @@ fn initialize_sqlite_session_schema(connection: &mut Connection) -> Result<(), S
             .execute_batch(CREATE_SESSION_COMMITS_TABLE)
             .map_err(sqlite_error)?;
         transaction
-            .execute_batch("PRAGMA user_version = 1;")
+            .execute_batch("PRAGMA user_version = 2;")
             .map_err(sqlite_error)?;
     } else {
         if version != SQLITE_SESSION_SCHEMA_VERSION {

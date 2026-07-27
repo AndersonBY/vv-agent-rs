@@ -90,14 +90,18 @@ fn memory_manager_does_not_compact_small_history() {
 #[test]
 fn memory_manager_uses_provider_tokens_and_recent_tool_ids() {
     let mut manager = MemoryManager::new(MemoryManagerConfig {
-        model_context_window: 120,
+        model_context_window: 400,
         reserved_output_tokens: 10,
         autocompact_buffer_tokens: 10,
-        microcompact_trigger_ratio: 1.0,
+        microcompaction_policy: MicrocompactionPolicy::new(1.0, 0.6, 3, 500).expect("policy"),
         tool_result_compact_threshold: 20,
         tool_result_keep_last: 0,
+        tool_result_excerpt_head: 10,
+        tool_result_excerpt_tail: 10,
         ..MemoryManagerConfig::default()
-    });
+    })
+    .with_workspace_backend(Arc::new(vv_agent::MemoryWorkspaceBackend::default()))
+    .with_recovery_tool_available(true);
     let mut assistant_call = Message::assistant("plan");
     assistant_call
         .tool_calls
@@ -106,14 +110,14 @@ fn memory_manager_uses_provider_tokens_and_recent_tool_ids() {
         Message::system("sys"),
         Message::user("hello"),
         assistant_call,
-        Message::tool("x".repeat(400), "call_1"),
+        Message::tool("large result ".repeat(200), "call_1"),
     ];
 
     let (unchanged, changed) = manager.compact_for_cycle_with_usage(
         &messages,
         0,
         false,
-        Some(100),
+        Some(200),
         Some(&BTreeSet::new()),
     );
     assert!(!changed);
@@ -124,7 +128,7 @@ fn memory_manager_uses_provider_tokens_and_recent_tool_ids() {
         &messages,
         0,
         false,
-        Some(100),
+        Some(200),
         Some(&recent_tool_ids),
     );
 
@@ -168,6 +172,7 @@ fn memory_manager_appends_agent_warning_before_compaction() {
 #[test]
 fn memory_manager_recomputes_length_after_tool_artifact_compaction() {
     let workspace = tempfile::tempdir().expect("workspace");
+    let backend = Arc::new(LocalWorkspaceBackend::new(workspace.path()));
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         model_context_window: 160,
         reserved_output_tokens: 10,
@@ -178,7 +183,9 @@ fn memory_manager_recomputes_length_after_tool_artifact_compaction() {
         tool_result_excerpt_tail: 1,
         workspace: Some(workspace.path().to_path_buf()),
         ..MemoryManagerConfig::default()
-    });
+    })
+    .with_workspace_backend(backend)
+    .with_recovery_tool_available(true);
     let mut assistant_call = Message::assistant("");
     assistant_call
         .tool_calls
@@ -187,12 +194,12 @@ fn memory_manager_recomputes_length_after_tool_artifact_compaction() {
         Message::system("sys"),
         Message::user("read file"),
         assistant_call,
-        Message::tool("x".repeat(400), "call_1"),
+        Message::tool("large result ".repeat(200), "call_1"),
         Message::assistant("continue"),
     ];
 
     let (compacted, changed) =
-        manager.compact_for_cycle_with_usage(&messages, 2, false, Some(500), None);
+        manager.compact_for_cycle_with_usage(&messages, 2, false, None, None);
 
     assert!(changed);
     assert!(compacted.len() > 2);
@@ -202,13 +209,9 @@ fn memory_manager_recomputes_length_after_tool_artifact_compaction() {
     assert!(compacted
         .iter()
         .any(|message| message.content.contains("<Tool Result Compact>")));
-    assert!(workspace
-        .path()
-        .join(".memory/tool_results/cycle_2/call_1.txt")
-        .exists());
-    assert!(compacted.iter().any(|message| message
-        .content
-        .contains(".memory/tool_results/cycle_2/call_1.txt")));
+    assert!(compacted
+        .iter()
+        .any(|message| message.content.contains(".vv-agent/artifacts/")));
 }
 
 #[test]
@@ -267,7 +270,7 @@ fn memory_manager_exposes_agent_threshold_properties() {
         reserved_output_tokens: 8_000,
         autocompact_buffer_tokens: 6_000,
         warning_threshold_percentage: 80,
-        microcompact_trigger_ratio: 0.5,
+        microcompaction_policy: MicrocompactionPolicy::new(0.5, 0.4, 3, 500).expect("policy"),
         ..MemoryManagerConfig::default()
     });
 
@@ -280,6 +283,7 @@ fn memory_manager_exposes_agent_threshold_properties() {
 #[test]
 fn memory_manager_persists_large_tool_results_as_artifacts() {
     let workspace = tempfile::tempdir().expect("workspace");
+    let backend = Arc::new(LocalWorkspaceBackend::new(workspace.path()));
     let large_tool_result = "x".repeat(240);
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         compact_threshold: 10,
@@ -292,7 +296,9 @@ fn memory_manager_persists_large_tool_results_as_artifacts() {
         tool_result_excerpt_tail: 10,
         workspace: Some(workspace.path().to_path_buf()),
         ..MemoryManagerConfig::default()
-    });
+    })
+    .with_workspace_backend(backend.clone())
+    .with_recovery_tool_available(true);
     let messages = vec![
         Message::system("system"),
         Message::user("read a large file"),
@@ -307,63 +313,23 @@ fn memory_manager_persists_large_tool_results_as_artifacts() {
     let (compacted, changed) = manager.compact_for_cycle(&messages, 3, false);
 
     assert!(changed);
-    let artifact = workspace
-        .path()
-        .join(".memory/tool_results/cycle_3/call_1.txt");
-    assert!(
-        artifact.is_file(),
-        "missing artifact at {}",
-        artifact.display()
-    );
+    assert!(compacted[1].content.contains("<Persisted Artifacts>"));
+    let artifact_path = compacted[1]
+        .content
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("- "))
+        .and_then(|line| line.split_whitespace().next())
+        .expect("artifact path");
+    assert!(artifact_path.starts_with(".vv-agent/artifacts/"));
     assert_eq!(
-        std::fs::read_to_string(&artifact).expect("artifact"),
+        backend.read_text(artifact_path).expect("artifact"),
         large_tool_result
     );
-    assert!(compacted[1].content.contains("<Persisted Artifacts>"));
-    assert!(compacted[1]
-        .content
-        .contains(".memory/tool_results/cycle_3/call_1.txt"));
     assert!(compacted[1].content.contains("tool: read_file"));
     assert!(compacted[1].content.contains("<Tool Result Compact>"));
     assert!(compacted[1]
         .content
         .contains("retrieval_hint: use read_file on artifact_path if needed"));
-}
-
-#[test]
-fn memory_manager_does_not_persist_microcompacted_tool_results_as_artifacts() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let mut manager = MemoryManager::new(MemoryManagerConfig {
-        compact_threshold: 10,
-        model_context_window: 80,
-        reserved_output_tokens: 10,
-        autocompact_buffer_tokens: 0,
-        tool_result_compact_threshold: 1,
-        tool_result_keep_last: 0,
-        workspace: Some(workspace.path().to_path_buf()),
-        ..MemoryManagerConfig::default()
-    });
-    let messages = vec![
-        Message::system("system"),
-        Message::user("continue from compacted output"),
-        Message {
-            tool_calls: vec![ToolCall::new("call_old", "read_file", BTreeMap::new())],
-            ..Message::assistant("reading")
-        },
-        Message::tool(CLEARED_MARKER, "call_old"),
-        Message::assistant("continue"),
-    ];
-
-    let (compacted, changed) = manager.compact(&messages, false);
-
-    assert!(changed);
-    assert!(!workspace
-        .path()
-        .join(".memory/tool_results/call_old.txt")
-        .exists());
-    assert!(compacted
-        .iter()
-        .all(|message| !message.content.contains("<Persisted Artifacts>")));
 }
 
 #[test]
@@ -446,17 +412,18 @@ fn memory_manager_second_compaction_preserves_original_user_messages() {
 
 #[test]
 fn memory_manager_uses_microcompact_before_full_summary() {
+    let backend = Arc::new(vv_agent::MemoryWorkspaceBackend::default());
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         compact_threshold: 1_000,
         model_context_window: 4_000,
         reserved_output_tokens: 0,
         autocompact_buffer_tokens: 0,
-        microcompact_trigger_ratio: 0.01,
-        microcompact_keep_recent_cycles: 1,
-        microcompact_min_result_length: 200,
+        microcompaction_policy: MicrocompactionPolicy::new(0.01, 0.005, 1, 200).expect("policy"),
         tool_result_compact_threshold: 2_000,
         ..MemoryManagerConfig::default()
-    });
+    })
+    .with_workspace_backend(backend)
+    .with_recovery_tool_available(true);
     let messages = vec![
         Message::system("sys"),
         Message::user("start"),
@@ -464,7 +431,7 @@ fn memory_manager_uses_microcompact_before_full_summary() {
             tool_calls: vec![ToolCall::new("call_old", "read_file", BTreeMap::new())],
             ..Message::assistant("old tool call")
         },
-        Message::tool("x".repeat(600), "call_old"),
+        Message::tool("large result ".repeat(600), "call_old"),
         Message::assistant("recent reply"),
         Message::user("latest ask"),
     ];
@@ -474,10 +441,44 @@ fn memory_manager_uses_microcompact_before_full_summary() {
     assert!(changed);
     assert!(compacted
         .iter()
-        .any(|message| message.content == CLEARED_MARKER));
+        .any(|message| message.content.starts_with(TOOL_RESULT_COMPACT_MARKER)));
     assert!(compacted
         .iter()
         .all(|message| !message.content.contains("<Compressed Agent Memory>")));
+}
+
+#[test]
+fn provider_usage_baseline_still_triggers_full_compaction_after_microcompact() {
+    let backend = Arc::new(vv_agent::MemoryWorkspaceBackend::default());
+    let mut manager = MemoryManager::new(MemoryManagerConfig {
+        compact_threshold: 1_000,
+        model_context_window: 1_000,
+        reserved_output_tokens: 0,
+        autocompact_buffer_tokens: 0,
+        microcompaction_policy: MicrocompactionPolicy::new(0.2, 0.1, 0, 200).expect("policy"),
+        tool_result_compact_threshold: 10_000,
+        ..MemoryManagerConfig::default()
+    })
+    .with_workspace_backend(backend)
+    .with_recovery_tool_available(true);
+    let messages = vec![
+        Message::system("sys"),
+        Message::user("start"),
+        Message {
+            tool_calls: vec![ToolCall::new("call_old", "read_file", BTreeMap::new())],
+            ..Message::assistant("old tool call")
+        },
+        Message::tool("large result ".repeat(1_000), "call_old"),
+        Message::assistant("recent reply"),
+        Message::user("latest ask"),
+    ];
+
+    let (compacted, changed) =
+        manager.compact_for_cycle_with_usage(&messages, 3, false, Some(10_000), None);
+
+    assert!(changed);
+    assert_eq!(compacted.len(), 2);
+    assert!(compacted[1].content.contains("<Compressed Agent Memory>"));
 }
 
 #[test]

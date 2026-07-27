@@ -1,9 +1,9 @@
-use std::collections::BTreeSet;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::memory::session::SessionMemory;
+use crate::memory::MicrocompactionPolicy;
 
 pub type SummaryCallback =
     Arc<dyn Fn(&str, Option<&str>, Option<&str>) -> Option<String> + Send + Sync + 'static>;
@@ -29,11 +29,7 @@ pub struct MemoryManagerConfig {
     pub tool_result_excerpt_tail: usize,
     pub tool_calls_keep_last: usize,
     pub assistant_no_tool_keep_last: usize,
-    pub tool_result_artifact_dir: PathBuf,
-    pub microcompact_trigger_ratio: f64,
-    pub microcompact_keep_recent_cycles: usize,
-    pub microcompact_min_result_length: usize,
-    pub microcompact_compactable_tools: Option<BTreeSet<String>>,
+    pub microcompaction_policy: MicrocompactionPolicy,
     pub workspace: Option<PathBuf>,
     pub session_memory: Option<SessionMemory>,
 }
@@ -73,23 +69,7 @@ impl fmt::Debug for MemoryManagerConfig {
                 "assistant_no_tool_keep_last",
                 &self.assistant_no_tool_keep_last,
             )
-            .field("tool_result_artifact_dir", &self.tool_result_artifact_dir)
-            .field(
-                "microcompact_trigger_ratio",
-                &self.microcompact_trigger_ratio,
-            )
-            .field(
-                "microcompact_keep_recent_cycles",
-                &self.microcompact_keep_recent_cycles,
-            )
-            .field(
-                "microcompact_min_result_length",
-                &self.microcompact_min_result_length,
-            )
-            .field(
-                "microcompact_compactable_tools",
-                &self.microcompact_compactable_tools,
-            )
+            .field("microcompaction_policy", &self.microcompaction_policy)
             .field("workspace", &self.workspace)
             .field("session_memory", &self.session_memory)
             .finish()
@@ -118,11 +98,7 @@ impl Default for MemoryManagerConfig {
             tool_result_excerpt_tail: 200,
             tool_calls_keep_last: 3,
             assistant_no_tool_keep_last: 1,
-            tool_result_artifact_dir: PathBuf::from(".memory/tool_results"),
-            microcompact_trigger_ratio: 0.75,
-            microcompact_keep_recent_cycles: 3,
-            microcompact_min_result_length: 500,
-            microcompact_compactable_tools: None,
+            microcompaction_policy: MicrocompactionPolicy::default(),
             workspace: None,
             session_memory: None,
         }

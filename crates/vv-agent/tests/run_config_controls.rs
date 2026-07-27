@@ -286,7 +286,7 @@ fn run_config_control_manifest_has_no_open_capability_gaps() {
     let controls = contract["per_run_controls"]
         .as_array()
         .expect("per-run controls");
-    assert_eq!(controls.len(), 23);
+    assert_eq!(controls.len(), 24);
     assert!(controls.iter().all(|entry| entry["status"] == "equivalent"));
     let capabilities = controls
         .iter()
@@ -297,6 +297,7 @@ fn run_config_control_manifest_has_no_open_capability_gaps() {
     assert!(capabilities.contains("diagnostics"));
     assert!(capabilities.contains("no_tool_policy"));
     assert!(capabilities.contains("session_memory"));
+    assert!(capabilities.contains("microcompaction_policy"));
     assert!(capabilities.contains("run_budget"));
     assert!(capabilities.contains("durable_checkpoint_resume"));
 }

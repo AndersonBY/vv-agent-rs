@@ -18,9 +18,9 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock selects contract `4.1.0` at revision
-`0611a95012ce40ca4e70acc0b695e6cf4ddd7eee`, release artifact SHA-256
-`376ffe70d497fa8b36667fe929e5241aede94e72091a12261f76286287124d23`.
+The current lock selects contract `6.0.1` at revision
+`77a2a55732fb1197da0239186dcad00806776063`, release artifact SHA-256
+`0d07e463297a58f2ceed17bf15acca05ef6b7dec9b84237907e1300ba9335ad2`.
 The current adoption state is not duplicated in this document. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
 as the machine-readable source for the current verified Python and Rust
@@ -100,7 +100,7 @@ A fixture parser or private helper test cannot replace a real public producer
 test. A field that is declared but ignored by a planner, executor, provider, or
 store remains a contract failure.
 
-## Contract 4.1.0 Boundaries
+## Contract 6.0.1 Boundaries
 
 ### Prompt Bundle And Provider Projection
 
@@ -154,14 +154,14 @@ usage, and error outcome.
 
 Task-neutral observations remain typed diagnostics. A diagnostic cannot replace
 model, budget, cancellation, tool, approval, checkpoint, or terminal lifecycle
-events. `RunEvent` version `v1` is the strict current wire discriminator; stale,
+events. `RunEvent` version `v2` is the strict current wire discriminator; stale,
 missing, unknown, and malformed fields are rejected rather than routed through
 an older decoder.
 
 ### Durable Accounting
 
-Checkpoints require `vv-agent.checkpoint.v4`, and run definitions require
-`vv-agent.run-definition.v3`. The run definition stores `prompt_bundle` and
+Checkpoints require `vv-agent.checkpoint.v5`, and run definitions require
+`vv-agent.run-definition.v5`. The run definition stores `prompt_bundle` and
 never stores an independent flattened prompt. The checkpoint owns the complete
 ordered run-level model-call ledger. A started model journal entry and started
 event become durable together. After dispatch, the terminal journal state,
@@ -207,10 +207,10 @@ camel-cases the complete task usage object, including `modelCalls` and
 `cacheUsage`, while opaque provider-native keys inside `providerUsage` remain
 unchanged.
 
-Distributed workers accept only `vv-agent.distributed-run.v3`; its `task`
+Distributed workers accept only `vv-agent.distributed-run.v5`; its `task`
 contains `prompt_bundle` and has no `system_prompt` field. Workers and
 dispatchers exchange only the closed
-`vv-agent.distributed-worker-response.v2` wire. The implementation in
+`vv-agent.distributed-worker-response.v3` wire. The implementation in
 `runtime/backends/distributed/dispatch.rs` has exactly `pending`, `committed`,
 `terminal_candidate`, and `terminal_replay` variants. The replaced `finished`
 and terminal boolean combination is neither produced nor accepted. A candidate
@@ -240,20 +240,66 @@ default auto-compaction buffer and preserves a known derived capacity of zero
 from a positive context. Omitted task and manager compact thresholds default to
 `250000`; explicit values in durable tasks remain unchanged.
 
-The runtime microcompacts eligible old tool results before evaluating an
-optional warning against recalculated usage, including when the original usage
-also crossed the full-compaction threshold. It emits every new capacity field
-on `memory_compact_started`, then emits the strongest applied mode and a
-message-content comparison as `changed` on `memory_compact_completed`.
+The runtime resolves the public `MicrocompactionPolicy` into `AgentTask` with
+defaults `0.75` trigger, `0.60` target, three recent cycles, and 500 minimum
+characters. Checkpointed runs freeze and restore it under
+`runtime_controls.microcompaction_policy`; it is not behavior-affecting
+process-local metadata and does not add a capability ref.
+
+The runtime plans eligible old `result_retention=archive` tool results oldest
+first and applies that single plan once per cycle before evaluating an optional
+warning against recalculated usage. Built-in and custom tools both default to
+archive; `preserve` excludes only proactive microcompaction. Complete text is
+written through the effective workspace backend to `.vv-agent/artifacts/`
+before replacement. An existing typed `Message.artifact_ref` is reused only
+after its complete UTF-8 bytes pass `size_bytes` and SHA-256 validation.
+Missing or corrupt references keep the original message, and recovery
+envelopes without a typed reference are never archived again. New artifacts
+are created only for ordinary complete results. The replacement retains the
+complete typed reference through host, session, checkpoint, and distributed
+round trips; LLM/model projection omits it. Persistence failure keeps the
+original message while the same application pass continues to later
+candidates. The compact marker exposes only `tool_name`, `artifact_path`, the
+fixed `use read_file` retrieval hint, and an excerpt.
+When `read_file` is absent from the task's actual model-visible tool plan,
+proactive microcompaction and full-compaction pre-archiving do not create that
+unusable marker.
+
+Application stops at the target using each actual replacement token
+difference rather than the plan estimate. The same operation is public as
+`MemoryManager::microcompact_messages`.
+
+The model-visible replacement has this closed shape:
+
+```text
+<Tool Result Compact>
+tool_name: web_search
+artifact_path: .vv-agent/artifacts/<run>/<call>.txt
+retrieval_hint: use read_file on artifact_path if needed
+excerpt:
+<bounded head/tail preview>
+</Tool Result Compact>
+```
+
+Artifact byte size and SHA-256 remain host-only integrity fields and never
+appear in the marker. SQLite session persistence uses the strict current schema
+at `PRAGMA user_version=2`.
+
+A micro-threshold crossing without a candidate emits no compaction lifecycle
+event. `memory_compact_started` includes `microcompact_target`,
+`candidate_count`, and `estimated_reclaimable_tokens`;
+`memory_compact_completed` includes `archived_count`, `reclaimed_tokens`, and
+`artifact_failure_count`, plus the strongest applied mode and a
+message-content comparison as `changed`.
 Provider callbacks, runtime payloads, and `runner/event_stream.rs` journal
-projections reuse the same `event_id` and `created_at`. The current `v1`
+projections reuse the same `event_id` and `created_at`. The current `v2`
 decoder rejects missing, unknown, stale, and malformed fields; it has no
 alternate historical decoder. No capacity or compaction branch inspects
 task category, answer meaning, or semantic progress.
 
-Runner checkpoint resume restores `run_metadata` from the frozen run definition
-before rebuilding runtime controls; current caller metadata does not rewrite
-the behavior-affecting snapshot.
+Runner checkpoint resume restores `run_metadata` and typed runtime controls
+from the frozen run definition; current caller metadata or
+`RunConfig.microcompaction_policy` does not rewrite the snapshot.
 
 ## Output Validation Mapping
 

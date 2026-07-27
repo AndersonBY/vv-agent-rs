@@ -7,23 +7,23 @@
 
 ## 安装
 
-当前 crate 版本为 `0.9.0`。仓库 `HEAD` 采用语言无关的 Contract `4.1.0`；当前跨仓采用
+当前 crate 版本为 `0.10.0`。仓库 `HEAD` 采用语言无关的 Contract `6.0.1`；当前跨仓采用
 状态和已验证 revision 以中央 support matrix 为准。
 
 ```bash
-cargo add vv-agent@0.9.0
+cargo add vv-agent@0.10.0
 ```
 
 需要 Apalis adapter 时使用：
 
 ```bash
-cargo add vv-agent@0.9.0 --features apalis
+cargo add vv-agent@0.10.0 --features apalis
 ```
 
-Contract 4 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
+Contract 6 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
 公共 API 与传输数据结构。需要旧协议的应用应固定旧 crate 版本。
 
-### 0.9.0 重点能力
+### 0.10.0 重点能力
 
 - 每次真正进入模型调用边界的尝试都会写入
   `result.token_usage().model_calls`，包括 Agent 主循环、Session Memory、完整上下文
@@ -40,9 +40,14 @@ Contract 4 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取�
 - 被截断的命令和文件结果通过稀疏 artifact 或 cursor 字段恢复。本地 artifact 位于 shell
   工作目录之外的私有存储，完整终端输出以流式方式写入。模型可见的 `compress_memory`
   工具和 deferred exposure 已删除，自动内存压缩仍由框架内部执行。
-- 持久化执行统一使用 `vv-agent.checkpoint.v4`、
-  `vv-agent.run-definition.v3`、`vv-agent.distributed-run.v3` 和
-  `vv-agent.distributed-worker-response.v2`，严格限定恢复与分布式 controller 边界。
+- `MicrocompactionPolicy` 可以配置触发比例、目标比例、受保护的最近 cycle 数和最小结果
+  长度。内建工具与自定义工具的旧结果默认都可归档；只有完整内容已经写入不可变 artifact，
+  且模型仍能调用 `read_file` 时才会替换。精简标记只暴露短预览和逻辑恢复路径。
+- 持久化执行统一使用 `vv-agent.checkpoint.v5`、
+  `vv-agent.run-definition.v5`、`vv-agent.distributed-run.v5` 和
+  `vv-agent.distributed-worker-response.v3`，严格限定恢复与分布式 controller 边界。
+  `RunEvent` 使用 wire version `v2`，SQLite session store 使用
+  `PRAGMA user_version=2`。
 
 详细规则见[输出校验](docs/output-validation.md)和
 [Checkpoint 与恢复](docs/checkpoint-resume.md)。
@@ -240,7 +245,7 @@ while let Some(event) = events.next().await {
 let result = handle.result().await?;
 ```
 
-每个 `RunEvent` 都是 v1 envelope，包含 `event_id`、`run_id`、`trace_id`、
+每个 `RunEvent` 都是 v2 envelope，包含 `event_id`、`run_id`、`trace_id`、
 可选 session/parent 标识、时间、metadata 和 typed `RunEventPayload`。
 `JsonlRunEventStore` 可以 append 事件并 replay 一个 run，也可以通过 parent run id
 带出子事件。

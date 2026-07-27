@@ -127,10 +127,10 @@ configured task threshold (`250000` when omitted); a known zero capacity stays
 zero. This calculation is task-neutral and does not inspect answer content or
 task type.
 
-When both warning and microcompact thresholds are crossed, eligible old tool
-results are cleared first. Runtime recalculates usage from the changed messages
-and appends the optional warning only if that post-microcompact usage remains
-eligible.
+When both warning and microcompact thresholds are crossed, eligible old
+`result_retention=archive` tool results are persisted and replaced with compact
+markers first. Runtime recalculates usage from the changed messages and appends
+the optional warning only if that post-microcompact usage remains eligible.
 
 ## Cache Usage Accounting
 

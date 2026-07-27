@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+use crate::memory::MicrocompactionPolicy;
 use crate::model_settings::ModelSettings;
 use crate::prompt::PromptBundle;
 use crate::tools::common::trim_portable_whitespace;
@@ -200,6 +201,7 @@ pub struct AgentTask {
     pub max_cycles: u32,
     pub memory_compact_threshold: u64,
     pub memory_threshold_percentage: u8,
+    pub microcompaction_policy: MicrocompactionPolicy,
     pub no_tool_policy: NoToolPolicy,
     pub allow_interruption: bool,
     pub use_workspace: bool,
@@ -227,6 +229,7 @@ struct AgentTaskWire {
     memory_compact_threshold: u64,
     #[serde(default = "default_memory_threshold_percentage")]
     memory_threshold_percentage: u8,
+    microcompaction_policy: MicrocompactionPolicy,
     #[serde(default)]
     no_tool_policy: NoToolPolicy,
     #[serde(default = "default_true")]
@@ -263,6 +266,9 @@ impl<'de> Deserialize<'de> for AgentTask {
             return Err(D::Error::custom("AgentTask payload must be an object"));
         }
         let wire = serde_json::from_value::<AgentTaskWire>(value).map_err(D::Error::custom)?;
+        wire.microcompaction_policy
+            .validate()
+            .map_err(D::Error::custom)?;
         Ok(Self {
             task_id: wire.task_id,
             model: wire.model,
@@ -271,6 +277,7 @@ impl<'de> Deserialize<'de> for AgentTask {
             max_cycles: wire.max_cycles,
             memory_compact_threshold: wire.memory_compact_threshold,
             memory_threshold_percentage: wire.memory_threshold_percentage,
+            microcompaction_policy: wire.microcompaction_policy,
             no_tool_policy: wire.no_tool_policy,
             allow_interruption: wire.allow_interruption,
             use_workspace: wire.use_workspace,
@@ -384,6 +391,14 @@ fn validate_agent_task_message(value: &Value, index: usize) -> Result<(), String
             "AgentTask initial_messages[{index}].metadata must be an object"
         ));
     }
+    if object
+        .get("artifact_ref")
+        .is_some_and(|value| !value.is_object())
+    {
+        return Err(format!(
+            "AgentTask initial_messages[{index}].artifact_ref must be an object"
+        ));
+    }
     Ok(())
 }
 
@@ -402,6 +417,7 @@ impl AgentTask {
             max_cycles: 8,
             memory_compact_threshold: default_memory_compact_threshold(),
             memory_threshold_percentage: 90,
+            microcompaction_policy: MicrocompactionPolicy::default(),
             no_tool_policy: NoToolPolicy::Continue,
             allow_interruption: true,
             use_workspace: true,

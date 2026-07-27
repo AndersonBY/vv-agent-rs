@@ -1,9 +1,6 @@
-use std::path::PathBuf;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolResultArtifactConfig {
-    pub workspace: Option<PathBuf>,
-    pub artifact_dir: PathBuf,
+    pub artifact_namespace: String,
     pub compact_threshold: usize,
     pub keep_last: usize,
     pub excerpt_head: usize,
@@ -13,8 +10,7 @@ pub struct ToolResultArtifactConfig {
 impl Default for ToolResultArtifactConfig {
     fn default() -> Self {
         Self {
-            workspace: None,
-            artifact_dir: PathBuf::from(".memory/tool_results"),
+            artifact_namespace: "memory".to_string(),
             compact_threshold: 2_000,
             keep_last: 3,
             excerpt_head: 200,

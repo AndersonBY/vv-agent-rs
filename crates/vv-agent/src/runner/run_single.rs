@@ -1,5 +1,7 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
+use crate::memory::MicrocompactionPolicy;
+
 use super::support::output_type_validation_error;
 use super::*;
 
@@ -62,6 +64,16 @@ impl Runner {
             .or_else(|| self.default_run_config.session.clone());
         let (preloaded_checkpoint, checkpoint_resume) =
             prepare_checkpoint_resume(agent, session.as_ref(), checkpoint_config.as_ref())?;
+        let microcompaction_policy = if checkpoint_resume {
+            MicrocompactionPolicy::default()
+        } else {
+            let policy = config
+                .microcompaction_policy
+                .or(self.default_run_config.microcompaction_policy)
+                .unwrap_or_default();
+            policy.validate().map_err(|error| error.to_string())?;
+            policy
+        };
         let tool_policy = merged_tool_policy(
             agent.tool_policy(),
             &self.default_run_config.tool_policy,
@@ -327,6 +339,7 @@ impl Runner {
                 input_text.clone(),
             );
             task.max_cycles = max_cycles;
+            task.microcompaction_policy = microcompaction_policy;
             task.no_tool_policy = no_tool_policy;
             task.sub_agents = agent.sub_agents().clone();
             task.metadata = agent.metadata().clone();
@@ -587,6 +600,7 @@ impl Runner {
         background_parent_run_config.max_context_chars = config
             .max_context_chars
             .or(self.default_run_config.max_context_chars);
+        background_parent_run_config.microcompaction_policy = Some(task.microcompaction_policy);
         background_parent_run_config.memory_providers = memory_providers.clone();
         background_parent_run_config.app_state = app_state.clone();
         background_parent_run_config.initial_shared_state = task.initial_shared_state.clone();

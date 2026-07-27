@@ -1,22 +1,19 @@
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
-use vv_agent::memory::{token_utils::count_messages_tokens, CLEARED_MARKER};
+use vv_agent::memory::{token_utils::count_messages_tokens, TOOL_RESULT_COMPACT_MARKER};
 use vv_agent::types::AgentTask;
 use vv_agent::{
     Agent, AgentRuntime, AgentStatus, ExecutionContext, LLMResponse, LlmClient, LlmError,
     LlmRequest, MemoryCompactMode, MemoryCompactTrigger, MemoryError, MemoryFuture, MemoryManager,
     MemoryManagerConfig, MemoryProvider, MemoryProviderResult, MemorySaveRequest, MemorySaveResult,
-    MemorySearchRequest, MemorySearchResult, Message, ModelError, ModelProvider, ModelRef,
-    ModelSettings, NoToolPolicy, ReservedOutputSource, ResolvedModelConfig, RunConfig, RunEvent,
-    RunEventPayload, Runner, RuntimeRunControls, SessionMemory, SessionMemoryConfig,
-    SessionMemoryEntry, ToolCall,
+    MemorySearchRequest, MemorySearchResult, MemoryWorkspaceBackend, Message,
+    MicrocompactionPolicy, ModelError, ModelProvider, ModelRef, ModelSettings, NoToolPolicy,
+    ReservedOutputSource, ResolvedModelConfig, RunConfig, RunEvent, RunEventPayload, Runner,
+    RuntimeRunControls, SessionMemory, SessionMemoryConfig, SessionMemoryEntry, ToolCall,
 };
 
-#[path = "memory_lifecycle_contract/artifact_fallbacks.rs"]
-mod artifact_fallbacks;
 #[path = "memory_lifecycle_contract/capacity.rs"]
 mod capacity;
 
@@ -768,7 +765,7 @@ fn ptl_forced_and_emergency_attempts_notify_providers() {
     )));
     assert!(started.iter().all(|event| {
         let payload = serde_json::to_value(event).expect("started event wire");
-        contract["compaction_events"]["started"]["new_producer_fields"]
+        contract["compaction_events"]["started"]["producer_fields"]
             .as_array()
             .unwrap()
             .iter()

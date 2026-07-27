@@ -2,7 +2,7 @@ use std::path::Path;
 
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
-use vv_agent::{MemorySession, Session, SessionItem, SqliteSessionStore};
+use vv_agent::{MemorySession, Message, Session, SessionItem, SqliteSessionStore, ToolArtifactRef};
 
 const CODEC_FIXTURE: &str = include_str!("fixtures/parity/session_codec.json");
 const CANONICAL_SQL_FIXTURE: &str = include_str!("fixtures/parity/session_sqlite_canonical.sql");
@@ -102,6 +102,36 @@ async fn memory_session_returns_isolated_snapshots() {
 }
 
 #[tokio::test]
+async fn session_round_trips_message_artifact_ref() {
+    let session = MemorySession::new("artifact-session");
+    let artifact_ref = ToolArtifactRef {
+        path: ".vv-agent/artifacts/session/call.txt".to_string(),
+        media_type: "text/plain".to_string(),
+        encoding: "utf-8".to_string(),
+        size_bytes: 17,
+        sha256: "a".repeat(64),
+    };
+    let mut message = Message::tool("bounded preview", "call");
+    message.artifact_ref = Some(artifact_ref.clone());
+    session
+        .add_items(vec![
+            SessionItem::from_message(&message).expect("session message")
+        ])
+        .await
+        .expect("persist session message");
+
+    let restored = session
+        .get_items(None)
+        .await
+        .expect("session items")
+        .pop()
+        .expect("stored message")
+        .to_message();
+
+    assert_eq!(restored.artifact_ref, Some(artifact_ref));
+}
+
+#[tokio::test]
 async fn sqlite_opens_canonical_schema_written_by_either_runtime() {
     let directory = tempfile::tempdir().expect("temp directory");
     let path = directory.path().join("canonical.sqlite3");
@@ -131,7 +161,7 @@ async fn sqlite_opens_canonical_schema_written_by_either_runtime() {
     drop(store);
 
     let (version, columns, rows) = schema_state(&path);
-    assert_eq!(version, 1);
+    assert_eq!(version, 2);
     assert_eq!(columns, ["session_id", "item_index", "payload"]);
     assert_eq!(rows.last().expect("last canonical row").0, 10);
     assert_eq!(
@@ -207,7 +237,7 @@ fn sqlite_rejects_newer_schema_without_mutating_it() {
     seed_database(&path, CANONICAL_SQL_FIXTURE);
     let connection = Connection::open(&path).expect("open newer database");
     connection
-        .execute_batch("PRAGMA user_version = 2;")
+        .execute_batch("PRAGMA user_version = 3;")
         .expect("set newer version");
     drop(connection);
 
@@ -218,7 +248,7 @@ fn sqlite_rejects_newer_schema_without_mutating_it() {
     assert!(error.contains("does not match required version"), "{error}");
 
     let (version, columns, rows) = schema_state(&path);
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
     assert_eq!(columns, ["session_id", "item_index", "payload"]);
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), 4);
 }

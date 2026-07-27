@@ -10,7 +10,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Number, Value};
+use serde_json::{Number, Value};
 use sha2::{Digest, Sha256};
 
 use crate::runtime::backends::CapabilityRef;
@@ -29,8 +29,8 @@ pub const MAX_CHECKPOINT_KEY_BYTES: usize = 512;
 pub const MAX_EXTENSION_NAMESPACE_BYTES: usize = 128;
 pub const MAX_EXTENSION_ENTRY_BYTES: usize = 65_536;
 pub const DEFAULT_MAX_EXTENSION_STATE_BYTES: u64 = 262_144;
-pub const CHECKPOINT_SCHEMA: &str = "vv-agent.checkpoint.v4";
-pub const RUN_DEFINITION_SCHEMA: &str = "vv-agent.run-definition.v3";
+pub const CHECKPOINT_SCHEMA: &str = "vv-agent.checkpoint.v5";
+pub const RUN_DEFINITION_SCHEMA: &str = "vv-agent.run-definition.v5";
 pub const OPERATION_REQUEST_SCHEMA: &str = "vv-agent.operation-request.v1";
 pub const EVENT_CURSOR_SCHEMA: &str = "vv-agent.event-cursor.v1";
 pub const CREDENTIAL_REDACTED: &str = "<credential-redacted>";
@@ -355,7 +355,7 @@ pub trait CheckpointExtension: Send + Sync {
     fn restore(&self, state: &Value) -> CheckpointResult<()>;
 }
 
-/// Runtime configuration for enabling checkpoint v2.
+/// Runtime configuration for enabling checkpointed runs.
 #[derive(Clone)]
 pub struct CheckpointConfig {
     pub store: Option<Arc<dyn CheckpointStore>>,

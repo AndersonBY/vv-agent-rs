@@ -10,7 +10,7 @@ use crate::checkpoint::{CheckpointConfig, CheckpointExtension, ReconciliationPro
 use crate::context_providers::ContextProvider;
 use crate::event_store::RunEventStore;
 use crate::execution_mode::ExecutionMode;
-use crate::memory::MemoryProvider;
+use crate::memory::{MemoryProvider, MicrocompactionPolicy};
 use crate::model::{ModelProvider, ModelRef};
 use crate::model_settings::ModelSettings;
 use crate::runtime::backends::RuntimeExecutionBackend;
@@ -49,6 +49,7 @@ pub struct RunConfig {
     pub initial_messages: Option<Vec<Message>>,
     pub max_cycles: Option<u32>,
     pub max_handoffs: Option<u32>,
+    pub microcompaction_policy: Option<MicrocompactionPolicy>,
     pub no_tool_policy: Option<NoToolPolicy>,
     pub tool_policy: ToolPolicy,
     pub execution_backend: Option<RuntimeExecutionBackend>,
@@ -175,6 +176,11 @@ impl RunConfigBuilder {
 
     pub fn max_handoffs(mut self, max_handoffs: u32) -> Self {
         self.config.max_handoffs = Some(max_handoffs);
+        self
+    }
+
+    pub fn microcompaction_policy(mut self, policy: MicrocompactionPolicy) -> Self {
+        self.config.microcompaction_policy = Some(policy);
         self
     }
 

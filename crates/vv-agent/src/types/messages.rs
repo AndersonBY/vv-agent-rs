@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 
-use super::{Metadata, TokenUsage, ToolCall};
+use super::{Metadata, TokenUsage, ToolArtifactRef, ToolCall};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -11,7 +11,7 @@ pub enum MessageRole {
     Tool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Message {
     pub role: MessageRole,
     pub content: String,
@@ -21,6 +21,7 @@ pub struct Message {
     pub reasoning_content: Option<String>,
     pub image_url: Option<String>,
     pub metadata: Metadata,
+    pub artifact_ref: Option<ToolArtifactRef>,
 }
 
 impl Message {
@@ -34,6 +35,7 @@ impl Message {
             reasoning_content: None,
             image_url: None,
             metadata: Metadata::new(),
+            artifact_ref: None,
         }
     }
 
@@ -53,6 +55,25 @@ impl Message {
         let mut message = Self::new(MessageRole::Tool, content);
         message.tool_call_id = Some(tool_call_id.into());
         message
+    }
+}
+
+impl Serialize for Message {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.to_dict().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Message {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Self::from_dict(&value).map_err(D::Error::custom)
     }
 }
 

@@ -272,12 +272,14 @@ fn simultaneous_warning_microcompact_messages(recent_tool_chars: usize) -> Vec<M
             tool_calls: vec![ToolCall::new("call_old", "read_file", BTreeMap::new())],
             ..Message::assistant("old tool call")
         },
-        Message::tool("x".repeat(800), "call_old"),
+        Message::tool("你".repeat(800), "call_old"),
+        Message::assistant("cycle two"),
+        Message::user("continue"),
         Message {
             tool_calls: vec![ToolCall::new("call_recent", "read_file", BTreeMap::new())],
             ..Message::assistant("recent tool call")
         },
-        Message::tool("y".repeat(recent_tool_chars), "call_recent"),
+        Message::tool("好".repeat(recent_tool_chars), "call_recent"),
     ]
 }
 
@@ -294,6 +296,7 @@ fn warning_is_evaluated_from_post_microcompact_usage_on_both_threshold_paths() {
     );
 
     for initial_usage in [3_800, 4_200] {
+        let expected_warning = initial_usage == 4_200;
         let mut manager = MemoryManager::new(MemoryManagerConfig {
             compact_threshold: 4_000,
             model_context_window: 4_000,
@@ -302,10 +305,11 @@ fn warning_is_evaluated_from_post_microcompact_usage_on_both_threshold_paths() {
             warning_threshold_percentage: 90,
             include_memory_warning: true,
             language: "en-US".to_string(),
-            microcompact_keep_recent_cycles: 1,
-            microcompact_min_result_length: 500,
+            microcompaction_policy: MicrocompactionPolicy::new(0.75, 0.60, 1, 500).expect("policy"),
             ..MemoryManagerConfig::default()
-        });
+        })
+        .with_workspace_backend(Arc::new(MemoryWorkspaceBackend::default()))
+        .with_recovery_tool_available(true);
 
         let (compacted, changed) = manager.compact_for_cycle_with_usage(
             &simultaneous_warning_microcompact_messages(800),
@@ -319,14 +323,15 @@ fn warning_is_evaluated_from_post_microcompact_usage_on_both_threshold_paths() {
         assert!(
             compacted
                 .iter()
-                .any(|message| message.content == CLEARED_MARKER),
+                .any(|message| message.content.starts_with(TOOL_RESULT_COMPACT_MARKER)),
             "initial usage {initial_usage}"
         );
-        assert!(
-            compacted.iter().all(|message| !message
+        assert_eq!(
+            compacted.iter().any(|message| message
                 .content
                 .contains("current memory usage has exceeded")),
-            "warning used the stale pre-microcompact length for {initial_usage}"
+            expected_warning,
+            "warning did not use post-microcompact length for {initial_usage}"
         );
         assert!(
             compacted
@@ -340,23 +345,20 @@ fn warning_is_evaluated_from_post_microcompact_usage_on_both_threshold_paths() {
 #[test]
 fn warning_is_retained_when_post_microcompact_usage_remains_eligible() {
     let messages = simultaneous_warning_microcompact_messages(8_000);
+    let full_threshold = count_messages_tokens(&messages, "") + 1;
     let mut manager = MemoryManager::new(MemoryManagerConfig {
+        compact_threshold: full_threshold,
+        model_context_window: full_threshold,
         reserved_output_tokens: 0,
         autocompact_buffer_tokens: 0,
         warning_threshold_percentage: 90,
         include_memory_warning: true,
         language: "en-US".to_string(),
-        microcompact_keep_recent_cycles: 1,
-        microcompact_min_result_length: 500,
+        microcompaction_policy: MicrocompactionPolicy::new(0.75, 0.60, 1, 500).expect("policy"),
         ..MemoryManagerConfig::default()
-    });
-    let (post_microcompact, cleared) = manager.microcompact_messages(&messages, 4);
-    assert_eq!(cleared, 1);
-    let post_tokens = count_messages_tokens(&post_microcompact, &manager.config.model);
-    assert!(post_tokens > 900);
-    let full_threshold = post_tokens + 100;
-    manager.config.compact_threshold = full_threshold;
-    manager.config.model_context_window = full_threshold;
+    })
+    .with_workspace_backend(Arc::new(MemoryWorkspaceBackend::default()))
+    .with_recovery_tool_available(true);
 
     let (compacted, changed) =
         manager.compact_for_cycle_with_usage(&messages, 4, false, Some(full_threshold), None);
@@ -364,8 +366,14 @@ fn warning_is_retained_when_post_microcompact_usage_remains_eligible() {
     assert!(changed);
     assert!(compacted
         .iter()
-        .any(|message| message.content == CLEARED_MARKER));
-    assert!(compacted.iter().any(|message| message
-        .content
-        .contains("current memory usage has exceeded")));
+        .any(|message| message.content.starts_with(TOOL_RESULT_COMPACT_MARKER)));
+    assert!(
+        compacted.iter().any(|message| message
+            .content
+            .contains("current memory usage has exceeded")),
+        "post_tokens={}, warning_threshold={}, full_threshold={}, compacted={compacted:#?}",
+        count_messages_tokens(&compacted, ""),
+        (full_threshold * 90) / 100,
+        full_threshold,
+    );
 }

@@ -24,6 +24,11 @@ impl AgentTask {
                 Value::from(self.memory_threshold_percentage),
             ),
             (
+                "microcompaction_policy".to_string(),
+                serde_json::to_value(self.microcompaction_policy)
+                    .expect("MicrocompactionPolicy is serializable"),
+            ),
+            (
                 "no_tool_policy".to_string(),
                 Value::String(no_tool_policy_value(self.no_tool_policy).to_string()),
             ),

@@ -6,6 +6,7 @@ mod defaults;
 
 use super::base::{ToolContext, ToolHandler, ToolNotFoundError, ToolSpec};
 use super::{ToolExecutor, ToolSpecExecutor};
+use crate::tools::ToolResultRetention;
 use crate::types::{AgentTask, ToolCall, ToolExecutionResult};
 
 pub use defaults::build_default_registry;
@@ -99,6 +100,21 @@ impl ToolRegistry {
 
     pub fn has_schema(&self, name: &str) -> bool {
         self.schemas.contains_key(name)
+    }
+
+    pub(crate) fn result_retentions(&self) -> BTreeMap<String, ToolResultRetention> {
+        self.tools
+            .iter()
+            .map(|(name, spec)| {
+                (
+                    name.clone(),
+                    spec.tool_metadata
+                        .as_ref()
+                        .map(|metadata| metadata.result_retention)
+                        .unwrap_or_default(),
+                )
+            })
+            .collect()
     }
 
     pub fn list_planner_extra_tool_names(&self) -> Vec<String> {

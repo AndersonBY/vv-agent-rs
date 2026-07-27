@@ -2,7 +2,7 @@ mod artifacts;
 pub mod errors;
 pub mod manager;
 pub mod message_sanitizer;
-pub mod microcompact;
+mod microcompact;
 pub mod post_compact_restore;
 pub mod provider;
 mod runtime_callbacks;
@@ -18,10 +18,7 @@ pub use message_sanitizer::{
     filter_empty_assistant_messages, filter_orphan_tool_results, filter_thinking_only_messages,
     filter_unresolved_tool_uses, sanitize_for_resume,
 };
-pub use microcompact::{
-    is_microcompacted_tool_content, microcompact, MicrocompactConfig, CLEARED_MARKER,
-    COMPACTABLE_TOOLS,
-};
+pub use microcompact::{MicrocompactionPolicy, MicrocompactionPolicyError};
 pub use post_compact_restore::{restore_key_files, PostCompactRestoreConfig};
 pub use provider::{
     MemoryError, MemoryFuture, MemoryProvider, MemoryProviderResult, MemorySaveRequest,

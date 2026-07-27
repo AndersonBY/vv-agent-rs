@@ -59,7 +59,7 @@ fn manager_wait_outcome_stays_non_error_and_preserves_completion_observation() {
     assert_eq!(entry["partial_output"], "proposed change");
 
     let sub_run: RunEvent = serde_json::from_value(json!({
-        "version": "v1",
+        "version": "v2",
         "type": "sub_run_completed",
         "event_id": "evt_wait_child",
         "run_id": "run_wait_child",

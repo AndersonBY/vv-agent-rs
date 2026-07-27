@@ -249,6 +249,7 @@ fn public_export_path(id: &str) -> &'static str {
             vv_agent::ToolExecutionResult,
             "vv_agent::ToolExecutionResult"
         ),
+        "tools.message" => export_type!(vv_agent::Message, "vv_agent::Message"),
         "tools.artifact_ref" => {
             export_type!(vv_agent::ToolArtifactRef, "vv_agent::ToolArtifactRef")
         }
@@ -268,6 +269,10 @@ fn public_export_path(id: &str) -> &'static str {
         "tools.side_effect" => {
             export_type!(vv_agent::ToolSideEffect, "vv_agent::ToolSideEffect")
         }
+        "tools.result_retention" => export_type!(
+            vv_agent::ToolResultRetention,
+            "vv_agent::ToolResultRetention"
+        ),
         "workspace.backend" => {
             export_type!(dyn vv_agent::WorkspaceBackend, "vv_agent::WorkspaceBackend")
         }
@@ -291,6 +296,10 @@ fn public_export_path(id: &str) -> &'static str {
             export_type!(vv_agent::PortableRegexError, "vv_agent::PortableRegexError")
         }
         "memory.manager" => export_type!(vv_agent::MemoryManager, "vv_agent::MemoryManager"),
+        "memory.microcompaction_policy" => export_type!(
+            vv_agent::MicrocompactionPolicy,
+            "vv_agent::MicrocompactionPolicy"
+        ),
         "memory.provider" => {
             export_type!(dyn vv_agent::MemoryProvider, "vv_agent::MemoryProvider")
         }

@@ -37,7 +37,7 @@ fn run_event_serializes_with_the_cross_language_flat_wire_shape() {
 
     let payload = serde_json::to_value(&event).expect("serialize event");
 
-    assert_eq!(payload["version"], json!("v1"));
+    assert_eq!(payload["version"], json!("v2"));
     assert_eq!(payload["type"], json!("run_started"));
     assert_eq!(payload["input"], json!("hello"));
     assert!(payload.get("payload").is_none());

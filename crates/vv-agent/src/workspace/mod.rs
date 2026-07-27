@@ -12,7 +12,8 @@ use std::time::SystemTime;
 
 pub(crate) use artifacts::{
     artifact_write_error_code, bounded_captured_text_preview, bounded_text_preview,
-    persist_captured_text_artifact, read_captured_text_prefix, BoundedTextPreview,
+    persist_captured_text_artifact, persist_text_artifact, read_captured_text_prefix,
+    read_validated_text_artifact, BoundedTextPreview,
 };
 pub use base::{FileInfo, WorkspaceBackend};
 pub use discovery_filter::{

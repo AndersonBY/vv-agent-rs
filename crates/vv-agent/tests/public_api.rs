@@ -460,10 +460,12 @@ fn constants_module_exports_agent_tool_names_and_workspace_tool_list() {
 }
 
 #[test]
-fn memory_module_exports_compactable_tools() {
-    assert!(vv_agent::memory::COMPACTABLE_TOOLS.contains(&"read_file"));
-    assert!(vv_agent::memory::COMPACTABLE_TOOLS.contains(&"find_files"));
-    assert!(vv_agent::memory::COMPACTABLE_TOOLS.contains(&"search_files"));
+fn memory_module_exports_typed_microcompaction_policy() {
+    let policy = vv_agent::memory::MicrocompactionPolicy::default();
+    assert_eq!(policy.trigger_ratio, 0.75);
+    assert_eq!(policy.target_ratio, 0.60);
+    assert_eq!(policy.keep_recent_cycles, 3);
+    assert_eq!(policy.min_result_chars, 500);
 }
 
 #[test]
@@ -471,9 +473,7 @@ fn memory_submodules_match_agent_import_paths() {
     let _error =
         vv_agent::memory::errors::CompactionExhaustedError::new(2, Some("last".to_string()));
     let _manager_config = vv_agent::memory::manager::MemoryManagerConfig::default();
-    let _microcompact_config = vv_agent::memory::microcompact::MicrocompactConfig::default();
-    assert!(vv_agent::memory::microcompact::COMPACTABLE_TOOLS.contains(&"find_files"));
-    assert!(vv_agent::memory::microcompact::COMPACTABLE_TOOLS.contains(&"search_files"));
+    let _microcompaction_policy = vv_agent::memory::MicrocompactionPolicy::default();
     let _restore_config =
         vv_agent::memory::post_compact_restore::PostCompactRestoreConfig::default();
     let _session_config = vv_agent::memory::session_memory::SessionMemoryConfig::default();

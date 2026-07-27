@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use vv_agent::{
-    memory::{token_utils::compute_compaction_threshold, CLEARED_MARKER},
-    MemoryManager, MemoryManagerConfig, Message, SessionMemory, SessionMemoryConfig,
-    SessionMemoryEntry, ToolCall,
+    memory::{token_utils::compute_compaction_threshold, TOOL_RESULT_COMPACT_MARKER},
+    LocalWorkspaceBackend, MemoryManager, MemoryManagerConfig, Message, MicrocompactionPolicy,
+    SessionMemory, SessionMemoryConfig, SessionMemoryEntry, ToolCall, WorkspaceBackend,
 };
 
 #[path = "memory_tools/compaction.rs"]

@@ -19,7 +19,7 @@ use super::contract_helpers::{
     validate_json_pointer, validate_sorted_unique,
 };
 
-pub const DISTRIBUTED_RUN_SCHEMA_VERSION: &str = "vv-agent.distributed-run.v3";
+pub const DISTRIBUTED_RUN_SCHEMA_VERSION: &str = "vv-agent.distributed-run.v5";
 pub const DEFAULT_TOOLSET_ID: &str = "vv-agent.builtin-tools";
 pub const DEFAULT_TOOLSET_VERSION: &str = "2";
 pub const DEFAULT_TOOLSET_SCHEMA_DIGEST: &str =

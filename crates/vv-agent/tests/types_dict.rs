@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use vv_agent::types::AgentTask;
 use vv_agent::{
     AgentResult, AgentStatus, CycleRecord, LLMResponse, Message, ModelCallOperation,
     ModelCallRecord, ModelCallStatus, NoToolPolicy, PromptBundle, SubTaskOutcome, SubTaskRequest,
-    TokenUsage, ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus,
+    TokenUsage, ToolArtifactRef, ToolCall, ToolDirective, ToolExecutionResult, ToolResultStatus,
 };
 
 fn sparse_agent_task_payload() -> Value {
@@ -13,7 +14,8 @@ fn sparse_agent_task_payload() -> Value {
         "task_id": "task-1",
         "model": "model-1",
         "prompt_bundle": PromptBundle::from_instruction_text("system").expect("prompt bundle"),
-        "user_prompt": "user"
+        "user_prompt": "user",
+        "microcompaction_policy": vv_agent::MicrocompactionPolicy::default()
     })
 }
 
@@ -253,6 +255,14 @@ fn agent_task_wire_requires_all_core_string_fields() {
     wrong_bundle["prompt_bundle"] = json!("system");
     assert!(AgentTask::from_dict(&wrong_bundle).is_err());
     assert!(serde_json::from_value::<AgentTask>(wrong_bundle).is_err());
+
+    let mut missing_policy = sparse_agent_task_payload();
+    missing_policy
+        .as_object_mut()
+        .expect("AgentTask object")
+        .remove("microcompaction_policy");
+    assert!(AgentTask::from_dict(&missing_policy).is_err());
+    assert!(serde_json::from_value::<AgentTask>(missing_policy).is_err());
 }
 
 #[test]
@@ -328,6 +338,8 @@ fn agent_task_wire_accepts_unsigned_boundaries() {
     payload["max_cycles"] = json!(u32::MAX);
     payload["memory_compact_threshold"] = json!(u64::MAX);
     payload["memory_threshold_percentage"] = json!(u8::MAX);
+    payload["microcompaction_policy"]["keep_recent_cycles"] = json!(u32::MAX);
+    payload["microcompaction_policy"]["min_result_chars"] = json!(u32::MAX);
 
     let from_dict = AgentTask::from_dict(&payload).expect("AgentTask dict boundaries");
     let from_serde: AgentTask =
@@ -337,6 +349,33 @@ fn agent_task_wire_accepts_unsigned_boundaries() {
         assert_eq!(task.max_cycles, u32::MAX);
         assert_eq!(task.memory_compact_threshold, u64::MAX);
         assert_eq!(task.memory_threshold_percentage, u8::MAX);
+        assert_eq!(task.microcompaction_policy.keep_recent_cycles, u32::MAX);
+        assert_eq!(task.microcompaction_policy.min_result_chars, u32::MAX);
+    }
+}
+
+#[test]
+fn agent_task_policy_integer_wire_rejects_non_u32_values() {
+    for (field, value) in [
+        ("keep_recent_cycles", json!(-1)),
+        ("keep_recent_cycles", json!(u64::from(u32::MAX) + 1)),
+        ("keep_recent_cycles", json!(true)),
+        ("keep_recent_cycles", json!(1.5)),
+        ("min_result_chars", json!(0)),
+        ("min_result_chars", json!(u64::from(u32::MAX) + 1)),
+        ("min_result_chars", json!(true)),
+        ("min_result_chars", json!(1.5)),
+    ] {
+        let mut payload = sparse_agent_task_payload();
+        payload["microcompaction_policy"][field] = value;
+        assert!(
+            AgentTask::from_dict(&payload).is_err(),
+            "from_dict accepted invalid policy {field}"
+        );
+        assert!(
+            serde_json::from_value::<AgentTask>(payload).is_err(),
+            "serde accepted invalid policy {field}"
+        );
     }
 }
 
@@ -417,6 +456,33 @@ fn message_to_openai_message_matches_multimodal_and_tool_shapes() {
 }
 
 #[test]
+fn message_artifact_ref_round_trips_but_is_not_model_projected() {
+    let complete = "complete archived output";
+    let artifact_ref = ToolArtifactRef {
+        path: ".vv-agent/artifacts/task/call.txt".to_string(),
+        media_type: "text/plain".to_string(),
+        encoding: "utf-8".to_string(),
+        size_bytes: complete.len() as u64,
+        sha256: format!("{:x}", Sha256::digest(complete.as_bytes())),
+    };
+    let mut message = Message::tool("bounded preview", "call");
+    message.artifact_ref = Some(artifact_ref.clone());
+
+    let dict = message.to_dict();
+    let dict_restored = Message::from_dict(&dict).expect("dict message");
+    let serde_wire = serde_json::to_value(&message).expect("serialize message");
+    let serde_restored: Message = serde_json::from_value(serde_wire).expect("deserialize message");
+
+    assert_eq!(dict["artifact_ref"]["path"], artifact_ref.path);
+    assert_eq!(dict_restored.artifact_ref, Some(artifact_ref.clone()));
+    assert_eq!(serde_restored.artifact_ref, Some(artifact_ref));
+    assert!(message
+        .to_openai_message(true)
+        .get("artifact_ref")
+        .is_none());
+}
+
+#[test]
 fn message_to_openai_message_omits_empty_reasoning() {
     let mut assistant = Message::assistant("answer");
     assistant.reasoning_content = Some(String::new());
@@ -441,6 +507,25 @@ fn message_to_openai_message_omits_empty_optional_fields() {
     assert!(payload.get("name").is_none());
     assert!(payload.get("tool_call_id").is_none());
     assert_eq!(payload["content"], json!("inspect"));
+}
+
+#[test]
+fn message_from_dict_accepts_null_optional_strings() {
+    let payload = json!({
+        "role": "assistant",
+        "content": "",
+        "name": null,
+        "tool_call_id": null,
+        "reasoning_content": null,
+        "image_url": null,
+    });
+
+    let message = Message::from_dict(&payload).expect("nullable optional strings");
+
+    assert_eq!(message.name, None);
+    assert_eq!(message.tool_call_id, None);
+    assert_eq!(message.reasoning_content, None);
+    assert_eq!(message.image_url, None);
 }
 
 #[test]

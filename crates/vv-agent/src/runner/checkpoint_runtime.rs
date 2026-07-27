@@ -7,13 +7,13 @@ pub(super) fn prepare_checkpoint_resume(
 ) -> Result<(Option<Checkpoint>, bool), String> {
     if config.is_some() && !agent.handoffs().is_empty() {
         return Err(
-            "checkpoint_handoff_unsupported: checkpoint v2 does not yet support handoff state"
+            "checkpoint_handoff_unsupported: checkpointed runs do not support handoff state"
                 .to_string(),
         );
     }
     if config.is_some() && session.is_some_and(|session| !session.supports_add_items_once()) {
         return Err(
-            "checkpoint_session_idempotency_unsupported: checkpoint v2 requires an append-once session"
+            "checkpoint_session_idempotency_unsupported: checkpointed runs require an append-once session"
                 .to_string(),
         );
     }

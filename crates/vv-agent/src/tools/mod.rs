@@ -31,7 +31,7 @@ pub use executor::{
     ToolRunContext, ToolSpecContext, ToolSpecExecutor,
 };
 pub use function::{FunctionTool, ToolErrorMapper};
-pub use metadata::{ToolMetadata, ToolMetadataError, ToolSideEffect};
+pub use metadata::{ToolMetadata, ToolMetadataError, ToolResultRetention, ToolSideEffect};
 pub use orchestrator::{
     BeforeToolDispatch, ToolLifecycleCallback, ToolLifecycleEvent, ToolOrchestrator, ToolRunOptions,
 };

@@ -74,6 +74,32 @@ fn workspace_backends_stream_exclusive_artifacts_and_hide_them_from_discovery() 
 }
 
 #[test]
+fn local_streaming_artifact_failure_does_not_publish_partial_final_path() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let local = LocalWorkspaceBackend::new(workspace.path());
+    let path = ".vv-agent/artifacts/task-7/call-failed.txt";
+    let mut chunks = vec![
+        Ok("partial content".to_string()),
+        Err(std::io::Error::other("injected chunk failure")),
+    ]
+    .into_iter();
+
+    let error = local
+        .write_text_chunks_exclusive(path, &mut chunks)
+        .expect_err("stream failure");
+
+    assert_eq!(error.kind(), ErrorKind::Other);
+    assert!(!local.exists(path));
+    assert_eq!(
+        local
+            .read_text(path)
+            .expect_err("final path is absent")
+            .kind(),
+        ErrorKind::NotFound
+    );
+}
+
+#[test]
 fn workspace_backends_enforce_canonical_dot_segment_rules() {
     let workspace = tempfile::tempdir().expect("workspace");
     let local = LocalWorkspaceBackend::new(workspace.path());

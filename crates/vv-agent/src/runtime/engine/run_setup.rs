@@ -84,6 +84,8 @@ where
     let memory_manager = build_memory_manager(
         &task,
         workspace_path.clone(),
+        workspace_backend.clone(),
+        &runtime.tool_registry,
         runtime.settings_file.as_deref(),
         runtime.default_backend.as_deref(),
     )

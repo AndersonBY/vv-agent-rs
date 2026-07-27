@@ -14,7 +14,9 @@ use crate::memory::{
 use crate::runtime::context::ExecutionContext;
 use crate::runtime::hooks::RuntimeHookManager;
 use crate::runtime::model_calls::ModelCallLedger;
+use crate::tools::ToolRegistry;
 use crate::types::{AgentResult, AgentTask, CycleRecord, Message, Metadata};
+use crate::workspace::WorkspaceBackend;
 
 use super::budget::{budget_failure_result, lock_budget, SharedRunBudgetController};
 use super::checkpoint::CheckpointCoordinator;
@@ -33,9 +35,8 @@ pub(super) use callbacks::{
     MemoryInferenceControl,
 };
 use metadata::{
-    metadata_path, read_bool_metadata, read_f64_metadata, read_optional_string_metadata,
-    read_optional_u64_metadata, read_string_metadata, read_string_set_metadata, read_u64_metadata,
-    read_usize_metadata,
+    read_bool_metadata, read_optional_string_metadata, read_optional_u64_metadata,
+    read_string_metadata, read_u64_metadata, read_usize_metadata,
 };
 use session::build_session_memory;
 use token_limits::resolve_runtime_model_token_limits;
@@ -58,12 +59,61 @@ pub(super) struct CycleMemoryCompaction {
     pub recent_tool_call_ids: Option<BTreeSet<String>>,
 }
 
+pub(super) struct MemoryCompactCompletion<'a> {
+    cycle_index: u32,
+    before_messages: &'a [Message],
+    after_messages: &'a [Message],
+    model: &'a str,
+    mode: MemoryCompactMode,
+    archived_count: usize,
+    reclaimed_tokens: u64,
+    artifact_failure_count: usize,
+}
+
+impl<'a> MemoryCompactCompletion<'a> {
+    pub(super) fn new(
+        cycle_index: u32,
+        before_messages: &'a [Message],
+        after_messages: &'a [Message],
+        model: &'a str,
+        mode: MemoryCompactMode,
+    ) -> Self {
+        Self {
+            cycle_index,
+            before_messages,
+            after_messages,
+            model,
+            mode,
+            archived_count: 0,
+            reclaimed_tokens: 0,
+            artifact_failure_count: 0,
+        }
+    }
+
+    pub(super) fn with_archive_stats(
+        mut self,
+        archived_count: usize,
+        reclaimed_tokens: u64,
+        artifact_failure_count: usize,
+    ) -> Self {
+        self.archived_count = archived_count;
+        self.reclaimed_tokens = reclaimed_tokens;
+        self.artifact_failure_count = artifact_failure_count;
+        self
+    }
+}
+
 pub(super) fn build_memory_manager(
     task: &AgentTask,
     workspace_path: PathBuf,
+    workspace_backend: Arc<dyn WorkspaceBackend>,
+    tool_registry: &ToolRegistry,
     settings_file: Option<&Path>,
     default_backend: Option<&str>,
 ) -> Result<MemoryManager, String> {
+    task.microcompaction_policy
+        .validate()
+        .map_err(|error| error.to_string())?;
     let workspace = task.use_workspace.then_some(workspace_path);
     let summary_backend =
         read_optional_string_metadata(&task.metadata, &["memory_summary_backend"])
@@ -91,6 +141,12 @@ pub(super) fn build_memory_manager(
         summary_backend.clone(),
         summary_model.clone(),
     )?;
+    let recovery_tool_available = tool_registry
+        .planned_openai_schemas(task)
+        .iter()
+        .any(|schema| {
+            schema["function"]["name"].as_str() == Some(crate::constants::READ_FILE_TOOL_NAME)
+        });
     Ok(MemoryManager::new(MemoryManagerConfig {
         compact_threshold: task.memory_compact_threshold,
         keep_recent_messages: read_usize_metadata(
@@ -131,35 +187,16 @@ pub(super) fn build_memory_manager(
             "assistant_no_tool_keep_last",
             1,
         ),
-        tool_result_artifact_dir: metadata_path(
-            &task.metadata,
-            "tool_result_artifact_dir",
-            ".memory/tool_results",
-        ),
-        microcompact_trigger_ratio: read_f64_metadata(
-            &task.metadata,
-            "microcompact_trigger_ratio",
-            0.75,
-            0.0,
-            Some(1.0),
-        ),
-        microcompact_keep_recent_cycles: read_usize_metadata(
-            &task.metadata,
-            "microcompact_keep_recent_cycles",
-            3,
-        ),
-        microcompact_min_result_length: read_usize_metadata(
-            &task.metadata,
-            "microcompact_min_result_length",
-            500,
-        ),
-        microcompact_compactable_tools: read_string_set_metadata(
-            &task.metadata,
-            "microcompact_compactable_tools",
-        ),
+        microcompaction_policy: task.microcompaction_policy,
         workspace: workspace.clone(),
         session_memory,
     })
+    .with_workspace_backend(workspace_backend)
+    .with_archive_context(
+        task.task_id.clone(),
+        tool_registry.result_retentions(),
+        recovery_tool_available,
+    )
     .with_capacity_observation(
         capacity.model_max_output_tokens,
         capacity.reserved_output_source,
@@ -192,6 +229,16 @@ where
         cycles,
         model_call_ledger.previous_agent_input_tokens(cycle_index),
     );
+    let effective_usage = memory_manager.effective_length_for_cycle(
+        &pre_compact_messages,
+        previous_prompt_tokens,
+        recent_tool_call_ids.as_ref(),
+    );
+    let microcompaction_plan = memory_manager.plan_cycle_microcompaction(
+        &pre_compact_messages,
+        cycle_index,
+        effective_usage,
+    );
     let memory_compact_event = memory_compact_started_event(
         controls.execution_context.as_ref(),
         memory_manager,
@@ -201,6 +248,8 @@ where
         previous_prompt_tokens,
         recent_tool_call_ids.as_ref(),
         false,
+        microcompaction_plan.candidate_count,
+        microcompaction_plan.estimated_reclaimable_tokens,
     )
     .map(|event| {
         let event = notify_memory_before_compact(
@@ -221,15 +270,23 @@ where
         false,
         previous_prompt_tokens,
         recent_tool_call_ids.as_ref(),
+        Some(microcompaction_plan),
     )?;
     if let Some(started_event) = memory_compact_event.as_ref() {
         let completed = memory_compact_completed_event(
             started_event,
-            cycle_index,
-            &pre_compact_messages,
-            &compaction_outcome.messages,
-            &memory_manager.config.model,
-            compaction_outcome.mode,
+            MemoryCompactCompletion::new(
+                cycle_index,
+                &pre_compact_messages,
+                &compaction_outcome.messages,
+                &memory_manager.config.model,
+                compaction_outcome.mode,
+            )
+            .with_archive_stats(
+                compaction_outcome.archived_count,
+                compaction_outcome.reclaimed_tokens,
+                compaction_outcome.artifact_failure_count,
+            ),
         );
         let completed = notify_memory_after_compact(controls.execution_context.as_ref(), completed);
         runtime.emit_log(
@@ -358,12 +415,17 @@ pub(super) fn memory_compact_started_event(
     previous_prompt_tokens: Option<u64>,
     recent_tool_call_ids: Option<&BTreeSet<String>>,
     force: bool,
+    candidate_count: usize,
+    estimated_reclaimable_tokens: u64,
 ) -> Option<RunEvent> {
     let trigger = if force {
         MemoryCompactTrigger::PromptTooLong
     } else {
         memory_manager.compaction_trigger(messages, previous_prompt_tokens, recent_tool_call_ids)?
     };
+    if trigger == MemoryCompactTrigger::MicroThreshold && candidate_count == 0 {
+        return None;
+    }
     let identity = execution_context.map(|context| &context.metadata);
     let run_id = identity
         .and_then(|metadata| metadata.get("_vv_agent_run_id"))
@@ -398,6 +460,9 @@ pub(super) fn memory_compact_started_event(
         memory_manager.config.compact_threshold,
         memory_manager.autocompact_threshold(),
         memory_manager.microcompact_trigger_threshold(),
+        memory_manager.microcompact_target_threshold(),
+        candidate_count,
+        estimated_reclaimable_tokens,
         memory_manager.config.model_context_window,
         memory_manager.model_max_output_tokens(),
         memory_manager.config.reserved_output_tokens,
@@ -482,11 +547,7 @@ fn memory_providers(execution_context: Option<&ExecutionContext>) -> Vec<&Arc<dy
 
 pub(super) fn memory_compact_completed_event(
     started_event: &RunEvent,
-    cycle_index: u32,
-    before_messages: &[Message],
-    after_messages: &[Message],
-    model: &str,
-    mode: MemoryCompactMode,
+    completion: MemoryCompactCompletion<'_>,
 ) -> RunEvent {
     let event = RunEvent::memory_compact_completed(
         started_event.run_id(),
@@ -494,12 +555,18 @@ pub(super) fn memory_compact_completed_event(
         started_event
             .agent_name()
             .expect("memory compact event has agent identity"),
-        cycle_index,
-        before_messages.len(),
-        after_messages.len(),
-        Some(count_messages_tokens(after_messages, model)),
-        mode,
-        before_messages != after_messages,
+        completion.cycle_index,
+        completion.before_messages.len(),
+        completion.after_messages.len(),
+        Some(count_messages_tokens(
+            completion.after_messages,
+            completion.model,
+        )),
+        completion.mode,
+        completion.before_messages != completion.after_messages,
+        completion.archived_count,
+        completion.reclaimed_tokens,
+        completion.artifact_failure_count,
     );
     match started_event.session_id() {
         Some(session_id) => event.with_session_id(session_id),
@@ -525,6 +592,9 @@ pub(super) fn memory_compact_event_payload(event: &RunEvent) -> BTreeMap<String,
             configured_threshold,
             effective_threshold,
             microcompact_threshold,
+            microcompact_target,
+            candidate_count,
+            estimated_reclaimable_tokens,
             model_context_window,
             model_max_output_tokens,
             reserved_output_tokens,
@@ -545,6 +615,13 @@ pub(super) fn memory_compact_event_payload(event: &RunEvent) -> BTreeMap<String,
                 &mut payload,
                 "microcompact_threshold",
                 microcompact_threshold,
+            );
+            insert_serializable(&mut payload, "microcompact_target", microcompact_target);
+            insert_serializable(&mut payload, "candidate_count", candidate_count);
+            insert_serializable(
+                &mut payload,
+                "estimated_reclaimable_tokens",
+                estimated_reclaimable_tokens,
             );
             insert_serializable(&mut payload, "model_context_window", model_context_window);
             payload.insert(
@@ -575,6 +652,9 @@ pub(super) fn memory_compact_event_payload(event: &RunEvent) -> BTreeMap<String,
             summary_tokens,
             mode,
             changed,
+            archived_count,
+            reclaimed_tokens,
+            artifact_failure_count,
         } => {
             payload.insert("before_count".to_string(), Value::from(*before_count));
             payload.insert("after_count".to_string(), Value::from(*after_count));
@@ -583,6 +663,13 @@ pub(super) fn memory_compact_event_payload(event: &RunEvent) -> BTreeMap<String,
             }
             insert_serializable(&mut payload, "mode", mode);
             insert_serializable(&mut payload, "changed", changed);
+            insert_serializable(&mut payload, "archived_count", archived_count);
+            insert_serializable(&mut payload, "reclaimed_tokens", reclaimed_tokens);
+            insert_serializable(
+                &mut payload,
+                "artifact_failure_count",
+                artifact_failure_count,
+            );
         }
         _ => {}
     }

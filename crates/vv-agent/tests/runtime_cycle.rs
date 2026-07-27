@@ -5,12 +5,12 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use vv_agent::types::AgentTask;
 use vv_agent::{
-    memory::CLEARED_MARKER, AgentRuntime, AgentStatus, BeforeLlmPatch, BeforeToolCallPatch,
-    CancellationToken, ExecutionContext, HostCost, HostCostMeter, LLMResponse, LlmClient, LlmError,
-    LlmRequest, LlmStreamCallback, MemoryCompactMode, MemoryCompactTrigger, Message,
-    RunBudgetLimits, RunEvent, RunEventHandler, RunEventPayload, RuntimeHook, RuntimeRunControls,
-    ScriptedLlmClient, SubAgentConfig, TokenUsage, ToolCall, ToolDirective, ToolExecutionResult,
-    UsageSource,
+    memory::TOOL_RESULT_COMPACT_MARKER, AgentRuntime, AgentStatus, BeforeLlmPatch,
+    BeforeToolCallPatch, CancellationToken, ExecutionContext, HostCost, HostCostMeter, LLMResponse,
+    LlmClient, LlmError, LlmRequest, LlmStreamCallback, MemoryCompactMode, MemoryCompactTrigger,
+    Message, MicrocompactionPolicy, RunBudgetLimits, RunEvent, RunEventHandler, RunEventPayload,
+    RuntimeHook, RuntimeRunControls, ScriptedLlmClient, SubAgentConfig, TokenUsage, ToolCall,
+    ToolDirective, ToolExecutionResult, UsageSource,
 };
 
 const PNG_1X1: &[u8] = &[

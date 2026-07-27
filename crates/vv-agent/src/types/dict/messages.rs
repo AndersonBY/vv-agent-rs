@@ -68,26 +68,73 @@ impl Message {
         if !self.metadata.is_empty() {
             payload.insert("metadata".to_string(), metadata_to_value(&self.metadata));
         }
+        if let Some(artifact_ref) = &self.artifact_ref {
+            payload.insert(
+                "artifact_ref".to_string(),
+                serde_json::to_value(artifact_ref).expect("ToolArtifactRef is serializable"),
+            );
+        }
         Value::Object(payload)
     }
 
     pub fn from_dict(data: &Value) -> Result<Self, String> {
         let object = expect_object(data, "Message")?;
+        const ALLOWED_FIELDS: &[&str] = &[
+            "role",
+            "content",
+            "name",
+            "tool_call_id",
+            "tool_calls",
+            "reasoning_content",
+            "image_url",
+            "metadata",
+            "artifact_ref",
+        ];
+        let unknown = object
+            .keys()
+            .filter(|field| !ALLOWED_FIELDS.contains(&field.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !unknown.is_empty() {
+            return Err(format!("Message contains unknown fields: {unknown:?}"));
+        }
         let role = parse_message_role(read_required_string(object, "role")?)?;
+        let content = read_required_string(object, "content")?.to_string();
         let tool_calls = read_array(object, "tool_calls")
             .unwrap_or(&[])
             .iter()
             .map(ToolCall::from_dict)
             .collect::<Result<Vec<_>, _>>()?;
+        for field in ["name", "tool_call_id", "reasoning_content", "image_url"] {
+            if object
+                .get(field)
+                .is_some_and(|value| !value.is_null() && !value.is_string())
+            {
+                return Err(format!("Message field {field:?} must be a string or null"));
+            }
+        }
+        let artifact_ref = object
+            .get("artifact_ref")
+            .map(|value| {
+                if !value.is_object() {
+                    return Err("Message field \"artifact_ref\" must be an object".to_string());
+                }
+                let artifact = serde_json::from_value::<ToolArtifactRef>(value.clone())
+                    .map_err(|error| error.to_string())?;
+                artifact.validate()?;
+                Ok(artifact)
+            })
+            .transpose()?;
         Ok(Self {
             role,
-            content: read_string(object, "content").unwrap_or_default(),
+            content,
             name: read_optional_string(object, "name"),
             tool_call_id: read_optional_string(object, "tool_call_id"),
             tool_calls,
             reasoning_content: read_optional_string(object, "reasoning_content"),
             image_url: read_optional_string(object, "image_url"),
             metadata: read_metadata(object, "metadata")?,
+            artifact_ref,
         })
     }
 }

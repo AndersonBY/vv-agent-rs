@@ -77,7 +77,7 @@ extension cannot expand tool policy, infer a task type, inspect hidden scoring,
 inject another agent cycle, or replace cancellation, budget exhaustion,
 reconciliation, or operator-abort precedence.
 
-Checkpoint v4 requires stable `output_validator` and `output_repair`
+Checkpoint v5 requires stable `output_validator` and `output_repair`
 capability refs when those callbacks are enabled.
 
 ## Verification

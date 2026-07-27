@@ -12,6 +12,14 @@ pub(crate) fn validate_current_discriminator_fields(payload: &Value) -> Result<(
     if payload.get("checkpoint_config").is_none_or(Value::is_null) {
         return Err("distributed run requires checkpoint_config".to_string());
     }
+    if payload
+        .get("task")
+        .and_then(Value::as_object)
+        .and_then(|task| task.get("microcompaction_policy"))
+        .is_none_or(Value::is_null)
+    {
+        return Err("invalid AgentTask microcompaction_policy".to_string());
+    }
     if !matches!(
         payload.get("claim_mode").and_then(Value::as_str),
         Some("continue" | "recovery")

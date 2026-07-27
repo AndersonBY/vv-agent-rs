@@ -153,6 +153,10 @@ impl<C: LlmClient> CycleRunner<C> {
                 tool_schemas,
                 shared_state,
             );
+            request
+                .memory_manager
+                .validate_model_recovery_surface(&request_messages, &request_tool_schemas)
+                .map_err(LlmError::Request)?;
             if let Some(context) = request.execution_context {
                 check_context_cancelled(context)?;
             }

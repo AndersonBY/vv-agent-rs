@@ -7,7 +7,7 @@ use crate::types::{AgentResult, AgentStatus};
 use super::DistributedRunEnvelope;
 
 pub const DISTRIBUTED_WORKER_RESPONSE_SCHEMA_VERSION: &str =
-    "vv-agent.distributed-worker-response.v2";
+    "vv-agent.distributed-worker-response.v3";
 const JSON_SAFE_INTEGER_MAX: u64 = (1_u64 << 53) - 1;
 const INVALID_AGENT_RESULT: &str =
     "distributed worker response result must be a complete current AgentResult";

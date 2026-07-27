@@ -72,6 +72,15 @@ impl MemoryManager {
         count_messages_tokens(messages, &self.config.model)
     }
 
+    pub(crate) fn effective_length_for_cycle(
+        &self,
+        messages: &[Message],
+        total_tokens: Option<u64>,
+        recent_tool_call_ids: Option<&BTreeSet<String>>,
+    ) -> u64 {
+        self.calculate_effective_length(messages, total_tokens, recent_tool_call_ids)
+    }
+
     fn estimate_recent_tool_message_length(
         &self,
         messages: &[Message],

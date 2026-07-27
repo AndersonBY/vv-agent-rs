@@ -16,9 +16,9 @@ use vv_agent::{
     AfterCycleDecision, AfterCycleHook, AfterCycleSnapshot, AgentResult, AmbiguousModelPolicy,
     AmbiguousToolPolicy, CheckpointExtension, CheckpointStatus, CheckpointStore, ClaimMode,
     CycleDispatchResult, EventOutboxEntry, ExtensionStateEntry, InMemoryCheckpointStore,
-    InMemoryRunEventStore, LLMResponse, ModelCallRecord, ModelCallStatus, ModelSettings,
+    InMemoryRunEventStore, LLMResponse, Message, ModelCallRecord, ModelCallStatus, ModelSettings,
     OperationJournalEntry, OperationState, PromptBundle, ResumePolicy, RunBudgetLimits, RunEvent,
-    RuntimeRecipe, ScriptedLlmClient, TokenUsage, ToolIdempotency,
+    RuntimeRecipe, ScriptedLlmClient, TokenUsage, ToolArtifactRef, ToolIdempotency,
 };
 
 const ENVELOPE_FIXTURE: &str = include_str!("fixtures/parity/distributed_run_envelope.json");
@@ -304,12 +304,78 @@ fn registry_with_store(
     registry
 }
 
+#[test]
+fn distributed_envelope_round_trips_message_artifact_ref() {
+    let artifact_ref = ToolArtifactRef {
+        path: ".vv-agent/artifacts/distributed/call.txt".to_string(),
+        media_type: "text/plain".to_string(),
+        encoding: "utf-8".to_string(),
+        size_bytes: 17,
+        sha256: "c".repeat(64),
+    };
+    let mut message = Message::tool("bounded preview", "call");
+    message.artifact_ref = Some(artifact_ref.clone());
+    let mut task = AgentTask::new(
+        "distributed-artifact",
+        "test-model",
+        PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "run",
+    );
+    task.initial_messages.push(message);
+    let mut recipe = RuntimeRecipe::new("settings.json", "test", "test-model", ".");
+    recipe.capabilities.checkpoint_store_ref = Some(store_ref());
+    let envelope = DistributedRunEnvelope::for_cycle(
+        task,
+        recipe,
+        1,
+        DEFAULT_CYCLE_NAME,
+        Some("run-artifact".to_string()),
+        None,
+        1_000,
+        None,
+        "run-artifact",
+        "trace-artifact",
+        "d".repeat(64),
+        ClaimMode::Continue,
+        1,
+        DistributedCheckpointConfig {
+            key: "checkpoint-artifact".to_string(),
+            resume_policy: ResumePolicy::RequireExisting,
+            ambiguous_model_policy: AmbiguousModelPolicy::RequireReconciliation,
+            ambiguous_tool_policy: AmbiguousToolPolicy::RequireReconciliation,
+            required_extension_namespaces: Vec::new(),
+            max_extension_state_bytes: 262_144,
+            credential_slots: Vec::new(),
+        },
+    )
+    .expect("distributed envelope");
+
+    let wire = envelope.to_dict();
+    let restored = DistributedRunEnvelope::from_dict(&wire).expect("restored envelope");
+
+    assert_eq!(
+        restored.task.initial_messages[0].artifact_ref,
+        Some(artifact_ref)
+    );
+}
+
 fn set_path(payload: &mut Value, path: &[Value], value: Value) {
     let mut target = payload;
     for key in &path[..path.len() - 1] {
         target = &mut target[key.as_str().expect("path key")];
     }
     target[path.last().and_then(Value::as_str).expect("final path key")] = value;
+}
+
+fn remove_path(payload: &mut Value, path: &[Value]) {
+    let mut target = payload;
+    for key in &path[..path.len() - 1] {
+        target = &mut target[key.as_str().expect("path key")];
+    }
+    target
+        .as_object_mut()
+        .expect("path parent object")
+        .remove(path.last().and_then(Value::as_str).expect("final path key"));
 }
 
 #[test]
@@ -340,11 +406,12 @@ fn distributed_envelope_accepts_only_the_current_wire_shape() {
             continue;
         }
         let mut payload = canonical.clone();
-        set_path(
-            &mut payload,
-            case["path"].as_array().unwrap(),
-            case["value"].clone(),
-        );
+        let path = case["path"].as_array().unwrap();
+        if case["operation"] == "remove" {
+            remove_path(&mut payload, path);
+        } else {
+            set_path(&mut payload, path, case["value"].clone());
+        }
         let error = DistributedRunEnvelope::from_dict(&payload).unwrap_err();
         assert!(
             error.contains(case["error"].as_str().unwrap()),
@@ -753,7 +820,7 @@ fn terminal_candidate_retains_claim_without_finalizing_or_acknowledging() {
             EventOutboxEntry::pending(
                 "evt-terminal-two-phase",
                 json!({
-                    "version": "v1",
+                    "version": "v2",
                     "type": "run_completed",
                     "event_id": "evt-terminal-two-phase",
                     "run_id": "run-terminal",

@@ -17,19 +17,20 @@ impl MemoryManager {
     pub(super) fn compact_large_tool_results(
         &self,
         messages: &[Message],
-        cycle_index: Option<u32>,
+        _cycle_index: Option<u32>,
     ) -> (Vec<Message>, bool) {
         let (compacted, _artifacts, changed) = compact_tool_results(
             messages,
             &ToolResultArtifactConfig {
-                workspace: self.config.workspace.clone(),
-                artifact_dir: self.config.tool_result_artifact_dir.clone(),
+                artifact_namespace: self.artifact_namespace.clone(),
                 compact_threshold: self.config.tool_result_compact_threshold,
                 keep_last: self.config.tool_result_keep_last,
                 excerpt_head: self.config.tool_result_excerpt_head,
                 excerpt_tail: self.config.tool_result_excerpt_tail,
             },
-            cycle_index,
+            self.recovery_tool_available
+                .then_some(self.workspace_backend.as_ref())
+                .flatten(),
         );
         (compacted, changed)
     }
@@ -51,14 +52,15 @@ impl MemoryManager {
         let (messages_for_summary, artifacts, _compacted_tools) = compact_tool_results(
             &messages_for_summary,
             &ToolResultArtifactConfig {
-                workspace: self.config.workspace.clone(),
-                artifact_dir: self.config.tool_result_artifact_dir.clone(),
+                artifact_namespace: self.artifact_namespace.clone(),
                 compact_threshold: self.config.tool_result_compact_threshold,
                 keep_last: self.config.tool_result_keep_last,
                 excerpt_head: self.config.tool_result_excerpt_head,
                 excerpt_tail: self.config.tool_result_excerpt_tail,
             },
-            cycle_index,
+            self.recovery_tool_available
+                .then_some(self.workspace_backend.as_ref())
+                .flatten(),
         );
         let original_request = extract_original_user_request(messages).unwrap_or_default();
         let summary_prompt = self.build_compress_memory_prompt(&messages_for_summary);

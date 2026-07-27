@@ -46,6 +46,7 @@ pub(super) fn build_sub_agent_task(
     );
     sub_task.max_cycles = sub_agent.max_cycles.max(1);
     sub_task.memory_threshold_percentage = parent_task.memory_threshold_percentage;
+    sub_task.microcompaction_policy = parent_task.microcompaction_policy;
     sub_task.no_tool_policy = NoToolPolicy::Continue;
     sub_task.allow_interruption = false;
     sub_task.use_workspace = parent_task.use_workspace;
@@ -330,6 +331,7 @@ mod parity_tests {
 
     use super::build_sub_agent_task;
     use crate::llm::ScriptedLlmClient;
+    use crate::memory::MicrocompactionPolicy;
     use crate::model_settings::ModelSettings;
     use crate::runtime::sub_task_manager::SubTaskManager;
     use crate::tools::build_default_registry;
@@ -357,6 +359,12 @@ mod parity_tests {
         parent.max_cycles = 6;
         parent.memory_compact_threshold = 64_000;
         parent.memory_threshold_percentage = 80;
+        parent.microcompaction_policy = MicrocompactionPolicy {
+            trigger_ratio: 0.8,
+            target_ratio: 0.5,
+            keep_recent_cycles: 4,
+            min_result_chars: 700,
+        };
         parent.agent_type = Some("computer".to_string());
         parent.extra_tool_names = vec!["custom_tool".to_string()];
         parent.exclude_tools = vec!["parent_excluded".to_string()];
@@ -458,6 +466,7 @@ mod parity_tests {
             "max_cycles": task.max_cycles,
             "memory_compact_threshold": task.memory_compact_threshold,
             "memory_threshold_percentage": task.memory_threshold_percentage,
+            "microcompaction_policy": task.microcompaction_policy,
             "no_tool_policy": task.no_tool_policy,
             "allow_interruption": task.allow_interruption,
             "use_workspace": task.use_workspace,

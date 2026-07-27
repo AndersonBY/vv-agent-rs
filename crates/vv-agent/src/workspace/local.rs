@@ -372,21 +372,85 @@ fn write_text_chunks_exclusive_below(
 
     let filename = CString::new(*segments.last().expect("non-empty segments"))
         .map_err(|_| Error::new(ErrorKind::InvalidInput, "path contains NUL"))?;
-    let fd = unsafe {
-        libc::openat(
+    let mut temporary_name = None;
+    let mut temporary_file = None;
+    for _ in 0..32 {
+        let candidate = CString::new(format!(
+            ".vv-agent-write-{}.tmp",
+            uuid::Uuid::new_v4().simple()
+        ))
+        .expect("UUID temporary filename contains no NUL");
+        let fd = unsafe {
+            libc::openat(
+                directory.as_raw_fd(),
+                candidate.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                0o600,
+            )
+        };
+        if fd != -1 {
+            temporary_name = Some(candidate);
+            temporary_file = Some(unsafe { fs::File::from_raw_fd(fd) });
+            break;
+        }
+        let error = Error::last_os_error();
+        if error.kind() != ErrorKind::AlreadyExists {
+            return Err(error);
+        }
+    }
+    let temporary_name = temporary_name.ok_or_else(|| {
+        Error::new(
+            ErrorKind::AlreadyExists,
+            "could not allocate an exclusive temporary artifact path",
+        )
+    })?;
+    let mut file = temporary_file.expect("temporary file accompanies its name");
+    let write_result = write_chunks(&mut file, chunks).and_then(|written| {
+        file.sync_all()?;
+        Ok(written)
+    });
+    drop(file);
+    let written = match write_result {
+        Ok(written) => written,
+        Err(error) => {
+            unsafe {
+                libc::unlinkat(directory.as_raw_fd(), temporary_name.as_ptr(), 0);
+            }
+            return Err(error);
+        }
+    };
+
+    let published = unsafe {
+        libc::linkat(
+            directory.as_raw_fd(),
+            temporary_name.as_ptr(),
             directory.as_raw_fd(),
             filename.as_ptr(),
-            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-            0o600,
+            0,
         )
     };
-    if fd == -1 {
-        return Err(Error::last_os_error());
+    if published == -1 {
+        let error = Error::last_os_error();
+        unsafe {
+            libc::unlinkat(directory.as_raw_fd(), temporary_name.as_ptr(), 0);
+        }
+        return Err(error);
     }
-    let mut file = unsafe { fs::File::from_raw_fd(fd) };
-    let written = write_chunks(&mut file, chunks)?;
-    file.sync_all()?;
-    directory.sync_all()?;
+    let unlinked = unsafe { libc::unlinkat(directory.as_raw_fd(), temporary_name.as_ptr(), 0) };
+    if unlinked == -1 {
+        let error = Error::last_os_error();
+        unsafe {
+            libc::unlinkat(directory.as_raw_fd(), filename.as_ptr(), 0);
+            libc::unlinkat(directory.as_raw_fd(), temporary_name.as_ptr(), 0);
+        }
+        return Err(error);
+    }
+    if let Err(error) = directory.sync_all() {
+        unsafe {
+            libc::unlinkat(directory.as_raw_fd(), filename.as_ptr(), 0);
+        }
+        return Err(error);
+    }
     Ok(written)
 }
 
@@ -420,12 +484,59 @@ fn write_text_chunks_exclusive_below(
         }
     }
     let target = parent.join(segments.last().expect("non-empty segments"));
-    let mut file = fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(target)?;
-    let written = write_chunks(&mut file, chunks)?;
-    file.sync_all()?;
+    let mut temporary_path = None;
+    let mut temporary_file = None;
+    for _ in 0..32 {
+        let candidate = parent.join(format!(
+            ".vv-agent-write-{}.tmp",
+            uuid::Uuid::new_v4().simple()
+        ));
+        match fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&candidate)
+        {
+            Ok(file) => {
+                temporary_path = Some(candidate);
+                temporary_file = Some(file);
+                break;
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    let temporary_path = temporary_path.ok_or_else(|| {
+        Error::new(
+            ErrorKind::AlreadyExists,
+            "could not allocate an exclusive temporary artifact path",
+        )
+    })?;
+    let mut file = temporary_file.expect("temporary file accompanies its path");
+    let write_result = write_chunks(&mut file, chunks).and_then(|written| {
+        file.sync_all()?;
+        Ok(written)
+    });
+    drop(file);
+    let written = match write_result {
+        Ok(written) => written,
+        Err(error) => {
+            let _ = fs::remove_file(&temporary_path);
+            return Err(error);
+        }
+    };
+    if let Err(error) = fs::hard_link(&temporary_path, &target) {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error);
+    }
+    if let Err(error) = fs::remove_file(&temporary_path) {
+        let _ = fs::remove_file(&target);
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error);
+    }
+    if let Err(error) = fs::File::open(&parent).and_then(|directory| directory.sync_all()) {
+        let _ = fs::remove_file(&target);
+        return Err(error);
+    }
     Ok(written)
 }
 

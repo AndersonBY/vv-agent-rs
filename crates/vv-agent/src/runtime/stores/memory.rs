@@ -1,4 +1,4 @@
-//! In-memory checkpoint v2 store.
+//! In-memory checkpoint store.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};

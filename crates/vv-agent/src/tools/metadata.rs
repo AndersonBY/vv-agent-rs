@@ -34,11 +34,20 @@ impl ToolSideEffect {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolResultRetention {
+    #[default]
+    Archive,
+    Preserve,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct ToolMetadata {
     pub side_effect: ToolSideEffect,
     pub idempotency: ToolIdempotency,
     pub terminal: bool,
+    pub result_retention: ToolResultRetention,
     pub capability_tags: Vec<String>,
     pub cost_dimensions: Vec<String>,
 }
@@ -71,6 +80,8 @@ struct ToolMetadataWire {
     #[serde(default)]
     terminal: bool,
     #[serde(default)]
+    result_retention: ToolResultRetention,
+    #[serde(default)]
     capability_tags: Vec<String>,
     #[serde(default)]
     cost_dimensions: Vec<String>,
@@ -86,6 +97,7 @@ impl<'de> Deserialize<'de> for ToolMetadata {
             side_effect: wire.side_effect,
             idempotency: wire.idempotency,
             terminal: wire.terminal,
+            result_retention: wire.result_retention,
             capability_tags: wire.capability_tags,
             cost_dimensions: wire.cost_dimensions,
         }
@@ -100,6 +112,7 @@ impl ToolMetadata {
             side_effect: self.side_effect,
             idempotency: self.idempotency,
             terminal: self.terminal,
+            result_retention: self.result_retention,
             capability_tags: normalize_tool_metadata_labels(
                 &self.capability_tags,
                 "capability_tags",

@@ -19,7 +19,7 @@ impl AppServerRunAdapter {
             .map_err(|error| AppServerError::internal(error.to_string()))?;
         let base_checkpoint_config = base_config.checkpoint_config.clone().ok_or_else(|| {
             AppServerError::invalid_params(
-                "turn/resume requires the App Server host to configure checkpoint v2",
+                "turn/resume requires the App Server host to configure checkpointing",
             )
         })?;
         let checkpoint_store = base_checkpoint_config.store.clone().ok_or_else(|| {

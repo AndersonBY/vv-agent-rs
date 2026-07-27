@@ -184,9 +184,9 @@ later cancellation cannot replace it. A cancelled result bypasses output
 guardrails so guardrail side effects or messages cannot replace the recorded
 cancellation reason.
 
-## V1 Event Producers
+## V2 Event Producers
 
-Runner emits typed v1 events with canonical run, trace, agent, and session
+Runner emits typed v2 events with canonical run, trace, agent, and session
 identity. Raw runtime log and stream payloads are inputs to that producer, not
 the stable product-facing API. Product code should consume `RunEventPayload` or
 App Server item notifications instead of parsing raw log strings.

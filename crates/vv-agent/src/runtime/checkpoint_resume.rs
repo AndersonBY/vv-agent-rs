@@ -1,4 +1,4 @@
-//! Process-local checkpoint v2 execution controller.
+//! Process-local checkpoint execution controller.
 
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};

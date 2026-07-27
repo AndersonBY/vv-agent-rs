@@ -1,4 +1,4 @@
-//! Checkpoint v3 state and store contract.
+//! Checkpoint v5 state and store contract.
 
 use std::collections::BTreeMap;
 

@@ -70,7 +70,7 @@ totals do not prove cache-accounting availability.
 | `crates/vv-agent/src/model_settings.rs` | Public model-call settings aligned with common `vv-llm` request options. |
 | `crates/vv-agent/src/output_validation.rs` | Typed host output-validation result, context, and tools-free repair request contracts. |
 | `crates/vv-agent/src/sessions.rs` | Public `Session` storage contract and in-memory implementation. |
-| `crates/vv-agent/src/events.rs` | v1 run event envelope and typed serializable payloads for SDK consumers. |
+| `crates/vv-agent/src/events.rs` | v2 run event envelope and typed serializable payloads for SDK consumers. |
 | `crates/vv-agent/src/types/` | Public protocol types, dictionaries, messages, tasks, statuses, records, and token usage. |
 | `crates/vv-agent/src/llm/` | LLM trait, scripted test client, `vv-llm` bridge, endpoint failover, streaming, prompt cache, and request normalization. |
 | `crates/vv-agent/src/runtime/` | Agent runtime, cycle execution, hooks, cancellation, shell runtime, background sessions, sub-agents, state stores, and execution backends. |
@@ -149,16 +149,17 @@ Core responsibilities:
 - `Runner`: model provider, workspace default, default tool registry, run and
   live entrypoints.
 - `RunConfig`: per-call model, model settings, workspace, bounds, session,
-  tool registry/policy, runtime message injection and observers, diagnostics,
-  hooks, after-cycle lifecycle hooks, cancellation, optional run budgets,
-  public `ExecutionMode`, providers, event store, and metadata override. See
-  `runtime-control.md` for the complete surface.
+  typed microcompaction policy, tool registry/policy, runtime message injection
+  and observers, diagnostics, hooks, after-cycle lifecycle hooks,
+  cancellation, optional run budgets, public `ExecutionMode`, providers,
+  event store, and metadata override. See `runtime-control.md` for the complete
+  surface.
 - `RunHandle`: live event stream, cancellation, state, approval decisions, and
   final result synchronization.
 - `InteractiveAgentClient` / `InteractiveSession`: embedded stateful control over
   `Runner`, `RunHandle`, and `Session`, including steering and queued follow-up
   turns.
-- `RunEvent`: v1 envelope with stable identity fields and a typed payload.
+- `RunEvent`: v2 envelope with stable identity fields and a typed payload.
 - `RunEventStore`: append-only event storage and replay by run lineage. Replay
   includes direct child runs by default; callers can explicitly request only
   the selected run.
@@ -226,13 +227,16 @@ tool's generic `metadata` map:
 | `side_effect: ToolSideEffect` | One of `Unknown`, `None`, `Read`, `Write`, `Execute`, `Network`, or `External`. Values have no hierarchy and are never inferred from names or arguments. |
 | `idempotency: ToolIdempotency` | `Unknown`, `Supported`, or `Unsupported`; this participates in checkpoint recovery but does not make an external effect exactly once. |
 | `terminal: bool` | The tool may return `finish` or `wait_user`; the declaration alone never changes run state. |
+| `result_retention: ToolResultRetention` | `Archive` allows proactive archive-backed microcompaction; `Preserve` keeps the result inline until full or emergency compaction. |
 | `capability_tags: Vec<String>` | Opaque host labels matched as exact strings. |
 | `cost_dimensions: Vec<String>` | Opaque resource names, not prices, measurements, units, or budget usage. |
 
 An absent declaration stays `None`. For a present declaration,
 `ToolMetadata::default()` is `Unknown` side effect, `Unknown` idempotency,
-`terminal=false`, and two empty collections; wire input fills omitted fields
-with the same defaults and rejects fields outside the closed set.
+`terminal=false`, `result_retention=Archive`, and two empty collections; wire
+input fills omitted fields with the same defaults and rejects fields outside
+the closed set. A tool without a metadata declaration also defaults to archive
+retention.
 
 `FunctionTool::builder(...).tool_metadata(...)`,
 `StaticTool::with_tool_metadata`, and the defaultable `Tool::tool_metadata` /
@@ -240,6 +244,39 @@ with the same defaults and rejects fields outside the closed set.
 `ToolSpec::tool_metadata` carries the same normalized declaration through the
 registry. Generic keys named `side_effect`, `terminal`, or `capability_tags`
 never become typed metadata.
+
+### Archive-Backed Microcompaction
+
+`MicrocompactionPolicy` is a public typed runtime control with defaults
+`trigger_ratio=0.75`, `target_ratio=0.60`, `keep_recent_cycles=3`, and
+`min_result_chars=500`. It rejects values outside
+`0 < target_ratio < trigger_ratio <= 1` and rejects a zero character minimum.
+The compiled `AgentTask` owns the resolved policy. Checkpointed runs freeze it
+under `runtime_controls.microcompaction_policy`, so framework policy does not
+enter process-local run metadata or require a capability reference.
+
+At most one oldest-first plan is created and applied per cycle. Selected
+results are replaced only after the effective `Arc<dyn WorkspaceBackend>`
+persists the complete text under `.vv-agent/artifacts/`; a write failure keeps
+the original result inline. An existing typed `Message.artifact_ref` is reused
+only after reading its complete content and verifying UTF-8 byte length and
+SHA-256; a missing or corrupt referenced artifact keeps the original message.
+Recovery envelopes without a typed reference are never archived again. New
+artifacts are created only for ordinary complete results. The replacement
+retains the complete typed reference through host, session, checkpoint, and
+distributed serialization, while model/LLM projection omits it. The
+model-visible marker contains only `tool_name`, `artifact_path`,
+`retrieval_hint`, and `excerpt`.
+
+Application stops at the target according to each actual replacement token
+difference, not the plan estimate. Hosts can invoke the same behavior directly
+through the public `MemoryManager::microcompact_messages` API.
+
+The retrieval hint is fixed to `use read_file on artifact_path if needed`.
+Therefore proactive microcompaction is disabled when the task's actual planned
+tool surface does not expose `read_file`, including `use_workspace=false` and
+an explicit `read_file` exclusion. This prevents the runtime from replacing
+recoverable inline text with an unusable hint.
 
 The two label collections trim only tab, LF, CR, and ASCII space, reject blank
 or longer-than-128-code-point labels, deduplicate exact matches, sort by UTF-16
@@ -291,7 +328,7 @@ boundary with a monotonic clock and also report lower-case `status`,
 `finish`, or `wait_user`. Planned and started events contain normalized
 arguments and optional typed metadata. Completed events contain the outcome
 fields and optional typed metadata. Cancellation, process loss, or a panic
-after started may leave no completed observation; checkpoint v4's operation
+after started may leave no completed observation; checkpoint v5's operation
 journal, not telemetry, is authoritative for recovery ambiguity.
 
 `ToolLifecycleCallback` and `ToolLifecycleEvent` are exported Rust extension

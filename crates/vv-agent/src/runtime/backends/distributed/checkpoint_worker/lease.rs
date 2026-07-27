@@ -82,7 +82,7 @@ pub(super) fn run_with_checkpoint_lease<T>(
         drop(stop_guard);
         heartbeat
             .join()
-            .map_err(|_| "checkpoint v2 lease heartbeat panicked".to_string())?;
+            .map_err(|_| "checkpoint lease heartbeat panicked".to_string())?;
         Ok::<_, String>(result)
     })?;
 

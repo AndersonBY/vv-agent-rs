@@ -3,10 +3,29 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use vv_agent::runtime::is_prompt_too_long_error;
 use vv_agent::{
-    build_default_registry, CycleRunRequest, CycleRunner, LLMResponse, LlmError, MemoryManager,
-    MemoryManagerConfig, Message, ScriptStep, ScriptedLlmClient, ToolCall,
-    MAX_PROMPT_TOO_LONG_RETRIES,
+    build_default_registry, BeforeLlmEvent, BeforeLlmPatch, CycleRunRequest, CycleRunner,
+    LLMResponse, LlmError, MemoryManager, MemoryManagerConfig, MemoryWorkspaceBackend, Message,
+    MicrocompactionPolicy, RuntimeHook, RuntimeHookManager, ScriptStep, ScriptedLlmClient,
+    ToolCall, MAX_PROMPT_TOO_LONG_RETRIES,
 };
+
+struct RemoveReadFileHook;
+
+impl RuntimeHook for RemoveReadFileHook {
+    fn before_llm(&self, event: BeforeLlmEvent<'_>) -> Option<BeforeLlmPatch> {
+        Some(BeforeLlmPatch {
+            messages: None,
+            tool_schemas: Some(
+                event
+                    .tool_schemas
+                    .iter()
+                    .filter(|schema| schema["function"]["name"] != "read_file")
+                    .cloned()
+                    .collect(),
+            ),
+        })
+    }
+}
 
 #[test]
 fn cycle_runner_public_api_builds_assistant_message() {
@@ -86,11 +105,11 @@ fn cycle_runner_microcompacts_before_full_compaction_when_previous_prompt_tokens
             )
         })),
         tool_result_compact_threshold: 10_000,
-        microcompact_trigger_ratio: 0.2,
-        microcompact_keep_recent_cycles: 0,
-        microcompact_min_result_length: 200,
+        microcompaction_policy: MicrocompactionPolicy::new(0.2, 0.1, 0, 200).expect("policy"),
         ..MemoryManagerConfig::default()
-    });
+    })
+    .with_workspace_backend(Arc::new(MemoryWorkspaceBackend::default()))
+    .with_recovery_tool_available(true);
 
     let mut assistant = Message::assistant("old tool call");
     assistant
@@ -107,7 +126,7 @@ fn cycle_runner_microcompacts_before_full_compaction_when_previous_prompt_tokens
     let (_messages, cycle) = runner
         .run_cycle(
             CycleRunRequest::new(&task, messages, 3, &mut memory_manager)
-                .with_previous_prompt_tokens(Some(5_000)),
+                .with_previous_prompt_tokens(Some(750)),
         )
         .expect("cycle");
 
@@ -115,14 +134,10 @@ fn cycle_runner_microcompacts_before_full_compaction_when_previous_prompt_tokens
     let captured = captured_requests.lock().expect("captured");
     let request_messages = captured.first().expect("llm request");
     assert!(
-        request_messages.iter().any(|message| {
-            message.content == vv_agent::memory::CLEARED_MARKER
-                && message
-                    .metadata
-                    .get("microcompacted")
-                    .is_some_and(|value| value == true)
-        }),
-        "previous prompt token pressure should first clear old compactable tool output: {request_messages:#?}"
+        request_messages.iter().any(|message| message
+            .content
+            .starts_with(vv_agent::memory::TOOL_RESULT_COMPACT_MARKER)),
+        "previous prompt token pressure should first archive old tool output: {request_messages:#?}"
     );
     assert!(
         request_messages
@@ -130,6 +145,52 @@ fn cycle_runner_microcompacts_before_full_compaction_when_previous_prompt_tokens
             .all(|message| !message.content.contains("<Compressed Agent Memory>")),
         "microcompact should avoid full summary when the reduced request fits: {request_messages:#?}"
     );
+}
+
+#[test]
+fn cycle_runner_rejects_compacted_results_when_hook_removes_read_file() {
+    let runner = CycleRunner::new(
+        ScriptedLlmClient::from_steps(vec![ScriptStep::callback(|_| {
+            panic!("LLM must not be called without a recovery tool")
+        })]),
+        build_default_registry(),
+    )
+    .with_hook_manager(RuntimeHookManager::new(vec![Arc::new(RemoveReadFileHook)]));
+    let task = vv_agent::types::AgentTask::new(
+        "cycle_missing_recovery",
+        "demo",
+        vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+        "prompt",
+    );
+    let mut memory_manager = MemoryManager::new(MemoryManagerConfig::default())
+        .with_workspace_backend(Arc::new(MemoryWorkspaceBackend::default()))
+        .with_recovery_tool_available(true);
+    let messages = vec![
+        Message::system("system"),
+        Message::user("prompt"),
+        Message::tool(
+            format!(
+                "{}\ntool_name: custom_search\nartifact_path: .vv-agent/artifacts/run/call.txt\n\
+                 retrieval_hint: use read_file on artifact_path if needed\nexcerpt:\nprior\n\
+                 </Tool Result Compact>",
+                vv_agent::memory::TOOL_RESULT_COMPACT_MARKER
+            ),
+            "call",
+        ),
+    ];
+
+    let error = runner
+        .run_cycle(CycleRunRequest::new(
+            &task,
+            messages,
+            4,
+            &mut memory_manager,
+        ))
+        .expect_err("missing recovery tool must fail closed");
+
+    assert!(error
+        .to_string()
+        .contains("microcompaction_recovery_unavailable"));
 }
 
 #[test]

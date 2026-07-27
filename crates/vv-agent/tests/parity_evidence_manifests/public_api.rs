@@ -62,7 +62,28 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
         ("agent_task", "vv_agent::AgentTask", "field") => compile_fields!(
             name,
             vv_agent::AgentTask,
-            [task_id, model, prompt_bundle, user_prompt]
+            [
+                task_id,
+                model,
+                prompt_bundle,
+                user_prompt,
+                microcompaction_policy,
+            ]
+        ),
+        ("message", "vv_agent::Message", "field") => compile_fields!(
+            name,
+            vv_agent::Message,
+            [
+                role,
+                content,
+                name,
+                tool_call_id,
+                tool_calls,
+                reasoning_content,
+                image_url,
+                metadata,
+                artifact_ref,
+            ]
         ),
         ("tool_execution_result", "vv_agent::ToolExecutionResult", "field") => compile_fields!(
             name,
@@ -133,6 +154,7 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 session_memory_enabled,
                 initial_messages,
                 max_cycles,
+                microcompaction_policy,
                 no_tool_policy,
                 max_handoffs,
                 tool_policy,
@@ -357,10 +379,23 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 side_effect,
                 idempotency,
                 terminal,
+                result_retention,
                 capability_tags,
                 cost_dimensions,
             ]
         ),
+        ("microcompaction_policy", "vv_agent::MicrocompactionPolicy", "field") => {
+            compile_fields!(
+                name,
+                vv_agent::MicrocompactionPolicy,
+                [
+                    trigger_ratio,
+                    target_ratio,
+                    keep_recent_cycles,
+                    min_result_chars,
+                ]
+            )
+        }
         ("tool_policy", "vv_agent::ToolPolicy", "field") => compile_fields!(
             name,
             vv_agent::ToolPolicy,
@@ -421,10 +456,10 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
             vv_agent::MemoryManager,
             [
                 compact,
+                microcompact_messages,
                 emergency_compact,
                 effective_context_window,
                 estimate_memory_usage_percentage,
-                microcompact_messages,
                 apply_session_memory_context,
                 strip_session_memory_context,
             ]
@@ -537,8 +572,8 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
 #[test]
 fn public_api_manifest_compiles_real_rust_exports() {
     let fixture = load_fixture("public_api.json");
-    assert_eq!(fixture["contract"], "vv-agent-public-api-v2");
-    assert_eq!(fixture["schema_version"], 2);
+    assert_eq!(fixture["contract"], "vv-agent-public-api-v3");
+    assert_eq!(fixture["schema_version"], 3);
 
     let domains = fixture["domains"].as_array().expect("public API domains");
     let domain_ids = domains
@@ -563,7 +598,7 @@ fn public_api_manifest_compiles_real_rust_exports() {
             );
         }
     }
-    assert_eq!(capability_ids.len(), 156);
+    assert_eq!(capability_ids.len(), 159);
 
     let surfaces = fixture["surfaces"].as_array().expect("public API surfaces");
     let surface_map = surfaces
