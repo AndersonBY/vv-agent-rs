@@ -1,11 +1,13 @@
 mod builder;
 mod checkpoint_runtime;
+mod distributed_operation;
 mod event_stream;
 mod handoff;
 mod helpers;
 mod producer;
 mod resume;
 mod run_single;
+mod run_single_entry;
 mod session_blocking;
 mod support;
 mod trace_lifecycle;
@@ -31,6 +33,10 @@ use crate::model::{ModelError, ModelProvider, ModelRef};
 use crate::prompt::{PromptBundle, PromptSection};
 use crate::result::{RunResult, RunResumeContext};
 use crate::run_config::{validate_max_cycles, RunConfig, INITIAL_BUDGET_USAGE_METADATA_KEY};
+use crate::runtime::backends::distributed::DistributedCheckpointConfig;
+use crate::runtime::backends::{
+    DistributedAdvanceDecision, DistributedRunHandle, RuntimeExecutionBackend,
+};
 use crate::runtime::checkpoint_resume::{
     CheckpointController, CheckpointControllerRequest, CheckpointEventSink,
     CheckpointResumeController,
@@ -53,6 +59,7 @@ use checkpoint_runtime::{
     prepare_checkpoint_resume, prepare_checkpoint_runtime, prepare_checkpoint_terminal,
     replay_checkpoint_terminal, CheckpointRuntimeRequest, CheckpointRuntimeState,
 };
+use distributed_operation::{distributed_checkpoint_resume, start_distributed_cycle};
 pub(crate) use event_stream::map_stream_event;
 pub use event_stream::RunEventStream;
 #[doc(hidden)]
@@ -65,7 +72,8 @@ use session_blocking::block_on_session;
 use support::{
     apply_cancellation_precedence, apply_input_guardrails, apply_optional_output_validation,
     apply_output_guardrails, capture_event, effective_event_store, effective_session_id,
-    extract_handoff, initial_budget_usage, merged_tool_policy, ApprovalHook, SingleRunOutcome,
+    extract_handoff, initial_budget_usage, merged_tool_policy, output_type_validation_error,
+    ApprovalHook, SingleRunOutcome,
 };
 use trace_lifecycle::RunTrace;
 
@@ -102,6 +110,16 @@ struct InstructionBuildRequest<'a> {
 pub(super) struct CheckpointAdmission {
     pub checkpoint: Checkpoint,
     pub terminal_replayed: bool,
+}
+
+enum DistributedRunnerOperation {
+    Start,
+    Finalize(Box<DistributedAdvanceDecision>),
+}
+
+enum SingleRunExecutionOutcome {
+    Completed(Box<SingleRunOutcome>),
+    DistributedStarted(DistributedRunHandle),
 }
 
 pub(super) type CheckpointAdmissionSender = tokio::sync::oneshot::Sender<CheckpointAdmission>;

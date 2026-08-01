@@ -7,6 +7,7 @@ mod checkpoint_worker;
 mod contract;
 mod contract_helpers;
 mod dispatch;
+mod driver;
 mod execution;
 mod worker;
 
@@ -27,5 +28,9 @@ pub use contract::{
 };
 pub use dispatch::{
     CycleDispatchResult, CycleDispatcher, DISTRIBUTED_WORKER_RESPONSE_SCHEMA_VERSION,
+};
+pub use driver::{
+    CycleEnqueuer, DistributedAdvanceDecision, DistributedDeliveryOutcome, DistributedRunHandle,
+    DistributedWaitReason,
 };
 pub use worker::DistributedCycleWorker;

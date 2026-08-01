@@ -462,6 +462,15 @@ Apalis workers:
 cargo test -p vv-agent --features apalis --test apalis_backend
 ```
 
+For event-driven hosts, `DistributedBackend::start` enqueues the first cycle
+and returns a passive handle; each short completion callback calls `advance`
+once to enqueue, defer, wait, request terminal finalization, or replay the
+durable terminal. `ApalisCycleEnqueuer` is enqueue-only and does not require a
+result backend. `Runner::start_distributed` performs framework preparation,
+and a separate bounded `Runner::finalize_distributed` consumes
+`FinalizeRequired` through the normal terminal pipeline. The existing blocking
+dispatcher remains available.
+
 The distributed API also has an inline fallback, which is useful for local
 development and tests. See `crates/vv-agent/examples/23_distributed_backend.rs`.
 

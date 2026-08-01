@@ -427,6 +427,26 @@ fn public_export_path(id: &str) -> &'static str {
         "runtime_backend.distributed" => {
             export_type!(vv_agent::DistributedBackend, "vv_agent::DistributedBackend")
         }
+        "runtime_backend.distributed_run_handle" => export_type!(
+            vv_agent::DistributedRunHandle,
+            "vv_agent::DistributedRunHandle"
+        ),
+        "runtime_backend.distributed_delivery_outcome" => export_type!(
+            vv_agent::DistributedDeliveryOutcome,
+            "vv_agent::DistributedDeliveryOutcome"
+        ),
+        "runtime_backend.distributed_advance_decision" => export_type!(
+            vv_agent::DistributedAdvanceDecision,
+            "vv_agent::DistributedAdvanceDecision"
+        ),
+        "runtime_backend.distributed_start" => {
+            let _ = vv_agent::DistributedBackend::start;
+            "vv_agent::DistributedBackend::start"
+        }
+        "runtime_backend.distributed_advance" => {
+            let _ = vv_agent::DistributedBackend::advance;
+            "vv_agent::DistributedBackend::advance"
+        }
         "runtime_backend.envelope" => export_type!(
             vv_agent::DistributedRunEnvelope,
             "vv_agent::DistributedRunEnvelope"

@@ -2,12 +2,11 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::memory::MicrocompactionPolicy;
 
-use super::support::output_type_validation_error;
 use super::*;
 
 impl Runner {
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn run_single_agent(
+    pub(super) fn run_single_agent_operation(
         &self,
         agent: &Agent,
         input: NormalizedInput,
@@ -16,7 +15,8 @@ impl Runner {
         event_sender: Option<broadcast::Sender<RunEvent>>,
         mut checkpoint_admission_sender: Option<CheckpointAdmissionSender>,
         run_id_override: Option<String>,
-    ) -> Result<SingleRunOutcome, String> {
+        distributed_operation: Option<DistributedRunnerOperation>,
+    ) -> Result<SingleRunExecutionOutcome, String> {
         let checkpoint_config = config
             .checkpoint_config
             .clone()
@@ -64,6 +64,11 @@ impl Runner {
             .or_else(|| self.default_run_config.session.clone());
         let (preloaded_checkpoint, checkpoint_resume) =
             prepare_checkpoint_resume(agent, session.as_ref(), checkpoint_config.as_ref())?;
+        let checkpoint_resume = distributed_checkpoint_resume(
+            distributed_operation.as_ref(),
+            preloaded_checkpoint.is_some(),
+            checkpoint_resume,
+        )?;
         let microcompaction_policy = if checkpoint_resume {
             MicrocompactionPolicy::default()
         } else {
@@ -256,17 +261,19 @@ impl Runner {
                         serde_json::to_value(ended_run_span)
                             .unwrap_or_else(|error| Value::String(error.to_string())),
                     );
-                    return Ok(SingleRunOutcome {
-                        result: RunResult::without_resolved_model(
-                            agent.name().to_string(),
-                            AgentResult::failed(message),
-                        )
-                        .with_ids(&run_context.run_id, &trace_id)
-                        .with_input(original_input)
-                        .with_events(events)
-                        .with_metadata(result_metadata),
-                        handoff: None,
-                    });
+                    return Ok(SingleRunExecutionOutcome::Completed(Box::new(
+                        SingleRunOutcome {
+                            result: RunResult::without_resolved_model(
+                                agent.name().to_string(),
+                                AgentResult::failed(message),
+                            )
+                            .with_ids(&run_context.run_id, &trace_id)
+                            .with_input(original_input)
+                            .with_events(events)
+                            .with_metadata(result_metadata),
+                            handoff: None,
+                        },
+                    )));
                 }
             }
         };
@@ -660,6 +667,15 @@ impl Runner {
             .clone()
             .or_else(|| self.default_run_config.workspace_backend.clone());
 
+        let distributed_terminal_decision = match &distributed_operation {
+            Some(DistributedRunnerOperation::Finalize(decision)) => Some(decision.as_ref()),
+            _ => None,
+        };
+        let distributed_lease_duration_ms = match &runtime.execution_backend {
+            RuntimeExecutionBackend::Distributed(backend) => Some(backend.lease_duration_ms()),
+            _ => None,
+        };
+
         let CheckpointRuntimeState {
             controller: checkpoint_controller,
             mut terminal_replayed,
@@ -694,8 +710,23 @@ impl Runner {
             backend_manages_checkpoint_cycles: runtime
                 .execution_backend
                 .manages_checkpoint_cycles(),
+            distributed_terminal_decision,
+            distributed_lease_duration_ms,
             admission_sender: &mut checkpoint_admission_sender,
         })?;
+        if matches!(
+            &distributed_operation,
+            Some(DistributedRunnerOperation::Start)
+        ) {
+            let controller = checkpoint_controller.as_ref().ok_or_else(|| {
+                "checkpoint_config_invalid: distributed start requires checkpoint configuration"
+                    .to_string()
+            })?;
+            let handle =
+                start_distributed_cycle(&runtime, controller, &task, budget_limits.clone())?;
+            let _ = trace.finish("pending", None);
+            return Ok(SingleRunExecutionOutcome::DistributedStarted(handle));
+        }
         let post_run_event_handler = event_handler.clone();
         let controls = RuntimeRunControls {
             event_handler: event_handler.clone(),
@@ -743,6 +774,10 @@ impl Runner {
         };
         let mut result = if let Some(replayed_result) = replayed_result {
             replayed_result
+        } else if let Some(DistributedAdvanceDecision::FinalizeRequired { result, .. }) =
+            distributed_terminal_decision
+        {
+            result.clone()
         } else {
             runtime
                 .run_with_controls(task, controls)
@@ -941,23 +976,25 @@ impl Runner {
         if let Some(error) = output_validation_error {
             return Err(error);
         }
-        Ok(SingleRunOutcome {
-            result: RunResult::new(agent.name().to_string(), result, resolved)
-                .with_ids(&run_context.run_id, &trace_id)
-                .with_input(&original_input)
-                .with_new_items(new_items)
-                .with_events(events)
-                .with_metadata(result_metadata)
-                .with_resume_context(RunResumeContext {
-                    agent: agent.clone(),
-                    input: NormalizedInput {
-                        text: original_input.clone(),
-                    },
-                    config,
-                    runner: self.clone(),
-                    pending_tool_approval,
-                }),
-            handoff,
-        })
+        Ok(SingleRunExecutionOutcome::Completed(Box::new(
+            SingleRunOutcome {
+                result: RunResult::new(agent.name().to_string(), result, resolved)
+                    .with_ids(&run_context.run_id, &trace_id)
+                    .with_input(&original_input)
+                    .with_new_items(new_items)
+                    .with_events(events)
+                    .with_metadata(result_metadata)
+                    .with_resume_context(RunResumeContext {
+                        agent: agent.clone(),
+                        input: NormalizedInput {
+                            text: original_input.clone(),
+                        },
+                        config,
+                        runner: self.clone(),
+                        pending_tool_approval,
+                    }),
+                handoff,
+            },
+        )))
     }
 }

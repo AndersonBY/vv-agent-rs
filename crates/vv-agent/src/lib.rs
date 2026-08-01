@@ -108,11 +108,12 @@ pub use run_config::{RunConfig, ToolRegistryFactory};
 pub use run_handle::{RunHandle, RunHandleState, RunHandleStatus};
 pub use runner::{NormalizedInput, RunEventStream, Runner};
 pub use runtime::backends::{
-    CapabilityRef, CycleDispatchResult, CycleDispatcher, DistributedBackend,
-    DistributedCapabilities, DistributedCapabilityError, DistributedCapabilityRegistry,
-    DistributedCycleWorker, DistributedRunEnvelope, DistributedToolPolicy, InlineBackend,
-    ResolvedDistributedCapabilities, RuntimeExecutionBackend, RuntimeRecipe, ThreadBackend,
-    ToolsetRef,
+    CapabilityRef, CycleDispatchResult, CycleDispatcher, CycleEnqueuer, DistributedAdvanceDecision,
+    DistributedBackend, DistributedCapabilities, DistributedCapabilityError,
+    DistributedCapabilityRegistry, DistributedCycleWorker, DistributedDeliveryOutcome,
+    DistributedRunEnvelope, DistributedRunHandle, DistributedToolPolicy, DistributedWaitReason,
+    InlineBackend, ResolvedDistributedCapabilities, RuntimeExecutionBackend, RuntimeRecipe,
+    ThreadBackend, ToolsetRef,
 };
 pub use runtime::background_sessions::{
     background_session_manager, BackgroundSessionAdoptOptions, BackgroundSessionListener,

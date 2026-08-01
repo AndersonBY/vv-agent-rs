@@ -35,7 +35,15 @@ const EXPECTED_DOMAINS: [&str; 14] = [
     "llm_bridge",
     "runtime_backend",
 ];
-const EXPECTED_RUNNER_OPERATIONS: [&str; 5] = ["run", "start", "stream", "resume", "configured"];
+const EXPECTED_RUNNER_OPERATIONS: [&str; 7] = [
+    "run",
+    "start",
+    "start_distributed",
+    "finalize_distributed",
+    "stream",
+    "resume",
+    "configured",
+];
 const EXPECTED_RUN_HANDLE_OPERATIONS: [&str; 8] = [
     "cancel",
     "events",

@@ -86,7 +86,8 @@ totals do not prove cache-accounting availability.
 
 - Inline backend: synchronous default execution.
 - Thread backend: non-blocking execution with task submission.
-- Distributed backend: checkpointed cycle execution with inline fallback and pluggable dispatchers.
+- Distributed backend: checkpointed cycle execution with inline fallback, a legacy blocking
+  dispatcher, and an enqueue-only event-driven driver.
 - Checkpoint stores: in-memory, SQLite, and Redis.
 
 Distributed and checkpointed paths must preserve the same public result and
@@ -128,6 +129,27 @@ the checkpoint commit later succeeds. Rust's public `run_checkpointed_cycle`
 helper uses this same lifecycle with the default lease and no job deadline.
 Redis connection I/O and non-renewal optimistic-transaction retries are bounded
 so stopping or unwinding a worker cannot wait forever on the heartbeat thread.
+
+The event-driven path uses `DistributedBackend::start` to enqueue at most Cycle
+1 and return a passive `DistributedRunHandle`. A bounded callback then calls
+`DistributedBackend::advance` with one worker response or transport failure.
+Each call reloads the checkpoint once and either dispatches one envelope,
+schedules one lease-delayed recovery, waits, requests framework finalization,
+or replays a durable terminal. It never polls or waits for task completion.
+`ApalisCycleEnqueuer` therefore requires only `TaskSink`; the existing
+`ApalisCycleDispatcher` and blocking `DistributedBackend::execute` path remain
+available for synchronous integrations.
+
+`FinalizeRequired` is an input to the separate bounded
+`Runner::finalize_distributed` framework controller, not permission for the
+driver callback to finalize inline. The controller reuses the normal output
+guardrail, validation, append-once session, checkpoint outbox, CAS terminal,
+delivery, and acknowledgement pipeline. It adopts and renews a worker claim
+when present; scheduler-generated max-cycles candidates finalize through the
+unclaimed revision CAS. Repeated finalizer delivery replays the retained
+terminal without repeating session or terminal work. Brokered cross-process
+approval remains rejected because no durable approval-resume checkpoint state
+exists yet.
 
 This is an at-least-once execution model. Apalis cancellation stops scheduler
 polling but queued or claimed work may still complete. The cycle idempotency

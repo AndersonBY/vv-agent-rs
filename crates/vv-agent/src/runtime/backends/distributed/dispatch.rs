@@ -162,7 +162,7 @@ impl CycleDispatchResult {
         }
     }
 
-    fn validate(&self) -> Result<(), String> {
+    pub(super) fn validate(&self) -> Result<(), String> {
         match self {
             Self::Pending => Ok(()),
             Self::Committed {

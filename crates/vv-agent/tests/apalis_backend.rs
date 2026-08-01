@@ -12,11 +12,11 @@ use futures_util::stream::{self, BoxStream};
 use futures_util::StreamExt;
 use serde_json::json;
 use vv_agent::runtime::backends::distributed::{
-    apalis::{run_apalis_worker_task, ApalisCycleDispatcher, ApalisCycleJob},
-    CapabilityRef, CycleDispatcher, DistributedCapabilities, DistributedCapabilityRegistry,
-    DistributedCheckpointConfig, DistributedCheckpointProgress, DistributedCycleExecutor,
-    DistributedCycleOutcome, DistributedCycleWorker, DistributedRunEnvelope,
-    ResolvedDistributedCapabilities,
+    apalis::{run_apalis_worker_task, ApalisCycleDispatcher, ApalisCycleEnqueuer, ApalisCycleJob},
+    CapabilityRef, CycleDispatcher, CycleEnqueuer, DistributedCapabilities,
+    DistributedCapabilityRegistry, DistributedCheckpointConfig, DistributedCheckpointProgress,
+    DistributedCycleExecutor, DistributedCycleOutcome, DistributedCycleWorker,
+    DistributedRunEnvelope, ResolvedDistributedCapabilities,
 };
 use vv_agent::runtime::backends::{CycleDispatchResult, RuntimeRecipe};
 use vv_agent::runtime::checkpoint_codec::checkpoint_from_value;
@@ -28,6 +28,110 @@ use vv_agent::{
 
 const DISTRIBUTED_FIXTURE: &str = include_str!("fixtures/parity/distributed_run_envelope.json");
 const CODEC_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec.json");
+
+#[derive(Clone, Default)]
+struct EnqueueOnlyBackend {
+    tasks: Arc<Mutex<Vec<Task<ApalisCycleJob, Extensions, RandomId>>>>,
+}
+
+impl Backend for EnqueueOnlyBackend {
+    type Args = ApalisCycleJob;
+    type IdType = RandomId;
+    type Context = Extensions;
+    type Error = std::io::Error;
+    type Stream =
+        stream::Empty<Result<Option<Task<ApalisCycleJob, Extensions, RandomId>>, Self::Error>>;
+    type Beat = stream::Empty<Result<(), Self::Error>>;
+    type Layer = ();
+
+    fn heartbeat(&self, _worker: &WorkerContext) -> Self::Beat {
+        stream::empty()
+    }
+
+    fn middleware(&self) -> Self::Layer {}
+
+    fn poll(self, _worker: &WorkerContext) -> Self::Stream {
+        stream::empty()
+    }
+}
+
+impl TaskSink<ApalisCycleJob> for EnqueueOnlyBackend {
+    async fn push(&mut self, task: ApalisCycleJob) -> Result<(), TaskSinkError<Self::Error>> {
+        self.push_task(Task::new(task)).await
+    }
+
+    async fn push_bulk(
+        &mut self,
+        tasks: Vec<ApalisCycleJob>,
+    ) -> Result<(), TaskSinkError<Self::Error>> {
+        for task in tasks {
+            self.push(task).await?;
+        }
+        Ok(())
+    }
+
+    async fn push_stream(
+        &mut self,
+        mut tasks: impl futures_util::Stream<Item = ApalisCycleJob> + Unpin + Send,
+    ) -> Result<(), TaskSinkError<Self::Error>> {
+        while let Some(task) = tasks.next().await {
+            self.push(task).await?;
+        }
+        Ok(())
+    }
+
+    async fn push_task(
+        &mut self,
+        task: Task<ApalisCycleJob, Self::Context, Self::IdType>,
+    ) -> Result<(), TaskSinkError<Self::Error>> {
+        self.tasks
+            .lock()
+            .map_err(|_| TaskSinkError::PushError(std::io::Error::other("task lock poisoned")))?
+            .push(task);
+        Ok(())
+    }
+
+    async fn push_all(
+        &mut self,
+        mut tasks: impl futures_util::Stream<Item = Task<ApalisCycleJob, Self::Context, Self::IdType>>
+            + Unpin
+            + Send,
+    ) -> Result<(), TaskSinkError<Self::Error>> {
+        while let Some(task) = tasks.next().await {
+            self.push_task(task).await?;
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn apalis_enqueue_adapter_requires_only_task_sink_and_preserves_schedule() {
+    let payload: serde_json::Value = serde_json::from_str(DISTRIBUTED_FIXTURE).unwrap();
+    let mut envelope = DistributedRunEnvelope::from_dict(&payload["canonical_envelope"]).unwrap();
+    envelope.deadline_unix_ms = None;
+    let backend = EnqueueOnlyBackend::default();
+    let tasks = backend.tasks.clone();
+    let enqueuer = ApalisCycleEnqueuer::new(backend);
+    let not_before_unix_ms = 1_800_000_000_001_u64;
+
+    enqueuer
+        .enqueue_envelope(&envelope, Some(not_before_unix_ms))
+        .expect("enqueue only");
+
+    let tasks = tasks.lock().expect("tasks");
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].args.envelope, envelope);
+    assert_eq!(
+        tasks[0].parts.task_id.as_ref().map(ToString::to_string),
+        Some(envelope.job_id.clone())
+    );
+    assert_eq!(
+        tasks[0].parts.idempotency_key.as_deref(),
+        Some(envelope.idempotency_key.as_str())
+    );
+    assert_eq!(tasks[0].parts.run_at, not_before_unix_ms.div_ceil(1_000));
+    assert!(tasks[0].parts.run_at * 1_000 >= not_before_unix_ms);
+}
 
 #[derive(Clone)]
 struct CompletionBackend {

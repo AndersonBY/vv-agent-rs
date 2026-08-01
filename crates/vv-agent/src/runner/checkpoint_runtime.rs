@@ -44,6 +44,8 @@ pub(super) struct CheckpointRuntimeRequest<'a> {
     pub preloaded_checkpoint: Option<Checkpoint>,
     pub checkpoint_resume: bool,
     pub backend_manages_checkpoint_cycles: bool,
+    pub distributed_terminal_decision: Option<&'a DistributedAdvanceDecision>,
+    pub distributed_lease_duration_ms: Option<u64>,
     pub admission_sender: &'a mut Option<CheckpointAdmissionSender>,
 }
 
@@ -126,7 +128,37 @@ pub(super) fn prepare_checkpoint_runtime(
         preloaded_checkpoint: request.preloaded_checkpoint,
     })
     .map_err(|error| error.to_string())?;
-    let mut replayed_result = controller.admit().map_err(|error| error.to_string())?;
+    let mut replayed_result = if let Some(decision) = request.distributed_terminal_decision {
+        let DistributedAdvanceDecision::FinalizeRequired {
+            handle,
+            checkpoint_revision,
+            result,
+        } = decision
+        else {
+            return Err(
+                "distributed finalization requires a FinalizeRequired decision".to_string(),
+            );
+        };
+        if controller.checkpoint_config().key.as_deref() != Some(handle.checkpoint_key.as_str())
+            || request.run_id != handle.run_id
+            || request.trace_id != handle.trace_id
+        {
+            return Err(
+                "distributed terminal handle does not match the checkpoint preparation".to_string(),
+            );
+        }
+        controller
+            .admit_terminal_candidate(
+                *checkpoint_revision,
+                result.status != AgentStatus::MaxCycles,
+                request.distributed_lease_duration_ms.ok_or_else(|| {
+                    "distributed terminal finalization requires a lease duration".to_string()
+                })?,
+            )
+            .map_err(|error| error.to_string())?
+    } else {
+        controller.admit().map_err(|error| error.to_string())?
+    };
     let terminal_replayed = replayed_result.is_some();
     let completed_cycles = u32::try_from(
         controller
@@ -136,7 +168,10 @@ pub(super) fn prepare_checkpoint_runtime(
     )
     .map_err(|_| "checkpoint_cycle_invalid: checkpoint cycle_index exceeds u32".to_string())?;
     let cycle_index_start = completed_cycles.saturating_add(1);
-    if replayed_result.is_none() && !request.backend_manages_checkpoint_cycles {
+    if replayed_result.is_none()
+        && request.distributed_terminal_decision.is_none()
+        && !request.backend_manages_checkpoint_cycles
+    {
         replayed_result = controller
             .begin_cycle(cycle_index_start)
             .map_err(|error| error.to_string())?;

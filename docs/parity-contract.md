@@ -221,6 +221,22 @@ transport failure. Public `AgentResult` readers require all 13 current fields,
 reject unknown fields, and require absent optional budget/error fields to be
 omitted rather than encoded as null.
 
+The transport-neutral nonblocking scheduler API is implemented in
+`runtime/backends/distributed/driver.rs`. `start` enqueues at most the first
+cycle and returns a passive `DistributedRunHandle`; `advance` performs exactly
+one authoritative checkpoint read and returns `Dispatch`, `RetryAt`, `Wait`,
+`FinalizeRequired`, or `TerminalReplay`. Superseded callbacks are no-op waits.
+The Apalis adapter uses `TaskSink` without `WaitForCompletion`, while the older
+blocking dispatcher remains a supported language-side adapter. A terminal
+candidate, including synthetic max-cycles exhaustion, must be passed to a
+separate framework terminal controller. `Runner::start_distributed` prepares
+the durable checkpoint and returns the passive handle;
+`Runner::finalize_distributed` consumes only `FinalizeRequired` and reuses the
+normal guardrail, validation, append-once session, outbox, claim-bound or
+revision-bound CAS, delivery, and acknowledgement path. Duplicate finalizer
+delivery returns the retained terminal. Durable cross-process approval
+continuation is not implemented by this Rust slice.
+
 ## Memory Capacity Mapping
 
 Rust records a resolved model's output capability in task metadata as

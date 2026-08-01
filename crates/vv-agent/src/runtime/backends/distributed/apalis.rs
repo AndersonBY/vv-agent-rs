@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use super::contract::{now_unix_ms, DistributedRunEnvelope};
 use super::{
-    CycleDispatchResult, CycleDispatcher, DistributedCycleWorker, DistributedDeliveryMetadata,
+    CycleDispatchResult, CycleDispatcher, CycleEnqueuer, DistributedCycleWorker,
+    DistributedDeliveryMetadata,
 };
 use crate::runtime::CancellationToken;
 
@@ -66,6 +67,69 @@ pub async fn run_apalis_worker_task<Ctx, IdType>(
 
 pub struct ApalisCycleDispatcher<B> {
     backend: Arc<Mutex<B>>,
+}
+
+pub struct ApalisCycleEnqueuer<B> {
+    backend: Arc<Mutex<B>>,
+}
+
+impl<B> Clone for ApalisCycleEnqueuer<B> {
+    fn clone(&self) -> Self {
+        Self {
+            backend: self.backend.clone(),
+        }
+    }
+}
+
+impl<B> std::fmt::Debug for ApalisCycleEnqueuer<B> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ApalisCycleEnqueuer")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<B> ApalisCycleEnqueuer<B> {
+    pub fn new(backend: B) -> Self {
+        Self {
+            backend: Arc::new(Mutex::new(backend)),
+        }
+    }
+}
+
+impl<B> CycleEnqueuer for ApalisCycleEnqueuer<B>
+where
+    B: TaskSink<ApalisCycleJob> + Send,
+    B::Error: std::fmt::Display,
+    B::IdType: Clone + FromStr + Send + Sync + 'static,
+    <B::IdType as FromStr>::Err: std::fmt::Display,
+{
+    fn enqueue_envelope(
+        &self,
+        envelope: &DistributedRunEnvelope,
+        not_before_unix_ms: Option<u64>,
+    ) -> Result<(), String> {
+        envelope.validate()?;
+        envelope.ensure_not_expired()?;
+        let task_id = TaskId::<B::IdType>::from_str(&envelope.job_id)
+            .map_err(|error| format!("invalid Apalis task id: {error}"))?;
+        let builder: TaskBuilder<ApalisCycleJob, B::Context, B::IdType> =
+            TaskBuilder::new(ApalisCycleJob::from_envelope(envelope.clone()))
+                .with_task_id(task_id)
+                .with_idempotency_key(&envelope.idempotency_key);
+        let task = match not_before_unix_ms {
+            Some(not_before_unix_ms) => builder
+                .run_at_timestamp(not_before_unix_ms.div_ceil(1_000))
+                .build(),
+            None => builder.build(),
+        };
+        let mut backend = self
+            .backend
+            .lock()
+            .map_err(|_| "Apalis backend lock poisoned".to_string())?;
+        block_on_apalis(backend.push_task(task))?
+            .map_err(|error| format!("failed to enqueue Apalis cycle: {error}"))
+    }
 }
 
 impl<B> Clone for ApalisCycleDispatcher<B> {

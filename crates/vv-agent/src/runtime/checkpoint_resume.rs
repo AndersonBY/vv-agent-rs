@@ -107,6 +107,7 @@ pub(crate) struct CheckpointResumeController {
 mod operations;
 mod persistence;
 mod recovery;
+mod terminal_admission;
 
 impl Drop for CheckpointResumeController {
     fn drop(&mut self) {

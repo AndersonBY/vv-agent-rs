@@ -7,6 +7,9 @@ use crate::agent::Agent;
 use crate::result::RunResult;
 use crate::run_config::RunConfig;
 use crate::run_handle::{RunEventSenderSlot, RunHandle, RunHandleState, SharedRunResult};
+use crate::runtime::backends::{
+    DistributedAdvanceDecision, DistributedRunHandle, RuntimeExecutionBackend,
+};
 
 use super::{CheckpointAdmissionSender, NormalizedInput, RunEventStream, Runner};
 
@@ -25,6 +28,135 @@ pub(crate) enum CheckpointStartOutcome {
 }
 
 impl Runner {
+    pub async fn start_distributed(
+        &self,
+        agent: &Agent,
+        input: impl Into<NormalizedInput>,
+        config: RunConfig,
+    ) -> Result<DistributedRunHandle, String> {
+        self.validate_nonblocking_distributed_config(&config)?;
+        let runner = self.clone();
+        let agent = agent.clone();
+        let input = input.into();
+        tokio::task::spawn_blocking(move || {
+            match runner.run_single_agent_operation(
+                &agent,
+                input,
+                config,
+                Some(Arc::new(Mutex::new(Vec::new()))),
+                None,
+                None,
+                None,
+                Some(super::DistributedRunnerOperation::Start),
+            )? {
+                super::SingleRunExecutionOutcome::DistributedStarted(handle) => Ok(handle),
+                super::SingleRunExecutionOutcome::Completed(_) => {
+                    Err("distributed start completed before returning a passive handle".to_string())
+                }
+            }
+        })
+        .await
+        .map_err(|error| format!("distributed start task failed: {error}"))?
+    }
+
+    pub async fn finalize_distributed(
+        &self,
+        agent: &Agent,
+        input: impl Into<NormalizedInput>,
+        decision: DistributedAdvanceDecision,
+        config: RunConfig,
+    ) -> Result<RunResult, String> {
+        self.validate_nonblocking_distributed_config(&config)?;
+        let handle = match &decision {
+            DistributedAdvanceDecision::FinalizeRequired { handle, .. } => handle,
+            _ => {
+                return Err(
+                    "distributed finalization requires a FinalizeRequired decision".to_string(),
+                )
+            }
+        };
+        let checkpoint_config = config
+            .checkpoint_config
+            .as_ref()
+            .or(self.default_run_config.checkpoint_config.as_ref())
+            .ok_or_else(|| {
+                "checkpoint_config_invalid: distributed finalization requires checkpoint configuration"
+                    .to_string()
+            })?;
+        if checkpoint_config.key.as_deref() != Some(handle.checkpoint_key.as_str()) {
+            return Err(
+                "distributed finalization checkpoint does not match the run handle".to_string(),
+            );
+        }
+        let runner = self.clone();
+        let agent = agent.clone();
+        let input = input.into();
+        tokio::task::spawn_blocking(move || {
+            match runner.run_single_agent_operation(
+                &agent,
+                input,
+                config,
+                Some(Arc::new(Mutex::new(Vec::new()))),
+                None,
+                None,
+                None,
+                Some(super::DistributedRunnerOperation::Finalize(Box::new(
+                    decision,
+                ))),
+            )? {
+                super::SingleRunExecutionOutcome::Completed(outcome) => Ok(outcome.result),
+                super::SingleRunExecutionOutcome::DistributedStarted(_) => {
+                    Err("distributed finalization returned a passive start handle".to_string())
+                }
+            }
+        })
+        .await
+        .map_err(|error| format!("distributed finalization task failed: {error}"))?
+    }
+
+    fn validate_nonblocking_distributed_config(&self, config: &RunConfig) -> Result<(), String> {
+        let checkpoint_config = config
+            .checkpoint_config
+            .as_ref()
+            .or(self.default_run_config.checkpoint_config.as_ref())
+            .ok_or_else(|| {
+                "checkpoint_config_invalid: nonblocking distributed runs require checkpoint configuration"
+                    .to_string()
+            })?;
+        checkpoint_config
+            .validate()
+            .map_err(|error| error.to_string())?;
+        if checkpoint_config.key.is_none() {
+            return Err(
+                "checkpoint_key_required: nonblocking distributed runs require an explicit checkpoint key"
+                    .to_string(),
+            );
+        }
+        let backend = config
+            .execution_backend
+            .as_ref()
+            .or(self.default_run_config.execution_backend.as_ref());
+        if !matches!(
+            backend,
+            Some(RuntimeExecutionBackend::Distributed(backend)) if backend.has_nonblocking_driver()
+        ) {
+            return Err(
+                "nonblocking distributed runs require an enqueue-only DistributedBackend"
+                    .to_string(),
+            );
+        }
+        if config.approval_provider.is_some()
+            || config.approval_broker.is_some()
+            || self.default_run_config.approval_provider.is_some()
+            || self.default_run_config.approval_broker.is_some()
+        {
+            return Err(
+                "nonblocking distributed runs do not support brokered approval waits".to_string(),
+            );
+        }
+        Ok(())
+    }
+
     pub async fn stream(
         &self,
         agent: &Agent,

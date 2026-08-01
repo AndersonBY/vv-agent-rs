@@ -832,7 +832,14 @@ impl CheckpointResumeController {
         let event = event
             .with_event_id(event_id)
             .map_err(|error| CheckpointError::new("checkpoint_event_outbox_invalid", error))?;
-        self.emit_durable(event)
+        if self.require_checkpoint()?.claim_token.is_some() {
+            self.emit_durable(event)
+        } else {
+            // An unclaimed scheduler terminal has no claim-bound progress CAS.
+            // Retain the stable observation so finalize_checkpoint persists it
+            // in the same revision-bound terminal snapshot before delivery.
+            self.queue_outbox_event(event)
+        }
     }
 
     pub(crate) fn finalize(
@@ -844,6 +851,12 @@ impl CheckpointResumeController {
             result.checkpoint_key = Some(self.checkpoint_key()?.to_string());
             return Ok(result);
         }
+        let staged_unclaimed_outbox = self
+            .require_checkpoint()
+            .ok()
+            .filter(|checkpoint| checkpoint.claim_token.is_none())
+            .map(|checkpoint| checkpoint.event_outbox.clone())
+            .unwrap_or_default();
         self.reload()?;
         if self.require_checkpoint()?.terminal_result.is_some() {
             self.deliver_pending_outbox()?;
@@ -855,6 +868,16 @@ impl CheckpointResumeController {
                     .expect("terminal checked"),
             )
             .map_err(|error| CheckpointError::new("checkpoint_terminal_result_invalid", error));
+        }
+        for entry in staged_unclaimed_outbox {
+            if !self
+                .require_checkpoint()?
+                .event_outbox
+                .iter()
+                .any(|existing| existing.event_id == entry.event_id)
+            {
+                self.require_checkpoint_mut()?.event_outbox.push(entry);
+            }
         }
         if self.unresolved_operation().is_some() && !is_operator_abort(&result) {
             return Err(CheckpointError::new(

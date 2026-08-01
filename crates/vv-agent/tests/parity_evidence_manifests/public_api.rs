@@ -132,6 +132,27 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 };
                 let _ = reference;
             }
+            "start_distributed" => {
+                let reference = |value: &vv_agent::Runner,
+                                 agent: &vv_agent::Agent,
+                                 input: String,
+                                 config: vv_agent::RunConfig| {
+                    std::mem::drop(value.start_distributed(agent, input, config));
+                };
+                let _ = reference;
+            }
+            "finalize_distributed" => {
+                let reference = |value: &vv_agent::Runner,
+                                 agent: &vv_agent::Agent,
+                                 input: String,
+                                 decision: vv_agent::DistributedAdvanceDecision,
+                                 config: vv_agent::RunConfig| {
+                    std::mem::drop(value.finalize_distributed(
+                        agent, input, decision, config,
+                    ));
+                };
+                let _ = reference;
+            }
             "stream" => {
                 let reference =
                     |value: &vv_agent::Runner, agent: &vv_agent::Agent, input: String| {
@@ -598,7 +619,7 @@ fn public_api_manifest_compiles_real_rust_exports() {
             );
         }
     }
-    assert_eq!(capability_ids.len(), 159);
+    assert_eq!(capability_ids.len(), 164);
 
     let surfaces = fixture["surfaces"].as_array().expect("public API surfaces");
     let surface_map = surfaces

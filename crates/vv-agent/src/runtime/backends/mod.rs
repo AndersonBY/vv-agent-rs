@@ -7,9 +7,10 @@ pub mod thread;
 
 pub use base::RuntimeExecutionBackend;
 pub use distributed::{
-    CapabilityRef, CycleDispatchResult, CycleDispatcher, DistributedBackend,
-    DistributedCapabilities, DistributedCapabilityError, DistributedCapabilityRegistry,
-    DistributedCycleWorker, DistributedRunEnvelope, DistributedToolPolicy,
+    CapabilityRef, CycleDispatchResult, CycleDispatcher, CycleEnqueuer, DistributedAdvanceDecision,
+    DistributedBackend, DistributedCapabilities, DistributedCapabilityError,
+    DistributedCapabilityRegistry, DistributedCycleWorker, DistributedDeliveryOutcome,
+    DistributedRunEnvelope, DistributedRunHandle, DistributedToolPolicy, DistributedWaitReason,
     ResolvedDistributedCapabilities, ToolsetRef,
 };
 pub use inline::InlineBackend;
