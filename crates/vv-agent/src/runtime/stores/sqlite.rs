@@ -112,89 +112,105 @@ impl SqliteCheckpointStore {
 
 fn initialize_schema(connection: &Connection) -> CheckpointResult<()> {
     connection
-        .execute_batch("PRAGMA journal_mode=WAL;")
-        .map_err(sqlite_error)?;
-    connection
         .execute_batch("PRAGMA foreign_keys=ON;")
         .map_err(sqlite_error)?;
-    match schema_sql(connection, "table", "checkpoints")? {
-        None => {
-            connection
-                .execute_batch(sqlite_schema::CREATE_CHECKPOINTS_TABLE_SQL)
-                .map_err(sqlite_error)?;
-            connection
-                .execute_batch(sqlite_schema::CREATE_CHECKPOINTS_STATUS_INDEX_SQL)
-                .map_err(sqlite_error)?;
-            connection
-                .execute_batch(sqlite_deferred::CREATE_DEFERRED_RECEIPTS_TABLE_SQL)
-                .map_err(sqlite_error)?;
-            connection
-                .execute_batch(sqlite_deferred::CREATE_DEFERRED_RECEIPTS_INDEX_SQL)
-                .map_err(sqlite_error)?;
+    let expected_objects = [
+        (
+            "table",
+            "checkpoints",
+            sqlite_schema::CREATE_CHECKPOINTS_TABLE_SQL,
+            "existing checkpoints table does not match the current schema; create a new database",
+        ),
+        (
+            "index",
+            "checkpoints_status_idx",
+            sqlite_schema::CREATE_CHECKPOINTS_STATUS_INDEX_SQL,
+            "existing checkpoints index does not match the current schema; create a new database",
+        ),
+        (
+            "table",
+            "deferred_resolution_receipts",
+            sqlite_deferred::CREATE_DEFERRED_RECEIPTS_TABLE_SQL,
+            "existing deferred receipt schema is incomplete; create a new database",
+        ),
+        (
+            "index",
+            "deferred_receipts_checkpoint_idx",
+            sqlite_deferred::CREATE_DEFERRED_RECEIPTS_INDEX_SQL,
+            "existing deferred receipt schema is incomplete; create a new database",
+        ),
+    ];
+    // Probe every canonical name before deciding whether this is a fresh database.  In
+    // particular, do not let an early match skip probing a later name: a later
+    // case-insensitive collision must still make schema validation fail closed.
+    let schema_matches = expected_objects
+        .iter()
+        .map(|(_, name, _, _)| schema_objects(connection, name))
+        .collect::<CheckpointResult<Vec<_>>>()?;
+    let has_related_objects = schema_matches.iter().any(|objects| !objects.is_empty());
+
+    if has_related_objects {
+        for (objects, (expected_type, _, expected_sql, message)) in
+            schema_matches.iter().zip(expected_objects.iter())
+        {
+            validate_schema_object(objects, expected_type, expected_sql, message)?;
         }
-        Some(existing) => {
-            if normalize_schema_sql(&existing)
-                != normalize_schema_sql(sqlite_schema::CREATE_CHECKPOINTS_TABLE_SQL)
-            {
-                return Err(schema_mismatch(
-                    "existing checkpoints table does not match the current schema; create a new database",
-                ));
-            }
-            let existing_index = schema_sql(connection, "index", "checkpoints_status_idx")?
-                .ok_or_else(|| {
-                    schema_mismatch(
-                        "existing checkpoints index does not match the current schema; create a new database",
-                    )
-                })?;
-            if normalize_schema_sql(&existing_index)
-                != normalize_schema_sql(sqlite_schema::CREATE_CHECKPOINTS_STATUS_INDEX_SQL)
-            {
-                return Err(schema_mismatch(
-                    "existing checkpoints index does not match the current schema; create a new database",
-                ));
-            }
-            for (object_type, name, expected) in [
-                (
-                    "table",
-                    "deferred_resolution_receipts",
-                    sqlite_deferred::CREATE_DEFERRED_RECEIPTS_TABLE_SQL,
-                ),
-                (
-                    "index",
-                    "deferred_receipts_checkpoint_idx",
-                    sqlite_deferred::CREATE_DEFERRED_RECEIPTS_INDEX_SQL,
-                ),
-            ] {
-                let actual = schema_sql(connection, object_type, name)?.ok_or_else(|| {
-                    schema_mismatch(
-                        "existing deferred receipt schema is incomplete; create a new database",
-                    )
-                })?;
-                if normalize_schema_sql(&actual) != normalize_schema_sql(expected) {
-                    return Err(schema_mismatch(
-                        "existing deferred receipt schema does not match the current schema; create a new database",
-                    ));
-                }
-            }
-        }
+    } else {
+        connection
+            .execute_batch(sqlite_schema::CREATE_CHECKPOINTS_TABLE_SQL)
+            .map_err(sqlite_error)?;
+        connection
+            .execute_batch(sqlite_schema::CREATE_CHECKPOINTS_STATUS_INDEX_SQL)
+            .map_err(sqlite_error)?;
+        connection
+            .execute_batch(sqlite_deferred::CREATE_DEFERRED_RECEIPTS_TABLE_SQL)
+            .map_err(sqlite_error)?;
+        connection
+            .execute_batch(sqlite_deferred::CREATE_DEFERRED_RECEIPTS_INDEX_SQL)
+            .map_err(sqlite_error)?;
     }
+    connection
+        .execute_batch("PRAGMA journal_mode=WAL;")
+        .map_err(sqlite_error)?;
     Ok(())
 }
 
-fn schema_sql(
-    connection: &Connection,
-    object_type: &str,
-    name: &str,
-) -> CheckpointResult<Option<String>> {
-    connection
-        .query_row(
-            "SELECT sql FROM sqlite_master WHERE type = ?1 AND name = ?2",
-            params![object_type, name],
-            |row| row.get::<_, Option<String>>(0),
-        )
-        .optional()
-        .map(Option::flatten)
+#[derive(Debug)]
+struct SchemaObject {
+    object_type: String,
+    sql: Option<String>,
+}
+
+fn schema_objects(connection: &Connection, name: &str) -> CheckpointResult<Vec<SchemaObject>> {
+    let mut statement = connection
+        .prepare("SELECT type, sql FROM sqlite_master WHERE lower(name) = lower(?1)")
+        .map_err(sqlite_error)?;
+    let rows = statement
+        .query_map(params![name], |row| {
+            Ok(SchemaObject {
+                object_type: row.get(0)?,
+                sql: row.get(1)?,
+            })
+        })
+        .map_err(sqlite_error)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(sqlite_error)
+}
+
+fn validate_schema_object(
+    objects: &[SchemaObject],
+    expected_type: &str,
+    expected_sql: &str,
+    message: &str,
+) -> CheckpointResult<()> {
+    if objects.len() != 1
+        || objects[0].object_type != expected_type
+        || objects[0].sql.as_deref().map(normalize_schema_sql)
+            != Some(normalize_schema_sql(expected_sql))
+    {
+        return Err(schema_mismatch(message));
+    }
+    Ok(())
 }
 
 fn normalize_schema_sql(sql: &str) -> String {
