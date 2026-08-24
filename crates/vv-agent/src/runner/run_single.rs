@@ -675,7 +675,6 @@ impl Runner {
             RuntimeExecutionBackend::Distributed(backend) => Some(backend.lease_duration_ms()),
             _ => None,
         };
-
         let CheckpointRuntimeState {
             controller: checkpoint_controller,
             mut terminal_replayed,
@@ -910,7 +909,8 @@ impl Runner {
                 }
             }
         }
-        if !terminal_replayed && !reconciliation_required {
+        let deferred = matches!(result.status, AgentStatus::Deferred);
+        if !terminal_replayed && !reconciliation_required && !deferred {
             let event = terminal_event(
                 &result,
                 &run_context.run_id,

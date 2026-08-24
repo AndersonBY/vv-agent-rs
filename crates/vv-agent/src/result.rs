@@ -165,6 +165,9 @@ impl RunResult {
     }
 
     pub fn final_output(&self) -> Option<&str> {
+        if self.result.status == AgentStatus::Deferred {
+            return self.result.final_answer.as_deref();
+        }
         self.result
             .final_answer
             .as_deref()

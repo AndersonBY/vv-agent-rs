@@ -820,7 +820,7 @@ fn terminal_candidate_retains_claim_without_finalizing_or_acknowledging() {
             EventOutboxEntry::pending(
                 "evt-terminal-two-phase",
                 json!({
-                    "version": "v2",
+                    "version": "v4",
                     "type": "run_completed",
                     "event_id": "evt-terminal-two-phase",
                     "run_id": "run-terminal",

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum AgentStatus {
     Pending,
     Running,
+    Deferred,
     WaitUser,
     Completed,
     Failed,

@@ -306,6 +306,7 @@ fn shared_fixture_nullability_and_restart_recovery_match() {
         completion_reason: None,
         completion_tool_name: None,
         partial_output: None,
+        wait_reason: None,
         error: None,
         token_usage: None,
         budget_usage: None,
@@ -700,7 +701,7 @@ fn run_event_from_fixture(mut event: Value) -> RunEvent {
     let object = event.as_object_mut().expect("tool lifecycle event object");
     object
         .entry("version".to_string())
-        .or_insert_with(|| json!("v2"));
+        .or_insert_with(|| json!("v4"));
     object
         .entry("run_id".to_string())
         .or_insert_with(|| json!("run_tool"));

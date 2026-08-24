@@ -78,6 +78,7 @@ cargo run -p vv-agent --example 03_sdk_client
 | `27_facade_handoff` | Handoff flow that transfers control to another agent. |
 | `28_facade_approval_background_trace` | Live approval provider, background agent task, and JSONL trace exporter. |
 | `29_typed_final_output` | Deserialize a JSON final output into a Rust type. |
+| `30_deferred_tool` | Build a framework-owned deferred handle and observe the non-durable fail-closed result. |
 
 ### Add Metadata to the Custom Tool Builder
 

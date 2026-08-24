@@ -185,6 +185,11 @@ impl ToolExecutionResult {
         }
     }
 
+    pub fn with_error_code(mut self, error_code: impl Into<String>) -> Self {
+        self.error_code = Some(error_code.into());
+        self
+    }
+
     pub fn to_message(&self) -> Message {
         let mut content = self.content.clone();
         if self.truncated {

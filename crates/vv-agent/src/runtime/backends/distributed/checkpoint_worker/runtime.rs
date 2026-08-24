@@ -122,6 +122,13 @@ pub(super) fn run_agent_runtime_cycle(
         controller.close();
         return CycleDispatchResult::committed(current.cycle_index, current.revision);
     }
+    if result.status == AgentStatus::Deferred {
+        if current.status != CheckpointStatus::Deferred || current.claim_token.is_some() {
+            return Err("distributed deferred result does not match durable state".to_string());
+        }
+        controller.close();
+        return Ok(CycleDispatchResult::pending());
+    }
     if result.status == AgentStatus::ReconciliationRequired {
         if current.status != CheckpointStatus::ReconciliationRequired
             || current.claim_token.is_some()

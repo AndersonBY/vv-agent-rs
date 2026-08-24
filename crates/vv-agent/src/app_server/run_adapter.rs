@@ -514,6 +514,7 @@ impl AppServerRunAdapter {
             completion_reason,
             completion_tool_name,
             partial_output,
+            wait_reason,
             error,
             token_usage,
             budget_usage,
@@ -543,6 +544,10 @@ impl AppServerRunAdapter {
                             (None, None)
                         },
                     );
+                let usage_visible = !matches!(
+                    result.status(),
+                    AgentStatus::Deferred | AgentStatus::ReconciliationRequired
+                );
                 (
                     status,
                     Some(result.run_id().to_string()),
@@ -552,10 +557,15 @@ impl AppServerRunAdapter {
                         .map(|reason| reason.as_str().to_string()),
                     result.completion_tool_name().map(str::to_string),
                     result.partial_output().map(str::to_string),
+                    result.result().wait_reason.clone(),
                     error,
-                    Some(app_token_usage(&result.result().token_usage)),
-                    result.budget_usage().map(app_json_object),
-                    result.budget_exhaustion().map(app_json_object),
+                    usage_visible.then(|| app_token_usage(&result.result().token_usage)),
+                    usage_visible
+                        .then(|| result.budget_usage().map(app_json_object))
+                        .flatten(),
+                    usage_visible
+                        .then(|| result.budget_exhaustion().map(app_json_object))
+                        .flatten(),
                     checkpoint,
                     interruption,
                 )
@@ -565,6 +575,7 @@ impl AppServerRunAdapter {
                 None,
                 None,
                 Some("failed".to_string()),
+                None,
                 None,
                 None,
                 Some(error),
@@ -593,6 +604,9 @@ impl AppServerRunAdapter {
         }
         if let Some(error) = &error {
             stored_result.insert("error".to_string(), json!(error));
+        }
+        if let Some(wait_reason) = &wait_reason {
+            stored_result.insert("waitReason".to_string(), json!(wait_reason));
         }
         if let Some(token_usage) = &token_usage {
             stored_result.insert("tokenUsage".to_string(), json!(token_usage));
@@ -641,6 +655,7 @@ impl AppServerRunAdapter {
                     completion_reason,
                     completion_tool_name,
                     partial_output,
+                    wait_reason,
                     error,
                     token_usage,
                     budget_usage,
@@ -887,6 +902,7 @@ fn input_text(input: &[UserInput]) -> String {
 fn turn_status(status: AgentStatus) -> TurnStatus {
     match status {
         AgentStatus::WaitUser | AgentStatus::ReconciliationRequired => TurnStatus::Interrupted,
+        AgentStatus::Deferred => TurnStatus::Interrupted,
         AgentStatus::Completed => TurnStatus::Completed,
         AgentStatus::Pending | AgentStatus::Running => TurnStatus::Running,
         AgentStatus::Failed | AgentStatus::MaxCycles => TurnStatus::Failed,

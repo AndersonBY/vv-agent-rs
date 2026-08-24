@@ -2,6 +2,7 @@
 
 use super::*;
 
+mod deferred_dispatch;
 mod model_terminal;
 
 pub(super) use model_terminal::model_identity_from_entry;
@@ -69,6 +70,10 @@ impl CheckpointResumeController {
 
     pub(crate) fn checkpoint_config(&self) -> &CheckpointConfig {
         &self.config
+    }
+
+    pub(crate) fn checkpoint_store(&self) -> Arc<dyn CheckpointStore> {
+        self.store.clone()
     }
 
     pub(crate) fn next_claim_mode(&self) -> ClaimMode {
@@ -235,6 +240,14 @@ impl CheckpointResumeController {
         &mut self,
         cycle_index: u32,
     ) -> CheckpointResult<Option<AgentResult>> {
+        if self.require_checkpoint()?.status == CheckpointStatus::Deferred {
+            let checkpoint = self.require_checkpoint()?.clone();
+            return Ok(Some(self.deferred_result(
+                &checkpoint.messages,
+                &checkpoint.cycles,
+                &checkpoint.shared_state,
+            )?));
+        }
         self.ensure_claim(u64::from(cycle_index))
     }
 

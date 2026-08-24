@@ -71,6 +71,8 @@ pub struct TurnResumeResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partial_output: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<CheckpointSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interruption: Option<InterruptionSummary>,
@@ -125,6 +127,8 @@ pub struct TurnCompletedParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partial_output: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_usage: Option<AppTokenUsage>,
@@ -158,6 +162,7 @@ pub enum CheckpointSummaryStatus {
     Failed,
     MaxCycles,
     ReconciliationRequired,
+    Deferred,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]

@@ -1,19 +1,3 @@
-use serde_json::Value;
-use std::collections::BTreeMap;
-
-use crate::llm::{LlmClient, LlmError};
-use crate::memory::CompactionExhaustedError;
-use crate::tools::ToolSpecKind;
-use crate::types::{AgentResult, AgentTask, CompletionReason, ToolDirective, ToolExecutionResult};
-
-use crate::runtime::cancellation::CancellationToken;
-use crate::runtime::cycle_runner::{is_prompt_too_long_error, MAX_PROMPT_TOO_LONG_RETRIES};
-use crate::runtime::model_calls::ModelCallDispatchRequest;
-use crate::runtime::results::assistant_message_from_response;
-use crate::runtime::tool_call_runner::{
-    apply_tool_use_behavior, needs_tool_call_id, skipped_tool_result,
-};
-
 use super::approval::{
     approval_error_result, approval_provider_result, PendingToolApprovalCapture,
 };
@@ -22,7 +6,7 @@ use super::budget::{
     observe_tool_batch_completion, preflight_tool_batch, project_model_call_completion,
     PreparedRunBudget,
 };
-use super::checkpoint::{CheckpointModelCompletion, CheckpointToolPlan};
+use super::checkpoint::{CheckpointModelCompletion, CheckpointToolPlan, DeferredBatchCollector};
 use super::controls::{CheckpointRuntimeControl, RuntimeRunControls};
 use super::helpers::{
     cancelled_agent_result, collect_interruption_messages, controls_cancelled,
@@ -47,7 +31,21 @@ use super::run_setup::{
 };
 use super::state::AgentRuntime;
 use super::tool_batch::{PreparedToolBatch, ToolBatchSetup};
-
+use crate::llm::{LlmClient, LlmError};
+use crate::memory::CompactionExhaustedError;
+use crate::runtime::cancellation::CancellationToken;
+use crate::runtime::cycle_runner::{is_prompt_too_long_error, MAX_PROMPT_TOO_LONG_RETRIES};
+use crate::runtime::model_calls::ModelCallDispatchRequest;
+use crate::runtime::results::assistant_message_from_response;
+use crate::runtime::tool_call_runner::{
+    apply_tool_use_behavior, normalize_tool_call_id, skipped_tool_result,
+};
+use crate::tools::ToolSpecKind;
+use crate::types::{
+    AgentResult, AgentTask, CompletionReason, ToolDirective, ToolExecutionResult, ToolResultStatus,
+};
+use serde_json::Value;
+use std::collections::BTreeMap;
 impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
     pub fn run_with_controls(
         &self,
@@ -79,7 +77,6 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
         } = self.prepare_run_budget(&controls, &messages, &cycles, &shared_state);
         let configured_budget = effective_budget_limits.is_some();
         let child_budget_limits = effective_budget_limits.clone();
-
         let effective_cancellation_token = controls.effective_cancellation_token();
         let PreparedRuntimeAccounting {
             model_call_ledger,
@@ -465,7 +462,6 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     Vec::<ToolExecutionResult>::new(),
                 );
                 cycle.memory_compacted = memory_compacted;
-
                 let model_boundary_result = project_model_call_completion(
                     &budget_controller,
                     &controls,
@@ -488,7 +484,6 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     return Some(result);
                 }
                 self.emit_cycle_llm_response(&controls, &cycle, &model_usage);
-
                 if response.tool_calls.is_empty() {
                     return finalize_no_tool_cycle(NoToolCycleFinalization {
                         runtime: self,
@@ -505,7 +500,6 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         persisted_denials: &active_after_cycle_denials,
                     });
                 }
-
                 if let Some(result) = preflight_tool_batch(
                     &budget_controller,
                     &controls,
@@ -518,7 +512,6 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 ) {
                     return Some(result);
                 }
-
                 let PreparedToolBatch {
                     mut context,
                     orchestrator: tool_orchestrator,
@@ -536,11 +529,11 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     request_tool_schemas: &request_tool_schemas,
                     after_cycle_disallowed_tools: &active_after_cycle_denials,
                 });
-
-                let mut directive_result = None;
-                let mut directive_completion_reason = None;
-                let mut directive_completion_tool_name = None;
+                let (mut directive_result, mut directive_completion_reason, mut directive_completion_tool_name) =
+                    (None, None, None);
                 let mut image_notifications = Vec::new();
+                let mut deferred_batch =
+                    DeferredBatchCollector::new(&checkpoint, &self.tool_registry, cycle_index);
                 for (call_index, call) in response.tool_calls.iter().enumerate() {
                     if cancellation_token.is_some_and(CancellationToken::is_cancelled)
                         || controls_cancelled(&controls)
@@ -598,16 +591,15 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         CheckpointToolPlan::Continue(plan) => plan,
                         CheckpointToolPlan::Stop(result) => return Some(*result),
                     };
+                    checkpoint.set_tool_context_identity(&mut context, cycle_index, &patched_call);
                     let tool_kind = self
                         .tool_registry
                         .get(&patched_call.name)
                         .map(|spec| spec.kind)
                         .ok();
                     let mut approval_failure = None;
-                    let mut execution = if let Some(mut result) = short_circuit_result {
-                        if needs_tool_call_id(&result.tool_call_id) {
-                            result.tool_call_id = call.id.clone();
-                        }
+                    let execution = if let Some(mut result) = short_circuit_result {
+                        normalize_tool_call_id(&mut result, &call.id);
                         tool_orchestrator.observe_result_without_execution(
                             patched_call.clone(),
                             result,
@@ -691,18 +683,21 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 ),
                             ),
                         };
-                        if let Some(result) =
-                            checkpoint.pending_failure(messages, cycles, shared_state)
-                        {
+                        if let Some(result) = checkpoint.pending_failure(messages, cycles, shared_state) {
                             return Some(result);
                         }
                         execution
                     };
+                    let Some(mut execution) = deferred_batch.capture_or_return_execution(
+                        &patched_call,
+                        checkpoint_plan.as_deref(),
+                        execution,
+                    ) else {
+                        continue;
+                    };
                     let execution_started = execution.execution_started();
                     let mut result = execution.result().clone();
-                    if needs_tool_call_id(&result.tool_call_id) {
-                        result.tool_call_id = patched_call.id.clone();
-                    }
+                    normalize_tool_call_id(&mut result, &patched_call.id);
                     result = hook_manager.apply_after_tool_call(
                         &task,
                         cycle_index,
@@ -710,13 +705,10 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         &context,
                         result,
                     );
-                    if needs_tool_call_id(&result.tool_call_id) {
-                        result.tool_call_id = patched_call.id.clone();
-                    }
+                    normalize_tool_call_id(&mut result, &patched_call.id);
                     let behavior_reason =
                         apply_tool_use_behavior(&task, &patched_call, &mut result);
                     execution.replace_result(result);
-                    let result = execution.complete();
                     if let Some(error) = approval_failure {
                         *shared_state = context.shared_state.clone();
                         if let Some(controller) = &budget_controller {
@@ -744,15 +736,31 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             task_token_usage(&controls),
                         ));
                     }
-                    if let Some(result) = checkpoint.finish_tool(
-                        cycle_index,
-                        &patched_call,
-                        &result,
-                        || budget_snapshot(&budget_controller),
-                        (messages, cycles, shared_state),
-                    ) {
-                        return Some(result);
-                    }
+                    let result = if execution_started
+                        && matches!(
+                            execution.result().status,
+                            ToolResultStatus::Success | ToolResultStatus::Error
+                        ) {
+                        deferred_batch.capture_completed_execution(
+                            &patched_call,
+                            checkpoint_plan.as_deref(),
+                            execution,
+                        )
+                    } else {
+                        let result = execution.complete();
+                        if execution_started {
+                            if let Some(result) = checkpoint.finish_tool(
+                                cycle_index,
+                                &patched_call,
+                                &result,
+                                || budget_snapshot(&budget_controller),
+                                (messages, cycles, shared_state),
+                            ) {
+                                return Some(result);
+                            }
+                        }
+                        result
+                    };
                     if matches!(
                         tool_kind,
                         Some(ToolSpecKind::Agent | ToolSpecKind::BackgroundAgent)
@@ -794,7 +802,6 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         );
                     }
                     self.emit_tool_result(&controls, cycle_index, &patched_call, &result);
-
                     let interruption_messages = collect_interruption_messages(&controls);
                     let steering_prompts = drain_steering_queue(&controls);
                     let steering_count = interruption_messages.len() + steering_prompts.len();
@@ -912,8 +919,10 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 }
                 messages.extend(image_notifications);
                 *shared_state = context.shared_state.clone();
-
                 cycles.push(cycle);
+                if let Some(result) = deferred_batch.finish(messages, cycles, shared_state) {
+                    return Some(result);
+                }
                 let tool_boundary_result = observe_tool_batch_completion(
                     &budget_controller,
                     &controls,

@@ -79,7 +79,7 @@ fn memory_compaction_model_output_capability_accepts_explicit_null() {
 
 fn current_memory_compact_started() -> Value {
     json!({
-        "version": "v2",
+        "version": "v4",
         "type": "memory_compact_started",
         "event_id": "evt_nullable_model_capability",
         "run_id": "run_nullable_model_capability",
@@ -103,7 +103,7 @@ fn current_memory_compact_started() -> Value {
 
 fn current_memory_compact_completed() -> Value {
     json!({
-        "version": "v2",
+        "version": "v4",
         "type": "memory_compact_completed",
         "event_id": "evt_invalid_memory_completed",
         "run_id": "run_invalid_memory",

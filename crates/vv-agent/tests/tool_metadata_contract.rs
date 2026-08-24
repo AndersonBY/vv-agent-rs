@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Map, Value};
 use vv_agent::{
-    FunctionTool, Tool, ToolCall, ToolContext, ToolDirective, ToolLifecycleEvent, ToolMetadata,
-    ToolOrchestrator, ToolOutput, ToolPolicy, ToolRegistry, ToolResultStatus, ToolRunOptions,
-    ToolSideEffect,
+    FunctionTool, Tool, ToolCall, ToolContext, ToolDirective, ToolExecutionResult,
+    ToolLifecycleEvent, ToolMetadata, ToolOrchestrator, ToolOutput, ToolPolicy, ToolRegistry,
+    ToolResultStatus, ToolRunOptions, ToolSideEffect, ToolSpecExecutor,
 };
 
 const CONTRACT_SOURCE: &str = include_str!("fixtures/parity/tool_metadata.json");
@@ -90,6 +90,7 @@ fn lifecycle_event_type(event: &ToolLifecycleEvent) -> &'static str {
     match event {
         ToolLifecycleEvent::Planned { .. } => "tool_call_planned",
         ToolLifecycleEvent::Started { .. } => "tool_call_started",
+        ToolLifecycleEvent::Deferred { .. } => "tool_call_deferred",
         ToolLifecycleEvent::Completed { .. } => "tool_call_completed",
     }
 }
@@ -104,6 +105,11 @@ fn lifecycle_event_value(event: &ToolLifecycleEvent) -> Value {
             call,
             tool_metadata,
         } => ("tool_call_started", call, tool_metadata),
+        ToolLifecycleEvent::Deferred {
+            call,
+            tool_metadata,
+            ..
+        } => ("tool_call_deferred", call, tool_metadata),
         ToolLifecycleEvent::Completed {
             call,
             tool_metadata,
@@ -139,6 +145,17 @@ fn lifecycle_event_value(event: &ToolLifecycleEvent) -> Value {
         );
         value["directive"] = serde_json::to_value(result.directive).expect("directive serializes");
         value["error_code"] = serde_json::to_value(&result.error_code).expect("error serializes");
+        value["execution_started"] = Value::Bool(*execution_started);
+        value["duration_ms"] = serde_json::to_value(duration_ms).expect("duration serializes");
+    }
+    if let ToolLifecycleEvent::Deferred {
+        handle,
+        execution_started,
+        duration_ms,
+        ..
+    } = event
+    {
+        value["handle"] = serde_json::to_value(handle).expect("handle serializes");
         value["execution_started"] = Value::Bool(*execution_started);
         value["duration_ms"] = serde_json::to_value(duration_ms).expect("duration serializes");
     }
@@ -352,6 +369,7 @@ fn telemetry_contract_matches_public_status_and_directive_values() {
         json!([
             "tool_call_planned",
             "tool_call_started",
+            "tool_call_deferred",
             "tool_call_completed"
         ])
     );
@@ -374,7 +392,10 @@ fn telemetry_contract_matches_public_status_and_directive_values() {
         )
     })
     .collect::<Vec<_>>();
-    assert_eq!(telemetry["tool_status_values"], Value::Array(status_values));
+    assert_eq!(
+        telemetry["completed_status_values"],
+        Value::Array(status_values)
+    );
 
     let directive_values = [
         ToolDirective::Continue,
@@ -447,6 +468,7 @@ async fn real_orchestrator_consumes_canonical_producer_cases() {
             Some(tool_metadata) => builder.tool_metadata(tool_metadata),
             None => builder,
         };
+        let should_defer = name == "deferred_admission_has_no_completed_result_or_model_message";
         let tool = builder
             .handler(move |_context, _arguments: Value| {
                 let handler_invocations = Arc::clone(&handler_invocations);
@@ -468,10 +490,31 @@ async fn real_orchestrator_consumes_canonical_producer_cases() {
         });
         let policy = policy_from_fixture(&case.get("policy").cloned().unwrap_or_else(|| json!({})));
         let options = ToolRunOptions::from_policy(&policy).lifecycle_callback(callback);
-        let result = ToolOrchestrator::from_tools(vec![tool.to_executor()])
+        let mut context = ToolContext::new(".");
+        if should_defer {
+            context.set_deferred_identity(
+                "metadata/checkpoint",
+                "op_metadata_deferred",
+                1,
+                "a".repeat(64),
+            );
+        }
+        let executor = if should_defer {
+            let mut spec = tool.as_tool_spec();
+            let handler_invocations = Arc::clone(&invocations);
+            spec.handler = Arc::new(move |context, _arguments| {
+                handler_invocations.fetch_add(1, Ordering::SeqCst);
+                let _ = context.defer();
+                ToolExecutionResult::success(context.tool_call_id.clone(), "ok")
+            });
+            ToolSpecExecutor::new(spec).into_arc()
+        } else {
+            tool.to_executor()
+        };
+        let result = ToolOrchestrator::from_tools(vec![executor])
             .run_one(
                 ToolCall::from_raw_arguments(&tool_call_id, tool_name, arguments.clone()),
-                &mut ToolContext::new("."),
+                &mut context,
                 options,
             )
             .await
@@ -500,6 +543,15 @@ async fn real_orchestrator_consumes_canonical_producer_cases() {
         }
 
         assert_eq!(json!(event_types), case["expected_event_types"], "{name}");
+        if should_defer {
+            assert_eq!(invocations.load(Ordering::SeqCst), 1, "{name}");
+            assert_eq!(case["expected_deferred"]["outcome"], "deferred", "{name}");
+            assert_eq!(
+                case["expected_deferred"]["model_visible_tool_result"], false,
+                "{name}"
+            );
+            continue;
+        }
         if name == "metadata_policy_denial_has_no_execution_start" {
             let completed = lifecycle_event_value(captured.last().expect("completed event"));
             for (field, expected) in case["expected_completed"]

@@ -54,6 +54,7 @@ pub enum DistributedWaitReason {
     ActiveClaim,
     ReconciliationRequired,
     HostInteraction,
+    DeferredPending,
     SupersededDelivery,
 }
 
@@ -129,8 +130,41 @@ impl DistributedBackend {
         checkpoint_config: DistributedCheckpointConfig,
         budget_limits: Option<RunBudgetLimits>,
     ) -> Result<DistributedRunHandle, String> {
+        self.start_inner(task, checkpoint_config, budget_limits, None)
+    }
+
+    pub(crate) fn start_with_controller_store(
+        &self,
+        task: AgentTask,
+        checkpoint_config: DistributedCheckpointConfig,
+        budget_limits: Option<RunBudgetLimits>,
+        controller_store: Arc<dyn CheckpointStore>,
+    ) -> Result<DistributedRunHandle, String> {
+        self.start_inner(
+            task,
+            checkpoint_config,
+            budget_limits,
+            Some(controller_store),
+        )
+    }
+
+    fn start_inner(
+        &self,
+        task: AgentTask,
+        checkpoint_config: DistributedCheckpointConfig,
+        budget_limits: Option<RunBudgetLimits>,
+        controller_store: Option<Arc<dyn CheckpointStore>>,
+    ) -> Result<DistributedRunHandle, String> {
         let (recipe, store, enqueuer) = self.nonblocking_components()?;
         checkpoint_config.validate()?;
+        if let Some(controller_store) = controller_store.as_deref() {
+            if controller_store.store_identity() != store.store_identity() {
+                return Err(
+                    "checkpoint_store_conflict: distributed start controller and registry stores differ"
+                        .to_string(),
+                );
+            }
+        }
         let checkpoint = load_checkpoint_once(store.as_ref(), &checkpoint_config.key)?;
         let handle = DistributedRunHandle::from_checkpoint(&checkpoint);
         if checkpoint.terminal_result.is_some() {
@@ -242,6 +276,23 @@ impl DistributedBackend {
 
         if matches!(response, Some(CycleDispatchResult::TerminalReplay { .. })) {
             return Err("distributed terminal replay has no matching durable terminal".to_string());
+        }
+
+        // Deferred checkpoints are an authoritative barrier. The worker
+        // response remains the existing `pending` wire shape; the driver
+        // never polls a provider or enqueues a replacement envelope while
+        // the barrier still has unresolved handles.
+        if checkpoint.status == CheckpointStatus::Deferred {
+            if checkpoint.claim_token.is_some() {
+                return Err(
+                    "checkpoint_store_conflict: distributed deferred checkpoint cannot retain an active claim"
+                        .to_string(),
+                );
+            }
+            return Ok(DistributedAdvanceDecision::Wait {
+                handle,
+                reason: DistributedWaitReason::DeferredPending,
+            });
         }
 
         if let Some(CycleDispatchResult::TerminalCandidate {

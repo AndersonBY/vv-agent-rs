@@ -162,6 +162,7 @@ impl CheckpointResumeController {
             .filter(|entry| entry.state == OperationState::Ambiguous)
             .cloned()
             .collect::<Vec<_>>();
+        let mut deferred_decisions = Vec::new();
         for entry in ambiguous {
             let observation = observation(&entry);
             self.emit_ambiguous(&entry, &observation)?;
@@ -177,6 +178,32 @@ impl CheckpointResumeController {
                 let result = operator_abort_result(self.require_checkpoint()?, observation);
                 return Ok(Some(result));
             }
+            if decision.kind == ReconciliationDecisionKind::AcceptDeferred {
+                if entry.kind != OperationKind::Tool {
+                    return Err(CheckpointError::new(
+                        "reconciliation_decision_invalid",
+                        "accept_deferred is only valid for tool operations",
+                    ));
+                }
+                let handle = decision.handle.clone().ok_or_else(|| {
+                    CheckpointError::new(
+                        "reconciliation_decision_invalid",
+                        "accept_deferred requires a handle",
+                    )
+                })?;
+                if handle.checkpoint_key != self.checkpoint_key()?
+                    || handle.operation_id != entry.operation_id
+                    || handle.attempt != entry.attempt
+                    || handle.request_digest != entry.request_digest
+                {
+                    return Err(CheckpointError::new(
+                        "reconciliation_decision_invalid",
+                        "accept_deferred handle does not match the ambiguous tool",
+                    ));
+                }
+                deferred_decisions.push(AcceptDeferredDecision::new(handle));
+                continue;
+            }
             {
                 let current = self.find_operation_mut(entry.kind, &entry.operation_id)?;
                 apply_reconciliation_decision(current, &decision)?;
@@ -189,6 +216,8 @@ impl CheckpointResumeController {
                     operation_id: entry.operation_id.clone(),
                     operation_kind: entry.kind,
                     decision: decision.kind,
+                    claim_mode: (decision.kind == ReconciliationDecisionKind::AcceptDeferred)
+                        .then_some(ClaimMode::Recovery),
                 },
                 self.stable_event_id(
                     "reconciliation_resolved",
@@ -196,6 +225,15 @@ impl CheckpointResumeController {
                 )?,
             )?;
             self.emit_durable(event)?;
+        }
+        if !deferred_decisions.is_empty() {
+            self.accept_deferred_batch(&deferred_decisions)?;
+            let checkpoint = self.require_checkpoint()?.clone();
+            return Ok(Some(self.deferred_result(
+                &checkpoint.messages,
+                &checkpoint.cycles,
+                &checkpoint.shared_state,
+            )?));
         }
         Ok(None)
     }

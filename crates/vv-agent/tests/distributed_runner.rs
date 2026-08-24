@@ -21,6 +21,10 @@ impl RecordingEnqueuer {
         assert_eq!(envelopes.len(), 1);
         envelopes.remove(0)
     }
+
+    fn len(&self) -> usize {
+        self.envelopes.lock().expect("envelopes").len()
+    }
 }
 
 impl CycleEnqueuer for RecordingEnqueuer {
@@ -49,11 +53,20 @@ struct DistributedFixture {
 }
 
 fn distributed_fixture(key: &str, max_cycles: u32) -> DistributedFixture {
+    let store = InMemoryCheckpointStore::new();
+    distributed_fixture_with_stores(key, max_cycles, store.clone(), store)
+}
+
+fn distributed_fixture_with_stores(
+    key: &str,
+    max_cycles: u32,
+    controller_store: InMemoryCheckpointStore,
+    registry_store: InMemoryCheckpointStore,
+) -> DistributedFixture {
     let checkpoint_ref = CapabilityRef::new("checkpoint.runner-driver", "1").unwrap();
     let llm_ref = CapabilityRef::new("llm.runner-driver", "1").unwrap();
-    let store = InMemoryCheckpointStore::new();
     let registry = DistributedCapabilityRegistry::new();
-    registry.register_checkpoint_store(checkpoint_ref.clone(), Arc::new(store.clone()));
+    registry.register_checkpoint_store(checkpoint_ref.clone(), Arc::new(registry_store));
     registry.register_llm_client(
         llm_ref.clone(),
         Arc::new(ScriptedLlmClient::new(vec![LLMResponse::new("done")])),
@@ -68,7 +81,7 @@ fn distributed_fixture(key: &str, max_cycles: u32) -> DistributedFixture {
     let backend = DistributedBackend::nonblocking(recipe, registry.clone(), enqueuer.clone());
     let worker = DistributedCycleWorker::new(registry);
 
-    let mut checkpoint = CheckpointConfig::with_store(store.clone());
+    let mut checkpoint = CheckpointConfig::with_store(controller_store.clone());
     checkpoint.key = Some(key.to_string());
     checkpoint.resume_policy = ResumePolicy::ResumeIfPresent;
     checkpoint
@@ -107,7 +120,7 @@ fn distributed_fixture(key: &str, max_cycles: u32) -> DistributedFixture {
         backend,
         worker,
         enqueuer,
-        store,
+        store: controller_store,
         session,
     }
 }
@@ -171,6 +184,55 @@ async fn runner_starts_passively_and_finalizes_claimed_candidate_once() {
         fixture.session.get_items(None).await.unwrap().len(),
         session_count
     );
+}
+
+#[tokio::test]
+async fn distributed_start_rejects_controller_registry_store_conflict_before_enqueue() {
+    let key = "runner-distributed-store-conflict";
+    let first = distributed_fixture(key, 2);
+    first
+        .runner
+        .start_distributed(&first.agent, "answer", first.config.clone())
+        .await
+        .expect("seed passive start");
+    let first_envelope = first.enqueuer.take_one();
+    let checkpoint = first
+        .store
+        .load_checkpoint(key)
+        .expect("load controller checkpoint")
+        .expect("controller checkpoint");
+
+    let registry_store = InMemoryCheckpointStore::new();
+    registry_store
+        .save_checkpoint(checkpoint.clone())
+        .expect("seed registry checkpoint");
+    let mismatch =
+        distributed_fixture_with_stores(key, 2, first.store.clone(), registry_store.clone());
+    let error = mismatch
+        .runner
+        .start_distributed(&mismatch.agent, "answer", mismatch.config.clone())
+        .await
+        .expect_err("different controller and registry stores must be rejected");
+    assert!(error.contains("checkpoint_store_conflict"), "{error}");
+    assert_eq!(mismatch.enqueuer.len(), 0);
+    assert_eq!(
+        first
+            .store
+            .load_checkpoint(key)
+            .expect("reload controller checkpoint")
+            .expect("controller checkpoint remains")
+            .revision,
+        checkpoint.revision
+    );
+    assert_eq!(
+        registry_store
+            .load_checkpoint(key)
+            .expect("reload registry checkpoint")
+            .expect("registry checkpoint remains")
+            .revision,
+        checkpoint.revision
+    );
+    assert_eq!(first_envelope.checkpoint_config.key, key);
 }
 
 #[tokio::test]

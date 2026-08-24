@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -5,14 +6,16 @@ use serde_json::{json, Value};
 use vv_agent::runtime::backends::distributed::{
     CapabilityRef, CycleEnqueuer, DistributedAdvanceDecision, DistributedBackend,
     DistributedCapabilities, DistributedCapabilityRegistry, DistributedCheckpointConfig,
-    DistributedDeliveryOutcome, DistributedRunEnvelope, DistributedWaitReason, DEFAULT_CYCLE_NAME,
+    DistributedCycleWorker, DistributedDeliveryOutcome, DistributedRunEnvelope,
+    DistributedWaitReason, DEFAULT_CYCLE_NAME,
 };
 use vv_agent::runtime::checkpoint_codec::checkpoint_from_value;
 use vv_agent::types::AgentTask;
 use vv_agent::{
     AgentResult, AmbiguousModelPolicy, AmbiguousToolPolicy, CheckpointStatus, CheckpointStore,
-    ClaimMode, CycleDispatchResult, InMemoryCheckpointStore, PromptBundle, ResumePolicy,
-    RuntimeRecipe,
+    ClaimMode, CycleDispatchResult, DeferredBatchEntry, DeferredToolHandle,
+    InMemoryCheckpointStore, OperationJournalEntry, OperationState, PromptBundle, ResumePolicy,
+    RuntimeRecipe, ToolCallOutcome, ToolIdempotency,
 };
 
 const CODEC_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec.json");
@@ -53,6 +56,59 @@ fn now_unix_ms() -> u64 {
 
 fn minimal_checkpoint(key: &str) -> vv_agent::Checkpoint {
     fixture_checkpoint("minimal_running", key)
+}
+
+fn admitted_deferred_checkpoint(key: &str) -> (vv_agent::Checkpoint, Arc<InMemoryCheckpointStore>) {
+    let digest = "a".repeat(64);
+    let operation_id = "op_tool_cycle_1_call_deferred";
+    let tool_call_id = "call_deferred";
+    let mut checkpoint = minimal_checkpoint(key);
+    let mut journal = OperationJournalEntry::tool(
+        operation_id,
+        1,
+        1,
+        digest.clone(),
+        tool_call_id,
+        "remote_write",
+        BTreeMap::new().into_iter().collect(),
+        None,
+        ToolIdempotency::Unsupported,
+    );
+    journal.state = OperationState::Started;
+    checkpoint.tool_journal = vec![journal];
+    checkpoint.validate().expect("started deferred checkpoint");
+    let store = InMemoryCheckpointStore::new();
+    store
+        .create_checkpoint(checkpoint.clone())
+        .expect("create started checkpoint");
+    let claimed = store
+        .claim_checkpoint(key, 1, "claim-deferred", 10_000, 1, ClaimMode::Continue)
+        .expect("claim deferred checkpoint")
+        .expect("claimed deferred checkpoint");
+    let handle =
+        DeferredToolHandle::new(key, operation_id, 1, digest.clone()).expect("deferred handle");
+    let admission = store
+        .admit_deferred_batch(
+            key,
+            claimed.revision,
+            "claim-deferred",
+            1,
+            &[DeferredBatchEntry {
+                operation_id: operation_id.to_string(),
+                cycle_index: 1,
+                attempt: 1,
+                request_digest: digest,
+                tool_call_id: tool_call_id.to_string(),
+                tool_name: "remote_write".to_string(),
+                idempotency_key: None,
+                idempotency_support: ToolIdempotency::Unsupported,
+                outcome: ToolCallOutcome::deferred(handle),
+            }],
+        )
+        .expect("deferred admission");
+    assert_eq!(admission.checkpoint.status, CheckpointStatus::Deferred);
+    assert!(admission.checkpoint.claim_token.is_none());
+    (admission.checkpoint, Arc::new(store))
 }
 
 fn fixture_checkpoint(name: &str, key: &str) -> vv_agent::Checkpoint {
@@ -179,6 +235,51 @@ fn start_enqueues_only_cycle_one_and_returns_passive_handle() {
     assert_eq!(deliveries[0].0.cycle_index, 1);
     assert_eq!(deliveries[0].0.claim_mode, ClaimMode::Continue);
     assert_eq!(deliveries[0].1, None);
+}
+
+#[test]
+fn deferred_producer_and_redelivery_remain_pending_without_claim_or_enqueue() {
+    let key = "driver-deferred-redelivery";
+    let (checkpoint, store) = admitted_deferred_checkpoint(key);
+    let registry = DistributedCapabilityRegistry::new();
+    registry.register_checkpoint_store(checkpoint_ref(), store.clone());
+    let worker = DistributedCycleWorker::new(registry.clone());
+    let enqueuer = Arc::new(RecordingEnqueuer::default());
+    let backend = DistributedBackend::nonblocking(recipe(), registry, enqueuer.clone());
+    let envelope = envelope(&checkpoint, task(&checkpoint, 10), recipe(), 1);
+    let before = store
+        .load_checkpoint(key)
+        .expect("load deferred checkpoint")
+        .expect("deferred checkpoint");
+
+    let first = worker
+        .run_cycle(envelope.clone())
+        .expect("first deferred delivery");
+    let repeated = worker
+        .run_cycle(envelope.clone())
+        .expect("repeated deferred delivery");
+    assert_eq!(first, CycleDispatchResult::pending());
+    assert_eq!(repeated, CycleDispatchResult::pending());
+
+    let decision = backend
+        .advance(&envelope, DistributedDeliveryOutcome::worker(first.clone()))
+        .expect("deferred driver advance");
+    assert!(matches!(
+        decision,
+        DistributedAdvanceDecision::Wait {
+            reason: DistributedWaitReason::DeferredPending,
+            ..
+        }
+    ));
+    assert!(enqueuer.deliveries().is_empty());
+    let after = store
+        .load_checkpoint(key)
+        .expect("reload deferred checkpoint")
+        .expect("deferred checkpoint remains");
+    assert_eq!(after.status, CheckpointStatus::Deferred);
+    assert_eq!(after.claim_token, None);
+    assert_eq!(after.revision, before.revision);
+    assert_eq!(after.event_outbox, before.event_outbox);
 }
 
 #[test]

@@ -9,6 +9,12 @@ pub(crate) fn needs_tool_call_id(value: &str) -> bool {
     stripped.is_empty() || stripped == "pending"
 }
 
+pub(crate) fn normalize_tool_call_id(result: &mut ToolExecutionResult, tool_call_id: &str) {
+    if needs_tool_call_id(&result.tool_call_id) {
+        result.tool_call_id = tool_call_id.to_string();
+    }
+}
+
 pub(crate) fn apply_tool_use_behavior(
     task: &crate::types::AgentTask,
     call: &ToolCall,

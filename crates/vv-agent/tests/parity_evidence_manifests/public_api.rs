@@ -105,6 +105,9 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 cursor,
             ]
         ),
+        ("tool_context", "vv_agent::ToolContext", "method") => {
+            compile_methods!(name, vv_agent::ToolContext, [defer])
+        }
         ("tool_artifact_ref", "vv_agent::ToolArtifactRef", "field") => compile_fields!(
             name,
             vv_agent::ToolArtifactRef,
@@ -593,8 +596,8 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
 #[test]
 fn public_api_manifest_compiles_real_rust_exports() {
     let fixture = load_fixture("public_api.json");
-    assert_eq!(fixture["contract"], "vv-agent-public-api-v3");
-    assert_eq!(fixture["schema_version"], 3);
+    assert_eq!(fixture["contract"], "vv-agent-public-api-v4");
+    assert_eq!(fixture["schema_version"], 4);
 
     let domains = fixture["domains"].as_array().expect("public API domains");
     let domain_ids = domains
@@ -619,7 +622,7 @@ fn public_api_manifest_compiles_real_rust_exports() {
             );
         }
     }
-    assert_eq!(capability_ids.len(), 164);
+    assert_eq!(capability_ids.len(), 169);
 
     let surfaces = fixture["surfaces"].as_array().expect("public API surfaces");
     let surface_map = surfaces

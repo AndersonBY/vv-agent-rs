@@ -237,6 +237,10 @@ fn public_export_path(id: &str) -> &'static str {
         "tools.executor" => export_type!(dyn vv_agent::ToolExecutor, "vv_agent::ToolExecutor"),
         "tools.spec" => export_type!(vv_agent::ToolSpec, "vv_agent::ToolSpec"),
         "tools.context" => export_type!(vv_agent::ToolContext, "vv_agent::ToolContext"),
+        "tools.context_defer" => {
+            let _ = vv_agent::ToolContext::defer;
+            "vv_agent::ToolContext::defer"
+        }
         "tools.call_context" => {
             export_type!(vv_agent::ToolCallContext, "vv_agent::ToolCallContext")
         }
@@ -249,6 +253,15 @@ fn public_export_path(id: &str) -> &'static str {
             vv_agent::ToolExecutionResult,
             "vv_agent::ToolExecutionResult"
         ),
+        "tools.result_status" => {
+            export_type!(vv_agent::ToolResultStatus, "vv_agent::ToolResultStatus")
+        }
+        "tools.deferred_handle" => {
+            export_type!(vv_agent::DeferredToolHandle, "vv_agent::DeferredToolHandle")
+        }
+        "tools.tool_call_outcome" => {
+            export_type!(vv_agent::ToolCallOutcome, "vv_agent::ToolCallOutcome")
+        }
         "tools.message" => export_type!(vv_agent::Message, "vv_agent::Message"),
         "tools.artifact_ref" => {
             export_type!(vv_agent::ToolArtifactRef, "vv_agent::ToolArtifactRef")
@@ -484,6 +497,10 @@ fn public_export_path(id: &str) -> &'static str {
             vv_agent::OperationJournalEntry,
             "vv_agent::OperationJournalEntry"
         ),
+        "runtime_backend.resolve_deferred" => {
+            let _ = <dyn vv_agent::CheckpointStore>::resolve_deferred;
+            "vv_agent::CheckpointStore::resolve_deferred"
+        }
         "runtime_backend.agent_runtime" => {
             export_type!(
                 vv_agent::AgentRuntime<vv_agent::ScriptedLlmClient>,

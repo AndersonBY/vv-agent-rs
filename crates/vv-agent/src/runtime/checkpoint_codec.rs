@@ -1,4 +1,4 @@
-//! Strict codec for the current checkpoint wire format.
+//! Strict codec for the current checkpoint v7 wire format.
 
 use std::collections::BTreeMap;
 
@@ -215,7 +215,7 @@ pub fn checkpoint_from_value(
     let object = payload.as_object().ok_or_else(|| {
         CheckpointError::new(
             "checkpoint_payload_invalid",
-            "checkpoint v5 payload must be an object",
+            "checkpoint v7 payload must be an object",
         )
     })?;
     if let Some(field) = object
@@ -230,7 +230,7 @@ pub fn checkpoint_from_value(
     if object.get("schema_version").and_then(Value::as_str) != Some(CHECKPOINT_SCHEMA) {
         return Err(CheckpointError::new(
             "checkpoint_schema_unsupported",
-            "checkpoint schema_version is not vv-agent.checkpoint.v5",
+            "checkpoint schema_version is not vv-agent.checkpoint.v7",
         ));
     }
     let run_definition_schema = required_string(
@@ -329,7 +329,7 @@ pub fn checkpoint_to_json(
     max_extension_state_bytes: u64,
 ) -> CheckpointResult<String> {
     let value = checkpoint_to_value(checkpoint, max_extension_state_bytes)?;
-    let bytes = canonical_json_bytes(&value, "checkpoint v5")?;
+    let bytes = canonical_json_bytes(&value, "checkpoint v7")?;
     String::from_utf8(bytes).map_err(|error| {
         CheckpointError::new(
             "checkpoint_canonicalization_invalid",

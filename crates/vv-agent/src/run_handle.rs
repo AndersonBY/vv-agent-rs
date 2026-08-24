@@ -38,6 +38,7 @@ pub enum RunHandleStatus {
     WaitUser,
     MaxCycles,
     ReconciliationRequired,
+    Deferred,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +92,12 @@ impl RunHandleState {
             AgentStatus::ReconciliationRequired => Self {
                 status: RunHandleStatus::ReconciliationRequired,
                 done: true,
+                cancelled: false,
+                error: None,
+            },
+            AgentStatus::Deferred => Self {
+                status: RunHandleStatus::Deferred,
+                done: false,
                 cancelled: false,
                 error: None,
             },

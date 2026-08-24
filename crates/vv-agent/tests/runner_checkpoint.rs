@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -13,9 +13,10 @@ use vv_agent::{
     DistributedCycleWorker, EventCursor, FunctionTool, InMemoryCheckpointStore, LLMResponse,
     MemorySession, MicrocompactionPolicy, ModelCallOperation, ModelRef, NoToolPolicy,
     OperationJournalEntry, OperationState, PromptBundle, PromptSection, ResumePolicy,
-    RunBudgetLimits, RunConfig, RunEventPayload, Runner, RuntimeRecipe, ScriptStep,
-    ScriptedLlmClient, ScriptedModelProvider, Session, TokenUsage, ToolCall, ToolIdempotency,
-    ToolMetadata, ToolOutput, UsageSource,
+    RunBudgetLimits, RunConfig, RunEventPayload, Runner, RuntimeExecutionBackend, RuntimeRecipe,
+    ScriptStep, ScriptedLlmClient, ScriptedModelProvider, Session, StaticTool, ThreadBackend,
+    TokenUsage, ToolCall, ToolExecutionResult, ToolIdempotency, ToolMetadata, ToolOutput,
+    ToolResultStatus, UsageSource,
 };
 
 #[derive(Clone)]
@@ -105,6 +106,280 @@ where
         CapabilityRef::new("session.runner-checkpoint", "1").expect("capability ref"),
     );
     config
+}
+
+#[tokio::test]
+async fn deferred_admission_failure_drops_staged_lifecycle_events() {
+    let store = InMemoryCheckpointStore::new();
+    let checkpoint_key = "deferred-admission-failure";
+    let deleted = Arc::new(AtomicBool::new(false));
+    let effects = Arc::new(AtomicUsize::new(0));
+    let lifecycle_events = Arc::new(Mutex::new(Vec::<String>::new()));
+    let delete_store = store.clone();
+    let delete_once = deleted.clone();
+    let observed_lifecycle = lifecycle_events.clone();
+    let stream = Arc::new(move |event: &vv_agent::RunEvent| {
+        if matches!(event.payload(), RunEventPayload::ToolCallDeferred { .. }) {
+            observed_lifecycle
+                .lock()
+                .expect("lifecycle events lock")
+                .push("tool_call_deferred".to_string());
+        }
+        if matches!(event.payload(), RunEventPayload::ToolCallCompleted { .. }) {
+            observed_lifecycle
+                .lock()
+                .expect("lifecycle events lock")
+                .push("tool_call_completed".to_string());
+        }
+        if matches!(event.payload(), RunEventPayload::ToolCallStarted { .. })
+            && !delete_once.swap(true, Ordering::SeqCst)
+        {
+            delete_store
+                .delete_checkpoint(checkpoint_key)
+                .expect("delete checkpoint before deferred admission");
+        }
+    });
+    let effects_for_tool = effects.clone();
+    let deferred_tool = StaticTool::new(
+        "remote_write",
+        "Record a durable external write.",
+        json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false,
+        }),
+        Arc::new(move |context, _arguments| {
+            effects_for_tool.fetch_add(1, Ordering::SeqCst);
+            let _ = context.defer();
+            ToolExecutionResult::success(context.tool_call_id.clone(), "not model-visible")
+        }),
+    );
+    let provider = ScriptedModelProvider::new(
+        "scripted",
+        "deferred-admission-failure-model",
+        vec![LLMResponse::with_tool_calls(
+            "defer this write",
+            vec![ToolCall::new(
+                "call_deferred_failure",
+                "remote_write",
+                BTreeMap::new(),
+            )],
+        )],
+    );
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(".")
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("deferred-admission-failure-agent")
+        .instructions("Defer the remote write.")
+        .model(ModelRef::named("deferred-admission-failure-model"))
+        .tool(deferred_tool)
+        .build()
+        .expect("agent");
+    let error = match runner
+        .run_with_config(
+            &agent,
+            "perform the write",
+            RunConfig::builder()
+                .max_cycles(1)
+                .no_tool_policy(NoToolPolicy::Finish)
+                .stream_arc(stream)
+                .checkpoint_config(checkpoint_config(store.clone(), checkpoint_key))
+                .build(),
+        )
+        .await
+    {
+        Ok(_) => panic!("admission failure must stop the run before projecting lifecycle"),
+        Err(error) => error,
+    };
+    assert!(deleted.load(Ordering::SeqCst));
+    assert_eq!(
+        effects.load(Ordering::SeqCst),
+        1,
+        "the provider effect occurred before the injected admission CAS failure"
+    );
+    assert!(
+        error.contains("checkpoint_not_found"),
+        "unexpected error: {error}"
+    );
+    assert!(
+        lifecycle_events
+            .lock()
+            .expect("lifecycle events lock")
+            .is_empty(),
+        "failed admission must not project staged lifecycle"
+    );
+    assert!(
+        store
+            .load_checkpoint(checkpoint_key)
+            .expect("load deleted checkpoint")
+            .is_none(),
+        "the injected CAS failure must happen before any durable lifecycle outbox write"
+    );
+}
+
+#[tokio::test]
+async fn resume_if_present_returns_deferred_pending_without_reclaiming_or_calling_model() {
+    let store = InMemoryCheckpointStore::new();
+    let checkpoint_key = "deferred-resume-no-reclaim";
+    let model_calls = Arc::new(AtomicUsize::new(0));
+    let calls = model_calls.clone();
+    let provider = ScriptedModelProvider::from_steps(
+        "scripted",
+        "deferred-resume-model",
+        vec![ScriptStep::callback(move |_request| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(LLMResponse::with_tool_calls(
+                "defer this write",
+                vec![ToolCall::new(
+                    "call_deferred_resume",
+                    "remote_write",
+                    BTreeMap::new(),
+                )],
+            ))
+        })],
+    );
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(".")
+        .build()
+        .expect("runner");
+    let deferred_tool = StaticTool::new(
+        "remote_write",
+        "Record a durable external write.",
+        json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false,
+        }),
+        Arc::new(|context, _arguments| {
+            let _ = context.defer();
+            ToolExecutionResult::success(context.tool_call_id.clone(), "not model-visible")
+        }),
+    );
+    let agent = Agent::builder("deferred-resume-agent")
+        .instructions("Defer the remote write.")
+        .model(ModelRef::named("deferred-resume-model"))
+        .tool(deferred_tool)
+        .build()
+        .expect("agent");
+    let config = RunConfig::builder()
+        .max_cycles(1)
+        .no_tool_policy(NoToolPolicy::Finish)
+        .checkpoint_config(checkpoint_config(store.clone(), checkpoint_key))
+        .build();
+    let first = runner
+        .run_with_config(&agent, "perform the write", config.clone())
+        .await
+        .expect("first deferred run");
+    assert_eq!(first.status(), AgentStatus::Deferred);
+    assert_eq!(
+        first.result().wait_reason.as_deref(),
+        Some("deferred_pending")
+    );
+    assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+
+    let second = runner
+        .run_with_config(&agent, "perform the write", config)
+        .await
+        .expect("deferred resume");
+    assert_eq!(second.status(), AgentStatus::Deferred);
+    assert_eq!(
+        second.result().wait_reason.as_deref(),
+        Some("deferred_pending")
+    );
+    assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+    let checkpoint = store
+        .load_checkpoint(checkpoint_key)
+        .expect("load checkpoint")
+        .expect("checkpoint");
+    assert_eq!(checkpoint.status, CheckpointStatus::Deferred);
+    assert!(checkpoint.claim_token.is_none());
+}
+
+#[tokio::test]
+async fn threaded_resume_if_present_returns_deferred_pending_without_reclaiming() {
+    let store = InMemoryCheckpointStore::new();
+    let checkpoint_key = "threaded-deferred-resume-no-reclaim";
+    let model_calls = Arc::new(AtomicUsize::new(0));
+    let calls = model_calls.clone();
+    let provider = ScriptedModelProvider::from_steps(
+        "scripted",
+        "threaded-deferred-resume-model",
+        vec![ScriptStep::callback(move |_request| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(LLMResponse::with_tool_calls(
+                "defer this write",
+                vec![ToolCall::new(
+                    "call_threaded_deferred_resume",
+                    "remote_write",
+                    BTreeMap::new(),
+                )],
+            ))
+        })],
+    );
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(".")
+        .build()
+        .expect("runner");
+    let deferred_tool = StaticTool::new(
+        "remote_write",
+        "Record a durable external write.",
+        json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false,
+        }),
+        Arc::new(|context, _arguments| {
+            let _ = context.defer();
+            ToolExecutionResult::success(context.tool_call_id.clone(), "not model-visible")
+        }),
+    );
+    let agent = Agent::builder("threaded-deferred-resume-agent")
+        .instructions("Defer the remote write.")
+        .model(ModelRef::named("threaded-deferred-resume-model"))
+        .tool(deferred_tool)
+        .build()
+        .expect("agent");
+    let config = RunConfig::builder()
+        .max_cycles(1)
+        .no_tool_policy(NoToolPolicy::Finish)
+        .execution_backend(RuntimeExecutionBackend::Thread(ThreadBackend::new(2)))
+        .checkpoint_config(checkpoint_config(store.clone(), checkpoint_key))
+        .build();
+
+    let first = runner
+        .run_with_config(&agent, "perform the write", config.clone())
+        .await
+        .expect("first deferred threaded run");
+    assert_eq!(first.status(), AgentStatus::Deferred);
+    assert_eq!(
+        first.result().wait_reason.as_deref(),
+        Some("deferred_pending")
+    );
+    assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+
+    let second = runner
+        .run_with_config(&agent, "perform the write", config)
+        .await
+        .expect("threaded deferred resume");
+    assert_eq!(second.status(), AgentStatus::Deferred);
+    assert_eq!(
+        second.result().wait_reason.as_deref(),
+        Some("deferred_pending")
+    );
+    assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+    let checkpoint = store
+        .load_checkpoint(checkpoint_key)
+        .expect("load threaded checkpoint")
+        .expect("threaded checkpoint");
+    assert_eq!(checkpoint.status, CheckpointStatus::Deferred);
+    assert!(checkpoint.claim_token.is_none());
 }
 
 #[tokio::test]
@@ -691,6 +966,8 @@ async fn distributed_execution_commits_nonterminal_cycle_before_max_cycles_candi
     assert!(terminal.terminal_acknowledged);
 }
 
+#[path = "runner_checkpoint/deferred.rs"]
+mod deferred;
 #[path = "runner_checkpoint/resume.rs"]
 mod resume;
 #[path = "runner_checkpoint/session_memory.rs"]

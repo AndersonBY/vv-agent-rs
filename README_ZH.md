@@ -7,23 +7,23 @@
 
 ## 安装
 
-当前 crate 版本为 `0.10.0`。仓库 `HEAD` 采用语言无关的 Contract `6.0.1`；当前跨仓采用
+当前 crate 版本为 `0.11.0`。仓库 `HEAD` 采用语言无关的 Contract `7.0.1`；当前跨仓采用
 状态和已验证 revision 以中央 support matrix 为准。
 
 ```bash
-cargo add vv-agent@0.10.0
+cargo add vv-agent@0.11.0
 ```
 
 需要 Apalis adapter 时使用：
 
 ```bash
-cargo add vv-agent@0.10.0 --features apalis
+cargo add vv-agent@0.11.0 --features apalis
 ```
 
-Contract 6 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
+Contract 7 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
 公共 API 与传输数据结构。需要旧协议的应用应固定旧 crate 版本。
 
-### 0.10.0 重点能力
+### 0.11.0 重点能力
 
 - 每次真正进入模型调用边界的尝试都会写入
   `result.token_usage().model_calls`，包括 Agent 主循环、Session Memory、完整上下文
@@ -43,11 +43,14 @@ Contract 6 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取�
 - `MicrocompactionPolicy` 可以配置触发比例、目标比例、受保护的最近 cycle 数和最小结果
   长度。内建工具与自定义工具的旧结果默认都可归档；只有完整内容已经写入不可变 artifact，
   且模型仍能调用 `read_file` 时才会替换。精简标记只暴露短预览和逻辑恢复路径。
-- 持久化执行统一使用 `vv-agent.checkpoint.v5`、
+- 持久化执行统一使用 `vv-agent.checkpoint.v7`、
   `vv-agent.run-definition.v5`、`vv-agent.distributed-run.v5` 和
   `vv-agent.distributed-worker-response.v3`，严格限定恢复与分布式 controller 边界。
-  `RunEvent` 使用 wire version `v2`，SQLite session store 使用
+  `RunEvent` 使用 wire version `v4`，SQLite session store 使用
   `PRAGMA user_version=2`。
+- 持久化 deferred 工具通过 `ToolContext::defer` 和一次性的
+  `admit_deferred_batch` barrier 工作。Memory、SQLite、Redis 都保留独立的 resolution
+  receipt；分布式 worker 以 `deferred_pending` 等待，并沿用现有 checkpoint 恢复路径。
 
 详细规则见[输出校验](docs/output-validation.md)和
 [Checkpoint 与恢复](docs/checkpoint-resume.md)。
@@ -245,7 +248,7 @@ while let Some(event) = events.next().await {
 let result = handle.result().await?;
 ```
 
-每个 `RunEvent` 都是 v2 envelope，包含 `event_id`、`run_id`、`trace_id`、
+每个 `RunEvent` 都是 v4 envelope，包含 `event_id`、`run_id`、`trace_id`、
 可选 session/parent 标识、时间、metadata 和 typed `RunEventPayload`。
 `JsonlRunEventStore` 可以 append 事件并 replay 一个 run，也可以通过 parent run id
 带出子事件。

@@ -175,6 +175,11 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 tool_policy: self.tool_policy.clone().unwrap_or_default(),
             }),
             execution_backend: Some(self.execution_backend.clone()),
+            checkpoint_key: None,
+            operation_id: None,
+            attempt: 1,
+            request_digest: None,
+            deferred_outcome: None,
             background_parent_run_config: controls.background_parent_run_config.clone(),
         };
         let orchestrator = ToolOrchestrator::from_tools(self.tool_registry.executors());
@@ -298,6 +303,36 @@ fn lifecycle_log_payload(
                 );
             }
             (event_name, payload)
+        }
+        ToolLifecycleEvent::Deferred {
+            call,
+            handle,
+            execution_started,
+            duration_ms,
+            tool_metadata,
+        } => {
+            payload.insert("tool_name".to_string(), Value::String(call.name));
+            payload.insert("tool_call_id".to_string(), Value::String(call.id));
+            payload.insert(
+                "handle".to_string(),
+                serde_json::to_value(handle).expect("deferred handle must serialize"),
+            );
+            payload.insert(
+                "execution_started".to_string(),
+                Value::Bool(execution_started),
+            );
+            payload.insert(
+                "duration_ms".to_string(),
+                duration_ms.map(Value::from).unwrap_or(Value::Null),
+            );
+            if let Some(tool_metadata) = tool_metadata {
+                payload.insert(
+                    "tool_metadata".to_string(),
+                    serde_json::to_value(tool_metadata)
+                        .expect("normalized tool metadata must serialize"),
+                );
+            }
+            ("tool_call_deferred", payload)
         }
         ToolLifecycleEvent::Completed {
             call,

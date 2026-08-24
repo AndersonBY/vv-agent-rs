@@ -13,6 +13,7 @@ use crate::runtime::state::{
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryCheckpointStore {
     checkpoints: Arc<Mutex<BTreeMap<String, Checkpoint>>>,
+    deferred_receipts: Arc<Mutex<BTreeMap<String, crate::checkpoint::DeferredReceipt>>>,
 }
 
 impl InMemoryCheckpointStore {
@@ -35,9 +36,26 @@ impl InMemoryCheckpointStore {
             )
         })
     }
+
+    fn receipt_lock(
+        &self,
+    ) -> CheckpointResult<
+        std::sync::MutexGuard<'_, BTreeMap<String, crate::checkpoint::DeferredReceipt>>,
+    > {
+        self.deferred_receipts.lock().map_err(|_| {
+            CheckpointError::new(
+                "checkpoint_store_lock_poisoned",
+                "deferred receipt index lock poisoned",
+            )
+        })
+    }
 }
 
 impl CheckpointStore for InMemoryCheckpointStore {
+    fn store_identity(&self) -> String {
+        format!("memory:{:p}", Arc::as_ptr(&self.checkpoints))
+    }
+
     fn create_checkpoint(&self, checkpoint: Checkpoint) -> CheckpointResult<bool> {
         checkpoint.validate()?;
         let mut checkpoints = self.lock()?;
@@ -249,12 +267,207 @@ impl CheckpointStore for InMemoryCheckpointStore {
         Ok(true)
     }
 
-    fn delete_checkpoint(&self, checkpoint_key: &str) -> CheckpointResult<()> {
-        self.lock()?.remove(checkpoint_key);
-        Ok(())
-    }
-
     fn list_checkpoints(&self) -> CheckpointResult<Vec<String>> {
         Ok(self.lock()?.keys().cloned().collect())
+    }
+
+    fn admit_deferred_batch(
+        &self,
+        checkpoint_key: &str,
+        expected_revision: u64,
+        claim_token: &str,
+        claimed_cycle: u64,
+        entries: &[crate::checkpoint::DeferredBatchEntry],
+    ) -> CheckpointResult<crate::checkpoint::DeferredBatchAdmission> {
+        let mut checkpoints = self.lock()?;
+        let current = checkpoints.get(checkpoint_key).cloned().ok_or_else(|| {
+            CheckpointError::new("checkpoint_not_found", "checkpoint does not exist")
+        })?;
+        let (updated, handles) = crate::runtime::state::admit_deferred_batch(
+            &current,
+            expected_revision,
+            claim_token,
+            claimed_cycle,
+            entries,
+        )?;
+        if updated.revision == current.revision {
+            return Err(CheckpointError::new(
+                "checkpoint_revision_conflict",
+                "deferred batch admission precondition failed",
+            ));
+        }
+        checkpoints.insert(checkpoint_key.to_string(), updated.clone());
+        Ok(crate::checkpoint::DeferredBatchAdmission {
+            checkpoint: updated,
+            handles,
+        })
+    }
+
+    fn resolve_deferred(
+        &self,
+        handle: crate::checkpoint::DeferredToolHandle,
+        result: crate::types::ToolExecutionResult,
+    ) -> CheckpointResult<crate::checkpoint::DeferredResolveDecision> {
+        use crate::checkpoint::{DeferredReceipt, DeferredResolveDecision};
+        crate::checkpoint::validate_definitive_result(&result)?;
+        let key = handle.handle_key()?;
+        let mut checkpoints = self.lock()?;
+        let mut receipts = self.receipt_lock()?;
+        if let Some(receipt) = receipts.get(&key) {
+            if crate::checkpoint::result_digest(&receipt.result)?
+                == crate::checkpoint::result_digest(&result)?
+            {
+                return Ok(DeferredResolveDecision::Replayed {
+                    receipt: receipt.clone(),
+                });
+            }
+            return Err(CheckpointError::new(
+                "deferred_resolution_conflict",
+                "deferred handle already has a different definitive result",
+            ));
+        }
+        let checkpoint = checkpoints
+            .get(&handle.checkpoint_key)
+            .cloned()
+            .ok_or_else(|| {
+                CheckpointError::new("deferred_resolution_stale", "checkpoint does not exist")
+            })?;
+        let Some(index) = checkpoint.tool_journal.iter().position(|entry| {
+            entry.operation_id == handle.operation_id
+                && entry.attempt == handle.attempt
+                && entry.request_digest == handle.request_digest
+        }) else {
+            return Err(CheckpointError::new(
+                "deferred_resolution_stale",
+                "no active journal matches the deferred handle",
+            ));
+        };
+        let entry = &checkpoint.tool_journal[index];
+        if entry.state == crate::checkpoint::OperationState::Started {
+            return Ok(DeferredResolveDecision::not_admitted());
+        }
+        if entry.state == crate::checkpoint::OperationState::Ambiguous {
+            return Ok(DeferredResolveDecision::ReconciliationRequired);
+        }
+        if checkpoint.claim_token.is_some() {
+            return Err(CheckpointError::new(
+                "deferred_checkpoint_claimed",
+                "deferred resolution is blocked while the checkpoint is claimed",
+            ));
+        }
+        if entry.state != crate::checkpoint::OperationState::Deferred
+            || entry.deferred_handle.as_ref() != Some(&handle)
+        {
+            return Err(CheckpointError::new(
+                "deferred_resolution_stale",
+                "deferred handle is stale or no longer active",
+            ));
+        }
+        if entry.tool_call_id.as_deref() != Some(result.tool_call_id.as_str()) {
+            return Err(CheckpointError::new(
+                "deferred_resolution_stale",
+                "deferred result tool_call_id does not match the journal",
+            ));
+        }
+        let event = crate::runtime::state::receipt_event(&checkpoint, entry, &result)?;
+        let event_id = event.event_id.clone();
+        let event_digest = event.payload_digest.clone();
+        let mut updated = checkpoint.clone();
+        let journal = &mut updated.tool_journal[index];
+        match result.status {
+            crate::types::ToolResultStatus::Success => {
+                journal.state = crate::checkpoint::OperationState::Succeeded;
+                journal.result = Some(result.to_dict());
+            }
+            crate::types::ToolResultStatus::Error => {
+                journal.state = crate::checkpoint::OperationState::Failed;
+                journal.error = Some(crate::runtime::state::OperationError::new(
+                    result
+                        .error_code
+                        .clone()
+                        .unwrap_or_else(|| "tool_error".to_string()),
+                    result.content.clone(),
+                    false,
+                ));
+            }
+            _ => unreachable!(),
+        }
+        journal.deferred_handle = None;
+        updated.event_outbox.push(event);
+        let unresolved = updated
+            .tool_journal
+            .iter()
+            .any(|entry| entry.state == crate::checkpoint::OperationState::Deferred);
+        updated.status = if unresolved {
+            crate::checkpoint::CheckpointStatus::Deferred
+        } else {
+            crate::checkpoint::CheckpointStatus::Running
+        };
+        updated.revision = checkpoint.revision.checked_add(1).ok_or_else(|| {
+            CheckpointError::new("checkpoint_revision_overflow", "revision overflow")
+        })?;
+        updated.validate()?;
+        let receipt = DeferredReceipt::new(handle, result, event_id, event_digest)?;
+        receipts.insert(key, receipt.clone());
+        checkpoints.insert(updated.checkpoint_key.clone(), updated);
+        Ok(if unresolved {
+            DeferredResolveDecision::AppliedWaiting { receipt }
+        } else {
+            DeferredResolveDecision::AppliedReady { receipt }
+        })
+    }
+
+    fn accept_deferred_batch(
+        &self,
+        checkpoint_key: &str,
+        expected_revision: u64,
+        claim_token: &str,
+        claimed_cycle: u64,
+        decisions: &[crate::checkpoint::AcceptDeferredDecision],
+    ) -> CheckpointResult<crate::checkpoint::DeferredBatchAdmission> {
+        let mut checkpoints = self.lock()?;
+        let current = checkpoints.get(checkpoint_key).cloned().ok_or_else(|| {
+            CheckpointError::new("checkpoint_not_found", "checkpoint does not exist")
+        })?;
+        if crate::runtime::state::deferred_batch_is_idempotent(&current, decisions) {
+            return Ok(crate::checkpoint::DeferredBatchAdmission {
+                checkpoint: current,
+                handles: decisions
+                    .iter()
+                    .map(|decision| decision.handle.clone())
+                    .collect(),
+            });
+        }
+        let (updated, changed) = crate::runtime::state::accept_deferred_batch(
+            &current,
+            expected_revision,
+            claim_token,
+            claimed_cycle,
+            decisions,
+        )?;
+        if !changed {
+            return Err(CheckpointError::new(
+                "reconciliation_required",
+                "deferred reconciliation precondition failed",
+            ));
+        }
+        let handles = decisions.iter().map(|d| d.handle.clone()).collect();
+        checkpoints.insert(checkpoint_key.to_string(), updated.clone());
+        Ok(crate::checkpoint::DeferredBatchAdmission {
+            checkpoint: updated,
+            handles,
+        })
+    }
+
+    fn delete_checkpoint(&self, checkpoint_key: &str) -> CheckpointResult<()> {
+        // Keep both indexes under one lock order.  Resolving a receipt and
+        // deleting its checkpoint cannot otherwise be linearized: a receipt
+        // could be inserted after the checkpoint lock is released and survive
+        // cleanup as an orphan.
+        let mut checkpoints = self.lock()?;
+        let mut receipts = self.receipt_lock()?;
+        checkpoints.remove(checkpoint_key);
+        receipts.retain(|_, receipt| receipt.handle.checkpoint_key != checkpoint_key);
+        Ok(())
     }
 }

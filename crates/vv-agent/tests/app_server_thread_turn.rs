@@ -140,6 +140,8 @@ fn item_mapping_tool_call_completed_becomes_completed_item() {
             error_code: None,
             execution_started: true,
             duration_ms: Some(1),
+            operation_id: None,
+            attempt: None,
         },
     );
 

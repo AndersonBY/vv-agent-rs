@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use serde_json::json;
 
+use crate::checkpoint::ToolCallOutcome;
 use crate::tools::{
     ApprovalPolicy, ApprovalRequirement, CanUseToolPredicate, ToolContext, ToolExecutor,
     ToolMetadata, ToolPolicy, ToolRunContext,
@@ -30,6 +31,13 @@ pub enum ToolLifecycleEvent {
         call: ToolCall,
         tool_metadata: Option<ToolMetadata>,
     },
+    Deferred {
+        call: ToolCall,
+        handle: crate::checkpoint::DeferredToolHandle,
+        execution_started: bool,
+        duration_ms: Option<u64>,
+        tool_metadata: Option<ToolMetadata>,
+    },
     Completed {
         call: ToolCall,
         result: Box<ToolExecutionResult>,
@@ -41,6 +49,7 @@ pub enum ToolLifecycleEvent {
 
 pub(crate) struct DeferredToolExecution {
     result: ToolExecutionResult,
+    outcome: ToolCallOutcome,
     lifecycle: Option<DeferredToolLifecycle>,
 }
 
@@ -55,6 +64,7 @@ struct DeferredToolLifecycle {
 impl DeferredToolExecution {
     pub(crate) fn without_lifecycle(result: ToolExecutionResult) -> Self {
         Self {
+            outcome: ToolCallOutcome::completed(result.clone()),
             result,
             lifecycle: None,
         }
@@ -69,7 +79,32 @@ impl DeferredToolExecution {
         callback: Option<ToolLifecycleCallback>,
     ) -> Self {
         Self {
+            outcome: ToolCallOutcome::completed(result.clone()),
             result,
+            lifecycle: Some(DeferredToolLifecycle {
+                call,
+                execution_started,
+                duration_ms,
+                tool_metadata,
+                callback,
+            }),
+        }
+    }
+
+    fn with_deferred_lifecycle(
+        call: ToolCall,
+        handle: crate::checkpoint::DeferredToolHandle,
+        execution_started: bool,
+        duration_ms: Option<u64>,
+        tool_metadata: Option<ToolMetadata>,
+        callback: Option<ToolLifecycleCallback>,
+    ) -> Self {
+        Self {
+            result: ToolExecutionResult::error(
+                call.id.clone(),
+                "Deferred tool execution is waiting for a definitive receipt.",
+            ),
+            outcome: ToolCallOutcome::deferred(handle),
             lifecycle: Some(DeferredToolLifecycle {
                 call,
                 execution_started,
@@ -84,7 +119,12 @@ impl DeferredToolExecution {
         &self.result
     }
 
+    pub(crate) fn outcome(&self) -> &ToolCallOutcome {
+        &self.outcome
+    }
+
     pub(crate) fn replace_result(&mut self, result: ToolExecutionResult) {
+        self.outcome = ToolCallOutcome::completed(result.clone());
         self.result = result;
     }
 
@@ -96,14 +136,29 @@ impl DeferredToolExecution {
 
     pub(crate) fn complete(self) -> ToolExecutionResult {
         if let Some(lifecycle) = self.lifecycle {
-            emit_completed(
-                &lifecycle.call,
-                &self.result,
-                lifecycle.execution_started,
-                lifecycle.duration_ms,
-                lifecycle.tool_metadata,
-                lifecycle.callback.as_ref(),
-            );
+            match &self.outcome {
+                ToolCallOutcome::Completed { .. } => emit_completed(
+                    &lifecycle.call,
+                    &self.result,
+                    lifecycle.execution_started,
+                    lifecycle.duration_ms,
+                    lifecycle.tool_metadata,
+                    lifecycle.callback.as_ref(),
+                ),
+                ToolCallOutcome::Deferred { handle } => emit_lifecycle(
+                    lifecycle.callback.as_ref(),
+                    ToolLifecycleEvent::Deferred {
+                        call: lifecycle.call,
+                        handle: handle.clone(),
+                        execution_started: lifecycle.execution_started,
+                        // A deferred event is an admission observation, not a
+                        // completed result.  Its cross-process duration is
+                        // therefore always null in the current wire shape.
+                        duration_ms: None,
+                        tool_metadata: lifecycle.tool_metadata,
+                    },
+                ),
+            }
         }
         self.result
     }
@@ -204,6 +259,22 @@ impl ToolOrchestrator {
     ) -> Result<ToolExecutionResult, crate::tools::ToolError> {
         self.run_one_with_approval(call, context, options, |_call, _requirement, _context| None)
             .await
+    }
+
+    pub async fn run_one_outcome(
+        &self,
+        call: ToolCall,
+        context: &mut ToolContext,
+        options: ToolRunOptions,
+    ) -> Result<ToolCallOutcome, crate::tools::ToolError> {
+        self.run_one_with_approval_and_metadata_deferred(
+            call,
+            context,
+            options,
+            |_call, _requirement, _context, _metadata| None,
+        )
+        .await
+        .map(|execution| execution.outcome.clone())
     }
 
     pub(crate) async fn run_one_with_approval<F>(
@@ -398,8 +469,8 @@ impl ToolOrchestrator {
                 tool_metadata: tool_metadata.clone(),
             },
         );
-        let future = tool.run(call.clone(), ToolRunContext::new(context));
-        let mut result = if let Some(timeout) = tool.timeout() {
+        let future = tool.run_outcome(call.clone(), ToolRunContext::new(context));
+        let outcome = if let Some(timeout) = tool.timeout() {
             match tokio::time::timeout(timeout, future).await {
                 Ok(result) => result?,
                 Err(_) => {
@@ -424,17 +495,36 @@ impl ToolOrchestrator {
         } else {
             future.await?
         };
-        if result.tool_call_id.trim().is_empty() || result.tool_call_id == "pending" {
-            result.tool_call_id = call.id.clone();
+        // Custom executors may implement only `run`; the framework-owned
+        // context marker still upgrades their completed transport result to
+        // the opaque deferred outcome without exposing a handle constructor
+        // to the executor.
+        let outcome = context.take_deferred_outcome().unwrap_or(outcome);
+        match outcome {
+            ToolCallOutcome::Completed { mut result } => {
+                if result.tool_call_id.trim().is_empty() || result.tool_call_id == "pending" {
+                    result.tool_call_id = call.id.clone();
+                }
+                Ok(DeferredToolExecution::with_lifecycle(
+                    call,
+                    result,
+                    true,
+                    Some(elapsed_millis(started_at)),
+                    tool_metadata,
+                    options.lifecycle_callback,
+                ))
+            }
+            ToolCallOutcome::Deferred { handle } => {
+                Ok(DeferredToolExecution::with_deferred_lifecycle(
+                    call,
+                    handle,
+                    true,
+                    None,
+                    tool_metadata,
+                    options.lifecycle_callback,
+                ))
+            }
         }
-        Ok(DeferredToolExecution::with_lifecycle(
-            call,
-            result,
-            true,
-            Some(elapsed_millis(started_at)),
-            tool_metadata,
-            options.lifecycle_callback,
-        ))
     }
 
     pub(crate) fn observe_result_without_execution(
@@ -634,6 +724,7 @@ mod tests {
             let name = match event {
                 ToolLifecycleEvent::Planned { .. } => "planned",
                 ToolLifecycleEvent::Started { .. } => "started",
+                ToolLifecycleEvent::Deferred { .. } => "deferred",
                 ToolLifecycleEvent::Completed { .. } => "completed",
             };
             observed_events.lock().expect("events").push(name);

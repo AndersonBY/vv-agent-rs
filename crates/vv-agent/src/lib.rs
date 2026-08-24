@@ -55,11 +55,13 @@ pub use budget::{
 pub use checkpoint::{
     canonical_json_bytes, event_payload_digest, model_request_digest, normalize_run_definition,
     operation_request_digest, redact_run_definition, run_definition_digest, tool_request_digest,
-    validate_extension_namespace, validate_run_definition, AmbiguousModelPolicy,
-    AmbiguousToolPolicy, AppendOnceResult, CheckpointConfig, CheckpointError, CheckpointExtension,
-    CheckpointStatus, ClaimMode, EventCursor, IdempotentRunEventStore, InMemoryRunEventStore,
-    OperationKind, OperationState, ReconciliationDecision, ReconciliationDecisionKind,
-    ReconciliationError, ReconciliationProvider, ResumeObservation, ResumePolicy, ToolIdempotency,
+    validate_extension_namespace, validate_run_definition, AcceptDeferredDecision,
+    AmbiguousModelPolicy, AmbiguousToolPolicy, AppendOnceResult, CheckpointConfig, CheckpointError,
+    CheckpointExtension, CheckpointStatus, ClaimMode, DeferredBatchAdmission, DeferredBatchEntry,
+    DeferredReceipt, DeferredReceiptStatus, DeferredResolveDecision, DeferredToolHandle,
+    EventCursor, IdempotentRunEventStore, InMemoryRunEventStore, OperationKind, OperationState,
+    ReconciliationDecision, ReconciliationDecisionKind, ReconciliationError,
+    ReconciliationProvider, ResumeObservation, ResumePolicy, ToolCallOutcome, ToolIdempotency,
 };
 pub use config::{
     apply_resolved_model_limits, build_vv_llm_from_local_settings, load_llm_settings_from_file,

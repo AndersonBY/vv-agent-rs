@@ -1,8 +1,6 @@
 use super::*;
 use crate::checkpoint::{OperationKind, OperationState};
-
 const JSON_SAFE_INTEGER_MAX: u64 = (1_u64 << 53) - 1;
-
 const COMMON_FIELDS: &[&str] = &[
     "version",
     "type",
@@ -17,7 +15,6 @@ const COMMON_FIELDS: &[&str] = &[
     "agent_name",
     "metadata",
 ];
-
 pub(super) fn validate_event_wire_shape(value: &Value) -> Result<(), String> {
     let object = value
         .as_object()
@@ -127,6 +124,8 @@ pub(super) fn validate_event_wire_shape(value: &Value) -> Result<(), String> {
                 "error_code",
                 "execution_started",
                 "duration_ms",
+                "operation_id",
+                "attempt",
                 "tool_metadata",
             ],
             &[
@@ -135,6 +134,28 @@ pub(super) fn validate_event_wire_shape(value: &Value) -> Result<(), String> {
                 "status",
                 "directive",
                 "error_code",
+                "execution_started",
+                "duration_ms",
+            ],
+        ),
+        "tool_call_deferred" => (
+            &[
+                "tool_call_id",
+                "tool_name",
+                "operation_id",
+                "attempt",
+                "handle",
+                "execution_started",
+                "duration_ms",
+                "operation_kind",
+                "checkpoint_key",
+            ],
+            &[
+                "tool_call_id",
+                "tool_name",
+                "operation_id",
+                "attempt",
+                "handle",
                 "execution_started",
                 "duration_ms",
             ],
@@ -326,6 +347,7 @@ pub(super) fn validate_event_wire_shape(value: &Value) -> Result<(), String> {
                 "operation_id",
                 "operation_kind",
                 "decision",
+                "claim_mode",
             ],
             &[
                 "checkpoint_key",
@@ -622,6 +644,33 @@ pub(super) fn validate_tool_lifecycle_wire_fields(
             }
             (tool_call_id, tool_name)
         }
+        RunEventPayload::ToolCallDeferred {
+            tool_call_id,
+            tool_name,
+            operation_id,
+            attempt,
+            handle,
+            execution_started: _,
+            duration_ms,
+            operation_kind,
+        } => {
+            require_stream_text(operation_id, "operation_id")?;
+            require_stream_text(tool_call_id, "tool_call_id")?;
+            require_stream_text(tool_name, "tool_name")?;
+            if *attempt == 0 || handle.validate().is_err() {
+                return Err("run event deferred tool identity is invalid".to_string());
+            }
+            if operation_kind.is_some_and(|kind| kind != OperationKind::Tool) {
+                return Err("deferred tool event operation_kind must be tool".to_string());
+            }
+            if duration_ms.is_some() {
+                return Err(
+                    "deferred tool event duration_ms must be null across process boundaries"
+                        .to_string(),
+                );
+            }
+            return Ok(());
+        }
         _ => return Ok(()),
     };
     require_stream_text(tool_call_id, "tool_call_id")?;
@@ -726,6 +775,19 @@ pub(super) fn validate_checkpoint_wire_fields(
     let require_lifecycle_cycle =
         || cycle_index.ok_or_else(|| "checkpoint lifecycle event requires cycle_index".to_string());
     match payload {
+        RunEventPayload::ToolCallDeferred {
+            handle,
+            operation_id,
+            attempt,
+            ..
+        } => {
+            handle.validate().map_err(|error| error.to_string())?;
+            if handle.operation_id != *operation_id || handle.attempt != u64::from(*attempt) {
+                return Err(
+                    "deferred tool event handle identity does not match operation".to_string(),
+                );
+            }
+        }
         RunEventPayload::CheckpointCreated {
             checkpoint_key,
             resume_attempt,
@@ -819,10 +881,27 @@ pub(super) fn validate_checkpoint_wire_fields(
         RunEventPayload::ReconciliationResolved {
             checkpoint_key,
             operation_id,
+            decision,
+            claim_mode,
             ..
         } => {
             require_lifecycle_cycle()?;
             require_event_operation(checkpoint_key, operation_id)?;
+            if *decision == crate::checkpoint::ReconciliationDecisionKind::AcceptDeferred
+                && *claim_mode != Some(crate::checkpoint::ClaimMode::Recovery)
+            {
+                return Err(
+                    "accept_deferred reconciliation event requires recovery claim_mode".to_string(),
+                );
+            }
+            if *decision != crate::checkpoint::ReconciliationDecisionKind::AcceptDeferred
+                && claim_mode.is_some()
+            {
+                return Err(
+                    "claim_mode is only valid for accept_deferred reconciliation events"
+                        .to_string(),
+                );
+            }
         }
         _ => {}
     }
@@ -850,6 +929,8 @@ pub(super) fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload)
             &["tool_metadata"]
         }
         RunEventPayload::ToolCallCompleted { .. } => &["tool_metadata"],
+        RunEventPayload::ToolCallDeferred { .. } => &["checkpoint_key"],
+        RunEventPayload::ReconciliationResolved { .. } => &["claim_mode"],
         RunEventPayload::SubRunStarted { .. } => &["status"],
         RunEventPayload::SubRunCompleted { .. } => &[
             "child_session_id",

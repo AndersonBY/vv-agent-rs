@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use super::paths::resolve_workspace_path_checked;
 use super::SubTaskRunner;
+use crate::checkpoint::{DeferredToolHandle, ToolCallOutcome};
 use crate::model::ModelProvider;
 use crate::types::{ToolArguments, ToolCall};
 use crate::workspace::{
@@ -32,6 +33,13 @@ pub struct ToolContext {
     pub sub_task_manager: Option<crate::runtime::sub_task_manager::SubTaskManager>,
     pub sub_task_turn_snapshot: Option<crate::runtime::sub_task_manager::SubTaskTurnSnapshot>,
     pub execution_backend: Option<crate::runtime::backends::RuntimeExecutionBackend>,
+    /// Framework-owned identity used by `defer()`.  These fields are filled
+    /// by the checkpointed runtime; handlers must not construct journal data.
+    pub checkpoint_key: Option<String>,
+    pub operation_id: Option<String>,
+    pub attempt: u64,
+    pub request_digest: Option<String>,
+    pub(crate) deferred_outcome: Option<ToolCallOutcome>,
     #[doc(hidden)]
     pub background_parent_run_config: Option<RunConfig>,
 }
@@ -88,6 +96,11 @@ impl ToolContext {
             sub_task_manager: None,
             sub_task_turn_snapshot: None,
             execution_backend: None,
+            checkpoint_key: None,
+            operation_id: None,
+            attempt: 1,
+            request_digest: None,
+            deferred_outcome: None,
             background_parent_run_config: None,
         }
     }
@@ -113,6 +126,60 @@ impl ToolContext {
         if let Some(snapshot) = self.sub_task_turn_snapshot.as_mut() {
             snapshot.parent_tool_call_id = (!call.id.trim().is_empty()).then(|| call.id.clone());
         }
+    }
+
+    /// Construct the opaque deferred outcome before a provider side effect.
+    /// Without a durable checkpoint this returns a completed stable error and
+    /// never creates a handle.
+    pub fn defer(&mut self) -> ToolCallOutcome {
+        let outcome = match (
+            self.checkpoint_key.clone(),
+            self.operation_id.clone(),
+            self.request_digest.clone(),
+        ) {
+            (Some(checkpoint_key), Some(operation_id), Some(request_digest))
+                if !checkpoint_key.trim().is_empty()
+                    && !operation_id.trim().is_empty()
+                    && !request_digest.trim().is_empty() =>
+            {
+                match DeferredToolHandle::new(
+                    checkpoint_key,
+                    operation_id,
+                    self.attempt,
+                    request_digest,
+                ) {
+                    Ok(handle) => ToolCallOutcome::deferred(handle),
+                    Err(_) => ToolCallOutcome::requires_checkpoint(self.tool_call_id.clone()),
+                }
+            }
+            _ => ToolCallOutcome::requires_checkpoint(self.tool_call_id.clone()),
+        };
+        self.deferred_outcome = Some(outcome.clone());
+        outcome
+    }
+
+    pub fn set_deferred_identity(
+        &mut self,
+        checkpoint_key: impl Into<String>,
+        operation_id: impl Into<String>,
+        attempt: u64,
+        request_digest: impl Into<String>,
+    ) {
+        self.checkpoint_key = Some(checkpoint_key.into());
+        self.operation_id = Some(operation_id.into());
+        self.attempt = attempt;
+        self.request_digest = Some(request_digest.into());
+    }
+
+    pub(crate) fn clear_deferred_identity(&mut self) {
+        self.checkpoint_key = None;
+        self.operation_id = None;
+        self.attempt = 1;
+        self.request_digest = None;
+    }
+
+    pub(crate) fn take_deferred_outcome(&mut self) -> Option<ToolCallOutcome> {
+        self.deferred_outcome.take()
     }
 
     pub fn app_state<T: Send + Sync + 'static>(&self) -> Option<&T> {

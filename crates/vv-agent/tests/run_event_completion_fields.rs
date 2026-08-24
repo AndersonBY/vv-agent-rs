@@ -3,7 +3,7 @@ use vv_agent::RunEvent;
 
 fn run_completed_event() -> Value {
     json!({
-        "version": "v2",
+        "version": "v4",
         "type": "run_completed",
         "event_id": "evt_completion_contract",
         "run_id": "run_completion_contract",

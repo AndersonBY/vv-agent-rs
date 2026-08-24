@@ -8,24 +8,24 @@ for model-driven automation.
 
 ## Install
 
-The current crate version is `0.10.0`. Repository `HEAD` locks language-neutral
-Contract `6.0.1` while keeping a Rust-idiomatic API. The current cross-repository
+The current crate version is `0.11.0`. Repository `HEAD` locks language-neutral
+Contract `7.0.1` while keeping a Rust-idiomatic API. The current cross-repository
 adoption state and verified revisions live in the central support matrix.
 
 ```bash
-cargo add vv-agent@0.10.0
+cargo add vv-agent@0.11.0
 ```
 
 Enable the Apalis adapter with:
 
 ```bash
-cargo add vv-agent@0.10.0 --features apalis
+cargo add vv-agent@0.11.0 --features apalis
 ```
 
 Repository `HEAD` is forward-only: current readers accept only the current
 strict public and wire shapes.
 
-### 0.10.0 Highlights
+### 0.11.0 Highlights
 
 - Every admitted model dispatch is recorded in
   `result.token_usage().model_calls`, including agent cycles, Session Memory,
@@ -53,11 +53,15 @@ strict public and wire shapes.
   tools default to archive retention; replacement requires a complete immutable
   artifact and a model-visible `read_file` recovery path. Compact markers expose
   only a bounded excerpt and logical recovery path.
-- Durable execution uses `vv-agent.checkpoint.v5`,
+- Durable execution uses `vv-agent.checkpoint.v7`,
   `vv-agent.run-definition.v5`, `vv-agent.distributed-run.v5`, and
   `vv-agent.distributed-worker-response.v3` for strict recovery and
-  distributed-controller boundaries. `RunEvent` uses wire version `v2`, and
+  distributed-controller boundaries. `RunEvent` uses wire version `v4`, and
   SQLite session stores use `PRAGMA user_version=2`.
+- Durable deferred tools use `ToolContext::defer` and one atomic
+  `admit_deferred_batch` barrier. Memory, SQLite, and Redis retain independent
+  resolution receipts; distributed workers wait with `deferred_pending` and
+  resume through the existing checkpoint path.
 
 See [output validation](docs/output-validation.md) and
 [checkpoint/resume](docs/checkpoint-resume.md) for the detailed contracts.
@@ -266,7 +270,7 @@ while let Some(event) = events.next().await {
 let result = handle.result().await?;
 ```
 
-Each `RunEvent` is a v2 envelope with `event_id`, `run_id`, `trace_id`,
+Each `RunEvent` is a v4 envelope with `event_id`, `run_id`, `trace_id`,
 optional session and parent identifiers, timing, metadata, and a typed
 `RunEventPayload`. `JsonlRunEventStore` can append events and replay a run,
 including child events linked by parent run id.

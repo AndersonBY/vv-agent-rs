@@ -13,6 +13,7 @@ fn running_response(
         completion_reason: None,
         completion_tool_name: None,
         partial_output: None,
+        wait_reason: None,
         checkpoint,
         interruption: None,
         error: None,
@@ -61,6 +62,7 @@ fn completion(
         completion_reason: None,
         completion_tool_name: None,
         partial_output: None,
+        wait_reason: None,
         error: None,
         token_usage: None,
         budget_usage: None,
@@ -194,4 +196,3 @@ fn contains_key(value: &Value, needle: &str) -> bool {
         _ => false,
     }
 }
-

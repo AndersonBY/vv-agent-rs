@@ -11,11 +11,11 @@ use sha2::{Digest, Sha256};
 
 use crate::budget::BudgetUsageSnapshot;
 use crate::checkpoint::{
-    event_payload_digest, operation_request_digest, run_definition_digest, AmbiguousModelPolicy,
-    AmbiguousToolPolicy, CheckpointConfig, CheckpointError, CheckpointExtension, CheckpointResult,
-    CheckpointStatus, ClaimMode, EventCursor, OperationKind, OperationState,
-    ReconciliationDecision, ReconciliationDecisionKind, ReconciliationProvider, ResumeObservation,
-    ResumePolicy, ToolIdempotency, OPERATION_REQUEST_SCHEMA,
+    event_payload_digest, operation_request_digest, run_definition_digest, AcceptDeferredDecision,
+    AmbiguousModelPolicy, AmbiguousToolPolicy, CheckpointConfig, CheckpointError,
+    CheckpointExtension, CheckpointResult, CheckpointStatus, ClaimMode, EventCursor, OperationKind,
+    OperationState, ReconciliationDecision, ReconciliationDecisionKind, ReconciliationProvider,
+    ResumeObservation, ResumePolicy, ToolIdempotency, OPERATION_REQUEST_SCHEMA,
 };
 use crate::event_store::RunEventStore;
 use crate::events::{RunEvent, RunEventPayload};
@@ -242,6 +242,17 @@ fn apply_reconciliation_decision(
                 &error.message,
                 error.retryable,
             ));
+            entry.validate()?;
+        }
+        ReconciliationDecisionKind::AcceptDeferred => {
+            let handle = decision.handle.clone().ok_or_else(|| {
+                CheckpointError::new(
+                    "reconciliation_decision_invalid",
+                    "accept_deferred requires a handle",
+                )
+            })?;
+            entry.deferred_handle = Some(handle);
+            entry.state = OperationState::Deferred;
             entry.validate()?;
         }
         ReconciliationDecisionKind::Defer | ReconciliationDecisionKind::Abort => {}

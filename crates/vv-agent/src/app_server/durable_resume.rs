@@ -37,6 +37,9 @@ pub enum DurableTurnResumeOutcome {
     ExistingOwner {
         response: TurnResumeResponse,
     },
+    DeferredPending {
+        response: TurnResumeResponse,
+    },
     TerminalReplay {
         response: TurnResumeResponse,
     },
@@ -47,6 +50,7 @@ impl DurableTurnResumeOutcome {
         match self {
             Self::Started { response, .. }
             | Self::ExistingOwner { response }
+            | Self::DeferredPending { response }
             | Self::TerminalReplay { response } => response,
         }
     }
@@ -63,6 +67,16 @@ impl DurableTurnResumeOutcome {
             Self::ExistingOwner { response } => {
                 validate_running_response(response, true)?;
             }
+            Self::DeferredPending { response } => {
+                validate_projection(
+                    response.status,
+                    response.completion_reason.as_deref(),
+                    response.error.as_deref(),
+                    response.wait_reason.as_deref(),
+                    response.checkpoint.as_ref(),
+                    response.interruption.as_ref(),
+                )?;
+            }
             Self::TerminalReplay { response } => {
                 if matches!(response.status, TurnStatus::Queued | TurnStatus::Running) {
                     return Err(invalid_bridge(
@@ -76,6 +90,7 @@ impl DurableTurnResumeOutcome {
                     checkpoint.status,
                     CheckpointSummaryStatus::Pending
                         | CheckpointSummaryStatus::Running
+                        | CheckpointSummaryStatus::Deferred
                         | CheckpointSummaryStatus::ReconciliationRequired
                 ) {
                     return Err(invalid_bridge(
@@ -86,6 +101,7 @@ impl DurableTurnResumeOutcome {
                     response.status,
                     response.completion_reason.as_deref(),
                     response.error.as_deref(),
+                    response.wait_reason.as_deref(),
                     response.checkpoint.as_ref(),
                     response.interruption.as_ref(),
                 )?;
@@ -124,6 +140,7 @@ pub(crate) fn validate_completion(
         completion.status,
         completion.completion_reason.as_deref(),
         completion.error.as_deref(),
+        completion.wait_reason.as_deref(),
         completion.checkpoint.as_ref(),
         completion.interruption.as_ref(),
     )
@@ -213,6 +230,7 @@ fn validate_projection(
     status: TurnStatus,
     completion_reason: Option<&str>,
     error: Option<&str>,
+    wait_reason: Option<&str>,
     checkpoint: Option<&crate::app_server::protocol::CheckpointSummary>,
     interruption: Option<&crate::app_server::protocol::InterruptionSummary>,
 ) -> Result<(), AppServerError> {
@@ -225,6 +243,7 @@ fn validate_projection(
         CheckpointSummaryStatus::WaitUser | CheckpointSummaryStatus::ReconciliationRequired => {
             TurnStatus::Interrupted
         }
+        CheckpointSummaryStatus::Deferred => TurnStatus::Interrupted,
         CheckpointSummaryStatus::Pending | CheckpointSummaryStatus::Running => {
             return Err(invalid_bridge(
                 "terminal projection contains a non-terminal checkpoint status",
@@ -236,7 +255,19 @@ fn validate_projection(
             "checkpoint status and projected turn status disagree",
         ));
     }
-    if reconciliation {
+    if checkpoint.status == CheckpointSummaryStatus::Deferred {
+        if completion_reason.is_some() || error.is_some() || wait_reason != Some("deferred_pending")
+        {
+            return Err(invalid_bridge(
+                "deferred checkpoint requires deferred_pending and no completion or error",
+            ));
+        }
+        if interruption.is_some() {
+            return Err(invalid_bridge(
+                "deferred checkpoint must not include reconciliation interruption details",
+            ));
+        }
+    } else if reconciliation {
         if completion_reason.is_some() || error.is_some() {
             return Err(invalid_bridge(
                 "reconciliation_required must omit completionReason and error",
@@ -339,6 +370,7 @@ mod tests {
             completion_reason: completion_reason.map(str::to_string),
             completion_tool_name: None,
             partial_output: None,
+            wait_reason: None,
             error: error.map(str::to_string),
             token_usage: None,
             budget_usage: None,

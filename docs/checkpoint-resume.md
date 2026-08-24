@@ -1,6 +1,6 @@
 # Durable Checkpoint And Resume
 
-Checkpoint v5 is an opt-in Runner capability. It preserves the last committed
+Checkpoint v7 is an opt-in Runner capability. It preserves the last committed
 cycle, operation receipts, budget usage, extension state, event cursor, claim,
 lease, and retained terminal result. The language-neutral behavior is defined
 by the locked `vv-agent-contract`; this document records the Rust producer and
@@ -14,7 +14,7 @@ used by the scheduler process. A distributed worker resolves the same logical
 store through `RuntimeRecipe.capabilities.checkpoint_store_ref` and its
 `DistributedCapabilityRegistry`.
 
-Enabled records require `schema_version=vv-agent.checkpoint.v5` and
+Enabled records require `schema_version=vv-agent.checkpoint.v7` and
 `run_definition_schema=vv-agent.run-definition.v5`. Distributed workers accept
 only `vv-agent.distributed-run.v5` and return only
 `vv-agent.distributed-worker-response.v3`; no other current record or envelope
@@ -42,11 +42,11 @@ synthesized and no stored definition or digest is rewritten.
 
 Execution telemetry is not a durable receipt. A `tool_call_started` event may
 exist without `tool_call_completed` after cancellation, process loss, or an
-exception. The checkpoint v5 operation journal remains authoritative for
+exception. The checkpoint v7 operation journal remains authoritative for
 whether an operation is planned, started, committed, replayable, or ambiguous;
 neither `duration_ms` nor a lifecycle observer provides exactly-once effects.
 
-The typed `RunEvent` envelope uses the strict current `v2` discriminator.
+The typed `RunEvent` envelope uses the strict current `v4` discriminator.
 Readers require every current field, reject unknown fields, and never dispatch
 to an older decoder. Checkpoint outbox entries must contain a canonical current
 `RunEvent`, match its embedded `event_id`, and match the recorded payload
@@ -102,7 +102,7 @@ transition share the same checkpoint progress boundary.
 
 ## Worker Reconstruction
 
-`DistributedCycleWorker::new()` has a production checkpoint-v5 executor. It
+`DistributedCycleWorker::new()` has a production checkpoint-v7 executor. It
 resolves the declared model, workspace, toolset, policy, hooks, observers,
 budget meter, extensions, and reconciliation provider, then rebuilds an inline
 single-cycle `AgentRuntime`. `with_checkpoint_executor()` remains available for
@@ -136,6 +136,43 @@ dispatch timeout. An in-process channel is suitable only for tests.
 The dispatcher submits the preassigned task id, waits for the retained
 `CycleDispatchResult`, observes cancellation and the envelope deadline, and
 returns terminal candidates to the scheduler for durable finalization.
+
+## Deferred Tool Barrier And Resolution
+
+`ToolContext::defer` is the framework-owned factory for an opaque
+`DeferredToolHandle`. It can only create a handle after the runtime has
+attached checkpoint, operation, attempt, and request-digest identity. A
+non-durable run receives a completed `ERROR` result with
+`deferred_requires_checkpoint`; no provider call may occur on that path.
+
+The runtime collects the complete model-tool batch and calls one
+`CheckpointStore::admit_deferred_batch` CAS. The CAS writes all completed and
+deferred journal outcomes and outbox events, sets `CheckpointStatus::Deferred`
+when any handle remains unresolved, and releases the active claim exactly
+once. A deferred checkpoint is not claimable for another model cycle.
+
+Callbacks call `resolve_deferred(handle, result)` without an expected
+revision. Memory, SQLite, and Redis check the independent receipt index first,
+then atomically transition the deferred journal entry, insert the receipt
+tombstone, stage `tool_call_completed`, and release one barrier item. Exact
+replays return the retained receipt; conflicting results return
+`deferred_resolution_conflict`, invalid result statuses return
+`deferred_resolution_result_invalid`, early-started callbacks return the
+retryable `deferred_resolution_not_admitted` decision, ambiguous callbacks
+require reconciliation, stale identities return `deferred_resolution_stale`,
+and an exact active handle on a claimed checkpoint returns
+`deferred_checkpoint_claimed`. The four resolver codes are typed errors, not
+`DeferredResolveDecision` variants. Only `SUCCESS` and `ERROR` results are
+definitive, and the resolver never invokes the external tool or creates a
+terminal result.
+
+Crash recovery accepts trusted exact handles through one
+`accept_deferred_batch` CAS under a recovery claim. It writes paired
+`reconciliation_resolved` and `tool_call_deferred` events and is idempotent on
+an exact replay. Distributed workers retain the existing pending response wire;
+the scheduler waits with `deferred_pending` and resumes through the existing
+driver after the final receipt releases the barrier. App Server exposes the
+state as a non-terminal interrupted turn with `waitReason=deferred_pending`.
 
 ## Verification
 

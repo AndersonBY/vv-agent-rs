@@ -25,7 +25,8 @@ use vv_agent::app_server::transport::ConnectionId;
 use vv_agent::{
     Agent, CapabilityRef, CheckpointConfig, CheckpointStore, FunctionTool, InMemoryCheckpointStore,
     LLMResponse, ModelRef, NoToolPolicy, ResumePolicy, RunBudgetLimits, RunConfig, Runner,
-    ScriptStep, ScriptedModelProvider, TokenUsage, ToolCall, ToolOutput, UsageSource,
+    ScriptStep, ScriptedModelProvider, StaticTool, TokenUsage, ToolCall, ToolExecutionResult,
+    ToolOutput, UsageSource,
 };
 
 const CONTRACT_SOURCE: &str = include_str!("fixtures/parity/app_server_observable.json");
@@ -144,92 +145,228 @@ fn unused_runtime() -> (Runner, Agent) {
 }
 
 #[tokio::test]
-async fn resumed_run_uses_same_turn_and_emits_reconciliation_sequence() {
+async fn deferred_pending_completion_is_produced_as_an_interrupted_resumable_turn() {
+    let checkpoint_key = "tenant-7/deferred-run";
     let thread_id = "thread_1";
     let turn_id = "turn_1";
-    let run_id = "run-resume-1";
-    let checkpoint_key = "tenant-7/run-42";
-    let checkpoint = checkpoint(
-        checkpoint_key,
-        CheckpointSummaryStatus::ReconciliationRequired,
-        false,
-    );
-    let interruption = interruption();
+    let run_id = "run-deferred-1";
     let response = running_response(thread_id, turn_id, run_id, None);
-    let completion = completion(
+    let mut deferred_completion = completion(
         thread_id,
         turn_id,
         run_id,
         TurnStatus::Interrupted,
-        Some(checkpoint.clone()),
-        Some(interruption.clone()),
+        Some(checkpoint(
+            checkpoint_key,
+            CheckpointSummaryStatus::Deferred,
+            false,
+        )),
+        None,
     );
+    deferred_completion.wait_reason = Some("deferred_pending".to_string());
     let outcome = DurableTurnResumeOutcome::Started {
         response,
-        completion: Box::pin(async move { Ok(completion) }),
+        completion: Box::pin(async move { Ok(deferred_completion) }),
     };
     let mut harness = harness(outcome);
     initialize(&mut harness).await;
 
     send_resume(&mut harness, checkpoint_key).await;
-    let response = next_message(&mut harness.outgoing).await;
-    let JsonRpcMessage::Response(response) = response else {
+    let JsonRpcMessage::Response(response) = next_message(&mut harness.outgoing).await else {
         panic!("turn/resume response must be first");
     };
     let response: TurnResumeResponse =
         serde_json::from_value(response.result).expect("resume response");
     assert_eq!(response.status, TurnStatus::Running);
-    assert_eq!(response.thread_id, harness.thread_id);
-    assert_eq!(response.turn_id, harness.turn_id);
 
-    let running = next_notification(&mut harness.outgoing).await;
-    let started = next_notification(&mut harness.outgoing).await;
-    let idle = next_notification(&mut harness.outgoing).await;
-    let completed = next_notification(&mut harness.outgoing).await;
-    assert!(matches!(
-        running,
-        ServerNotification::ThreadStatusChanged(ref params)
-            if params.status == ThreadStatus::Running
-    ));
-    assert!(matches!(
-        started,
-        ServerNotification::TurnStarted(ref params)
-            if params.thread_id == harness.thread_id
-                && params.turn_id == harness.turn_id
-                && params.run_id.as_deref() == Some(run_id)
-                && params.status == Some(TurnStatus::Running)
-    ));
-    assert!(matches!(
-        idle,
-        ServerNotification::ThreadStatusChanged(ref params)
-            if params.status == ThreadStatus::Idle
-    ));
-    let ServerNotification::TurnCompleted(completed) = completed else {
-        panic!("expected turn/completed");
+    let _running = next_notification(&mut harness.outgoing).await;
+    let _started = next_notification(&mut harness.outgoing).await;
+    let _idle = next_notification(&mut harness.outgoing).await;
+    let ServerNotification::TurnCompleted(completed) =
+        next_notification(&mut harness.outgoing).await
+    else {
+        panic!("expected deferred turn/completed notification");
     };
     assert_eq!(completed.status, TurnStatus::Interrupted);
+    assert_eq!(completed.wait_reason.as_deref(), Some("deferred_pending"));
     assert_eq!(completed.completion_reason, None);
     assert_eq!(completed.error, None);
-    assert_eq!(completed.checkpoint, Some(checkpoint));
-    assert_eq!(completed.interruption, Some(interruption));
-
-    let stored = harness
-        .store
-        .get_turn(&harness.thread_id, &harness.turn_id)
-        .expect("stored turn")
-        .expect("same turn");
-    assert_eq!(stored.status, TurnStatus::Interrupted);
     assert_eq!(
-        harness
-            .store
-            .list_turns(&harness.thread_id)
-            .expect("turns")
-            .len(),
-        1
+        completed.checkpoint.as_ref().map(|summary| summary.status),
+        Some(CheckpointSummaryStatus::Deferred)
     );
-    assert_sensitive_fields_absent(&serde_json::to_value(completed).expect("completion"));
-    assert_sensitive_fields_absent(&serde_json::to_value(stored.result).expect("stored result"));
+    assert!(completed.interruption.is_none());
     assert_requests(&harness, checkpoint_key, 1);
+}
+
+#[tokio::test]
+async fn app_server_projects_real_deferred_tool_runner_as_pending_turn() {
+    let checkpoint_key = "app-server/deferred-producer";
+    let checkpoint_store = InMemoryCheckpointStore::new();
+    let provider = ScriptedModelProvider::new(
+        "scripted",
+        "app-server-deferred-model",
+        vec![LLMResponse::with_tool_calls(
+            "waiting for provider",
+            vec![ToolCall::new(
+                "call_deferred",
+                "remote_write",
+                BTreeMap::new(),
+            )],
+        )],
+    );
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(".")
+        .build()
+        .expect("runner");
+    let deferred_tool = StaticTool::new(
+        "remote_write",
+        "Record a durable external write.",
+        json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false,
+        }),
+        Arc::new(|context, _arguments| {
+            let _ = context.defer();
+            ToolExecutionResult::success(context.tool_call_id.clone(), "not model-visible")
+        }),
+    );
+    let agent = Agent::builder("app-server-deferred-agent")
+        .instructions("Defer the remote write.")
+        .model(ModelRef::named("app-server-deferred-model"))
+        .tool(deferred_tool)
+        .build()
+        .expect("agent");
+    let mut checkpoint_config = CheckpointConfig::with_store(checkpoint_store.clone());
+    checkpoint_config.key = Some(checkpoint_key.to_string());
+    checkpoint_config.resume_policy = ResumePolicy::ResumeIfPresent;
+    for (slot, id) in [
+        ("approval_provider", "app-server.approval"),
+        ("runtime_hook:0", "app-server.steering"),
+        ("behavior_affecting_run_metadata", "app-server.run-metadata"),
+    ] {
+        checkpoint_config.capability_refs.insert(
+            slot.to_string(),
+            CapabilityRef::new(id, "1").expect("capability ref"),
+        );
+    }
+    let config = RunConfig::builder()
+        .max_cycles(1)
+        .no_tool_policy(NoToolPolicy::Finish)
+        .checkpoint_config(checkpoint_config)
+        .build();
+    let host = Arc::new(DefaultAppServerHost::from_agent(agent).with_run_config(config));
+    let store = SqliteThreadStore::in_memory().expect("thread store");
+    let thread = store
+        .create_thread(ThreadStartParams::default())
+        .expect("thread");
+    let (mut processor, mut outgoing) =
+        MessageProcessor::with_host(64, runner, host, store.clone());
+    let connection = ConnectionId::new(31);
+    initialize_processor(&mut processor, &mut outgoing, connection).await;
+
+    processor
+        .process_message(
+            connection,
+            request(
+                2,
+                "turn/start",
+                json!({
+                    "threadId": thread.thread_id,
+                    "input": [{"type": "text", "text": "defer the write"}],
+                }),
+            ),
+        )
+        .await;
+    let JsonRpcMessage::Response(started) = next_message(&mut outgoing).await else {
+        panic!("turn/start response");
+    };
+    let started: TurnStartResponse =
+        serde_json::from_value(started.result).expect("start response");
+    let completion = loop {
+        let notification = next_notification(&mut outgoing).await;
+        if let ServerNotification::TurnCompleted(completion) = notification {
+            break completion;
+        }
+    };
+    assert_eq!(completion.turn_id, started.turn_id);
+    assert_eq!(completion.status, TurnStatus::Interrupted);
+    assert_eq!(completion.wait_reason.as_deref(), Some("deferred_pending"));
+    assert_eq!(completion.completion_reason, None);
+    assert_eq!(completion.error, None);
+    assert_eq!(
+        completion.checkpoint.as_ref().map(|summary| summary.status),
+        Some(CheckpointSummaryStatus::Deferred)
+    );
+    let persisted = checkpoint_store
+        .load_checkpoint(checkpoint_key)
+        .expect("load deferred checkpoint")
+        .expect("deferred checkpoint");
+    assert_eq!(persisted.status, vv_agent::CheckpointStatus::Deferred);
+    assert!(persisted.claim_token.is_none());
+    let turn = store
+        .get_turn(&thread.thread_id, &started.turn_id)
+        .expect("turn")
+        .expect("stored turn");
+    assert_eq!(turn.status, TurnStatus::Interrupted);
+    assert!(
+        !turn.result.contains_key("tokenUsage"),
+        "deferred projections must omit tokenUsage"
+    );
+    assert!(
+        !turn.result.contains_key("budgetUsage"),
+        "deferred projections must omit budgetUsage"
+    );
+    assert!(
+        !turn.result.contains_key("budgetExhaustion"),
+        "deferred projections must omit budgetExhaustion"
+    );
+
+    processor
+        .process_message(
+            connection,
+            request(
+                3,
+                "turn/resume",
+                json!({
+                    "threadId": thread.thread_id,
+                    "turnId": started.turn_id,
+                    "checkpointKey": checkpoint_key,
+                }),
+            ),
+        )
+        .await;
+    let JsonRpcMessage::Response(resumed) = next_message(&mut outgoing).await else {
+        panic!("turn/resume response");
+    };
+    let resumed: TurnResumeResponse =
+        serde_json::from_value(resumed.result).expect("deferred resume response");
+    assert_eq!(resumed.status, TurnStatus::Interrupted);
+    assert_eq!(resumed.wait_reason.as_deref(), Some("deferred_pending"));
+    assert_eq!(
+        resumed.checkpoint.as_ref().map(|summary| summary.status),
+        Some(CheckpointSummaryStatus::Deferred)
+    );
+    assert!(resumed.final_output.is_none());
+    assert_no_message(&mut outgoing).await;
+    let persisted = store
+        .get_turn(&thread.thread_id, &started.turn_id)
+        .expect("resumed turn")
+        .expect("stored resumed turn");
+    assert!(!persisted.result.contains_key("tokenUsage"));
+    assert!(!persisted.result.contains_key("budgetUsage"));
+    assert!(!persisted.result.contains_key("budgetExhaustion"));
+    assert_eq!(
+        checkpoint_store
+            .load_checkpoint(checkpoint_key)
+            .expect("load deferred checkpoint")
+            .expect("deferred checkpoint")
+            .claim_token,
+        None
+    );
 }
 
 #[tokio::test]
@@ -357,6 +494,7 @@ async fn terminal_replay_is_response_only_and_updates_the_existing_turn_snapshot
         completion_reason: Some("no_tool_finish".to_string()),
         completion_tool_name: None,
         partial_output: None,
+        wait_reason: None,
         checkpoint: Some(checkpoint(
             checkpoint_key,
             CheckpointSummaryStatus::Completed,
@@ -805,5 +943,8 @@ async fn concurrent_standard_app_servers_have_one_checkpoint_claim_winner() {
     assert_eq!(model_calls.load(Ordering::SeqCst), 2);
     assert_eq!(store.list_turns(&thread.thread_id).expect("turns").len(), 1);
 }
+
+#[path = "app_server_turn_resume/deferred.rs"]
+mod deferred;
 
 include!("app_server_turn_resume/helpers.rs");

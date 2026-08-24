@@ -110,6 +110,11 @@ impl AppServerRunAdapter {
                 })
             }
             CheckpointStartOutcome::Started { handle, checkpoint } => {
+                if checkpoint.status == CheckpointStatus::Deferred {
+                    return Ok(DurableTurnResumeOutcome::DeferredPending {
+                        response: deferred_pending_resume_response(&request, &checkpoint),
+                    });
+                }
                 let response = running_resume_response(&request, &checkpoint, false);
                 let completion_request = request.clone();
                 let completion_store = checkpoint_store;
@@ -216,6 +221,17 @@ impl AppServerRunAdapter {
             }
             DurableTurnResumeOutcome::ExistingOwner { .. } => {
                 self.persist_running_resume(&resume_request, &response.run_id)?;
+                Ok(PreparedTurnResume {
+                    response,
+                    continuation: None,
+                })
+            }
+            DurableTurnResumeOutcome::DeferredPending { .. } => {
+                let completion = completion_from_resume_response(&response);
+                self.persist_deferred_pending(&completion)?;
+                self.state
+                    .clear_durable_resume(&resume_request.thread_id, &resume_request.turn_id)
+                    .await;
                 Ok(PreparedTurnResume {
                     response,
                     continuation: None,
@@ -375,6 +391,35 @@ impl AppServerRunAdapter {
         Ok(())
     }
 
+    fn persist_deferred_pending(
+        &self,
+        completion: &TurnCompletedParams,
+    ) -> Result<(), AppServerError> {
+        let turn = self
+            .store
+            .get_turn(&completion.thread_id, &completion.turn_id)
+            .map_err(store_error)?
+            .ok_or_else(|| AppServerError::invalid_params("Turn not found in thread"))?;
+        let expected_result = turn_completion_result(completion);
+        if turn.status != completion.status
+            || turn.run_id.as_deref() != completion.run_id.as_deref()
+            || turn.result != expected_result
+        {
+            self.persist_turn_completion(completion)?;
+        }
+        let thread = self
+            .store
+            .get_thread(&completion.thread_id)
+            .map_err(store_error)?
+            .ok_or_else(AppServerError::thread_not_found)?;
+        if thread.status != ThreadStatus::Idle {
+            self.store
+                .set_active_turn(&completion.thread_id, None, ThreadStatus::Idle)
+                .map_err(store_error)?;
+        }
+        Ok(())
+    }
+
     async fn complete_durable_resume(
         &self,
         request: DurableTurnResumeRequest,
@@ -431,6 +476,7 @@ fn checkpoint_summary(checkpoint: &Checkpoint) -> CheckpointSummary {
             CheckpointStatus::ReconciliationRequired => {
                 CheckpointSummaryStatus::ReconciliationRequired
             }
+            CheckpointStatus::Deferred => CheckpointSummaryStatus::Deferred,
         },
         terminal_acknowledged: checkpoint.terminal_acknowledged,
     }
@@ -497,6 +543,7 @@ fn running_resume_response(
         completion_reason: None,
         completion_tool_name: None,
         partial_output: None,
+        wait_reason: None,
         checkpoint: include_checkpoint.then(|| checkpoint_summary(checkpoint)),
         interruption: None,
         error: None,
@@ -513,21 +560,38 @@ fn resume_response_from_result(
         turn_id: request.turn_id.clone(),
         run_id: checkpoint.root_run_id.clone(),
         status: turn_status(result.status),
-        final_output: result
-            .final_answer
-            .clone()
-            .or_else(|| result.wait_reason.clone())
-            .or_else(|| result.error.clone()),
+        final_output: result.final_answer.clone().or_else(|| result.error.clone()),
         completion_reason: result
             .completion_reason
             .map(|reason| reason.as_str().to_string()),
         completion_tool_name: result.completion_tool_name.clone(),
         partial_output: result.partial_output.clone(),
+        wait_reason: result.wait_reason.clone(),
         checkpoint: Some(checkpoint_summary(checkpoint)),
         interruption: result.resume_observation.as_ref().map(interruption_summary),
         error: (result.status == AgentStatus::Failed)
             .then(|| result.error.clone())
             .flatten(),
+    }
+}
+
+fn deferred_pending_resume_response(
+    request: &DurableTurnResumeRequest,
+    checkpoint: &Checkpoint,
+) -> TurnResumeResponse {
+    TurnResumeResponse {
+        thread_id: request.thread_id.clone(),
+        turn_id: request.turn_id.clone(),
+        run_id: checkpoint.root_run_id.clone(),
+        status: TurnStatus::Interrupted,
+        final_output: None,
+        completion_reason: None,
+        completion_tool_name: None,
+        partial_output: crate::types::last_assistant_output(&checkpoint.cycles),
+        wait_reason: Some("deferred_pending".to_string()),
+        checkpoint: Some(checkpoint_summary(checkpoint)),
+        interruption: None,
+        error: None,
     }
 }
 
@@ -537,6 +601,10 @@ fn completion_from_agent_result(
     checkpoint: &Checkpoint,
 ) -> TurnCompletedParams {
     let response = resume_response_from_result(request, result, checkpoint);
+    let usage_visible = !matches!(
+        result.status,
+        AgentStatus::Deferred | AgentStatus::ReconciliationRequired
+    );
     TurnCompletedParams {
         thread_id: response.thread_id,
         turn_id: response.turn_id,
@@ -546,10 +614,15 @@ fn completion_from_agent_result(
         completion_reason: response.completion_reason,
         completion_tool_name: response.completion_tool_name,
         partial_output: response.partial_output,
+        wait_reason: response.wait_reason,
         error: response.error,
-        token_usage: Some(app_token_usage(&result.token_usage)),
-        budget_usage: result.budget_usage.as_ref().map(app_json_object),
-        budget_exhaustion: result.budget_exhaustion.as_ref().map(app_json_object),
+        token_usage: usage_visible.then(|| app_token_usage(&result.token_usage)),
+        budget_usage: usage_visible
+            .then(|| result.budget_usage.as_ref().map(app_json_object))
+            .flatten(),
+        budget_exhaustion: usage_visible
+            .then(|| result.budget_exhaustion.as_ref().map(app_json_object))
+            .flatten(),
         checkpoint: response.checkpoint,
         interruption: response.interruption,
     }
@@ -565,6 +638,7 @@ fn completion_from_resume_response(response: &TurnResumeResponse) -> TurnComplet
         completion_reason: response.completion_reason.clone(),
         completion_tool_name: response.completion_tool_name.clone(),
         partial_output: response.partial_output.clone(),
+        wait_reason: response.wait_reason.clone(),
         error: response.error.clone(),
         token_usage: None,
         budget_usage: None,
@@ -587,6 +661,9 @@ pub(super) fn turn_completion_result(completion: &TurnCompletedParams) -> BTreeM
     }
     if let Some(value) = &completion.partial_output {
         result.insert("partialOutput".to_string(), json!(value));
+    }
+    if let Some(value) = &completion.wait_reason {
+        result.insert("waitReason".to_string(), json!(value));
     }
     if let Some(value) = &completion.error {
         result.insert("error".to_string(), json!(value));

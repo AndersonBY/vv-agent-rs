@@ -259,6 +259,119 @@ impl CheckpointResumeController {
             .cloned()
     }
 
+    pub(crate) fn deferred_tool_identity(
+        &self,
+        cycle_index: u32,
+        tool_call_id: &str,
+    ) -> Option<(String, String, u64, String)> {
+        let entry = self.find_tool_call(cycle_index, tool_call_id)?;
+        Some((
+            self.checkpoint.as_ref()?.checkpoint_key.clone(),
+            entry.operation_id,
+            entry.attempt,
+            entry.request_digest,
+        ))
+    }
+
+    pub(crate) fn admit_deferred_batch(
+        &mut self,
+        entries: &[crate::checkpoint::DeferredBatchEntry],
+    ) -> CheckpointResult<crate::checkpoint::DeferredBatchAdmission> {
+        let checkpoint = self.require_checkpoint()?.clone();
+        let claim_token = checkpoint.claim_token.clone().ok_or_else(|| {
+            CheckpointError::new(
+                "checkpoint_claim_active",
+                "deferred batch admission requires an active claim",
+            )
+        })?;
+        let claimed_cycle = checkpoint.claimed_cycle.ok_or_else(|| {
+            CheckpointError::new(
+                "checkpoint_claim_active",
+                "deferred batch admission requires a claimed cycle",
+            )
+        })?;
+        let admission = self.store.admit_deferred_batch(
+            &checkpoint.checkpoint_key,
+            checkpoint.revision,
+            &claim_token,
+            claimed_cycle,
+            entries,
+        )?;
+        self.checkpoint = Some(admission.checkpoint.clone());
+        self.owned_claim_token = None;
+        self.first_claim_is_recovery = false;
+        self.stop_heartbeat();
+        self.deliver_pending_outbox()?;
+        self.reload()?;
+        Ok(crate::checkpoint::DeferredBatchAdmission {
+            checkpoint: self.require_checkpoint()?.clone(),
+            handles: admission.handles,
+        })
+    }
+
+    pub(crate) fn accept_deferred_batch(
+        &mut self,
+        decisions: &[crate::checkpoint::AcceptDeferredDecision],
+    ) -> CheckpointResult<crate::checkpoint::DeferredBatchAdmission> {
+        let checkpoint = self.require_checkpoint()?.clone();
+        let claim_token = checkpoint.claim_token.clone().ok_or_else(|| {
+            CheckpointError::new(
+                "checkpoint_claim_active",
+                "deferred reconciliation requires an active recovery claim",
+            )
+        })?;
+        let claimed_cycle = checkpoint.claimed_cycle.ok_or_else(|| {
+            CheckpointError::new(
+                "checkpoint_claim_active",
+                "deferred reconciliation requires a claimed cycle",
+            )
+        })?;
+        let admission = self.store.accept_deferred_batch(
+            &checkpoint.checkpoint_key,
+            checkpoint.revision,
+            &claim_token,
+            claimed_cycle,
+            decisions,
+        )?;
+        self.checkpoint = Some(admission.checkpoint.clone());
+        self.owned_claim_token = None;
+        self.first_claim_is_recovery = false;
+        self.stop_heartbeat();
+        self.deliver_pending_outbox()?;
+        self.reload()?;
+        Ok(crate::checkpoint::DeferredBatchAdmission {
+            checkpoint: self.require_checkpoint()?.clone(),
+            handles: admission.handles,
+        })
+    }
+
+    pub(crate) fn deferred_result(
+        &self,
+        messages: &[Message],
+        cycles: &[CycleRecord],
+        shared_state: &Metadata,
+    ) -> CheckpointResult<AgentResult> {
+        let checkpoint = self.require_checkpoint()?;
+        Ok(AgentResult {
+            status: AgentStatus::Deferred,
+            messages: messages.to_vec(),
+            cycles: cycles.to_vec(),
+            completion_reason: None,
+            completion_tool_name: None,
+            partial_output: last_assistant_output(cycles),
+            budget_usage: checkpoint.budget_usage.clone(),
+            budget_exhaustion: None,
+            checkpoint_key: Some(checkpoint.checkpoint_key.clone()),
+            resume_observation: None,
+            final_answer: None,
+            wait_reason: Some("deferred_pending".to_string()),
+            error: None,
+            error_code: None,
+            shared_state: shared_state.clone(),
+            token_usage: summarize_task_token_usage(&checkpoint.model_calls),
+        })
+    }
+
     pub(super) fn find_tool_call_mut(
         &mut self,
         cycle_index: u32,

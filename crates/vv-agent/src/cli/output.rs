@@ -24,6 +24,7 @@ fn status_value(status: AgentStatus) -> &'static str {
     match status {
         AgentStatus::Pending => "pending",
         AgentStatus::Running => "running",
+        AgentStatus::Deferred => "deferred",
         AgentStatus::WaitUser => "wait_user",
         AgentStatus::Completed => "completed",
         AgentStatus::Failed => "failed",

@@ -674,6 +674,8 @@ fn map_runtime_tool_completion(
             error_code,
             execution_started,
             duration_ms,
+            operation_id: None,
+            attempt: None,
         },
     )
     .with_tool_metadata(tool_metadata.as_ref());

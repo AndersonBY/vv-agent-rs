@@ -211,6 +211,7 @@ pub(super) fn reconcile_recovery(
         )
         .collect::<Vec<_>>();
 
+    let mut deferred_decisions = Vec::new();
     for (kind, index) in positions {
         let entry = match kind {
             OperationKind::Model => &progress.checkpoint.model_call_journal[index],
@@ -226,6 +227,24 @@ pub(super) fn reconcile_recovery(
         };
         decision.validate().map_err(|error| error.to_string())?;
         if decision.kind == ReconciliationDecisionKind::Defer {
+            continue;
+        }
+        if decision.kind == ReconciliationDecisionKind::AcceptDeferred {
+            if kind != OperationKind::Tool {
+                return Err("accept_deferred is only valid for tool operations".to_string());
+            }
+            let handle = decision
+                .handle
+                .clone()
+                .ok_or_else(|| "accept_deferred requires a handle".to_string())?;
+            if handle.checkpoint_key != progress.checkpoint.checkpoint_key
+                || handle.operation_id != entry.operation_id
+                || handle.attempt != entry.attempt
+                || handle.request_digest != entry.request_digest
+            {
+                return Err("accept_deferred handle identity mismatch".to_string());
+            }
+            deferred_decisions.push(crate::checkpoint::AcceptDeferredDecision::new(handle));
             continue;
         }
 
@@ -269,11 +288,19 @@ pub(super) fn reconcile_recovery(
                 snapshot.cycle_index = cycle_index;
                 return Ok(RecoveryDisposition::Abort(Box::new(snapshot)));
             }
+            ReconciliationDecisionKind::AcceptDeferred => {
+                unreachable!("accept_deferred decisions are collected for one batch CAS")
+            }
             ReconciliationDecisionKind::Defer => {
                 unreachable!("defer returned before mutating the journal")
             }
         }
         progress.persist(snapshot)?;
+    }
+
+    if !deferred_decisions.is_empty() {
+        progress.accept_deferred_batch(&deferred_decisions)?;
+        return Ok(RecoveryDisposition::Deferred);
     }
 
     if progress.checkpoint.has_ambiguous_operation() {

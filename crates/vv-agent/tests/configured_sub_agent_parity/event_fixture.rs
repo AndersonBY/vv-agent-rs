@@ -228,9 +228,9 @@ fn real_configured_sub_agent_producer_matches_locked_event_fixture_line_by_line(
         .map(|line| serde_json::from_str::<Value>(line).expect("event fixture line"))
         .collect::<Vec<_>>();
     let fixture = contract();
-    assert!(expected
-        .iter()
-        .all(|event| event["version"] == fixture["version"]));
+    // The configured-sub-agent fixture has its own contract version (`v2`);
+    // lifecycle events use the current strict RunEvent wire (`v4`).
+    assert!(expected.iter().all(|event| event["version"] == "v4"));
     assert_eq!(actual.len(), expected.len());
     for (line_index, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
         assert_eq!(actual, expected, "event fixture line {}", line_index + 1);

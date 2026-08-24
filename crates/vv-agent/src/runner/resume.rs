@@ -600,6 +600,26 @@ fn approval_lifecycle_run_event(
             Value::Object(call.arguments.into_iter().collect()),
         )
         .with_tool_metadata(tool_metadata.as_ref()),
+        ToolLifecycleEvent::Deferred {
+            call,
+            handle,
+            execution_started,
+            duration_ms,
+            tool_metadata,
+        } => RunEvent::tool_call_deferred(
+            run_id,
+            trace_id,
+            agent_name,
+            cycle_index,
+            call.id,
+            call.name,
+            handle.operation_id.clone(),
+            handle.attempt as u32,
+            handle,
+            execution_started,
+            duration_ms,
+        )
+        .with_tool_metadata(tool_metadata.as_ref()),
         ToolLifecycleEvent::Completed {
             call,
             result,
@@ -627,6 +647,8 @@ fn approval_lifecycle_run_event(
                     error_code: result.error_code.clone(),
                     execution_started,
                     duration_ms,
+                    operation_id: None,
+                    attempt: None,
                 },
             )
             .with_tool_metadata(tool_metadata.as_ref())

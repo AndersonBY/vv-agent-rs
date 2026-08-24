@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::checkpoint::ToolCallOutcome;
 use crate::context::RunContext;
 use crate::tools::{ToolContext, ToolMetadata, ToolSpec};
 use crate::types::{Metadata, ToolArguments, ToolCall, ToolExecutionResult};
@@ -216,6 +217,14 @@ pub trait ToolExecutor: Send + Sync {
         call: ToolCall,
         ctx: ToolRunContext<'a>,
     ) -> ToolFuture<'a, ToolExecutionResult>;
+
+    fn run_outcome<'a>(
+        &'a self,
+        call: ToolCall,
+        ctx: ToolRunContext<'a>,
+    ) -> ToolFuture<'a, ToolCallOutcome> {
+        Box::pin(async move { self.run(call, ctx).await.map(ToolCallOutcome::completed) })
+    }
 }
 
 #[derive(Clone)]
@@ -328,6 +337,45 @@ impl ToolExecutor for ToolSpecExecutor {
                 result.tool_call_id = call.id;
             }
             Ok(result)
+        })
+    }
+
+    fn run_outcome<'a>(
+        &'a self,
+        call: ToolCall,
+        ctx: ToolRunContext<'a>,
+    ) -> ToolFuture<'a, ToolCallOutcome> {
+        let handler = self.spec.handler.clone();
+        Box::pin(async move {
+            if let Some(result) = self.validate_arguments(&call)? {
+                return Ok(ToolCallOutcome::completed(result));
+            }
+            ctx.context.begin_tool_call(&call);
+            let result = if self.spec.timeout.is_none() {
+                let mut result = handler(ctx.context, &call.arguments);
+                if result.tool_call_id.trim().is_empty() || result.tool_call_id == "pending" {
+                    result.tool_call_id = call.id.clone();
+                }
+                result
+            } else {
+                let arguments = call.arguments.clone();
+                let mut isolated_context = ctx.context.clone();
+                let (mut result, updated_context) = tokio::task::spawn_blocking(move || {
+                    let result = handler(&mut isolated_context, &arguments);
+                    (result, isolated_context)
+                })
+                .await
+                .map_err(|error| ToolError::new(format!("tool task failed: {error}")))?;
+                *ctx.context = updated_context;
+                if result.tool_call_id.trim().is_empty() || result.tool_call_id == "pending" {
+                    result.tool_call_id = call.id.clone();
+                }
+                result
+            };
+            Ok(ctx
+                .context
+                .take_deferred_outcome()
+                .unwrap_or_else(|| ToolCallOutcome::completed(result)))
         })
     }
 }

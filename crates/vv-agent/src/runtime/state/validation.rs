@@ -106,7 +106,9 @@ pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
     if checkpoint.terminal_result.is_none()
         && !matches!(
             checkpoint.status,
-            CheckpointStatus::Running | CheckpointStatus::ReconciliationRequired
+            CheckpointStatus::Running
+                | CheckpointStatus::Deferred
+                | CheckpointStatus::ReconciliationRequired
         )
     {
         return Err(CheckpointError::new(
@@ -189,6 +191,37 @@ pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
             "checkpoint_status_invalid",
             "reconciliation_required needs an ambiguous journal and no claim",
         ));
+    }
+    if checkpoint.status == CheckpointStatus::Deferred {
+        let deferred_entries = checkpoint
+            .tool_journal
+            .iter()
+            .filter(|entry| entry.state == OperationState::Deferred)
+            .collect::<Vec<_>>();
+        if deferred_entries.is_empty() || checkpoint.claim_token.is_some() {
+            return Err(CheckpointError::new(
+                "checkpoint_status_invalid",
+                "deferred checkpoint requires a deferred journal and no claim",
+            ));
+        }
+        for entry in deferred_entries {
+            let Some(handle) = &entry.deferred_handle else {
+                return Err(CheckpointError::new(
+                    "checkpoint_status_invalid",
+                    "deferred journal entry requires a handle",
+                ));
+            };
+            if handle.checkpoint_key != checkpoint.checkpoint_key
+                || handle.operation_id != entry.operation_id
+                || handle.attempt != entry.attempt
+                || handle.request_digest != entry.request_digest
+            {
+                return Err(CheckpointError::new(
+                    "checkpoint_status_invalid",
+                    "deferred handle identity does not match checkpoint journal",
+                ));
+            }
+        }
     }
     if checkpoint.status == CheckpointStatus::Running
         && checkpoint.has_ambiguous_operation()
@@ -349,6 +382,9 @@ fn validate_model_journal_entry_accounting(
         {
             return Ok(());
         }
+        OperationState::Deferred => {
+            return Err(model_accounting_error("model journal cannot be deferred"));
+        }
         OperationState::Succeeded | OperationState::Failed | OperationState::Ambiguous => {}
     }
 
@@ -375,7 +411,7 @@ fn validate_model_journal_entry_accounting(
             ModelCallStatus::Failed | ModelCallStatus::Ambiguous
         ),
         OperationState::Ambiguous => record.status == ModelCallStatus::Ambiguous,
-        OperationState::Planned | OperationState::Started => false,
+        OperationState::Planned | OperationState::Started | OperationState::Deferred => false,
     };
     let event_type_matches = matches!(
         (record.status, terminal_event.1.payload()),
@@ -616,6 +652,7 @@ fn agent_status_matches_checkpoint(status: AgentStatus, checkpoint: CheckpointSt
                 AgentStatus::ReconciliationRequired,
                 CheckpointStatus::ReconciliationRequired
             )
+            | (AgentStatus::Deferred, CheckpointStatus::Deferred)
     )
 }
 

@@ -4,12 +4,17 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde_json::Value;
 
 use crate::budget::BudgetUsageSnapshot;
-use crate::checkpoint::{CheckpointError, CheckpointResult, ToolIdempotency};
+use crate::checkpoint::{
+    CheckpointError, CheckpointResult, DeferredBatchEntry, ToolCallOutcome, ToolIdempotency,
+};
 use crate::llm::{LlmError, LlmRequest};
 use crate::runtime::checkpoint_resume::{
     CheckpointController, CheckpointResumeController, ModelOperationOutcome, ToolOperationPlan,
 };
-use crate::tools::{BeforeToolDispatch, ToolError, ToolRunOptions};
+use crate::tools::{
+    orchestrator::DeferredToolExecution, BeforeToolDispatch, ToolError, ToolRegistry,
+    ToolRunOptions,
+};
 use crate::types::{AgentResult, CycleRecord, LLMResponse, Message, ToolCall, ToolExecutionResult};
 
 use super::helpers::failed_agent_result;
@@ -45,6 +50,124 @@ pub(super) struct CheckpointCoordinator {
     controller: Option<CheckpointController>,
     pending_error: PendingCheckpointError,
     model_call_ledger: ModelCallLedger,
+}
+
+pub(super) struct DeferredBatchCollector<'a> {
+    checkpoint: &'a CheckpointCoordinator,
+    registry: &'a ToolRegistry,
+    cycle_index: u32,
+    entries: Vec<DeferredBatchEntry>,
+    // Lifecycle callbacks are staged with the same ownership boundary as the
+    // journal entries.  A provider may have already produced an outcome, but
+    // no deferred/completed observation is externally visible until the
+    // admission CAS (and its outbox write) succeeds.
+    lifecycle: Vec<DeferredToolExecution>,
+}
+
+impl<'a> DeferredBatchCollector<'a> {
+    pub(super) fn new(
+        checkpoint: &'a CheckpointCoordinator,
+        registry: &'a ToolRegistry,
+        cycle_index: u32,
+    ) -> Self {
+        Self {
+            checkpoint,
+            registry,
+            cycle_index,
+            entries: Vec::new(),
+            lifecycle: Vec::new(),
+        }
+    }
+
+    pub(super) fn capture(
+        &mut self,
+        call: &ToolCall,
+        plan: Option<&ToolOperationPlan>,
+        outcome: ToolCallOutcome,
+    ) -> bool {
+        let deferred = matches!(outcome, ToolCallOutcome::Deferred { .. });
+        self.checkpoint.append_deferred_batch_entry(
+            &mut self.entries,
+            self.cycle_index,
+            call,
+            plan,
+            self.registry,
+            outcome,
+        );
+        deferred
+    }
+
+    pub(super) fn capture_or_return_execution(
+        &mut self,
+        call: &ToolCall,
+        plan: Option<&ToolOperationPlan>,
+        execution: DeferredToolExecution,
+    ) -> Option<DeferredToolExecution> {
+        let outcome = execution.outcome().clone();
+        if !matches!(outcome, ToolCallOutcome::Deferred { .. }) {
+            return Some(execution);
+        }
+        self.capture(call, plan, outcome);
+        self.lifecycle.push(execution);
+        None
+    }
+
+    pub(super) fn capture_completed_execution(
+        &mut self,
+        call: &ToolCall,
+        plan: Option<&ToolOperationPlan>,
+        execution: DeferredToolExecution,
+    ) -> ToolExecutionResult {
+        let result = execution.result().clone();
+        let entry_count = self.entries.len();
+        self.capture(call, plan, ToolCallOutcome::completed(result.clone()));
+        if self.entries.len() != entry_count {
+            self.lifecycle.push(execution);
+        } else {
+            // The collector is also used by the non-checkpoint runtime. In
+            // that mode there is no CAS boundary to stage behind, so preserve
+            // the normal immediate lifecycle callback ordering.
+            let _ = execution.complete();
+        }
+        result
+    }
+
+    pub(super) fn complete_lifecycle(&mut self) {
+        for execution in self.lifecycle.drain(..) {
+            let _ = execution.complete();
+        }
+    }
+
+    pub(super) fn finish(
+        &mut self,
+        messages: &[Message],
+        cycles: &[CycleRecord],
+        shared_state: &BTreeMap<String, Value>,
+    ) -> Option<AgentResult> {
+        let has_deferred = self
+            .entries
+            .iter()
+            .any(|entry| entry.outcome.handle().is_some());
+        let result =
+            self.checkpoint
+                .finish_tool_batch(&self.entries, messages, cycles, shared_state);
+        if has_deferred {
+            // Deferred admission writes the canonical lifecycle events into
+            // the durable outbox in the same CAS.  Replaying the staged
+            // callbacks here would emit a second deferred/completed event
+            // for the same operation, and would also leak an event if a
+            // later projection crashes.  The outbox is the sole authority
+            // once a batch contains a deferred outcome; clear callbacks on
+            // both success and admission failure.
+            self.lifecycle.clear();
+        } else if result
+            .as_ref()
+            .is_none_or(|result| matches!(result.status, crate::types::AgentStatus::Deferred))
+        {
+            self.complete_lifecycle();
+        }
+        result
+    }
 }
 
 impl CheckpointCoordinator {
@@ -237,6 +360,125 @@ impl CheckpointCoordinator {
         }
     }
 
+    pub(super) fn set_tool_context_identity(
+        &self,
+        context: &mut crate::tools::ToolContext,
+        cycle_index: u32,
+        call: &ToolCall,
+    ) {
+        context.clear_deferred_identity();
+        let Some(controller) = self.controller.as_ref() else {
+            return;
+        };
+        let Ok(controller) = lock_controller(controller) else {
+            return;
+        };
+        if let Some((checkpoint_key, operation_id, attempt, request_digest)) =
+            controller.deferred_tool_identity(cycle_index, &call.id)
+        {
+            context.set_deferred_identity(checkpoint_key, operation_id, attempt, request_digest);
+        }
+    }
+
+    pub(super) fn tool_identity(
+        &self,
+        cycle_index: u32,
+        call: &ToolCall,
+    ) -> Option<(String, String, u64, String)> {
+        let controller = self.controller.as_ref()?;
+        let controller = lock_controller(controller).ok()?;
+        controller.deferred_tool_identity(cycle_index, &call.id)
+    }
+
+    pub(super) fn deferred_batch_entry(
+        &self,
+        cycle_index: u32,
+        call: &ToolCall,
+        plan: Option<&ToolOperationPlan>,
+        registry: &ToolRegistry,
+        outcome: ToolCallOutcome,
+    ) -> Option<DeferredBatchEntry> {
+        let (_, operation_id, attempt, request_digest) = self.tool_identity(cycle_index, call)?;
+        Some(DeferredBatchEntry {
+            operation_id,
+            cycle_index: u64::from(cycle_index),
+            attempt,
+            request_digest,
+            tool_call_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            idempotency_key: plan.and_then(|plan| plan.idempotency_key.clone()),
+            idempotency_support: crate::runtime::run_definition::tool_idempotency_for(
+                registry, &call.name,
+            ),
+            outcome,
+        })
+    }
+
+    pub(super) fn append_deferred_batch_entry(
+        &self,
+        entries: &mut Vec<DeferredBatchEntry>,
+        cycle_index: u32,
+        call: &ToolCall,
+        plan: Option<&ToolOperationPlan>,
+        registry: &ToolRegistry,
+        outcome: ToolCallOutcome,
+    ) {
+        if let Some(entry) = self.deferred_batch_entry(cycle_index, call, plan, registry, outcome) {
+            entries.push(entry);
+        }
+    }
+
+    pub(super) fn finish_tool_batch(
+        &self,
+        entries: &[crate::checkpoint::DeferredBatchEntry],
+        messages: &[Message],
+        cycles: &[CycleRecord],
+        shared_state: &BTreeMap<String, Value>,
+    ) -> Option<AgentResult> {
+        if entries.is_empty() {
+            return None;
+        }
+        let has_deferred = entries.iter().any(|entry| entry.outcome.handle().is_some());
+        if has_deferred {
+            let controller = self.controller.as_ref()?;
+            let result = lock_controller(controller).and_then(|mut controller| {
+                controller.admit_deferred_batch(entries)?;
+                controller.deferred_result(messages, cycles, shared_state)
+            });
+            return match result {
+                Ok(result) => Some(result),
+                Err(error) => Some(self.failure(error, messages, cycles, shared_state)),
+            };
+        }
+        // Ordinary batches retain their existing per-tool journal path. This
+        // keeps approval/short-circuit semantics unchanged when no deferred
+        // outcome is present.
+        for entry in entries {
+            let Some(controller) = self.controller.as_ref() else {
+                break;
+            };
+            let Some(result) = entry.outcome.result() else {
+                continue;
+            };
+            let outcome = lock_controller(controller).and_then(|mut controller| {
+                controller.finish_tool(
+                    entry.cycle_index as u32,
+                    &ToolCall::new(
+                        entry.tool_call_id.clone(),
+                        entry.tool_name.clone(),
+                        crate::types::ToolArguments::new(),
+                    ),
+                    result,
+                    None,
+                )
+            });
+            if let Err(error) = outcome {
+                return Some(self.failure(error, messages, cycles, shared_state));
+            }
+        }
+        None
+    }
+
     pub(super) fn before_tool_dispatch(
         &self,
         options: ToolRunOptions,
@@ -248,8 +490,10 @@ impl CheckpointCoordinator {
         let controller = controller.clone();
         let pending_error = self.pending_error.clone();
         let callback: BeforeToolDispatch = Arc::new(move |call, _context| {
-            let outcome = lock_controller(&controller)
-                .and_then(|mut controller| controller.tool_started(cycle_index, call));
+            let outcome = lock_controller(&controller).and_then(|mut controller| {
+                controller.preflight_tool_dispatch(cycle_index, call)?;
+                controller.tool_started(cycle_index, call)
+            });
             match outcome {
                 Ok(()) => Ok(()),
                 Err(error) => {

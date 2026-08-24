@@ -181,7 +181,7 @@ Core responsibilities:
 - `InteractiveAgentClient` / `InteractiveSession`: embedded stateful control over
   `Runner`, `RunHandle`, and `Session`, including steering and queued follow-up
   turns.
-- `RunEvent`: v2 envelope with stable identity fields and a typed payload.
+- `RunEvent`: v4 envelope with stable identity fields and a typed payload.
 - `RunEventStore`: append-only event storage and replay by run lineage. Replay
   includes direct child runs by default; callers can explicitly request only
   the selected run.

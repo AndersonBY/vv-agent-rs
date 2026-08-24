@@ -18,9 +18,9 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock selects contract `6.0.1` at revision
-`77a2a55732fb1197da0239186dcad00806776063`, release artifact SHA-256
-`0d07e463297a58f2ceed17bf15acca05ef6b7dec9b84237907e1300ba9335ad2`.
+The current lock selects contract `7.0.1` at revision
+`fd3352a1c3a17dd5d7ff01e5e9dcceee9e038a19`, release artifact SHA-256
+`4358b9dbae6b51c476677b0c4d48fd02d7acd2fffc5bb1170276654e1f2bb6a5`.
 The current adoption state is not duplicated in this document. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
 as the machine-readable source for the current verified Python and Rust
@@ -100,7 +100,7 @@ A fixture parser or private helper test cannot replace a real public producer
 test. A field that is declared but ignored by a planner, executor, provider, or
 store remains a contract failure.
 
-## Contract 6.0.1 Boundaries
+## Contract 7.0.1 Boundaries
 
 ### Prompt Bundle And Provider Projection
 
@@ -154,13 +154,13 @@ usage, and error outcome.
 
 Task-neutral observations remain typed diagnostics. A diagnostic cannot replace
 model, budget, cancellation, tool, approval, checkpoint, or terminal lifecycle
-events. `RunEvent` version `v2` is the strict current wire discriminator; stale,
+events. `RunEvent` version `v4` is the strict current wire discriminator; stale,
 missing, unknown, and malformed fields are rejected rather than routed through
 an older decoder.
 
 ### Durable Accounting
 
-Checkpoints require `vv-agent.checkpoint.v5`, and run definitions require
+Checkpoints require `vv-agent.checkpoint.v7`, and run definitions require
 `vv-agent.run-definition.v5`. The run definition stores `prompt_bundle` and
 never stores an independent flattened prompt. The checkpoint owns the complete
 ordered run-level model-call ledger. A started model journal entry and started
@@ -237,6 +237,54 @@ revision-bound CAS, delivery, and acknowledgement path. Duplicate finalizer
 delivery returns the retained terminal. Durable cross-process approval
 continuation is not implemented by this Rust slice.
 
+## Durable Deferred Tools
+
+Contract 7 adds one provider-neutral result boundary for tools whose external
+acceptance finishes after the current worker invocation. The framework creates
+an opaque `DeferredToolHandle` through `ToolContext::defer`; handlers never
+construct checkpoint journals, claims, provider/job identifiers, or callback
+metadata. Without an active durable checkpoint the factory returns a completed
+`ERROR` result with `deferred_requires_checkpoint` before an external effect.
+
+`ToolCallOutcome` is the closed `vv-agent.tool-call-outcome.v2` wire: a
+completed `ToolExecutionResult` or a deferred handle. Deferred is not a
+`ToolExecutionResult` status. A model-tool batch is admitted once through the
+checkpoint store (`admit_deferred_batch`), atomically persisting all completed
+and deferred journal entries, lifecycle outbox events, the deferred barrier,
+and one claim release. `CheckpointStatus::Deferred` blocks new model cycles
+until every handle resolves.
+
+`CheckpointStore::resolve_deferred(handle, result)` accepts only definitive
+`SUCCESS` or `ERROR` results. Memory, SQLite, and Redis stores use an
+independent receipt index and atomic resolution update; exact callbacks replay
+the retained receipt, conflicting results return
+`deferred_resolution_conflict`, invalid result statuses return
+`deferred_resolution_result_invalid`, early callbacks return retryable
+`deferred_resolution_not_admitted`, ambiguous operations require
+reconciliation, stale identities return `deferred_resolution_stale`, and an
+exact active handle on a claimed checkpoint returns
+`deferred_checkpoint_claimed`. These are typed errors, not
+`DeferredResolveDecision` variants.
+Receipt cleanup follows checkpoint retention and has no fixed cardinality cap.
+
+Recovery acceptance is an all-or-none `accept_deferred_batch` CAS under an
+active recovery claim. It validates exact handles, records a
+`reconciliation_resolved` audit plus `tool_call_deferred` events, and is
+idempotent on exact replay without a second claim or revision. Distributed
+workers keep the existing `vv-agent.distributed-worker-response.v3` pending
+wire; the nonblocking driver waits with `deferred_pending` and performs no
+worker polling or new response variant. App Server maps the state to a
+non-terminal interrupted turn with `waitReason=deferred_pending` and a normal
+`turn/resume` path.
+
+The main Rust producer and evidence surfaces are
+`crates/vv-agent/src/checkpoint/deferred.rs`,
+`crates/vv-agent/src/runtime/state/deferred.rs`,
+`crates/vv-agent/src/runtime/stores/{memory,sqlite,redis}.rs`,
+`crates/vv-agent/src/tools/base/context.rs`,
+`crates/vv-agent/src/runtime/backends/distributed/`, and
+`crates/vv-agent/tests/deferred_tools.rs`.
+
 ## Memory Capacity Mapping
 
 Rust records a resolved model's output capability in task metadata as
@@ -308,7 +356,7 @@ event. `memory_compact_started` includes `microcompact_target`,
 `artifact_failure_count`, plus the strongest applied mode and a
 message-content comparison as `changed`.
 Provider callbacks, runtime payloads, and `runner/event_stream.rs` journal
-projections reuse the same `event_id` and `created_at`. The current `v2`
+projections reuse the same `event_id` and `created_at`. The current `v4`
 decoder rejects missing, unknown, stale, and malformed fields; it has no
 alternate historical decoder. No capacity or compaction branch inspects
 task category, answer meaning, or semantic progress.

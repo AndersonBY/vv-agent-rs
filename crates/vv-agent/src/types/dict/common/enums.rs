@@ -73,6 +73,7 @@ pub(in crate::types::dict) fn agent_status_value(status: AgentStatus) -> &'stati
     match status {
         AgentStatus::Pending => "pending",
         AgentStatus::Running => "running",
+        AgentStatus::Deferred => "deferred",
         AgentStatus::WaitUser => "wait_user",
         AgentStatus::Completed => "completed",
         AgentStatus::Failed => "failed",
@@ -85,6 +86,7 @@ pub(in crate::types::dict) fn parse_agent_status(value: &str) -> Result<AgentSta
     match value {
         "pending" => Ok(AgentStatus::Pending),
         "running" => Ok(AgentStatus::Running),
+        "deferred" => Ok(AgentStatus::Deferred),
         "wait_user" => Ok(AgentStatus::WaitUser),
         "completed" => Ok(AgentStatus::Completed),
         "failed" => Ok(AgentStatus::Failed),

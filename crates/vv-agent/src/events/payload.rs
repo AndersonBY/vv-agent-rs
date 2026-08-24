@@ -3,7 +3,8 @@ use serde_json::Value;
 
 use crate::budget::{BudgetEnforcementBoundary, BudgetExhaustion, BudgetUsageSnapshot};
 use crate::checkpoint::{
-    OperationKind, OperationState, ReconciliationDecisionKind, ResumeObservation, ToolIdempotency,
+    ClaimMode, DeferredToolHandle, OperationKind, OperationState, ReconciliationDecisionKind,
+    ResumeObservation, ToolIdempotency,
 };
 use crate::types::{AgentStatus, ModelCallOperation, TokenUsage, ToolDirective};
 
@@ -115,6 +116,21 @@ pub enum RunEventPayload {
         error_code: Option<String>,
         execution_started: bool,
         duration_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        operation_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt: Option<u32>,
+    },
+    ToolCallDeferred {
+        tool_call_id: String,
+        tool_name: String,
+        operation_id: String,
+        attempt: u32,
+        handle: DeferredToolHandle,
+        execution_started: bool,
+        duration_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        operation_kind: Option<OperationKind>,
     },
     MemoryCompactStarted {
         message_count: usize,
@@ -216,6 +232,8 @@ pub enum RunEventPayload {
         operation_id: String,
         operation_kind: OperationKind,
         decision: ReconciliationDecisionKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        claim_mode: Option<ClaimMode>,
     },
     RunCompleted {
         status: AgentStatus,

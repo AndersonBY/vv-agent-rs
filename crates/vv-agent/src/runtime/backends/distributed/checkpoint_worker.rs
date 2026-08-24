@@ -119,6 +119,26 @@ impl DistributedCheckpointProgress {
         Ok(self.checkpoint.clone())
     }
 
+    pub fn accept_deferred_batch(
+        &mut self,
+        decisions: &[crate::checkpoint::AcceptDeferredDecision],
+    ) -> Result<crate::checkpoint::DeferredBatchAdmission, String> {
+        let admission = self
+            .store
+            .accept_deferred_batch(
+                &self.checkpoint.checkpoint_key,
+                self.checkpoint.revision,
+                &self.claim_token,
+                self.checkpoint.claimed_cycle.ok_or_else(|| {
+                    "deferred reconciliation requires an active claimed cycle".to_string()
+                })?,
+                decisions,
+            )
+            .map_err(|error| error.to_string())?;
+        self.checkpoint = admission.checkpoint.clone();
+        Ok(admission)
+    }
+
     fn reload(&mut self) -> Result<(), String> {
         let checkpoint = self
             .store
@@ -144,6 +164,7 @@ impl DistributedCheckpointProgress {
 enum RecoveryDisposition {
     Continue,
     Suspend,
+    Deferred,
     Abort(Box<Checkpoint>),
 }
 
@@ -152,6 +173,7 @@ enum PostCommitAction {
         revision: u64,
         cycle_index: u64,
     },
+    DeferredPending,
     TerminalCandidate {
         result: Box<AgentResult>,
         revision: u64,
@@ -183,6 +205,9 @@ pub(super) fn run_distributed_cycle(
 
     if checkpoint.terminal_result.is_some() {
         return terminal_replay(&checkpoint);
+    }
+    if checkpoint.status == CheckpointStatus::Deferred {
+        return Ok(CycleDispatchResult::pending());
     }
     if checkpoint.cycle_index >= u64::from(envelope.cycle_index) && checkpoint.claim_token.is_none()
     {
@@ -256,6 +281,10 @@ pub(super) fn run_distributed_cycle(
                 if claim_mode == ClaimMode::Recovery {
                     match reconcile_recovery(config, &resolved, &mut progress)? {
                         RecoveryDisposition::Continue => {}
+                        RecoveryDisposition::Deferred => {
+                            heartbeat_status.mark_commit_succeeded()?;
+                            return Ok(PostCommitAction::DeferredPending);
+                        }
                         RecoveryDisposition::Suspend => {
                             suspend_reconciliation(&mut progress, heartbeat_status)?;
                             let checkpoint = load_checkpoint(store.as_ref(), checkpoint_key)?;
@@ -323,6 +352,7 @@ pub(super) fn run_distributed_cycle(
             })();
             let claim_committed = match &result {
                 Ok(PostCommitAction::Unfinished { .. }) => true,
+                Ok(PostCommitAction::DeferredPending) => true,
                 Ok(PostCommitAction::TerminalCandidate { result, .. }) => {
                     result.status == crate::types::AgentStatus::ReconciliationRequired
                 }
@@ -337,6 +367,7 @@ pub(super) fn run_distributed_cycle(
             revision,
             cycle_index,
         } => CycleDispatchResult::committed(cycle_index, revision),
+        PostCommitAction::DeferredPending => Ok(CycleDispatchResult::pending()),
         PostCommitAction::TerminalCandidate { result, revision } => {
             CycleDispatchResult::terminal_candidate(*result, revision)
         }

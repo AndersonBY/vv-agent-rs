@@ -17,19 +17,21 @@ use crate::runtime::backends::CapabilityRef;
 use crate::runtime::state::CheckpointStore;
 
 mod canonical;
+mod deferred;
 
 pub use canonical::*;
 use canonical::{
     require_non_empty, require_positive, utf16_cmp, validate_capability_ref,
     validate_capability_slot, validate_i_json, validate_pointer,
 };
+pub use deferred::*;
 
 pub const MAX_WIRE_INTEGER: u64 = (1_u64 << 53) - 1;
 pub const MAX_CHECKPOINT_KEY_BYTES: usize = 512;
 pub const MAX_EXTENSION_NAMESPACE_BYTES: usize = 128;
 pub const MAX_EXTENSION_ENTRY_BYTES: usize = 65_536;
 pub const DEFAULT_MAX_EXTENSION_STATE_BYTES: u64 = 262_144;
-pub const CHECKPOINT_SCHEMA: &str = "vv-agent.checkpoint.v5";
+pub const CHECKPOINT_SCHEMA: &str = "vv-agent.checkpoint.v7";
 pub const RUN_DEFINITION_SCHEMA: &str = "vv-agent.run-definition.v5";
 pub const OPERATION_REQUEST_SCHEMA: &str = "vv-agent.operation-request.v1";
 pub const EVENT_CURSOR_SCHEMA: &str = "vv-agent.event-cursor.v1";
@@ -131,6 +133,7 @@ pub enum OperationKind {
 pub enum OperationState {
     Planned,
     Started,
+    Deferred,
     Succeeded,
     Failed,
     Ambiguous,
@@ -148,6 +151,7 @@ pub enum ClaimMode {
 pub enum CheckpointStatus {
     Pending,
     Running,
+    Deferred,
     WaitUser,
     Completed,
     Failed,
@@ -160,6 +164,7 @@ impl CheckpointStatus {
         match self {
             Self::Pending => "pending",
             Self::Running => "running",
+            Self::Deferred => "deferred",
             Self::WaitUser => "wait_user",
             Self::Completed => "completed",
             Self::Failed => "failed",
@@ -180,6 +185,7 @@ impl CheckpointStatus {
 #[serde(rename_all = "snake_case")]
 pub enum ReconciliationDecisionKind {
     Defer,
+    AcceptDeferred,
     Retry,
     ReplaySuccess,
     RecordFailure,
@@ -246,6 +252,7 @@ pub struct ReconciliationDecision {
     pub response: Option<Value>,
     pub result: Option<Value>,
     pub error: Option<ReconciliationError>,
+    pub handle: Option<DeferredToolHandle>,
 }
 
 impl ReconciliationDecision {
@@ -255,6 +262,7 @@ impl ReconciliationDecision {
             response: None,
             result: None,
             error: None,
+            handle: None,
         }
     }
 
@@ -264,6 +272,7 @@ impl ReconciliationDecision {
             response: None,
             result: None,
             error: None,
+            handle: None,
         }
     }
 
@@ -273,6 +282,7 @@ impl ReconciliationDecision {
             response: Some(response),
             result: None,
             error: None,
+            handle: None,
         }
     }
 
@@ -282,6 +292,7 @@ impl ReconciliationDecision {
             response: None,
             result: Some(result),
             error: None,
+            handle: None,
         }
     }
 
@@ -291,6 +302,7 @@ impl ReconciliationDecision {
             response: None,
             result: None,
             error: Some(error),
+            handle: None,
         }
     }
 
@@ -300,6 +312,17 @@ impl ReconciliationDecision {
             response: None,
             result: None,
             error: Some(error),
+            handle: None,
+        }
+    }
+
+    pub fn accept_deferred(handle: DeferredToolHandle) -> Self {
+        Self {
+            kind: ReconciliationDecisionKind::AcceptDeferred,
+            response: None,
+            result: None,
+            error: None,
+            handle: Some(handle),
         }
     }
 
@@ -322,7 +345,23 @@ impl ReconciliationDecision {
                 };
                 error.validate()?;
             }
-            _ if self.response.is_none() && self.result.is_none() && self.error.is_none() => {}
+            ReconciliationDecisionKind::AcceptDeferred => {
+                if self.response.is_some()
+                    || self.result.is_some()
+                    || self.error.is_some()
+                    || self.handle.is_none()
+                {
+                    return Err(CheckpointError::new(
+                        "checkpoint_reconciliation_decision_invalid",
+                        "accept_deferred requires exactly one handle",
+                    ));
+                }
+                self.handle.as_ref().expect("checked above").validate()?;
+            }
+            _ if self.response.is_none()
+                && self.result.is_none()
+                && self.error.is_none()
+                && self.handle.is_none() => {}
             _ => {
                 return Err(CheckpointError::new(
                     "checkpoint_reconciliation_decision_invalid",

@@ -76,6 +76,7 @@ cargo run -p vv-agent --example 03_sdk_client
 | `27_facade_handoff` | handoff 流程，将控制权转交给另一个 Agent。 |
 | `28_facade_approval_background_trace` | live approval provider、后台 Agent task 和 JSONL trace exporter。 |
 | `29_typed_final_output` | 将 JSON final output 反序列化为 Rust 类型。 |
+| `30_deferred_tool` | 构造框架持有的 deferred handle，并观察非 durable 运行的 fail-closed 结果。 |
 
 ### 给现有 Custom Tool Builder 增加元数据
 

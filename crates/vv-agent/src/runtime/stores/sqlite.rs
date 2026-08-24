@@ -1,10 +1,8 @@
-//! SQLite checkpoint v5 store.
-
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-
+//! SQLite checkpoint v7 store.
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::{Map, Value};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::checkpoint::{CheckpointError, CheckpointResult, ClaimMode, EventCursor};
 use crate::runtime::checkpoint_codec::{checkpoint_from_value, checkpoint_to_value};
@@ -14,48 +12,11 @@ use crate::runtime::state::{
     CheckpointStore,
 };
 
+#[path = "sqlite_deferred.rs"]
+mod sqlite_deferred;
+#[path = "sqlite_schema.rs"]
+mod sqlite_schema;
 const MAX_EXTENSION_STATE_BYTES: u64 = crate::checkpoint::MAX_WIRE_INTEGER;
-const CREATE_CHECKPOINTS_TABLE_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS checkpoints (
-    checkpoint_key TEXT PRIMARY KEY,
-    schema_version TEXT NOT NULL CHECK (schema_version = 'vv-agent.checkpoint.v5'),
-    run_definition_schema TEXT NOT NULL CHECK (run_definition_schema = 'vv-agent.run-definition.v5'),
-    run_definition TEXT NOT NULL,
-    task_id TEXT NOT NULL,
-    root_run_id TEXT NOT NULL,
-    trace_id TEXT NOT NULL,
-    run_definition_digest TEXT NOT NULL,
-    resume_attempt INTEGER NOT NULL CHECK (resume_attempt >= 1),
-    cycle_index INTEGER NOT NULL CHECK (cycle_index >= 0),
-    status TEXT NOT NULL,
-    messages TEXT NOT NULL,
-    cycles TEXT NOT NULL,
-    model_calls TEXT NOT NULL,
-    shared_state TEXT NOT NULL,
-    budget_usage TEXT,
-    event_cursor TEXT,
-    event_outbox TEXT NOT NULL,
-    extension_state TEXT NOT NULL,
-    model_call_journal TEXT NOT NULL,
-    tool_journal TEXT NOT NULL,
-    revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
-    claim_token TEXT,
-    claimed_cycle INTEGER,
-    lease_expires_at_ms INTEGER,
-    terminal_result TEXT,
-    terminal_acknowledged INTEGER NOT NULL DEFAULT 0 CHECK (terminal_acknowledged IN (0, 1)),
-    CHECK (
-        (claim_token IS NULL AND claimed_cycle IS NULL AND lease_expires_at_ms IS NULL)
-        OR
-        (claim_token IS NOT NULL AND claimed_cycle IS NOT NULL AND lease_expires_at_ms IS NOT NULL)
-    ),
-    CHECK (claim_token IS NULL OR claimed_cycle = cycle_index + 1),
-    CHECK (terminal_result IS NULL OR claim_token IS NULL)
-)
-"#;
-const CREATE_CHECKPOINTS_STATUS_INDEX_SQL: &str = r#"
-CREATE INDEX IF NOT EXISTS checkpoints_status_idx ON checkpoints(status)
-"#;
 
 pub struct SqliteCheckpointStore {
     connection: Mutex<Connection>,
@@ -153,17 +114,27 @@ fn initialize_schema(connection: &Connection) -> CheckpointResult<()> {
     connection
         .execute_batch("PRAGMA journal_mode=WAL;")
         .map_err(sqlite_error)?;
+    connection
+        .execute_batch("PRAGMA foreign_keys=ON;")
+        .map_err(sqlite_error)?;
     match schema_sql(connection, "table", "checkpoints")? {
         None => {
             connection
-                .execute_batch(CREATE_CHECKPOINTS_TABLE_SQL)
+                .execute_batch(sqlite_schema::CREATE_CHECKPOINTS_TABLE_SQL)
                 .map_err(sqlite_error)?;
             connection
-                .execute_batch(CREATE_CHECKPOINTS_STATUS_INDEX_SQL)
+                .execute_batch(sqlite_schema::CREATE_CHECKPOINTS_STATUS_INDEX_SQL)
+                .map_err(sqlite_error)?;
+            connection
+                .execute_batch(sqlite_deferred::CREATE_DEFERRED_RECEIPTS_TABLE_SQL)
+                .map_err(sqlite_error)?;
+            connection
+                .execute_batch(sqlite_deferred::CREATE_DEFERRED_RECEIPTS_INDEX_SQL)
                 .map_err(sqlite_error)?;
         }
         Some(existing) => {
-            if normalize_schema_sql(&existing) != normalize_schema_sql(CREATE_CHECKPOINTS_TABLE_SQL)
+            if normalize_schema_sql(&existing)
+                != normalize_schema_sql(sqlite_schema::CREATE_CHECKPOINTS_TABLE_SQL)
             {
                 return Err(schema_mismatch(
                     "existing checkpoints table does not match the current schema; create a new database",
@@ -176,11 +147,34 @@ fn initialize_schema(connection: &Connection) -> CheckpointResult<()> {
                     )
                 })?;
             if normalize_schema_sql(&existing_index)
-                != normalize_schema_sql(CREATE_CHECKPOINTS_STATUS_INDEX_SQL)
+                != normalize_schema_sql(sqlite_schema::CREATE_CHECKPOINTS_STATUS_INDEX_SQL)
             {
                 return Err(schema_mismatch(
                     "existing checkpoints index does not match the current schema; create a new database",
                 ));
+            }
+            for (object_type, name, expected) in [
+                (
+                    "table",
+                    "deferred_resolution_receipts",
+                    sqlite_deferred::CREATE_DEFERRED_RECEIPTS_TABLE_SQL,
+                ),
+                (
+                    "index",
+                    "deferred_receipts_checkpoint_idx",
+                    sqlite_deferred::CREATE_DEFERRED_RECEIPTS_INDEX_SQL,
+                ),
+            ] {
+                let actual = schema_sql(connection, object_type, name)?.ok_or_else(|| {
+                    schema_mismatch(
+                        "existing deferred receipt schema is incomplete; create a new database",
+                    )
+                })?;
+                if normalize_schema_sql(&actual) != normalize_schema_sql(expected) {
+                    return Err(schema_mismatch(
+                        "existing deferred receipt schema does not match the current schema; create a new database",
+                    ));
+                }
             }
         }
     }
@@ -215,6 +209,14 @@ fn schema_mismatch(message: &str) -> CheckpointError {
 }
 
 impl CheckpointStore for SqliteCheckpointStore {
+    fn store_identity(&self) -> String {
+        let location = self
+            .location
+            .canonicalize()
+            .unwrap_or_else(|_| self.location.clone());
+        format!("sqlite:{}", location.to_string_lossy())
+    }
+
     fn create_checkpoint(&self, checkpoint: Checkpoint) -> CheckpointResult<bool> {
         checkpoint.validate()?;
         let values = SqlValues::from_checkpoint(&checkpoint)?;
@@ -473,7 +475,8 @@ impl CheckpointStore for SqliteCheckpointStore {
     }
 
     fn delete_checkpoint(&self, checkpoint_key: &str) -> CheckpointResult<()> {
-        self.lock()?
+        let connection = self.lock()?;
+        connection
             .execute(
                 "DELETE FROM checkpoints WHERE checkpoint_key = ?1",
                 params![checkpoint_key],
@@ -492,6 +495,50 @@ impl CheckpointStore for SqliteCheckpointStore {
             .map_err(sqlite_error)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(sqlite_error)
+    }
+
+    fn admit_deferred_batch(
+        &self,
+        checkpoint_key: &str,
+        expected_revision: u64,
+        claim_token: &str,
+        claimed_cycle: u64,
+        entries: &[crate::checkpoint::DeferredBatchEntry],
+    ) -> CheckpointResult<crate::checkpoint::DeferredBatchAdmission> {
+        sqlite_deferred::admit_deferred_batch(
+            self,
+            checkpoint_key,
+            expected_revision,
+            claim_token,
+            claimed_cycle,
+            entries,
+        )
+    }
+
+    fn resolve_deferred(
+        &self,
+        handle: crate::checkpoint::DeferredToolHandle,
+        result: crate::types::ToolExecutionResult,
+    ) -> CheckpointResult<crate::checkpoint::DeferredResolveDecision> {
+        sqlite_deferred::resolve_deferred(self, handle, result)
+    }
+
+    fn accept_deferred_batch(
+        &self,
+        checkpoint_key: &str,
+        expected_revision: u64,
+        claim_token: &str,
+        claimed_cycle: u64,
+        decisions: &[crate::checkpoint::AcceptDeferredDecision],
+    ) -> CheckpointResult<crate::checkpoint::DeferredBatchAdmission> {
+        sqlite_deferred::accept_deferred_batch(
+            self,
+            checkpoint_key,
+            expected_revision,
+            claim_token,
+            claimed_cycle,
+            decisions,
+        )
     }
 }
 

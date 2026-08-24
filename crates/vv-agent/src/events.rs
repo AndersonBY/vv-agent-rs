@@ -29,8 +29,8 @@ use wire::{
 pub struct RunEventVersion(String);
 
 impl RunEventVersion {
-    pub fn v2() -> Self {
-        Self("v2".to_string())
+    pub fn v4() -> Self {
+        Self("v4".to_string())
     }
 
     pub fn as_str(&self) -> &str {
@@ -39,7 +39,7 @@ impl RunEventVersion {
 }
 impl Default for RunEventVersion {
     fn default() -> Self {
-        Self::v2()
+        Self::v4()
     }
 }
 
@@ -188,7 +188,7 @@ impl<'de> Deserialize<'de> for RunEvent {
         let value = Value::deserialize(deserializer)?;
         validate_event_wire_shape(&value).map_err(D::Error::custom)?;
         let wire: RunEventWire = serde_json::from_value(value.clone()).map_err(D::Error::custom)?;
-        if wire.version.as_str() != "v2" {
+        if wire.version.as_str() != "v4" {
             return Err(D::Error::custom(format!(
                 "unsupported run event version `{}`",
                 wire.version.as_str()
@@ -273,7 +273,7 @@ impl RunEvent {
         let mut extra_fields = Metadata::new();
         add_constructed_supplemental_fields(&payload, &mut extra_fields);
         Self {
-            version: RunEventVersion::v2(),
+            version: RunEventVersion::v4(),
             event_id: EventId::new(),
             run_id: run_id.into(),
             trace_id: trace_id.into(),
@@ -499,6 +499,38 @@ impl RunEvent {
                 tool_call_id: tool_call_id.into(),
                 tool_name: tool_name.into(),
                 arguments,
+            },
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn tool_call_deferred(
+        run_id: impl Into<String>,
+        trace_id: impl Into<String>,
+        agent_name: impl Into<String>,
+        cycle_index: u32,
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        operation_id: impl Into<String>,
+        attempt: u32,
+        handle: crate::checkpoint::DeferredToolHandle,
+        execution_started: bool,
+        duration_ms: Option<u64>,
+    ) -> Self {
+        Self::new(
+            run_id,
+            trace_id,
+            agent_name,
+            Some(cycle_index),
+            RunEventPayload::ToolCallDeferred {
+                tool_call_id: tool_call_id.into(),
+                tool_name: tool_name.into(),
+                operation_id: operation_id.into(),
+                attempt,
+                handle,
+                execution_started,
+                duration_ms,
+                operation_kind: None,
             },
         )
     }
@@ -794,6 +826,14 @@ impl RunEvent {
 
     pub fn with_metadata(mut self, key: impl Into<String>, value: Value) -> Self {
         self.metadata.insert(key.into(), value);
+        self
+    }
+
+    pub fn with_checkpoint_key(mut self, checkpoint_key: impl Into<String>) -> Self {
+        self.extra_fields.insert(
+            "checkpoint_key".to_string(),
+            Value::String(checkpoint_key.into()),
+        );
         self
     }
 
