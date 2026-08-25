@@ -685,7 +685,11 @@ impl RunEvent {
             agent_name,
             None,
             RunEventPayload::RunFailed { error: message },
-        );
+        )
+        // A failed event is terminal by construction.  Keep the canonical
+        // completion reason on the wire even when a producer does not add
+        // supplemental completion fields later.
+        .with_completion_details(Some(CompletionReason::Failed), None, None);
         if let Some(code) = code {
             event
                 .metadata

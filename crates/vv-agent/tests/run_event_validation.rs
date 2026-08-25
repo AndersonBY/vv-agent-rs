@@ -25,7 +25,14 @@ fn invalid_run_event_inputs_are_rejected() {
         assert!(ids.contains(id), "missing invalid memory case {id}");
     }
     for case in cases {
-        let result = serde_json::from_value::<RunEvent>(case["input"].clone());
+        let mut input = case["input"].clone();
+        // The canonical fixture uses a compact marker instead of embedding a
+        // 65 KiB string in the vendored JSON.  Expand that one producer case
+        // before exercising the real strict reader.
+        if case["id"] == "host_interaction_requested_prompt_over_utf8_limit" {
+            input["prompt"] = Value::String("x".repeat(65_537));
+        }
+        let result = serde_json::from_value::<RunEvent>(input);
         assert!(result.is_err(), "{}", case["id"]);
     }
 }

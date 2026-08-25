@@ -39,12 +39,13 @@ pub(super) fn terminal_event(
             run_id,
             trace_id,
             agent_name,
-            AgentErrorPayload::new(
-                result
+            AgentErrorPayload {
+                message: result
                     .error
                     .clone()
                     .unwrap_or_else(|| status_string(result.status)),
-            ),
+                code: result.error_code.clone(),
+            },
         )
     } else {
         RunEvent::new(

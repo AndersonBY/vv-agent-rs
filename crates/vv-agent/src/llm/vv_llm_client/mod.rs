@@ -72,6 +72,7 @@ impl EndpointAttemptError {
             }
             vv_llm::VvLlmError::Http(_) => EndpointAttemptAction::RetrySameEndpoint,
             vv_llm::VvLlmError::Provider(message) => provider_error_action(message),
+            vv_llm::VvLlmError::Classified(details) => classified_error_action(details.kind),
         };
         Self {
             error: LlmError::Request(error.to_string()),
@@ -81,6 +82,24 @@ impl EndpointAttemptError {
 
     fn into_llm_error(self) -> LlmError {
         self.error
+    }
+}
+
+fn classified_error_action(kind: vv_llm::ErrorKind) -> EndpointAttemptAction {
+    match kind {
+        vv_llm::ErrorKind::RateLimited
+        | vv_llm::ErrorKind::Network
+        | vv_llm::ErrorKind::Timeout
+        | vv_llm::ErrorKind::ProviderInternal => EndpointAttemptAction::RetrySameEndpoint,
+        vv_llm::ErrorKind::Authentication | vv_llm::ErrorKind::ModelNotFound => {
+            EndpointAttemptAction::Failover
+        }
+        vv_llm::ErrorKind::InvalidRequest
+        | vv_llm::ErrorKind::ContextLength
+        | vv_llm::ErrorKind::ContentPolicy
+        | vv_llm::ErrorKind::Serialization
+        | vv_llm::ErrorKind::Configuration => EndpointAttemptAction::Abort,
+        vv_llm::ErrorKind::Unknown => EndpointAttemptAction::Failover,
     }
 }
 
@@ -171,7 +190,7 @@ impl LlmClient for VvLlmClient {
             .is_some_and(|settings| !settings.extra_headers.is_empty())
         {
             return Err(LlmError::Request(
-                "ModelSettings.extra_headers is not supported by vv-llm 0.2.3; configure headers on the provider endpoint instead"
+                "ModelSettings.extra_headers is not supported by the vv-llm bridge; configure headers on the provider endpoint instead"
                     .to_string(),
             ));
         }
@@ -181,7 +200,7 @@ impl LlmClient for VvLlmClient {
             .is_some_and(|settings| !settings.extra_args.is_empty())
         {
             return Err(LlmError::Request(
-                "ModelSettings.extra_args is not supported by vv-llm 0.2.3; use extra_body or a custom model client instead"
+                "ModelSettings.extra_args is not supported by the vv-llm bridge; use extra_body or a custom model client instead"
                     .to_string(),
             ));
         }
@@ -273,6 +292,44 @@ mod retry_classification_tests {
         assert_eq!(
             provider_error_action("opaque provider failure"),
             EndpointAttemptAction::Failover
+        );
+    }
+
+    #[test]
+    fn classified_provider_errors_have_explicit_retry_dispositions() {
+        assert_eq!(
+            classified_error_action(vv_llm::ErrorKind::RateLimited),
+            EndpointAttemptAction::RetrySameEndpoint
+        );
+        assert_eq!(
+            classified_error_action(vv_llm::ErrorKind::ProviderInternal),
+            EndpointAttemptAction::RetrySameEndpoint
+        );
+        assert_eq!(
+            classified_error_action(vv_llm::ErrorKind::Authentication),
+            EndpointAttemptAction::Failover
+        );
+        assert_eq!(
+            classified_error_action(vv_llm::ErrorKind::ContextLength),
+            EndpointAttemptAction::Abort
+        );
+        assert_eq!(
+            classified_error_action(vv_llm::ErrorKind::Unknown),
+            EndpointAttemptAction::Failover
+        );
+    }
+
+    #[test]
+    fn classified_provider_errors_are_converted_without_losing_message() {
+        let error = EndpointAttemptError::from_provider(vv_llm::VvLlmError::classified(
+            vv_llm::ErrorKind::InvalidRequest,
+            "request rejected",
+        ));
+
+        assert_eq!(error.action, EndpointAttemptAction::Abort);
+        assert_eq!(
+            error.error.to_string(),
+            "llm request failed: request rejected"
         );
     }
 }

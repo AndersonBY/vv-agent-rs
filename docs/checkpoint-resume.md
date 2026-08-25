@@ -1,6 +1,6 @@
 # Durable Checkpoint And Resume
 
-Checkpoint v7 is an opt-in Runner capability. It preserves the last committed
+Checkpoint v8 is an opt-in Runner capability. It preserves the last committed
 cycle, operation receipts, budget usage, extension state, event cursor, claim,
 lease, and retained terminal result. The language-neutral behavior is defined
 by the locked `vv-agent-contract`; this document records the Rust producer and
@@ -14,7 +14,7 @@ used by the scheduler process. A distributed worker resolves the same logical
 store through `RuntimeRecipe.capabilities.checkpoint_store_ref` and its
 `DistributedCapabilityRegistry`.
 
-Enabled records require `schema_version=vv-agent.checkpoint.v7` and
+Enabled records require `schema_version=vv-agent.checkpoint.v8` and
 `run_definition_schema=vv-agent.run-definition.v5`. Distributed workers accept
 only `vv-agent.distributed-run.v5` and return only
 `vv-agent.distributed-worker-response.v3`; no other current record or envelope
@@ -42,7 +42,7 @@ synthesized and no stored definition or digest is rewritten.
 
 Execution telemetry is not a durable receipt. A `tool_call_started` event may
 exist without `tool_call_completed` after cancellation, process loss, or an
-exception. The checkpoint v7 operation journal remains authoritative for
+exception. The checkpoint v8 operation journal remains authoritative for
 whether an operation is planned, started, committed, replayable, or ambiguous;
 neither `duration_ms` nor a lifecycle observer provides exactly-once effects.
 
@@ -102,7 +102,7 @@ transition share the same checkpoint progress boundary.
 
 ## Worker Reconstruction
 
-`DistributedCycleWorker::new()` has a production checkpoint-v7 executor. It
+`DistributedCycleWorker::new()` has a production checkpoint-v8 executor. It
 resolves the declared model, workspace, toolset, policy, hooks, observers,
 budget meter, extensions, and reconciliation provider, then rebuilds an inline
 single-cycle `AgentRuntime`. `with_checkpoint_executor()` remains available for
@@ -118,24 +118,17 @@ Apalis attempt metadata is passed to
 than one promote the delivery to recovery without mutating the signed/frozen
 envelope.
 
-## Apalis Result Transport
+## Apalis Enqueue Transport
 
-Checkpoint polling cannot carry a terminal candidate because the candidate is
-not a durable terminal yet. Polling would wait for an acknowledgement that the
-scheduler cannot write until it receives the candidate.
+The Apalis bridge is deliberately enqueue-only. `ApalisCycleEnqueuer` requires
+only `TaskSink<ApalisCycleJob>` and preserves the envelope idempotency key and
+optional not-before time. `run_apalis_worker_task` executes one envelope and
+returns its typed worker response to the host.
 
-Use `apalis::ApalisCycleDispatcher` with a backend implementing both:
-
-- `TaskSink<ApalisCycleJob>`
-- `WaitForCompletion<CycleDispatchResult>`
-
-The backend must persist task results across processes, support replay by the
-preassigned task ID, and define retention/TTL appropriate for the scheduler's
-dispatch timeout. An in-process channel is suitable only for tests.
-
-The dispatcher submits the preassigned task id, waits for the retained
-`CycleDispatchResult`, observes cancellation and the envelope deadline, and
-returns terminal candidates to the scheduler for durable finalization.
+There is no `WaitForCompletion` adapter and no result-polling dispatcher in the
+public surface. Hosts persist that worker response and invoke the nonblocking
+distributed `advance` callback; terminal candidates remain subject to the
+separate framework finalizer and are never transported by a polling wait.
 
 ## Deferred Tool Barrier And Resolution
 
@@ -174,6 +167,33 @@ the scheduler waits with `deferred_pending` and resumes through the existing
 driver after the final receipt releases the barrier. App Server exposes the
 state as a non-terminal interrupted turn with `waitReason=deferred_pending`.
 
+## Host Interaction And Controller Commands
+
+`HostInteractionRequest` is a closed, credential-redacted v8 wire value. The
+producer binds it to the one active logical-cycle claim and atomically writes
+the `host_interaction` checkpoint projection, an active interaction record, a
+`host_interaction_requested` event, and the independent UI notification
+outbox. A retry with the same interaction identity and digest returns the
+retained outcome; a different binding or digest is a zero-write conflict.
+
+`ControllerCommand` is the only control envelope and has five closed variants:
+host response, suspend, resume, cancel, and reconciliation abort. Commands
+carry the authoritative run and revision fences. A response is admitted as a
+full `resolved_pending` record and a durable recovery wake; it does not inject
+user input or create a new cycle. The worker must then call
+`claim_and_consume_host_interaction_response`, which claims the checkpoint and
+record in one CAS, injects the response exactly once, writes
+`host_interaction_response_consumed`, releases the transient record claim, and
+retains the execution claim for the same logical cycle. Crash-before-commit
+retries the pending record; replay-after-commit performs no second injection.
+
+Suspension preserves whether the origin was running or waiting for a host
+interaction. Resume dispatches only when the origin is runnable or already has
+a pending response. Deferred, ambiguous, and terminal states have precedence
+over all controller commands. Cancel and abort create the terminal result only
+through the controller transition; host-interaction candidates themselves are
+never terminal results.
+
 ## Verification
 
 Focused producer tests:
@@ -184,6 +204,7 @@ cargo test -p vv-agent --test run_event_validation
 cargo test -p vv-agent --test runner_producer_parity
 cargo test -p vv-agent --test runner_checkpoint
 cargo test -p vv-agent --test distributed_checkpoint
+cargo test -p vv-agent --test controller_command
 cargo test -p vv-agent --features apalis --test apalis_backend
 cargo test -p vv-agent --test app_server_turn_resume
 ```

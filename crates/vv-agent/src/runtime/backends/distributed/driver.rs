@@ -54,6 +54,7 @@ pub enum DistributedWaitReason {
     ActiveClaim,
     ReconciliationRequired,
     HostInteraction,
+    Suspended,
     DeferredPending,
     SupersededDelivery,
 }
@@ -276,6 +277,32 @@ impl DistributedBackend {
 
         if matches!(response, Some(CycleDispatchResult::TerminalReplay { .. })) {
             return Err("distributed terminal replay has no matching durable terminal".to_string());
+        }
+
+        // A pending worker response is only an observation.  The durable
+        // checkpoint remains authoritative for host interaction and
+        // suspension; neither state creates a replacement cycle or polls a
+        // provider.
+        if checkpoint.status == CheckpointStatus::HostInteraction {
+            if checkpoint.claim_token.is_some() {
+                return Err(
+                    "checkpoint_store_conflict: host interaction cannot retain an execution claim"
+                        .to_string(),
+                );
+            }
+            return Ok(DistributedAdvanceDecision::Wait {
+                handle,
+                reason: DistributedWaitReason::HostInteraction,
+            });
+        }
+        if checkpoint.status == CheckpointStatus::Suspended {
+            if checkpoint.claim_token.is_some() {
+                return Err("checkpoint_store_conflict: suspended checkpoint cannot retain an execution claim".to_string());
+            }
+            return Ok(DistributedAdvanceDecision::Wait {
+                handle,
+                reason: DistributedWaitReason::Suspended,
+            });
         }
 
         // Deferred checkpoints are an authoritative barrier. The worker

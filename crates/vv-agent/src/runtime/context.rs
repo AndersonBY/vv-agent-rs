@@ -12,6 +12,15 @@ use super::model_calls::{ModelCallCoordinator, ModelCallLedger};
 use super::state::CheckpointStore;
 use super::{CancellationToken, CancelledError};
 
+pub(crate) type HostInteractionProducer = Arc<
+    dyn Fn(
+            crate::checkpoint::HostInteractionRequest,
+        ) -> Result<crate::checkpoint::HostInteractionOutcome, String>
+        + Send
+        + Sync
+        + 'static,
+>;
+
 pub type RunEventHandler = Arc<dyn Fn(&RunEvent) + Send + Sync + 'static>;
 
 #[doc(hidden)]
@@ -19,6 +28,7 @@ pub type RunEventHandler = Arc<dyn Fn(&RunEvent) + Send + Sync + 'static>;
 pub struct ExecutionRuntimeState {
     pub(crate) model_call_ledger: ModelCallLedger,
     pub(crate) model_call_coordinator: Option<ModelCallCoordinator>,
+    pub(crate) host_interaction_producer: Option<HostInteractionProducer>,
 }
 
 #[derive(Default)]
@@ -48,7 +58,10 @@ impl Clone for ExecutionContext {
             memory_providers: self.memory_providers.clone(),
             app_state: self.app_state.clone(),
             metadata: self.metadata.clone(),
-            runtime_state: ExecutionRuntimeState::default(),
+            runtime_state: ExecutionRuntimeState {
+                host_interaction_producer: self.runtime_state.host_interaction_producer.clone(),
+                ..ExecutionRuntimeState::default()
+            },
         }
     }
 }
@@ -64,6 +77,10 @@ impl std::fmt::Debug for ExecutionContext {
             .field("has_approval_broker", &self.approval_broker.is_some())
             .field("memory_provider_count", &self.memory_providers.len())
             .field("has_app_state", &self.app_state.is_some())
+            .field(
+                "has_host_interaction_producer",
+                &self.runtime_state.host_interaction_producer.is_some(),
+            )
             .field(
                 "model_call_count",
                 &self.runtime_state.model_call_ledger.records().len(),
@@ -124,6 +141,14 @@ impl ExecutionContext {
 
     pub fn with_metadata(mut self, metadata: BTreeMap<String, Value>) -> Self {
         self.metadata = metadata;
+        self
+    }
+
+    pub(crate) fn with_host_interaction_producer(
+        mut self,
+        producer: HostInteractionProducer,
+    ) -> Self {
+        self.runtime_state.host_interaction_producer = Some(producer);
         self
     }
 

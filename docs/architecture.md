@@ -86,8 +86,8 @@ totals do not prove cache-accounting availability.
 
 - Inline backend: synchronous default execution.
 - Thread backend: non-blocking execution with task submission.
-- Distributed backend: checkpointed cycle execution with inline fallback, a legacy blocking
-  dispatcher, and an enqueue-only event-driven driver.
+- Distributed backend: checkpointed cycle execution with an enqueue-only event-driven driver;
+  controller commands and host interactions are admitted through the durable checkpoint store.
 - Checkpoint stores: in-memory, SQLite, and Redis.
 
 Distributed and checkpointed paths must preserve the same public result and
@@ -136,9 +136,11 @@ The event-driven path uses `DistributedBackend::start` to enqueue at most Cycle
 Each call reloads the checkpoint once and either dispatches one envelope,
 schedules one lease-delayed recovery, waits, requests framework finalization,
 or replays a durable terminal. It never polls or waits for task completion.
-`ApalisCycleEnqueuer` therefore requires only `TaskSink`; the existing
-`ApalisCycleDispatcher` and blocking `DistributedBackend::execute` path remain
-available for synchronous integrations.
+`ApalisCycleEnqueuer` therefore requires only `TaskSink`. There is no Apalis
+result-wait dispatcher: hosts deliver worker responses to `advance` through
+their durable callback/notification path. The separate blocking
+`DistributedBackend::execute` helper is an explicit local synchronous API,
+not a scheduler polling seam.
 
 `FinalizeRequired` is an input to the separate bounded
 `Runner::finalize_distributed` framework controller, not permission for the

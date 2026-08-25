@@ -91,11 +91,12 @@ fn error_response_preserves_code_message_and_data() {
 #[test]
 fn stable_client_request_methods_cover_mvp_surface() {
     let methods = ClientRequest::stable_method_names();
-    assert_eq!(methods.len(), 16);
+    assert_eq!(methods.len(), 18);
     assert!(methods.contains(&"initialize"));
     assert!(methods.contains(&"thread/start"));
     assert!(methods.contains(&"thread/resume"));
     assert!(methods.contains(&"thread/read"));
+    assert!(methods.contains(&"thread/status"));
     assert!(methods.contains(&"thread/list"));
     assert!(methods.contains(&"thread/archive"));
     assert!(methods.contains(&"thread/unsubscribe"));
@@ -104,6 +105,7 @@ fn stable_client_request_methods_cover_mvp_surface() {
     assert!(methods.contains(&"turn/interrupt"));
     assert!(methods.contains(&"turn/steer"));
     assert!(methods.contains(&"turn/followUp"));
+    assert!(methods.contains(&"turn/action"));
     assert!(methods.contains(&"approval/resolve"));
     assert!(methods.contains(&"model/list"));
     assert!(methods.contains(&"schema/export"));

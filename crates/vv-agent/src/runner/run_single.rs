@@ -1,8 +1,7 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use crate::memory::MicrocompactionPolicy;
-
 use super::*;
+use crate::memory::MicrocompactionPolicy;
 
 impl Runner {
     #[allow(clippy::too_many_arguments)]
@@ -795,7 +794,8 @@ impl Runner {
             prepare_checkpoint_terminal(checkpoint_controller.as_ref(), terminal_replayed, result)?;
         let reconciliation_required = result.status == AgentStatus::ReconciliationRequired;
         let operator_abort = result.status == AgentStatus::Failed
-            && result.error.as_deref() == Some("operator_abort_with_unknown_outcome")
+            && (result.error_code.as_deref() == Some("operator_abort_with_unknown_outcome")
+                || result.error.as_deref() == Some("operator_abort_with_unknown_outcome"))
             && result.resume_observation.is_some();
         if !terminal_replayed && !reconciliation_required && !operator_abort {
             result = apply_output_guardrails(agent, &run_context, result);

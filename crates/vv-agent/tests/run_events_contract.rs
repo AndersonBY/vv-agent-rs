@@ -144,6 +144,8 @@ fn run_events_parity_fixture_has_stable_bytes_and_round_trips() {
         "model_retry_duplicate_risk",
         "reconciliation_resolved",
         "reconciliation_required",
+        "host_interaction_requested",
+        "host_interaction_response_consumed",
     ];
     let mut actual_types = Vec::new();
 

@@ -106,7 +106,10 @@ pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
     if checkpoint.terminal_result.is_none()
         && !matches!(
             checkpoint.status,
-            CheckpointStatus::Running
+            CheckpointStatus::Pending
+                | CheckpointStatus::Running
+                | CheckpointStatus::HostInteraction
+                | CheckpointStatus::Suspended
                 | CheckpointStatus::Deferred
                 | CheckpointStatus::ReconciliationRequired
         )
@@ -121,6 +124,57 @@ pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
             "checkpoint_status_invalid",
             "terminal_result requires a terminal checkpoint status",
         ));
+    }
+    if let Some(request) = &checkpoint.active_host_interaction {
+        request.validate()?;
+        let expected_cycle = checkpoint.cycle_index.checked_add(1).ok_or_else(|| {
+            CheckpointError::new(
+                "checkpoint_status_invalid",
+                "host interaction logical cycle overflow",
+            )
+        })?;
+        if request.logical_cycle != expected_cycle {
+            return Err(CheckpointError::new(
+                "checkpoint_status_invalid",
+                "host interaction logical_cycle must equal cycle_index + 1",
+            ));
+        }
+    }
+    if let Some(origin) = &checkpoint.suspended_origin {
+        origin.validate()?;
+    }
+    match checkpoint.status {
+        CheckpointStatus::HostInteraction => {
+            if checkpoint.active_host_interaction.is_none()
+                || checkpoint.suspended_origin.is_some()
+                || checkpoint.claim_token.is_some()
+            {
+                return Err(CheckpointError::new(
+                    "checkpoint_status_invalid",
+                    "host_interaction requires an active request, no suspended origin, and no claim",
+                ));
+            }
+        }
+        CheckpointStatus::Suspended => {
+            if checkpoint.active_host_interaction.is_some()
+                || checkpoint.suspended_origin.is_none()
+                || checkpoint.claim_token.is_some()
+            {
+                return Err(CheckpointError::new(
+                    "checkpoint_status_invalid",
+                    "suspended requires an origin, no active request, and no claim",
+                ));
+            }
+        }
+        _ if checkpoint.active_host_interaction.is_some()
+            || checkpoint.suspended_origin.is_some() =>
+        {
+            return Err(CheckpointError::new(
+                "checkpoint_status_invalid",
+                "active_host_interaction and suspended_origin are only valid for their matching statuses",
+            ));
+        }
+        _ => {}
     }
     let call_ids = checkpoint
         .model_calls

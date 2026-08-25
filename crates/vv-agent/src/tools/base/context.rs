@@ -8,6 +8,7 @@ use super::paths::resolve_workspace_path_checked;
 use super::SubTaskRunner;
 use crate::checkpoint::{DeferredToolHandle, ToolCallOutcome};
 use crate::model::ModelProvider;
+use crate::runtime::context::HostInteractionProducer;
 use crate::types::{ToolArguments, ToolCall};
 use crate::workspace::{
     DiscoveryFilteredWorkspaceBackend, LocalWorkspaceBackend, WorkspaceBackend,
@@ -33,6 +34,7 @@ pub struct ToolContext {
     pub sub_task_manager: Option<crate::runtime::sub_task_manager::SubTaskManager>,
     pub sub_task_turn_snapshot: Option<crate::runtime::sub_task_manager::SubTaskTurnSnapshot>,
     pub execution_backend: Option<crate::runtime::backends::RuntimeExecutionBackend>,
+    pub(crate) host_interaction_producer: Option<HostInteractionProducer>,
     /// Framework-owned identity used by `defer()`.  These fields are filled
     /// by the checkpointed runtime; handlers must not construct journal data.
     pub checkpoint_key: Option<String>,
@@ -68,6 +70,10 @@ impl std::fmt::Debug for ToolContext {
             )
             .field("has_execution_backend", &self.execution_backend.is_some())
             .field(
+                "has_host_interaction_producer",
+                &self.host_interaction_producer.is_some(),
+            )
+            .field(
                 "has_background_parent_run_config",
                 &self.background_parent_run_config.is_some(),
             )
@@ -96,6 +102,7 @@ impl ToolContext {
             sub_task_manager: None,
             sub_task_turn_snapshot: None,
             execution_backend: None,
+            host_interaction_producer: None,
             checkpoint_key: None,
             operation_id: None,
             attempt: 1,

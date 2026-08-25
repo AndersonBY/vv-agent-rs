@@ -460,6 +460,37 @@ fn public_export_path(id: &str) -> &'static str {
             let _ = vv_agent::DistributedBackend::advance;
             "vv_agent::DistributedBackend::advance"
         }
+        "runtime_backend.controller_command" => {
+            export_type!(vv_agent::ControllerCommand, "vv_agent::ControllerCommand")
+        }
+        "runtime_backend.controller_command_receipt" => export_type!(
+            vv_agent::ControllerCommandReceipt,
+            "vv_agent::ControllerCommandReceipt"
+        ),
+        "runtime_backend.host_interaction_request" => export_type!(
+            vv_agent::HostInteractionRequest,
+            "vv_agent::HostInteractionRequest"
+        ),
+        "runtime_backend.host_interaction_outcome" => export_type!(
+            vv_agent::HostInteractionOutcome,
+            "vv_agent::HostInteractionOutcome"
+        ),
+        "runtime_backend.produce_host_interaction" => {
+            let _ = vv_agent::DistributedBackend::produce_host_interaction;
+            "vv_agent::DistributedBackend::produce_host_interaction"
+        }
+        "runtime_backend.resolve_controller_command" => {
+            let _ = vv_agent::DistributedBackend::resolve_controller_command;
+            "vv_agent::DistributedBackend::resolve_controller_command"
+        }
+        "runtime_backend.claim_and_consume_host_interaction_response" => {
+            let _ = vv_agent::DistributedBackend::claim_and_consume_host_interaction_response;
+            "vv_agent::DistributedBackend::claim_and_consume_host_interaction_response"
+        }
+        "runtime_backend.controller_command_resolution" => export_type!(
+            vv_agent::ControllerCommandResolution,
+            "vv_agent::ControllerCommandResolution"
+        ),
         "runtime_backend.envelope" => export_type!(
             vv_agent::DistributedRunEnvelope,
             "vv_agent::DistributedRunEnvelope"

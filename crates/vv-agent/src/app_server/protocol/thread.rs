@@ -46,6 +46,12 @@ pub struct ThreadReadParams {
     pub after_item_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThreadStatusParams {
+    pub thread_id: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadListParams {
@@ -104,6 +110,20 @@ pub struct ThreadResumeResponse {
 
 pub type ThreadReadResponse = ThreadResumeResponse;
 
+/// Public controller projection.  The status is intentionally a string:
+/// controller states such as `interrupted` are not persisted thread-store
+/// states (`ThreadStatus` remains the product/thread lifecycle enum).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThreadStatusResponse {
+    pub thread_id: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadListResponse {
@@ -138,6 +158,10 @@ pub struct ThreadClosedParams {
 pub struct ThreadStatusChangedParams {
     pub thread_id: String,
     pub status: ThreadStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -161,6 +185,7 @@ pub struct AppThread {
 pub enum ThreadStatus {
     Idle,
     Running,
+    Interrupted,
     Archived,
     Closed,
 }

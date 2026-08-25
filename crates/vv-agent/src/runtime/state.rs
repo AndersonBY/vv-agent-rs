@@ -1,4 +1,4 @@
-//! Checkpoint v7 state and store contract.
+//! Checkpoint v8 state and store contract.
 
 use std::collections::BTreeMap;
 
@@ -6,11 +6,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::budget::BudgetUsageSnapshot;
-use crate::checkpoint::DeferredToolHandle;
 use crate::checkpoint::{
     canonical_json_bytes, validate_checkpoint_key, validate_extension_namespace, validate_sha256,
     CheckpointError, CheckpointResult, CheckpointStatus, ClaimMode, EventCursor, OperationKind,
     OperationState, ToolIdempotency, MAX_EXTENSION_ENTRY_BYTES, MAX_WIRE_INTEGER,
+};
+use crate::checkpoint::{
+    DeferredToolHandle, HostInteractionAdmissionContext, HostInteractionRequest, SuspendedOrigin,
 };
 use crate::events::RunEvent;
 use crate::types::{CycleRecord, Message, ModelCallOperation, ModelCallRecord};
@@ -334,6 +336,8 @@ pub struct Checkpoint {
     pub resume_attempt: u64,
     pub cycle_index: u64,
     pub status: CheckpointStatus,
+    pub active_host_interaction: Option<HostInteractionRequest>,
+    pub suspended_origin: Option<SuspendedOrigin>,
     pub messages: Vec<Message>,
     pub cycles: Vec<CycleRecord>,
     pub model_calls: Vec<ModelCallRecord>,
@@ -366,6 +370,8 @@ impl Default for Checkpoint {
             resume_attempt: 1,
             cycle_index: 0,
             status: CheckpointStatus::Running,
+            active_host_interaction: None,
+            suspended_origin: None,
             messages: Vec::new(),
             cycles: Vec::new(),
             model_calls: Vec::new(),
@@ -547,6 +553,224 @@ pub trait CheckpointStore: Send + Sync {
         Err(CheckpointError::new(
             "checkpoint_store_deferred_unsupported",
             "checkpoint store does not implement deferred reconciliation",
+        ))
+    }
+
+    /// Admit a framework-produced host interaction against the currently
+    /// claimed logical cycle.  The public producer deliberately carries only
+    /// the canonical request; the store binds it to one and only one active
+    /// execution claim and releases that claim in the same CAS.
+    fn produce_host_interaction(
+        &self,
+        _request: crate::checkpoint::HostInteractionRequest,
+        _context: &HostInteractionAdmissionContext,
+    ) -> CheckpointResult<crate::checkpoint::HostInteractionOutcome> {
+        Err(CheckpointError::new(
+            "host_interaction_unsupported",
+            "checkpoint store does not implement host interaction admission",
+        ))
+    }
+
+    /// Admit a closed controller command and retain its durable receipt.  A
+    /// replay returns the original receipt; a conflicting command id is a
+    /// zero-write error.
+    fn admit_controller_command(
+        &self,
+        _command: crate::checkpoint::ControllerCommand,
+    ) -> CheckpointResult<crate::checkpoint::ControllerCommandReceipt> {
+        Err(CheckpointError::new(
+            "controller_command_unsupported",
+            "checkpoint store does not implement controller command admission",
+        ))
+    }
+
+    /// Resolve a command into its public applied/replayed/rejected envelope.
+    /// Stores with a durable receipt index should override this so replay can
+    /// preserve the original wake decision without producing a second outbox
+    /// item.
+    fn resolve_controller_command(
+        &self,
+        command: crate::checkpoint::ControllerCommand,
+    ) -> CheckpointResult<crate::checkpoint::ControllerCommandResolution> {
+        let receipt = self.admit_controller_command(command)?;
+        let wake = if receipt.outbox_action == "recovery_dispatch" {
+            crate::checkpoint::ControllerCommandWake::recovery(
+                receipt
+                    .resulting_revision
+                    .checked_add(1)
+                    .unwrap_or(receipt.resulting_revision),
+            )
+        } else {
+            crate::checkpoint::ControllerCommandWake::none()
+        };
+        Ok(crate::checkpoint::ControllerCommandResolution::Applied { receipt, wake })
+    }
+
+    /// Read the immutable command/receipt pair for an App Server replay.  A
+    /// controller action may be retried after the checkpoint has advanced, so
+    /// replay must not reconstruct fences from the current checkpoint.
+    fn get_controller_command_receipt(
+        &self,
+        _command_id: &str,
+    ) -> CheckpointResult<Option<crate::checkpoint::ControllerCommandReceipt>> {
+        Err(CheckpointError::new(
+            "controller_command_unsupported",
+            "checkpoint store does not expose controller receipts",
+        ))
+    }
+
+    fn get_controller_command(
+        &self,
+        _command_id: &str,
+    ) -> CheckpointResult<Option<crate::checkpoint::ControllerCommand>> {
+        Err(CheckpointError::new(
+            "controller_command_unsupported",
+            "checkpoint store does not expose controller commands",
+        ))
+    }
+
+    /// Consume a response at the hard recovery barrier.  Claiming the
+    /// checkpoint and the response record, injecting the response, writing the
+    /// consumed event, and releasing the transient record claim must be one
+    /// durable CAS.
+    fn claim_and_consume_host_interaction_response(
+        &self,
+        _envelope: crate::checkpoint::HostInteractionRecoveryEnvelope,
+    ) -> CheckpointResult<crate::checkpoint::HostInteractionRecoveryResult> {
+        Err(CheckpointError::new(
+            "host_interaction_recovery_unsupported",
+            "checkpoint store does not implement host interaction recovery",
+        ))
+    }
+
+    /// Return an expired resolved response claim to `resolved_pending`.
+    fn reap_host_interaction_record(
+        &self,
+        _record_id: &str,
+        _checkpoint_key: &str,
+        _now_ms: u64,
+    ) -> CheckpointResult<bool> {
+        Err(CheckpointError::new(
+            "host_interaction_recovery_unsupported",
+            "checkpoint store does not implement host interaction recovery reaping",
+        ))
+    }
+
+    /// Claim one public host-interaction notification with owner/lease CAS.
+    fn claim_host_interaction_notification(
+        &self,
+        _notification_id: &str,
+        _payload_digest: &str,
+        _claim_token: &str,
+        _lease_expires_at_ms: u64,
+        _now_ms: u64,
+    ) -> CheckpointResult<Option<crate::checkpoint::HostInteractionNotificationRecord>> {
+        Err(CheckpointError::new(
+            "host_interaction_notification_unsupported",
+            "checkpoint store does not implement host interaction notification lifecycle",
+        ))
+    }
+
+    /// Read the retained public notification projection without claiming or
+    /// mutating its delivery lifecycle. App Server status projections must
+    /// source prompt text from this row, never from the private checkpoint.
+    fn get_host_interaction_notification(
+        &self,
+        _notification_id: &str,
+    ) -> CheckpointResult<Option<crate::checkpoint::HostInteractionNotificationRecord>> {
+        Err(CheckpointError::new(
+            "host_interaction_notification_unsupported",
+            "checkpoint store does not expose host interaction notifications",
+        ))
+    }
+
+    /// Complete a notification delivery attempt as `delivered` or `ambiguous`.
+    #[allow(clippy::too_many_arguments)]
+    fn complete_host_interaction_notification(
+        &self,
+        _notification_id: &str,
+        _payload_digest: &str,
+        _claim_token: &str,
+        _attempt: u64,
+        _outcome: &str,
+        _now_ms: u64,
+        _error: Option<&str>,
+    ) -> CheckpointResult<Option<crate::checkpoint::HostInteractionNotificationRecord>> {
+        Err(CheckpointError::new(
+            "host_interaction_notification_unsupported",
+            "checkpoint store does not implement host interaction notification lifecycle",
+        ))
+    }
+
+    /// Resolve an ambiguous notification as `delivered`, `retry`, or `abort`.
+    fn reconcile_host_interaction_notification(
+        &self,
+        _notification_id: &str,
+        _payload_digest: &str,
+        _outcome: &str,
+        _now_ms: u64,
+        _abort_reason: Option<&str>,
+    ) -> CheckpointResult<Option<crate::checkpoint::HostInteractionNotificationRecord>> {
+        Err(CheckpointError::new(
+            "host_interaction_notification_unsupported",
+            "checkpoint store does not implement host interaction notification lifecycle",
+        ))
+    }
+
+    /// Claim the independent controller recovery-wake outbox.
+    fn claim_controller_command_wake(
+        &self,
+        _command_id: &str,
+        _command_digest: &str,
+        _claim_token: &str,
+        _lease_expires_at_ms: u64,
+        _now_ms: u64,
+    ) -> CheckpointResult<Option<crate::checkpoint::ControllerCommandReceipt>> {
+        Err(CheckpointError::new(
+            "controller_command_outbox_unsupported",
+            "checkpoint store does not implement controller wake lifecycle",
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn complete_controller_command_wake(
+        &self,
+        _command_id: &str,
+        _command_digest: &str,
+        _claim_token: &str,
+        _attempt: u64,
+        _outcome: &str,
+        _now_ms: u64,
+        _error: Option<&str>,
+    ) -> CheckpointResult<Option<crate::checkpoint::ControllerCommandReceipt>> {
+        Err(CheckpointError::new(
+            "controller_command_outbox_unsupported",
+            "checkpoint store does not implement controller wake lifecycle",
+        ))
+    }
+
+    fn reconcile_controller_command_wake(
+        &self,
+        _command_id: &str,
+        _command_digest: &str,
+        _outcome: &str,
+        _now_ms: u64,
+    ) -> CheckpointResult<Option<crate::checkpoint::ControllerCommandReceipt>> {
+        Err(CheckpointError::new(
+            "controller_command_outbox_unsupported",
+            "checkpoint store does not implement controller wake lifecycle",
+        ))
+    }
+
+    fn reap_controller_command_wake(
+        &self,
+        _command_id: &str,
+        _command_digest: &str,
+        _now_ms: u64,
+    ) -> CheckpointResult<bool> {
+        Err(CheckpointError::new(
+            "controller_command_outbox_unsupported",
+            "checkpoint store does not implement controller wake lifecycle",
         ))
     }
 }

@@ -13,21 +13,22 @@ use crate::app_server::host::{
 };
 use crate::app_server::outgoing::OutgoingMessageSender;
 use crate::app_server::protocol::{
-    map_run_event_to_notifications, AgentMessageDeltaParams, AppItem, AppServerError,
-    AppServerErrorCode, AppThread, AppTurn, ApprovalDecision, ApprovalRequestParams,
-    ApprovalResolveParams, CheckpointSummary, CheckpointSummaryStatus,
-    InterruptionIdempotencySupport, InterruptionOperationKind, InterruptionSummary,
-    ItemCompletedParams, ItemStartedParams, JsonRpcError, JsonRpcErrorBody, RequestId,
-    ServerNotification, ServerRequest, ThreadStatus, ThreadStatusChangedParams,
-    TurnCompletedParams, TurnResumeParams, TurnResumeResponse, TurnStartParams, TurnStartedParams,
-    TurnStatus, UserInput,
+    map_run_event_to_notifications, AppServerError, AppServerErrorCode, AppThread, AppTurn,
+    ApprovalDecision, ApprovalRequestParams, ApprovalResolveParams, CheckpointSummary,
+    CheckpointSummaryStatus, InterruptionIdempotencySupport, InterruptionOperationKind,
+    InterruptionSummary, JsonRpcError, JsonRpcErrorBody, RequestId, ServerNotification,
+    ServerRequest, ThreadStatus, ThreadStatusChangedParams, ThreadStatusResponse, TurnAction,
+    TurnActionParams, TurnActionResponse, TurnCompletedParams, TurnResumeParams,
+    TurnResumeResponse, TurnStartParams, TurnStartedParams, TurnStatus, UserInput,
 };
 use crate::app_server::thread_state::{ActiveTurn, SteeringQueue, ThreadStateManager};
-use crate::app_server::thread_store::{ItemAppendOutcome, SqliteThreadStore, ThreadStoreError};
+use crate::app_server::thread_store::{ItemAppendOutcome, SqliteThreadStore};
 use crate::app_server::transport::ConnectionId;
 use crate::checkpoint::{
-    CheckpointStatus, OperationKind, ResumeObservation, ResumePolicy, ToolIdempotency,
-    MAX_CHECKPOINT_KEY_BYTES,
+    derive_controller_command_id, CheckpointStatus, ControllerCommand, ControllerCommandResolution,
+    ControllerCommandVariant, ControllerHandle, HostInteractionMessage,
+    HostInteractionNotificationRecord, OperationKind, ResumeObservation, ResumePolicy,
+    ToolIdempotency, MAX_CHECKPOINT_KEY_BYTES,
 };
 use crate::events::RunEventPayload;
 use crate::runner::CheckpointStartOutcome;
@@ -41,10 +42,16 @@ use crate::{
 };
 
 mod approval;
+mod controller;
+mod helpers;
 mod resume;
 mod usage;
 
 use approval::tool_approval_decision_from_response;
+use helpers::{
+    app_json_object, hydrate_host_interaction_prompt, input_text, item_from_notification,
+    store_error, turn_status,
+};
 use resume::{checkpoint_projection, turn_completion_result};
 use usage::app_token_usage;
 
@@ -243,6 +250,8 @@ impl AppServerRunAdapter {
             ServerNotification::ThreadStatusChanged(ThreadStatusChangedParams {
                 thread_id: turn.thread_id.clone(),
                 status: ThreadStatus::Running,
+                wait_reason: None,
+                prompt: None,
             }),
         )
         .await?;
@@ -290,6 +299,11 @@ impl AppServerRunAdapter {
                         }
                         let mut notifications =
                             map_run_event_to_notifications(&thread_id, &turn_id, &event);
+                        hydrate_host_interaction_prompt(
+                            active.checkpoint_store.as_deref(),
+                            &event,
+                            &mut notifications,
+                        );
                         for notification in &mut notifications {
                             if let ServerNotification::ApprovalRequested(approval) = notification {
                                 if let Some(arguments) = tool_arguments.get(&approval.tool_call_id)
@@ -640,6 +654,8 @@ impl AppServerRunAdapter {
                 ServerNotification::ThreadStatusChanged(ThreadStatusChangedParams {
                     thread_id: thread_id.clone(),
                     status: ThreadStatus::Idle,
+                    wait_reason: None,
+                    prompt: None,
                 }),
             )
             .await;
@@ -869,57 +885,6 @@ impl RuntimeHook for SteeringRuntimeHook {
 
 fn effective_approval_request_timeout(config: &RunConfig, fallback: Duration) -> Duration {
     config.approval_timeout.unwrap_or(fallback)
-}
-
-fn item_from_notification(notification: &ServerNotification) -> Option<AppItem> {
-    match notification {
-        ServerNotification::AgentMessageDelta(AgentMessageDeltaParams { item, .. })
-        | ServerNotification::ItemStarted(ItemStartedParams { item })
-        | ServerNotification::ItemCompleted(ItemCompletedParams { item }) => Some(item.clone()),
-        _ => None,
-    }
-}
-
-fn input_text(input: &[UserInput]) -> String {
-    input
-        .iter()
-        .filter_map(|item| {
-            if item.get("type").and_then(Value::as_str) == Some("text") {
-                item.get("text").and_then(Value::as_str).map(str::to_string)
-            } else if let Some(text) = item.get("text").and_then(Value::as_str) {
-                Some(text.to_string())
-            } else if item.is_null() {
-                None
-            } else {
-                Some(item.to_string())
-            }
-        })
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn turn_status(status: AgentStatus) -> TurnStatus {
-    match status {
-        AgentStatus::WaitUser | AgentStatus::ReconciliationRequired => TurnStatus::Interrupted,
-        AgentStatus::Deferred => TurnStatus::Interrupted,
-        AgentStatus::Completed => TurnStatus::Completed,
-        AgentStatus::Pending | AgentStatus::Running => TurnStatus::Running,
-        AgentStatus::Failed | AgentStatus::MaxCycles => TurnStatus::Failed,
-    }
-}
-
-fn app_json_object(value: &impl serde::Serialize) -> BTreeMap<String, Value> {
-    let Value::Object(fields) =
-        serde_json::to_value(value).expect("typed App Server observation must serialize")
-    else {
-        unreachable!("typed App Server observation must serialize as an object");
-    };
-    fields.into_iter().collect()
-}
-
-fn store_error(error: ThreadStoreError) -> AppServerError {
-    AppServerError::internal(error.to_string())
 }
 
 #[cfg(test)]

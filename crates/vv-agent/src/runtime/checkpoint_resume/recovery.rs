@@ -412,22 +412,11 @@ impl CheckpointResumeController {
                     )
                 })?;
             let cursor = if let Some(store) = &self.event_store {
-                match store
+                store
                     .append_once(&pending.event_id, &pending.payload_digest, &event)
                     .map_err(|error| {
                         CheckpointError::new("checkpoint_event_delivery_failed", error.to_string())
-                    })? {
-                    Some(cursor) => cursor,
-                    None => {
-                        store.append(&event).map_err(|error| {
-                            CheckpointError::new(
-                                "checkpoint_event_delivery_failed",
-                                error.to_string(),
-                            )
-                        })?;
-                        raw_event_cursor(&pending.event_id)?
-                    }
-                }
+                    })?
             } else {
                 raw_event_cursor(&pending.event_id)?
             };

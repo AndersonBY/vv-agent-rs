@@ -612,6 +612,7 @@ fn thread_status_to_str(status: ThreadStatus) -> &'static str {
     match status {
         ThreadStatus::Idle => "idle",
         ThreadStatus::Running => "running",
+        ThreadStatus::Interrupted => "interrupted",
         ThreadStatus::Archived => "archived",
         ThreadStatus::Closed => "closed",
     }
@@ -621,6 +622,7 @@ fn thread_status_from_str(status: &str) -> Result<ThreadStatus, String> {
     match status {
         "idle" => Ok(ThreadStatus::Idle),
         "running" => Ok(ThreadStatus::Running),
+        "interrupted" => Ok(ThreadStatus::Interrupted),
         "archived" => Ok(ThreadStatus::Archived),
         "closed" => Ok(ThreadStatus::Closed),
         other => Err(format!("unknown thread status: {other}")),

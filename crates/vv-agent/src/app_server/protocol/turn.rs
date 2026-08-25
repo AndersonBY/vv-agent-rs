@@ -7,6 +7,83 @@ use ts_rs::TS;
 
 pub type UserInput = Value;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TurnActionMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum TurnAction {
+    #[serde(rename = "respond")]
+    Respond { message: TurnActionMessage },
+    #[serde(rename = "suspend")]
+    Suspend,
+    #[serde(rename = "resume")]
+    Resume,
+    #[serde(rename = "cancel")]
+    Cancel,
+    #[serde(rename = "abort")]
+    Abort,
+}
+
+impl TurnAction {
+    pub fn validate(&self) -> Result<(), String> {
+        if let Self::Respond { message } = self {
+            if message.role != "user" {
+                return Err("turn/action message role must be user".to_string());
+            }
+            if message.content.trim().is_empty() {
+                return Err("message.content must be a non-empty string".to_string());
+            }
+            if message.content.len() > 65_536 {
+                return Err("message.content exceeds the UTF-8 byte limit".to_string());
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TurnActionParams {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub action_id: String,
+    pub action: TurnAction,
+}
+
+impl TurnActionParams {
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("threadId", &self.thread_id),
+            ("turnId", &self.turn_id),
+            ("actionId", &self.action_id),
+        ] {
+            if value.trim().is_empty() || value.len() > 512 {
+                return Err(format!(
+                    "{name} must be a non-empty string of at most 512 bytes"
+                ));
+            }
+        }
+        self.action.validate()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TurnActionResponse {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub action_id: String,
+    pub accepted: bool,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_reason: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnStartParams {
@@ -157,6 +234,8 @@ pub struct CheckpointSummary {
 pub enum CheckpointSummaryStatus {
     Pending,
     Running,
+    HostInteraction,
+    Suspended,
     WaitUser,
     Completed,
     Failed,

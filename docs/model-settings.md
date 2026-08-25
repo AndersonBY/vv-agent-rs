@@ -97,6 +97,12 @@ default is explicit.
 contract and are forwarded to runtime request metadata while the runtime
 continues to use `vv-llm` for provider transport.
 
+The `vv-llm` bridge accepts provider request options through `extra_body`. It
+rejects per-request `extra_headers` and `extra_args` explicitly; configure
+headers on the provider endpoint or use a custom model client when those
+options are required. These errors intentionally use version-independent
+bridge wording so they remain stable as the pinned `vv-llm` release changes.
+
 ## Runtime Capacity Metadata
 
 Resolved `context_length` and `max_output_tokens` values describe model
@@ -135,7 +141,7 @@ the optional warning only if that post-microcompact usage remains eligible.
 ## Cache Usage Accounting
 
 OpenAI-compatible request serialization remains owned by `vv-llm`. This
-repository requires `vv-llm` 0.4.4 or newer so streaming calls request the
+repository pins the official `vv-llm` 0.4.10 release so streaming calls request the
 provider's final usage chunk by default, reasoning-only assistant history keeps
 an explicit empty OpenAI-compatible `content` field, and typed cache readings
 reach the Agent bridge.

@@ -390,7 +390,10 @@ fn vv_llm_client_rejects_per_request_extra_headers() {
         .complete(request)
         .expect_err("headers must fail explicitly");
 
-    assert!(error.to_string().contains("extra_headers is not supported"));
+    let error_text = error.to_string();
+    assert!(error_text.contains("extra_headers is not supported"));
+    assert!(error_text.contains("vv-llm bridge"));
+    assert!(!error_text.contains("0.2.3"));
 
     let mut request = llm_request("demo-model", vec![Message::user("inspect settings")]);
     request.model_settings = Some(
@@ -401,7 +404,10 @@ fn vv_llm_client_rejects_per_request_extra_headers() {
     let error = llm
         .complete(request)
         .expect_err("extra args must fail explicitly");
-    assert!(error.to_string().contains("extra_args is not supported"));
+    let error_text = error.to_string();
+    assert!(error_text.contains("extra_args is not supported"));
+    assert!(error_text.contains("vv-llm bridge"));
+    assert!(!error_text.contains("0.2.3"));
 }
 
 #[test]

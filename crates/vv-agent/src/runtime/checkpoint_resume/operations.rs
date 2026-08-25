@@ -2,7 +2,9 @@
 
 use super::*;
 
+mod authoritative;
 mod deferred_dispatch;
+mod host_interaction;
 mod model_terminal;
 
 pub(super) use model_terminal::model_identity_from_entry;
@@ -97,12 +99,6 @@ impl CheckpointResumeController {
         }
         self.lease_duration_ms = lease_duration_ms;
         Ok(())
-    }
-
-    pub(crate) fn refresh_authoritative(&mut self) -> CheckpointResult<Checkpoint> {
-        self.reload()?;
-        self.validate_existing_definition(self.require_checkpoint()?)?;
-        Ok(self.require_checkpoint()?.clone())
     }
 
     pub(crate) fn adopt_claim_for_terminal_finalize(

@@ -6,6 +6,7 @@ use ts_rs::TS;
 use crate::events::{ApprovalAction, RunEvent, RunEventPayload, ToolStatus};
 
 use super::approval::{ApprovalDecision, ApprovalRequestParams, ApprovalResolveParams};
+use super::thread::{ThreadStatus, ThreadStatusChangedParams};
 use super::ServerNotification;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -84,6 +85,40 @@ pub fn map_run_event_to_notifications(
     event: &RunEvent,
 ) -> Vec<ServerNotification> {
     match event.payload() {
+        RunEventPayload::HostInteractionRequested { .. } => {
+            vec![ServerNotification::ThreadStatusChanged(
+                ThreadStatusChangedParams {
+                    thread_id: thread_id.to_string(),
+                    status: ThreadStatus::Interrupted,
+                    wait_reason: Some("host_interaction".to_string()),
+                    // Prompt text is populated by the App Server adapter from
+                    // the durable public notification outbox. The event is
+                    // an execution fact and must not become a second prompt
+                    // source for UI projections.
+                    prompt: None,
+                },
+            )]
+        }
+        RunEventPayload::RunStateChanged { state } if state == "suspended" => {
+            vec![ServerNotification::ThreadStatusChanged(
+                ThreadStatusChangedParams {
+                    thread_id: thread_id.to_string(),
+                    status: ThreadStatus::Interrupted,
+                    wait_reason: Some("suspended".to_string()),
+                    prompt: None,
+                },
+            )]
+        }
+        RunEventPayload::RunStateChanged { state } if state == "running" => {
+            vec![ServerNotification::ThreadStatusChanged(
+                ThreadStatusChangedParams {
+                    thread_id: thread_id.to_string(),
+                    status: ThreadStatus::Running,
+                    wait_reason: None,
+                    prompt: None,
+                },
+            )]
+        }
         RunEventPayload::RunStarted { input } => {
             let item = item(
                 thread_id,

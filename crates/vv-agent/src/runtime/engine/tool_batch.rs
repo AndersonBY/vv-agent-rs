@@ -175,6 +175,10 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 tool_policy: self.tool_policy.clone().unwrap_or_default(),
             }),
             execution_backend: Some(self.execution_backend.clone()),
+            host_interaction_producer: controls
+                .execution_context
+                .as_ref()
+                .and_then(|context| context.runtime_state.host_interaction_producer.clone()),
             checkpoint_key: None,
             operation_id: None,
             attempt: 1,

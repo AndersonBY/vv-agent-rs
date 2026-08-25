@@ -1,3 +1,4 @@
+mod control;
 mod helpers;
 mod resume;
 mod turns;
@@ -359,6 +360,7 @@ impl MessageProcessor {
             "thread/start" => self.process_thread_start(connection_id, request).await,
             "thread/resume" => self.process_thread_resume(connection_id, request).await,
             "thread/read" => self.process_thread_read(connection_id, request).await,
+            "thread/status" => self.process_thread_status(connection_id, request).await,
             "thread/list" => self.process_thread_list(connection_id, request).await,
             "thread/archive" => self.process_thread_archive(connection_id, request).await,
             "thread/unsubscribe" => {
@@ -370,6 +372,7 @@ impl MessageProcessor {
             "turn/interrupt" => self.process_turn_interrupt(connection_id, request).await,
             "turn/steer" => self.process_turn_steer(connection_id, request).await,
             "turn/followUp" => self.process_turn_follow_up(connection_id, request).await,
+            "turn/action" => self.process_turn_action(connection_id, request).await,
             "approval/resolve" => self.process_approval_resolve(connection_id, request).await,
             "model/list" => self.process_model_list(connection_id, request).await,
             "schema/export" => self.process_schema_export(connection_id, request).await,
@@ -718,6 +721,8 @@ impl MessageProcessor {
                 ServerNotification::ThreadStatusChanged(ThreadStatusChangedParams {
                     thread_id: params.thread_id,
                     status: ThreadStatus::Archived,
+                    wait_reason: None,
+                    prompt: None,
                 }),
             )
             .await;
@@ -801,6 +806,8 @@ impl MessageProcessor {
                     ServerNotification::ThreadStatusChanged(ThreadStatusChangedParams {
                         thread_id: params.thread_id,
                         status: ThreadStatus::Closed,
+                        wait_reason: None,
+                        prompt: None,
                     }),
                 )
                 .await;

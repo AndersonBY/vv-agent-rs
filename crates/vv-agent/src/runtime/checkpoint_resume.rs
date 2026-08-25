@@ -215,7 +215,8 @@ fn operator_abort_result(checkpoint: &Checkpoint, observation: ResumeObservation
     let mut result = reconciliation_result(checkpoint, observation);
     result.status = AgentStatus::Failed;
     result.completion_reason = Some(crate::types::CompletionReason::Failed);
-    result.error = Some("operator_abort_with_unknown_outcome".to_string());
+    result.error = Some("failed".to_string());
+    result.error_code = Some("operator_abort_with_unknown_outcome".to_string());
     result
 }
 
@@ -275,7 +276,8 @@ fn checkpoint_status(status: AgentStatus) -> CheckpointResult<CheckpointStatus> 
 
 fn is_operator_abort(result: &AgentResult) -> bool {
     result.status == AgentStatus::Failed
-        && result.error.as_deref() == Some("operator_abort_with_unknown_outcome")
+        && (result.error_code.as_deref() == Some("operator_abort_with_unknown_outcome")
+            || result.error.as_deref() == Some("operator_abort_with_unknown_outcome"))
         && result.resume_observation.is_some()
 }
 
