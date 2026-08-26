@@ -144,28 +144,27 @@ pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
         origin.validate()?;
     }
     match checkpoint.status {
-        CheckpointStatus::HostInteraction => {
+        CheckpointStatus::HostInteraction
             if checkpoint.active_host_interaction.is_none()
                 || checkpoint.suspended_origin.is_some()
-                || checkpoint.claim_token.is_some()
-            {
-                return Err(CheckpointError::new(
-                    "checkpoint_status_invalid",
-                    "host_interaction requires an active request, no suspended origin, and no claim",
-                ));
-            }
+                || checkpoint.claim_token.is_some() =>
+        {
+            return Err(CheckpointError::new(
+                "checkpoint_status_invalid",
+                "host_interaction requires an active request, no suspended origin, and no claim",
+            ));
         }
-        CheckpointStatus::Suspended => {
+        CheckpointStatus::Suspended
             if checkpoint.active_host_interaction.is_some()
                 || checkpoint.suspended_origin.is_none()
-                || checkpoint.claim_token.is_some()
-            {
-                return Err(CheckpointError::new(
-                    "checkpoint_status_invalid",
-                    "suspended requires an origin, no active request, and no claim",
-                ));
-            }
+                || checkpoint.claim_token.is_some() =>
+        {
+            return Err(CheckpointError::new(
+                "checkpoint_status_invalid",
+                "suspended requires an origin, no active request, and no claim",
+            ));
         }
+        CheckpointStatus::HostInteraction | CheckpointStatus::Suspended => {}
         _ if checkpoint.active_host_interaction.is_some()
             || checkpoint.suspended_origin.is_some() =>
         {
