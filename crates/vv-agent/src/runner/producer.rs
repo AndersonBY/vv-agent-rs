@@ -11,7 +11,7 @@ use crate::runtime::backends::{
     DistributedAdvanceDecision, DistributedRunHandle, RuntimeExecutionBackend,
 };
 
-use super::{CheckpointAdmissionSender, NormalizedInput, RunEventStream, Runner};
+use super::{AgentTask, CheckpointAdmissionSender, NormalizedInput, RunEventStream, Runner};
 
 pub(crate) enum CheckpointStartOutcome {
     Started {
@@ -57,6 +57,37 @@ impl Runner {
         })
         .await
         .map_err(|error| format!("distributed start task failed: {error}"))?
+    }
+
+    pub async fn start_distributed_compiled(
+        &self,
+        agent: &Agent,
+        task: AgentTask,
+        config: RunConfig,
+    ) -> Result<DistributedRunHandle, String> {
+        self.validate_nonblocking_distributed_config(&config)?;
+        let runner = self.clone();
+        let agent = agent.clone();
+        let input = task.user_prompt.clone();
+        tokio::task::spawn_blocking(move || {
+            match runner.run_single_agent_operation(
+                &agent,
+                input.into(),
+                config,
+                Some(Arc::new(Mutex::new(Vec::new()))),
+                None,
+                None,
+                None,
+                Some(super::DistributedRunnerOperation::StartCompiled(task)),
+            )? {
+                super::SingleRunExecutionOutcome::DistributedStarted(handle) => Ok(handle),
+                super::SingleRunExecutionOutcome::Completed(_) => {
+                    Err("distributed start completed before returning a passive handle".to_string())
+                }
+            }
+        })
+        .await
+        .map_err(|error| format!("compiled distributed start task failed: {error}"))?
     }
 
     pub async fn finalize_distributed(

@@ -327,6 +327,16 @@ impl Runner {
             let initial_messages =
                 frozen_definition_messages(checkpoint).map_err(|error| error.to_string())?;
             (task, initial_messages)
+        } else if let Some(task) =
+            distributed_operation
+                .as_ref()
+                .and_then(|operation| match operation {
+                    DistributedRunnerOperation::StartCompiled(task) => Some(task.clone()),
+                    _ => None,
+                })
+        {
+            let initial_messages = task.initial_messages.clone();
+            (task, initial_messages)
         } else {
             let prompt_bundle = self.build_instructions_with_context(InstructionBuildRequest {
                 agent,
@@ -714,7 +724,7 @@ impl Runner {
         })?;
         if matches!(
             &distributed_operation,
-            Some(DistributedRunnerOperation::Start)
+            Some(DistributedRunnerOperation::Start | DistributedRunnerOperation::StartCompiled(_),)
         ) {
             let controller = checkpoint_controller.as_ref().ok_or_else(|| {
                 "checkpoint_config_invalid: distributed start requires checkpoint configuration"
