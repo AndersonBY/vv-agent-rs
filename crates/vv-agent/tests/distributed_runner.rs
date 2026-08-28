@@ -1,18 +1,35 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vv_agent::runtime::backends::distributed::CycleEnqueuer;
 use vv_agent::{
-    Agent, AgentStatus, CapabilityRef, CheckpointConfig, CheckpointStore, ClaimMode,
-    DistributedAdvanceDecision, DistributedBackend, DistributedCapabilities,
-    DistributedCapabilityRegistry, DistributedCycleWorker, DistributedDeliveryOutcome,
-    DistributedRunEnvelope, ExecutionMode, InMemoryCheckpointStore, LLMResponse, MemorySession,
-    ModelRef, NoToolPolicy, ResumePolicy, RunConfig, Runner, RuntimeRecipe, ScriptedLlmClient,
-    ScriptedModelProvider, Session,
+    Agent, AgentStatus, AgentTask, CapabilityRef, CheckpointConfig, CheckpointStore, ClaimMode,
+    ContextError, ContextFragment, ContextProvider, ContextRequest, DistributedAdvanceDecision,
+    DistributedBackend, DistributedCapabilities, DistributedCapabilityRegistry,
+    DistributedCycleWorker, DistributedDeliveryOutcome, DistributedRunEnvelope, ExecutionMode,
+    InMemoryCheckpointStore, LLMResponse, MemorySession, ModelRef, NoToolPolicy, PromptBundle,
+    ResumePolicy, RunConfig, Runner, RuntimeRecipe, ScriptedLlmClient, ScriptedModelProvider,
+    Session,
 };
 
 #[derive(Default)]
 struct RecordingEnqueuer {
     envelopes: Mutex<Vec<DistributedRunEnvelope>>,
+}
+
+#[derive(Clone, Default)]
+struct CountingContextProvider {
+    calls: Arc<AtomicUsize>,
+}
+
+impl ContextProvider for CountingContextProvider {
+    fn fragments(
+        &self,
+        _request: &ContextRequest<'_>,
+    ) -> Result<Vec<ContextFragment>, ContextError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Vec::new())
+    }
 }
 
 impl RecordingEnqueuer {
@@ -184,6 +201,66 @@ async fn runner_starts_passively_and_finalizes_claimed_candidate_once() {
         fixture.session.get_items(None).await.unwrap().len(),
         session_count
     );
+}
+
+#[tokio::test]
+async fn runner_starts_distributed_from_compiled_task_without_rebuilding_it() {
+    let mut fixture = distributed_fixture("runner-distributed-compiled", 2);
+    let context_provider = CountingContextProvider::default();
+    fixture
+        .config
+        .context_providers
+        .push(Arc::new(context_provider.clone()));
+    fixture
+        .config
+        .checkpoint_config
+        .as_mut()
+        .expect("checkpoint config")
+        .capability_refs
+        .insert(
+            "context_provider:0".to_string(),
+            CapabilityRef::new("context.runner-driver", "1").expect("context provider ref"),
+        );
+    let mut task = AgentTask::new(
+        "runner-distributed-compiled",
+        "driver-model",
+        PromptBundle::from_instruction_text("compiled instructions").expect("prompt bundle"),
+        "compiled input",
+    );
+    task.max_cycles = 2;
+    task.allow_interruption = false;
+    task.use_workspace = false;
+    task.agent_type = Some("computer".to_string());
+    task.extra_tool_names = vec!["compiled_tool".to_string()];
+    task.initial_messages = vec![vv_agent::Message::user("compiled history")];
+    task.metadata.insert(
+        "compiled_marker".to_string(),
+        serde_json::Value::String("preserved".to_string()),
+    );
+
+    let expected_prompt_bundle = task.prompt_bundle.clone();
+    let expected_initial_messages = task.initial_messages.clone();
+    let handle = fixture
+        .runner
+        .start_distributed_compiled(&fixture.agent, task, fixture.config.clone())
+        .await
+        .expect("compiled passive start");
+    let envelope = fixture.enqueuer.take_one();
+
+    assert_eq!(handle.checkpoint_key, "runner-distributed-compiled");
+    assert_eq!(envelope.task.user_prompt, "compiled input");
+    assert_eq!(envelope.task.prompt_bundle, expected_prompt_bundle);
+    assert_eq!(envelope.task.max_cycles, 2);
+    assert!(!envelope.task.allow_interruption);
+    assert!(!envelope.task.use_workspace);
+    assert_eq!(envelope.task.agent_type.as_deref(), Some("computer"));
+    assert_eq!(envelope.task.extra_tool_names, vec!["compiled_tool"]);
+    assert_eq!(envelope.task.initial_messages, expected_initial_messages);
+    assert_eq!(
+        envelope.task.metadata.get("compiled_marker"),
+        Some(&serde_json::Value::String("preserved".to_string()))
+    );
+    assert_eq!(context_provider.calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

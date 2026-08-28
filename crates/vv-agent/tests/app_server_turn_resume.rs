@@ -854,15 +854,30 @@ async fn concurrent_standard_app_servers_have_one_checkpoint_claim_winner() {
         )
         .await;
     let started = started.expect("App Server start_turn");
-    let active = initial_state
-        .active_turn(&thread.thread_id)
-        .await
-        .expect("active turn");
-    let crash_error = match active.handle.result().await {
-        Ok(_) => panic!("initial run must crash"),
-        Err(error) => error,
-    };
-    assert!(!crash_error.is_empty());
+    // The simulated process crash is intentionally delivered by the worker
+    // task.  Do not await `RunHandle::result()` here: formatting a Tokio
+    // JoinError for a panic payload can recurse through the test runtime's
+    // panic hook and overflow the test thread's stack.  The durable
+    // checkpoint is the crash fact we need; poll that fact with a bounded
+    // timeout and let the child task terminate independently.
+    let crash_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let checkpoint = checkpoint_store
+            .load_checkpoint(checkpoint_key)
+            .expect("checkpoint load");
+        if checkpoint
+            .as_ref()
+            .is_some_and(|checkpoint| checkpoint.cycle_index == 1)
+            && model_calls.load(Ordering::SeqCst) == 1
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < crash_deadline,
+            "crash fixture did not commit cycle one before the bounded wait"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     initial_state
         .clear_active_turn(&thread.thread_id, &started.turn_id)
         .await;
@@ -877,6 +892,16 @@ async fn concurrent_standard_app_servers_have_one_checkpoint_claim_winner() {
     assert_eq!(crashed.cycle_index, 1);
     assert_eq!(crashed.cycles.len(), 1);
     let original_run_id = crashed.root_run_id.clone();
+    // Preserve the checkpoint's all-or-nothing claim tuple while making the
+    // simulated crashed owner recoverable.  A worker can panic after its
+    // claim has already been released, so the fixture must rebuild the full
+    // lease tuple instead of writing an expiry field in isolation.
+    if crashed.claim_token.is_none() {
+        crashed.claim_token = Some("crashed-app-server-claim".to_string());
+    }
+    if crashed.claimed_cycle.is_none() {
+        crashed.claimed_cycle = Some(crashed.cycle_index + 1);
+    }
     crashed.lease_expires_at_ms = Some(1);
     checkpoint_store
         .save_checkpoint(crashed)

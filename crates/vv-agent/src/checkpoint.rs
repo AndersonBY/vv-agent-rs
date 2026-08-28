@@ -17,6 +17,7 @@ use crate::runtime::backends::CapabilityRef;
 use crate::runtime::state::CheckpointStore;
 
 mod canonical;
+mod controller;
 mod deferred;
 
 pub use canonical::*;
@@ -24,6 +25,7 @@ use canonical::{
     require_non_empty, require_positive, utf16_cmp, validate_capability_ref,
     validate_capability_slot, validate_i_json, validate_pointer,
 };
+pub use controller::*;
 pub use deferred::*;
 
 pub const MAX_WIRE_INTEGER: u64 = (1_u64 << 53) - 1;
@@ -31,7 +33,7 @@ pub const MAX_CHECKPOINT_KEY_BYTES: usize = 512;
 pub const MAX_EXTENSION_NAMESPACE_BYTES: usize = 128;
 pub const MAX_EXTENSION_ENTRY_BYTES: usize = 65_536;
 pub const DEFAULT_MAX_EXTENSION_STATE_BYTES: u64 = 262_144;
-pub const CHECKPOINT_SCHEMA: &str = "vv-agent.checkpoint.v7";
+pub const CHECKPOINT_SCHEMA: &str = "vv-agent.checkpoint.v8";
 pub const RUN_DEFINITION_SCHEMA: &str = "vv-agent.run-definition.v5";
 pub const OPERATION_REQUEST_SCHEMA: &str = "vv-agent.operation-request.v1";
 pub const EVENT_CURSOR_SCHEMA: &str = "vv-agent.event-cursor.v1";
@@ -152,6 +154,8 @@ pub enum CheckpointStatus {
     Pending,
     Running,
     Deferred,
+    HostInteraction,
+    Suspended,
     WaitUser,
     Completed,
     Failed,
@@ -165,6 +169,8 @@ impl CheckpointStatus {
             Self::Pending => "pending",
             Self::Running => "running",
             Self::Deferred => "deferred",
+            Self::HostInteraction => "host_interaction",
+            Self::Suspended => "suspended",
             Self::WaitUser => "wait_user",
             Self::Completed => "completed",
             Self::Failed => "failed",
@@ -718,7 +724,7 @@ impl crate::event_store::RunEventStore for InMemoryRunEventStore {
         event_id: &str,
         payload_digest: &str,
         event: &crate::events::RunEvent,
-    ) -> Result<Option<EventCursor>, crate::event_store::EventStoreError> {
+    ) -> Result<EventCursor, crate::event_store::EventStoreError> {
         let value = serde_json::to_value(event).map_err(|error| {
             crate::event_store::EventStoreError::new(
                 "event_store_serialization_error",
@@ -732,13 +738,13 @@ impl crate::event_store::RunEventStore for InMemoryRunEventStore {
                 error.to_string(),
             )
         })?;
-        Ok(Some(EventCursor::new(
+        Ok(EventCursor::new(
             crate::runtime::backends::CapabilityRef {
                 id: "events.in-memory".to_string(),
                 version: "1".to_string(),
             },
             result.cursor,
             Some(event_id.to_string()),
-        )))
+        ))
     }
 }

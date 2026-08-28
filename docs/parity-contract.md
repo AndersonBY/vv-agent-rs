@@ -18,9 +18,9 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock selects contract `7.0.1` at revision
-`fd3352a1c3a17dd5d7ff01e5e9dcceee9e038a19`, release artifact SHA-256
-`4358b9dbae6b51c476677b0c4d48fd02d7acd2fffc5bb1170276654e1f2bb6a5`.
+The current lock selects contract `8.1.0` at revision
+`eb67dc6a3a7933ff413c0cd7a3594727e971a5d1`, release artifact SHA-256
+`9bf75cec30d04cda987beff4ae021cce62ec4624ba7547cd9440678869ee541f`.
 The current adoption state is not duplicated in this document. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
 as the machine-readable source for the current verified Python and Rust
@@ -100,7 +100,7 @@ A fixture parser or private helper test cannot replace a real public producer
 test. A field that is declared but ignored by a planner, executor, provider, or
 store remains a contract failure.
 
-## Contract 7.0.1 Boundaries
+## Contract 8.1.0 Boundaries
 
 ### Prompt Bundle And Provider Projection
 
@@ -160,7 +160,7 @@ an older decoder.
 
 ### Durable Accounting
 
-Checkpoints require `vv-agent.checkpoint.v7`, and run definitions require
+Checkpoints require `vv-agent.checkpoint.v8`, and run definitions require
 `vv-agent.run-definition.v5`. The run definition stores `prompt_bundle` and
 never stores an independent flattened prompt. The checkpoint owns the complete
 ordered run-level model-call ledger. A started model journal entry and started
@@ -226,9 +226,9 @@ The transport-neutral nonblocking scheduler API is implemented in
 cycle and returns a passive `DistributedRunHandle`; `advance` performs exactly
 one authoritative checkpoint read and returns `Dispatch`, `RetryAt`, `Wait`,
 `FinalizeRequired`, or `TerminalReplay`. Superseded callbacks are no-op waits.
-The Apalis adapter uses `TaskSink` without `WaitForCompletion`, while the older
-blocking dispatcher remains a supported language-side adapter. A terminal
-candidate, including synthetic max-cycles exhaustion, must be passed to a
+The Apalis adapter is enqueue-only and uses `TaskSink` without
+`WaitForCompletion`; no result-polling dispatcher is part of the public
+surface. A terminal candidate, including synthetic max-cycles exhaustion, must be passed to a
 separate framework terminal controller. `Runner::start_distributed` prepares
 the durable checkpoint and returns the passive handle;
 `Runner::finalize_distributed` consumes only `FinalizeRequired` and reuses the
@@ -237,9 +237,16 @@ revision-bound CAS, delivery, and acknowledgement path. Duplicate finalizer
 delivery returns the retained terminal. Durable cross-process approval
 continuation is not implemented by this Rust slice.
 
+`Runner::start_distributed_compiled` accepts an already-compiled `AgentTask`,
+preserves its prepared prompt bundle, runtime fields, initial messages, and
+metadata in the first distributed envelope, and does not invoke compile-time
+instruction or context producers again. It returns the same passive handle as
+`start_distributed`; the existing distributed envelope and worker response wire
+shapes remain unchanged.
+
 ## Durable Deferred Tools
 
-Contract 7 adds one provider-neutral result boundary for tools whose external
+Contract 8 adds one provider-neutral result boundary for tools whose external
 acceptance finishes after the current worker invocation. The framework creates
 an opaque `DeferredToolHandle` through `ToolContext::defer`; handlers never
 construct checkpoint journals, claims, provider/job identifiers, or callback
@@ -418,6 +425,12 @@ The following are API-shape adaptations, not behavioral differences:
   copied frozen dataclasses and a protocol callback. Both compose
   runner-default hooks before per-run hooks, persist only cumulative denials,
   and resolve distributed `after_cycle_hook_refs` before checkpoint claim.
+- Both event stores use the typed `RunEventReplayQuery` for lineage replay and
+  include direct children by default. Python additionally offers a `run_id=`
+  convenience keyword; Rust keeps the root method as
+  `replay(RunEventReplayQuery)` so `include_children` remains explicit. Rust's
+  `RunHandle::events()` is the live typed-event projection; durable replay is
+  intentionally a separate `RunEventStore` operation.
 
 Add a new adaptation only when both implementations preserve input, output,
 safety, persistence, cancellation, and lifecycle semantics.
@@ -436,3 +449,10 @@ Then run the Python gate and the central
 `vv-agent-contract/.github/workflows/cross-repository.yml` workflow with exact
 contract, Python, and Rust refs. If either implementation is incomplete, keep
 the central support matrix at `pending-adoption` or `in-progress`.
+
+The current Rust gate may emit ts-rs warnings that it cannot parse the serde
+attributes `deny_unknown_fields` and `deserialize_with =
+"deserialize_input_items"`. These warnings are from TypeScript metadata
+generation; the runtime serde readers still enforce the strict v8 wire. The
+attributes must remain on the Rust readers until ts-rs supports them rather
+than being removed to silence the warning.

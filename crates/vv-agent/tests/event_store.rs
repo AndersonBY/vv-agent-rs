@@ -3,9 +3,38 @@ use std::sync::Arc;
 
 use serde_json::json;
 use vv_agent::{
-    Agent, AgentStatus, JsonlRunEventStore, LLMResponse, ModelRef, RunConfig, RunEvent,
-    RunEventPayload, RunEventReplayQuery, RunEventStore, Runner, ScriptedModelProvider, ToolCall,
+    event_payload_digest, Agent, AgentStatus, InMemoryRunEventStore, JsonlRunEventStore,
+    LLMResponse, ModelRef, RunConfig, RunEvent, RunEventPayload, RunEventReplayQuery,
+    RunEventStore, Runner, ScriptedModelProvider, ToolCall,
 };
+
+#[test]
+fn append_once_returns_a_cursor_or_fails_closed_without_fallback() {
+    let event = RunEvent::run_started("run_append_once", "trace_append_once", "agent", "input");
+    let value = serde_json::to_value(&event).expect("event value");
+    let digest = event_payload_digest(&value).expect("event digest");
+    let store = InMemoryRunEventStore::default();
+    let cursor = RunEventStore::append_once(&store, event.event_id().as_str(), &digest, &event)
+        .expect("append once");
+    assert_eq!(
+        cursor.last_event_id.as_deref(),
+        Some(event.event_id().as_str())
+    );
+    let replay = RunEventStore::append_once(&store, event.event_id().as_str(), &digest, &event)
+        .expect("identical replay");
+    assert_eq!(replay, cursor);
+
+    let unsupported = JsonlRunEventStore::new(
+        tempfile::tempdir()
+            .expect("tempdir")
+            .path()
+            .join("events.jsonl"),
+    );
+    let error =
+        RunEventStore::append_once(&unsupported, event.event_id().as_str(), &digest, &event)
+            .expect_err("non-idempotent store must not fall back to append");
+    assert_eq!(error.code(), "event_store_append_once_unsupported");
+}
 
 #[test]
 fn jsonl_event_store_replays_direct_children_by_default() {

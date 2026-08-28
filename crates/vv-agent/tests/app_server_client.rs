@@ -388,6 +388,7 @@ fn client_facade_covers_stable_method_inventory() {
             "thread/start",
             "thread/resume",
             "thread/read",
+            "thread/status",
             "thread/list",
             "thread/archive",
             "thread/unsubscribe",
@@ -396,6 +397,7 @@ fn client_facade_covers_stable_method_inventory() {
             "turn/interrupt",
             "turn/steer",
             "turn/followUp",
+            "turn/action",
             "approval/resolve",
             "model/list",
             "schema/export",
@@ -407,6 +409,7 @@ fn client_facade_covers_stable_method_inventory() {
     let _ = AppServerClient::start_thread;
     let _ = AppServerClient::resume_thread;
     let _ = AppServerClient::read_thread;
+    let _ = AppServerClient::thread_status;
     let _ = AppServerClient::list_threads;
     let _ = AppServerClient::archive_thread;
     let _ = AppServerClient::unsubscribe_thread;
@@ -415,6 +418,7 @@ fn client_facade_covers_stable_method_inventory() {
     let _ = AppServerClient::interrupt_turn;
     let _ = AppServerClient::steer_turn;
     let _ = AppServerClient::follow_up_turn;
+    let _ = AppServerClient::turn_action;
     let _ = AppServerClient::resolve_approval_request;
     let _ = AppServerClient::list_models;
     let _ = AppServerClient::export_schema;

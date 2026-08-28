@@ -92,6 +92,56 @@ pub(super) fn validate_event_wire_shape(value: &Value) -> Result<(), String> {
             ],
         ),
         "run_state_changed" => (&["state"], &["state"]),
+        "host_interaction_requested" => (
+            &[
+                "checkpoint_key",
+                "resume_attempt",
+                "interaction_id",
+                "logical_cycle",
+                "operation_id",
+                "tool_call_id",
+                "request_digest",
+                "prompt",
+            ],
+            &[
+                "checkpoint_key",
+                "resume_attempt",
+                "interaction_id",
+                "logical_cycle",
+                "operation_id",
+                "tool_call_id",
+                "request_digest",
+                "prompt",
+                "cycle_index",
+            ],
+        ),
+        "host_interaction_response_consumed" => (
+            &[
+                "checkpoint_key",
+                "resume_attempt",
+                "interaction_id",
+                "logical_cycle",
+                "operation_id",
+                "tool_call_id",
+                "request_digest",
+                "command_id",
+                "response_digest",
+                "consumed_revision",
+            ],
+            &[
+                "checkpoint_key",
+                "resume_attempt",
+                "interaction_id",
+                "logical_cycle",
+                "operation_id",
+                "tool_call_id",
+                "request_digest",
+                "command_id",
+                "response_digest",
+                "consumed_revision",
+                "cycle_index",
+            ],
+        ),
         "diagnostic" => (&["level", "code", "details"], &["level", "code", "details"]),
         "assistant_delta" => (
             &["delta", "content_chars", "estimated_tokens"],
@@ -768,233 +818,5 @@ fn require_stream_text(value: &str, field: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn validate_checkpoint_wire_fields(
-    payload: &RunEventPayload,
-    cycle_index: Option<u32>,
-) -> Result<(), String> {
-    let require_lifecycle_cycle =
-        || cycle_index.ok_or_else(|| "checkpoint lifecycle event requires cycle_index".to_string());
-    match payload {
-        RunEventPayload::ToolCallDeferred {
-            handle,
-            operation_id,
-            attempt,
-            ..
-        } => {
-            handle.validate().map_err(|error| error.to_string())?;
-            if handle.operation_id != *operation_id || handle.attempt != u64::from(*attempt) {
-                return Err(
-                    "deferred tool event handle identity does not match operation".to_string(),
-                );
-            }
-        }
-        RunEventPayload::CheckpointCreated {
-            checkpoint_key,
-            resume_attempt,
-        }
-        | RunEventPayload::CheckpointResumed {
-            checkpoint_key,
-            resume_attempt,
-        } => {
-            require_lifecycle_cycle()?;
-            require_event_text(checkpoint_key, "checkpoint_key")?;
-            if *resume_attempt == 0 {
-                return Err("checkpoint lifecycle resume_attempt must be positive".to_string());
-            }
-        }
-        RunEventPayload::OperationReplayed {
-            checkpoint_key,
-            operation_id,
-            receipt_state,
-            ..
-        } => {
-            require_lifecycle_cycle()?;
-            require_event_operation(checkpoint_key, operation_id)?;
-            if !matches!(
-                receipt_state,
-                OperationState::Succeeded | OperationState::Failed
-            ) {
-                return Err(
-                    "operation replay receipt_state must be succeeded or failed".to_string()
-                );
-            }
-        }
-        RunEventPayload::OperationAmbiguous {
-            checkpoint_key,
-            operation_id,
-            operation_kind,
-            risk,
-            idempotency_support,
-        } => {
-            require_lifecycle_cycle()?;
-            require_event_operation(checkpoint_key, operation_id)?;
-            require_event_text(risk, "risk")?;
-            match (operation_kind, idempotency_support) {
-                (OperationKind::Tool, Some(_)) | (OperationKind::Model, None) => {}
-                (OperationKind::Tool, None) => {
-                    return Err("ambiguous tool event requires idempotency_support".to_string());
-                }
-                (OperationKind::Model, Some(_)) => {
-                    return Err(
-                        "ambiguous model event idempotency_support must be null".to_string()
-                    );
-                }
-            }
-        }
-        RunEventPayload::ReconciliationRequired {
-            checkpoint_key,
-            operation_id,
-            operation_kind,
-            interruption_reason,
-            resume_observation,
-        } => {
-            let cycle = require_lifecycle_cycle()?;
-            require_event_operation(checkpoint_key, operation_id)?;
-            require_event_text(interruption_reason, "interruption_reason")?;
-            resume_observation
-                .validate()
-                .map_err(|error| error.to_string())?;
-            if resume_observation.operation_id != *operation_id
-                || resume_observation.operation_kind != *operation_kind
-                || resume_observation.cycle_index != u64::from(cycle)
-            {
-                return Err(
-                    "reconciliation event operation must match resume_observation".to_string(),
-                );
-            }
-        }
-        RunEventPayload::ModelRetryDuplicateRisk {
-            checkpoint_key,
-            operation_id,
-            operation_kind,
-            risk,
-        } => {
-            require_lifecycle_cycle()?;
-            require_event_operation(checkpoint_key, operation_id)?;
-            require_event_text(risk, "risk")?;
-            if *operation_kind != OperationKind::Model {
-                return Err(
-                    "model retry duplicate risk event requires model operation_kind".to_string(),
-                );
-            }
-        }
-        RunEventPayload::ReconciliationResolved {
-            checkpoint_key,
-            operation_id,
-            decision,
-            claim_mode,
-            ..
-        } => {
-            require_lifecycle_cycle()?;
-            require_event_operation(checkpoint_key, operation_id)?;
-            if *decision == crate::checkpoint::ReconciliationDecisionKind::AcceptDeferred
-                && *claim_mode != Some(crate::checkpoint::ClaimMode::Recovery)
-            {
-                return Err(
-                    "accept_deferred reconciliation event requires recovery claim_mode".to_string(),
-                );
-            }
-            if *decision != crate::checkpoint::ReconciliationDecisionKind::AcceptDeferred
-                && claim_mode.is_some()
-            {
-                return Err(
-                    "claim_mode is only valid for accept_deferred reconciliation events"
-                        .to_string(),
-                );
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn require_event_operation(checkpoint_key: &str, operation_id: &str) -> Result<(), String> {
-    require_event_text(checkpoint_key, "checkpoint_key")?;
-    require_event_text(operation_id, "operation_id")
-}
-
-fn require_event_text(value: &str, field: &str) -> Result<(), String> {
-    if value.trim().is_empty() {
-        return Err(format!("checkpoint lifecycle {field} must be non-empty"));
-    }
-    Ok(())
-}
-
-pub(super) fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload) -> Metadata {
-    let Some(object) = value.as_object() else {
-        return Metadata::new();
-    };
-    let keys: &[&str] = match payload {
-        RunEventPayload::ToolCallPlanned { .. } | RunEventPayload::ToolCallStarted { .. } => {
-            &["tool_metadata"]
-        }
-        RunEventPayload::ToolCallCompleted { .. } => &["tool_metadata"],
-        RunEventPayload::ToolCallDeferred { .. } => &["checkpoint_key"],
-        RunEventPayload::ReconciliationResolved { .. } => &["claim_mode"],
-        RunEventPayload::SubRunStarted { .. } => &["status"],
-        RunEventPayload::SubRunCompleted { .. } => &[
-            "child_session_id",
-            "task_id",
-            "wait_reason",
-            "error",
-            "completion_reason",
-            "completion_tool_name",
-            "partial_output",
-            "token_usage",
-            "budget_usage",
-            "budget_exhaustion",
-        ],
-        RunEventPayload::HandoffStarted { .. } => &["status", "child_session_id"],
-        RunEventPayload::HandoffCompleted { .. } => &["status", "child_session_id", "child_run_id"],
-        RunEventPayload::RunCompleted { .. } => &[
-            "final_output",
-            "completion_reason",
-            "completion_tool_name",
-            "partial_output",
-            "budget_usage",
-            "budget_exhaustion",
-        ],
-        RunEventPayload::RunFailed { .. } | RunEventPayload::RunCancelled { .. } => &[
-            "status",
-            "completion_reason",
-            "completion_tool_name",
-            "partial_output",
-            "budget_usage",
-            "budget_exhaustion",
-        ],
-        _ => &[],
-    };
-    let mut fields = keys
-        .iter()
-        .filter_map(|key| {
-            object
-                .get(*key)
-                .cloned()
-                .map(|value| ((*key).to_string(), value))
-        })
-        .collect::<Metadata>();
-    if let Some(metadata) = fields.get_mut("tool_metadata") {
-        if let Ok(normalized) =
-            serde_json::from_value::<crate::tools::ToolMetadata>(metadata.clone())
-        {
-            *metadata = serde_json::to_value(normalized).expect("tool metadata serializes");
-        }
-    }
-    fields
-}
-
-pub(super) fn add_constructed_supplemental_fields(
-    payload: &RunEventPayload,
-    fields: &mut Metadata,
-) {
-    let (key, value) = match payload {
-        RunEventPayload::SubRunStarted { .. } => ("status", Value::String("running".to_string())),
-        RunEventPayload::HandoffStarted { .. } => ("status", Value::String("started".to_string())),
-        RunEventPayload::HandoffCompleted { .. } => {
-            ("status", Value::String("completed".to_string()))
-        }
-        RunEventPayload::RunCompleted { .. } => ("final_output", Value::Null),
-        _ => return,
-    };
-    fields.entry(key.to_string()).or_insert(value);
-}
+include!("wire_checkpoint.rs");
+include!("wire_supplemental.rs");

@@ -30,16 +30,17 @@ pub use thread::{
     AppThread, ThreadArchiveParams, ThreadArchiveResponse, ThreadArchivedParams,
     ThreadClosedParams, ThreadListParams, ThreadListResponse, ThreadReadParams, ThreadReadResponse,
     ThreadResumeParams, ThreadResumeResponse, ThreadStartParams, ThreadStartResponse,
-    ThreadStartedParams, ThreadStatus, ThreadStatusChangedParams, ThreadUnsubscribeParams,
-    ThreadUnsubscribeResponse,
+    ThreadStartedParams, ThreadStatus, ThreadStatusChangedParams, ThreadStatusParams,
+    ThreadStatusResponse, ThreadUnsubscribeParams, ThreadUnsubscribeResponse,
 };
 pub use turn::{
     AppCacheUsage, AppModelCallUsage, AppModelUsage, AppTokenUsage, AppTurn, CheckpointSummary,
     CheckpointSummaryStatus, InterruptionIdempotencySupport, InterruptionOperationKind,
-    InterruptionSummary, TurnCompletedParams, TurnControlResponse, TurnFollowUpParams,
-    TurnFollowUpResponse, TurnInterruptParams, TurnInterruptResponse, TurnResumeParams,
-    TurnResumeResponse, TurnStartParams, TurnStartResponse, TurnStartedParams, TurnStatus,
-    TurnSteerParams, TurnSteerResponse, UserInput,
+    InterruptionSummary, TurnAction, TurnActionMessage, TurnActionParams, TurnActionResponse,
+    TurnCompletedParams, TurnControlResponse, TurnFollowUpParams, TurnFollowUpResponse,
+    TurnInterruptParams, TurnInterruptResponse, TurnResumeParams, TurnResumeResponse,
+    TurnStartParams, TurnStartResponse, TurnStartedParams, TurnStatus, TurnSteerParams,
+    TurnSteerResponse, UserInput,
 };
 
 pub use errors::{AppServerError, AppServerErrorCode};
@@ -59,6 +60,8 @@ pub enum ClientRequest {
     ThreadResume(ThreadResumeParams),
     #[serde(rename = "thread/read")]
     ThreadRead(ThreadReadParams),
+    #[serde(rename = "thread/status")]
+    ThreadStatus(ThreadStatusParams),
     #[serde(rename = "thread/list")]
     ThreadList(ThreadListParams),
     #[serde(rename = "thread/archive")]
@@ -75,6 +78,8 @@ pub enum ClientRequest {
     TurnSteer(TurnSteerParams),
     #[serde(rename = "turn/followUp")]
     TurnFollowUp(TurnFollowUpParams),
+    #[serde(rename = "turn/action")]
+    TurnAction(TurnActionParams),
     #[serde(rename = "approval/resolve")]
     ApprovalResolve(ApprovalResolveParams),
     #[serde(rename = "model/list")]
@@ -92,6 +97,7 @@ impl ClientRequest {
             "thread/start",
             "thread/resume",
             "thread/read",
+            "thread/status",
             "thread/list",
             "thread/archive",
             "thread/unsubscribe",
@@ -100,6 +106,7 @@ impl ClientRequest {
             "turn/interrupt",
             "turn/steer",
             "turn/followUp",
+            "turn/action",
             "approval/resolve",
             "model/list",
             "schema/export",

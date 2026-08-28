@@ -262,6 +262,8 @@ impl AppServerRunAdapter {
                 ServerNotification::ThreadStatusChanged(ThreadStatusChangedParams {
                     thread_id: continuation.request.thread_id.clone(),
                     status: ThreadStatus::Running,
+                    wait_reason: None,
+                    prompt: None,
                 }),
             )
             .await;
@@ -449,6 +451,8 @@ impl AppServerRunAdapter {
                 ServerNotification::ThreadStatusChanged(ThreadStatusChangedParams {
                     thread_id: request.thread_id.clone(),
                     status: ThreadStatus::Idle,
+                    wait_reason: None,
+                    prompt: None,
                 }),
             )
             .await;
@@ -469,6 +473,8 @@ fn checkpoint_summary(checkpoint: &Checkpoint) -> CheckpointSummary {
         status: match checkpoint.status {
             CheckpointStatus::Pending => CheckpointSummaryStatus::Pending,
             CheckpointStatus::Running => CheckpointSummaryStatus::Running,
+            CheckpointStatus::HostInteraction => CheckpointSummaryStatus::HostInteraction,
+            CheckpointStatus::Suspended => CheckpointSummaryStatus::Suspended,
             CheckpointStatus::WaitUser => CheckpointSummaryStatus::WaitUser,
             CheckpointStatus::Completed => CheckpointSummaryStatus::Completed,
             CheckpointStatus::Failed => CheckpointSummaryStatus::Failed,

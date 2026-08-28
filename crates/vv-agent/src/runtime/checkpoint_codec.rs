@@ -1,4 +1,4 @@
-//! Strict codec for the current checkpoint v7 wire format.
+//! Strict codec for the current checkpoint v8 wire format.
 
 use std::collections::BTreeMap;
 
@@ -8,8 +8,8 @@ use serde_json::{Map, Number, Value};
 
 use crate::budget::BudgetUsageSnapshot;
 use crate::checkpoint::{
-    canonical_json_bytes, CheckpointError, CheckpointResult, CheckpointStatus, CHECKPOINT_SCHEMA,
-    RUN_DEFINITION_SCHEMA,
+    canonical_json_bytes, CheckpointError, CheckpointResult, CheckpointStatus,
+    HostInteractionRequest, SuspendedOrigin, CHECKPOINT_SCHEMA, RUN_DEFINITION_SCHEMA,
 };
 use crate::runtime::state::{
     validate_checkpoint, validate_extension_state_size, Checkpoint, EventOutboxEntry,
@@ -29,6 +29,8 @@ const KNOWN_FIELDS: &[&str] = &[
     "resume_attempt",
     "cycle_index",
     "status",
+    "active_host_interaction",
+    "suspended_origin",
     "messages",
     "cycles",
     "model_calls",
@@ -100,6 +102,22 @@ pub fn checkpoint_to_value(
     object.insert(
         "status".to_string(),
         Value::String(checkpoint.status.as_str().to_string()),
+    );
+    object.insert(
+        "active_host_interaction".to_string(),
+        checkpoint
+            .active_host_interaction
+            .as_ref()
+            .map(HostInteractionRequest::to_value)
+            .unwrap_or(Value::Null),
+    );
+    object.insert(
+        "suspended_origin".to_string(),
+        checkpoint
+            .suspended_origin
+            .as_ref()
+            .map(SuspendedOrigin::to_value)
+            .unwrap_or(Value::Null),
     );
     object.insert(
         "messages".to_string(),
@@ -215,7 +233,7 @@ pub fn checkpoint_from_value(
     let object = payload.as_object().ok_or_else(|| {
         CheckpointError::new(
             "checkpoint_payload_invalid",
-            "checkpoint v7 payload must be an object",
+            "checkpoint v8 payload must be an object",
         )
     })?;
     if let Some(field) = object
@@ -230,7 +248,7 @@ pub fn checkpoint_from_value(
     if object.get("schema_version").and_then(Value::as_str) != Some(CHECKPOINT_SCHEMA) {
         return Err(CheckpointError::new(
             "checkpoint_schema_unsupported",
-            "checkpoint schema_version is not vv-agent.checkpoint.v7",
+            "checkpoint schema_version is not vv-agent.checkpoint.v8",
         ));
     }
     let run_definition_schema = required_string(
@@ -282,6 +300,10 @@ pub fn checkpoint_from_value(
         )?,
         cycle_index: required_u64(object, "cycle_index", "checkpoint_cycle_invalid")?,
         status: parse_status(object, "status")?,
+        active_host_interaction: parse_optional_host_interaction(
+            object.get("active_host_interaction"),
+        )?,
+        suspended_origin: parse_optional_suspended_origin(object.get("suspended_origin"))?,
         messages: parse_messages(object.get("messages"))?,
         cycles: parse_cycles(object.get("cycles"))?,
         model_calls: parse_model_calls(object.get("model_calls"))?,
@@ -329,7 +351,7 @@ pub fn checkpoint_to_json(
     max_extension_state_bytes: u64,
 ) -> CheckpointResult<String> {
     let value = checkpoint_to_value(checkpoint, max_extension_state_bytes)?;
-    let bytes = canonical_json_bytes(&value, "checkpoint v7")?;
+    let bytes = canonical_json_bytes(&value, "checkpoint v8")?;
     String::from_utf8(bytes).map_err(|error| {
         CheckpointError::new(
             "checkpoint_canonicalization_invalid",
@@ -354,6 +376,24 @@ fn parse_status(object: &Map<String, Value>, field: &str) -> CheckpointResult<Ch
             format!("unknown checkpoint status {value}"),
         )
     })
+}
+
+fn parse_optional_host_interaction(
+    value: Option<&Value>,
+) -> CheckpointResult<Option<HostInteractionRequest>> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => HostInteractionRequest::from_value(value).map(Some),
+    }
+}
+
+fn parse_optional_suspended_origin(
+    value: Option<&Value>,
+) -> CheckpointResult<Option<SuspendedOrigin>> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => SuspendedOrigin::from_value(value).map(Some),
+    }
 }
 
 fn parse_messages(value: Option<&Value>) -> CheckpointResult<Vec<Message>> {

@@ -14,7 +14,8 @@ use crate::app_server::protocol::{
     JsonRpcResponse, ModelListParams, ModelListResponse, RequestId, SchemaExportResponse,
     ThreadArchiveParams, ThreadArchiveResponse, ThreadListParams, ThreadListResponse,
     ThreadReadParams, ThreadReadResponse, ThreadResumeParams, ThreadResumeResponse,
-    ThreadStartParams, ThreadStartResponse, ThreadUnsubscribeParams, ThreadUnsubscribeResponse,
+    ThreadStartParams, ThreadStartResponse, ThreadStatusParams, ThreadStatusResponse,
+    ThreadUnsubscribeParams, ThreadUnsubscribeResponse, TurnActionParams, TurnActionResponse,
     TurnFollowUpParams, TurnFollowUpResponse, TurnInterruptParams, TurnInterruptResponse,
     TurnResumeParams, TurnResumeResponse, TurnStartParams, TurnStartResponse, TurnSteerParams,
     TurnSteerResponse,
@@ -89,6 +90,14 @@ impl AppServerClient {
             .await
     }
 
+    pub async fn thread_status(
+        &mut self,
+        params: ThreadStatusParams,
+    ) -> Result<ThreadStatusResponse, AppServerClientError> {
+        self.send_request("thread/status", serde_json::to_value(params)?)
+            .await
+    }
+
     pub async fn list_threads(
         &mut self,
         params: ThreadListParams,
@@ -150,6 +159,14 @@ impl AppServerClient {
         params: TurnFollowUpParams,
     ) -> Result<TurnFollowUpResponse, AppServerClientError> {
         self.send_request("turn/followUp", serde_json::to_value(params)?)
+            .await
+    }
+
+    pub async fn turn_action(
+        &mut self,
+        params: TurnActionParams,
+    ) -> Result<TurnActionResponse, AppServerClientError> {
+        self.send_request("turn/action", serde_json::to_value(params)?)
             .await
     }
 

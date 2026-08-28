@@ -70,7 +70,18 @@ pub(super) fn run_agent_runtime_cycle(
     let runtime = build_runtime(&envelope, &resolved)?;
     let mut task = envelope.task.clone();
     project_tool_policy(&mut task, &resolved.tool_policy);
-    let execution_context = worker_execution_context(&envelope, &resolved);
+    let producer_controller = checkpoint_controller.clone();
+    let host_interaction_producer: crate::runtime::context::HostInteractionProducer =
+        Arc::new(move |request| {
+            let mut controller = producer_controller
+                .lock()
+                .map_err(|_| "checkpoint controller lock poisoned".to_string())?;
+            controller
+                .produce_host_interaction(request)
+                .map_err(|error| error.to_string())
+        });
+    let execution_context = worker_execution_context(&envelope, &resolved)
+        .with_host_interaction_producer(host_interaction_producer);
     let previous_cycle_count = checkpoint.cycles.len();
     let controls = RuntimeRunControls {
         event_handler: combined_event_handler(&resolved),
@@ -250,7 +261,7 @@ impl RunEventStore for CheckpointEventStoreAdapter {
         event_id: &str,
         payload_digest: &str,
         event: &RunEvent,
-    ) -> Result<Option<EventCursor>, EventStoreError> {
+    ) -> Result<EventCursor, EventStoreError> {
         let value = serde_json::to_value(event).map_err(|error| {
             EventStoreError::new("event_store_serialization_error", error.to_string())
         })?;
@@ -260,10 +271,10 @@ impl RunEventStore for CheckpointEventStoreAdapter {
             .map_err(|error| {
                 EventStoreError::new("event_store_checkpoint_error", error.to_string())
             })?;
-        Ok(Some(EventCursor::new(
+        Ok(EventCursor::new(
             self.store_ref.clone(),
             appended.cursor,
             Some(event_id.to_string()),
-        )))
+        ))
     }
 }

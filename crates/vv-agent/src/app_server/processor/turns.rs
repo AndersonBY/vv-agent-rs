@@ -1,12 +1,57 @@
 use crate::app_server::protocol::{
-    AppServerError, JsonRpcRequest, TurnControlResponse, TurnFollowUpParams, TurnInterruptParams,
-    TurnInterruptResponse, TurnResumeParams, TurnStartParams, TurnStartResponse, TurnSteerParams,
+    AppServerError, JsonRpcRequest, TurnActionParams, TurnControlResponse, TurnFollowUpParams,
+    TurnInterruptParams, TurnInterruptResponse, TurnResumeParams, TurnStartParams,
+    TurnStartResponse, TurnSteerParams,
 };
 use crate::app_server::transport::ConnectionId;
 
 use super::{parse_params, MessageProcessor};
 
 impl MessageProcessor {
+    pub(super) async fn process_turn_action(
+        &mut self,
+        connection_id: ConnectionId,
+        request: JsonRpcRequest,
+    ) {
+        let params = match parse_params::<TurnActionParams>(request.params) {
+            Ok(params) => params,
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+                return;
+            }
+        };
+        let Some(adapter) = self.run_adapter.clone() else {
+            let _ = self
+                .outgoing
+                .send_error(
+                    connection_id,
+                    request.id,
+                    AppServerError::internal("App Server runtime is not configured"),
+                )
+                .await;
+            return;
+        };
+        match adapter.controller_action(params).await {
+            Ok(response) => {
+                let result =
+                    serde_json::to_value(response).expect("turn action response serializes");
+                let _ = self
+                    .outgoing
+                    .send_response(connection_id, request.id, result)
+                    .await;
+            }
+            Err(error) => {
+                let _ = self
+                    .outgoing
+                    .send_error(connection_id, request.id, error)
+                    .await;
+            }
+        }
+    }
+
     pub(super) async fn process_turn_start(
         &mut self,
         connection_id: ConnectionId,

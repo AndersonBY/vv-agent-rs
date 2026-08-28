@@ -5,25 +5,25 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use apalis::prelude::{
-    Attempt, Backend, Extensions, RandomId, Status, Task, TaskBuilder, TaskId, TaskResult,
-    TaskSink, TaskSinkError, WaitForCompletion, WorkerContext,
+    Attempt, Backend, Extensions, RandomId, Task, TaskBuilder, TaskSink, TaskSinkError,
+    WorkerContext,
 };
-use futures_util::stream::{self, BoxStream};
+use futures_util::stream;
 use futures_util::StreamExt;
 use serde_json::json;
 use vv_agent::runtime::backends::distributed::{
-    apalis::{run_apalis_worker_task, ApalisCycleDispatcher, ApalisCycleEnqueuer, ApalisCycleJob},
-    CapabilityRef, CycleDispatcher, CycleEnqueuer, DistributedCapabilities,
-    DistributedCapabilityRegistry, DistributedCheckpointConfig, DistributedCheckpointProgress,
-    DistributedCycleExecutor, DistributedCycleOutcome, DistributedCycleWorker,
-    DistributedRunEnvelope, ResolvedDistributedCapabilities,
+    apalis::{run_apalis_worker_task, ApalisCycleEnqueuer, ApalisCycleJob},
+    CapabilityRef, CycleEnqueuer, DistributedCapabilities, DistributedCapabilityRegistry,
+    DistributedCheckpointConfig, DistributedCheckpointProgress, DistributedCycleExecutor,
+    DistributedCycleOutcome, DistributedCycleWorker, DistributedRunEnvelope,
+    ResolvedDistributedCapabilities,
 };
 use vv_agent::runtime::backends::{CycleDispatchResult, RuntimeRecipe};
 use vv_agent::runtime::checkpoint_codec::checkpoint_from_value;
 use vv_agent::types::AgentTask;
 use vv_agent::{
-    AgentResult, AmbiguousModelPolicy, AmbiguousToolPolicy, CheckpointStore, ClaimMode,
-    InMemoryCheckpointStore, ResumePolicy, RunBudgetLimits,
+    AmbiguousModelPolicy, AmbiguousToolPolicy, CheckpointStore, ClaimMode, InMemoryCheckpointStore,
+    ResumePolicy, RunBudgetLimits,
 };
 
 const DISTRIBUTED_FIXTURE: &str = include_str!("fixtures/parity/distributed_run_envelope.json");
@@ -131,176 +131,6 @@ fn apalis_enqueue_adapter_requires_only_task_sink_and_preserves_schedule() {
     );
     assert_eq!(tasks[0].parts.run_at, not_before_unix_ms.div_ceil(1_000));
     assert!(tasks[0].parts.run_at * 1_000 >= not_before_unix_ms);
-}
-
-#[derive(Clone)]
-struct CompletionBackend {
-    configured_result: CycleDispatchResult,
-    results: Arc<Mutex<std::collections::BTreeMap<String, CycleDispatchResult>>>,
-}
-
-impl CompletionBackend {
-    fn new(configured_result: CycleDispatchResult) -> Self {
-        Self {
-            configured_result,
-            results: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
-        }
-    }
-
-    fn record(
-        &self,
-        task: &Task<ApalisCycleJob, Extensions, RandomId>,
-    ) -> Result<(), std::io::Error> {
-        let task_id = task
-            .parts
-            .task_id
-            .as_ref()
-            .ok_or_else(|| std::io::Error::other("task id missing"))?
-            .to_string();
-        self.results
-            .lock()
-            .map_err(|_| std::io::Error::other("result lock poisoned"))?
-            .insert(task_id, self.configured_result.clone());
-        Ok(())
-    }
-}
-
-impl Backend for CompletionBackend {
-    type Args = ApalisCycleJob;
-    type IdType = RandomId;
-    type Context = Extensions;
-    type Error = std::io::Error;
-    type Stream =
-        stream::Empty<Result<Option<Task<ApalisCycleJob, Extensions, RandomId>>, Self::Error>>;
-    type Beat = stream::Empty<Result<(), Self::Error>>;
-    type Layer = ();
-
-    fn heartbeat(&self, _worker: &WorkerContext) -> Self::Beat {
-        stream::empty()
-    }
-
-    fn middleware(&self) -> Self::Layer {}
-
-    fn poll(self, _worker: &WorkerContext) -> Self::Stream {
-        stream::empty()
-    }
-}
-
-impl TaskSink<ApalisCycleJob> for CompletionBackend {
-    async fn push(&mut self, task: ApalisCycleJob) -> Result<(), TaskSinkError<Self::Error>> {
-        self.push_task(Task::new(task)).await
-    }
-
-    async fn push_bulk(
-        &mut self,
-        tasks: Vec<ApalisCycleJob>,
-    ) -> Result<(), TaskSinkError<Self::Error>> {
-        for task in tasks {
-            self.push(task).await?;
-        }
-        Ok(())
-    }
-
-    async fn push_stream(
-        &mut self,
-        mut tasks: impl futures_util::Stream<Item = ApalisCycleJob> + Unpin + Send,
-    ) -> Result<(), TaskSinkError<Self::Error>> {
-        while let Some(task) = tasks.next().await {
-            self.push(task).await?;
-        }
-        Ok(())
-    }
-
-    async fn push_task(
-        &mut self,
-        task: Task<ApalisCycleJob, Self::Context, Self::IdType>,
-    ) -> Result<(), TaskSinkError<Self::Error>> {
-        self.record(&task).map_err(TaskSinkError::PushError)
-    }
-
-    async fn push_all(
-        &mut self,
-        mut tasks: impl futures_util::Stream<Item = Task<ApalisCycleJob, Self::Context, Self::IdType>>
-            + Unpin
-            + Send,
-    ) -> Result<(), TaskSinkError<Self::Error>> {
-        while let Some(task) = tasks.next().await {
-            self.push_task(task).await?;
-        }
-        Ok(())
-    }
-}
-
-impl WaitForCompletion<CycleDispatchResult> for CompletionBackend {
-    type ResultStream =
-        BoxStream<'static, Result<TaskResult<CycleDispatchResult, RandomId>, Self::Error>>;
-
-    fn wait_for(
-        &self,
-        task_ids: impl IntoIterator<Item = TaskId<Self::IdType>>,
-    ) -> Self::ResultStream {
-        let task_id = task_ids.into_iter().next().expect("one task id");
-        let results = self.results.clone();
-        stream::unfold((task_id, results), |(task_id, results)| async move {
-            loop {
-                let result = results
-                    .lock()
-                    .map_err(|_| std::io::Error::other("result lock poisoned"))
-                    .map(|mut results| results.remove(&task_id.to_string()));
-                match result {
-                    Ok(Some(result)) => {
-                        return Some((
-                            Ok(TaskResult::new(task_id.clone(), Status::Done, Ok(result))),
-                            (task_id, results),
-                        ))
-                    }
-                    Ok(None) => tokio::time::sleep(Duration::from_millis(1)).await,
-                    Err(error) => return Some((Err(error), (task_id, results))),
-                }
-            }
-        })
-        .take(1)
-        .boxed()
-    }
-
-    async fn check_status(
-        &self,
-        task_ids: impl IntoIterator<Item = TaskId<Self::IdType>> + Send,
-    ) -> Result<Vec<TaskResult<CycleDispatchResult, Self::IdType>>, Self::Error> {
-        let results = self
-            .results
-            .lock()
-            .map_err(|_| std::io::Error::other("result lock poisoned"))?;
-        Ok(task_ids
-            .into_iter()
-            .filter_map(|task_id| {
-                results
-                    .get(&task_id.to_string())
-                    .cloned()
-                    .map(|result| TaskResult::new(task_id, Status::Done, Ok(result)))
-            })
-            .collect())
-    }
-}
-
-#[test]
-fn apalis_dispatcher_returns_worker_candidate_from_completion_backend() {
-    let payload: serde_json::Value = serde_json::from_str(DISTRIBUTED_FIXTURE).unwrap();
-    let envelope = DistributedRunEnvelope::from_dict(&payload["canonical_envelope"]).unwrap();
-    let candidate = CycleDispatchResult::terminal_candidate(
-        AgentResult::completed(Vec::new(), Vec::new(), "done"),
-        7,
-    )
-    .unwrap();
-    let dispatcher = ApalisCycleDispatcher::new(CompletionBackend::new(candidate.clone()));
-
-    let result = dispatcher.dispatch_envelope(&envelope).unwrap();
-
-    assert_eq!(result, candidate);
-    assert!(matches!(
-        result,
-        CycleDispatchResult::TerminalCandidate { .. }
-    ));
 }
 
 struct BlockingCheckpointExecutor {

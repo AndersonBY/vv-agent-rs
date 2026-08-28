@@ -15,8 +15,11 @@ pub trait RunEventStore: Send + Sync {
         _event_id: &str,
         _payload_digest: &str,
         _event: &RunEvent,
-    ) -> Result<Option<EventCursor>, EventStoreError> {
-        Ok(None)
+    ) -> Result<EventCursor, EventStoreError> {
+        Err(EventStoreError::new(
+            "event_store_append_once_unsupported",
+            "the configured event store does not provide durable append-once semantics",
+        ))
     }
 }
 

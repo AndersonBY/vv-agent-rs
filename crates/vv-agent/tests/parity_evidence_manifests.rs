@@ -35,10 +35,11 @@ const EXPECTED_DOMAINS: [&str; 14] = [
     "llm_bridge",
     "runtime_backend",
 ];
-const EXPECTED_RUNNER_OPERATIONS: [&str; 7] = [
+const EXPECTED_RUNNER_OPERATIONS: [&str; 8] = [
     "run",
     "start",
     "start_distributed",
+    "start_distributed_compiled",
     "finalize_distributed",
     "stream",
     "resume",

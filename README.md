@@ -8,24 +8,28 @@ for model-driven automation.
 
 ## Install
 
-The current crate version is `0.11.0`. Repository `HEAD` locks language-neutral
-Contract `7.0.1` while keeping a Rust-idiomatic API. The current cross-repository
+The current crate version is `0.12.0`. Repository `HEAD` locks language-neutral
+Contract `8.1.0` while keeping a Rust-idiomatic API. The current cross-repository
 adoption state and verified revisions live in the central support matrix.
 
 ```bash
-cargo add vv-agent@0.11.0
+cargo add vv-agent@0.12.0
 ```
 
 Enable the Apalis adapter with:
 
 ```bash
-cargo add vv-agent@0.11.0 --features apalis
+cargo add vv-agent@0.12.0 --features apalis
 ```
 
 Repository `HEAD` is forward-only: current readers accept only the current
 strict public and wire shapes.
 
-### 0.11.0 Highlights
+### 0.12.0 Highlights
+
+- Distributed runs can start from an already-compiled `AgentTask` without
+  rebuilding its prepared prompt, runtime fields, or compile-time producers;
+  the API remains enqueue-only and returns a passive handle.
 
 - Every admitted model dispatch is recorded in
   `result.token_usage().model_calls`, including agent cycles, Session Memory,
@@ -53,7 +57,7 @@ strict public and wire shapes.
   tools default to archive retention; replacement requires a complete immutable
   artifact and a model-visible `read_file` recovery path. Compact markers expose
   only a bounded excerpt and logical recovery path.
-- Durable execution uses `vv-agent.checkpoint.v7`,
+- Durable execution uses `vv-agent.checkpoint.v8`,
   `vv-agent.run-definition.v5`, `vv-agent.distributed-run.v5`, and
   `vv-agent.distributed-worker-response.v3` for strict recovery and
   distributed-controller boundaries. `RunEvent` uses wire version `v4`, and
@@ -472,8 +476,9 @@ once to enqueue, defer, wait, request terminal finalization, or replay the
 durable terminal. `ApalisCycleEnqueuer` is enqueue-only and does not require a
 result backend. `Runner::start_distributed` performs framework preparation,
 and a separate bounded `Runner::finalize_distributed` consumes
-`FinalizeRequired` through the normal terminal pipeline. The existing blocking
-dispatcher remains available.
+`FinalizeRequired` through the normal terminal pipeline. The separate blocking
+`DistributedBackend::execute` helper is a local synchronous API; the Apalis
+bridge does not expose a blocking result-wait dispatcher.
 
 The distributed API also has an inline fallback, which is useful for local
 development and tests. See `crates/vv-agent/examples/23_distributed_backend.rs`.

@@ -17,6 +17,28 @@ pub enum RunEventPayload {
     RunStateChanged {
         state: String,
     },
+    HostInteractionRequested {
+        checkpoint_key: String,
+        resume_attempt: u64,
+        interaction_id: String,
+        logical_cycle: u64,
+        operation_id: String,
+        tool_call_id: String,
+        request_digest: String,
+        prompt: String,
+    },
+    HostInteractionResponseConsumed {
+        checkpoint_key: String,
+        resume_attempt: u64,
+        interaction_id: String,
+        logical_cycle: u64,
+        operation_id: String,
+        tool_call_id: String,
+        request_digest: String,
+        command_id: String,
+        response_digest: String,
+        consumed_revision: u64,
+    },
     AgentStarted,
     CycleStarted,
     ModelCallStarted {

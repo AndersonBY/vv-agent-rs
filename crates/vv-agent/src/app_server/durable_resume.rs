@@ -90,6 +90,8 @@ impl DurableTurnResumeOutcome {
                     checkpoint.status,
                     CheckpointSummaryStatus::Pending
                         | CheckpointSummaryStatus::Running
+                        | CheckpointSummaryStatus::HostInteraction
+                        | CheckpointSummaryStatus::Suspended
                         | CheckpointSummaryStatus::Deferred
                         | CheckpointSummaryStatus::ReconciliationRequired
                 ) {
@@ -240,9 +242,10 @@ fn validate_projection(
     let expected_status = match checkpoint.status {
         CheckpointSummaryStatus::Completed => TurnStatus::Completed,
         CheckpointSummaryStatus::Failed | CheckpointSummaryStatus::MaxCycles => TurnStatus::Failed,
-        CheckpointSummaryStatus::WaitUser | CheckpointSummaryStatus::ReconciliationRequired => {
-            TurnStatus::Interrupted
-        }
+        CheckpointSummaryStatus::WaitUser
+        | CheckpointSummaryStatus::ReconciliationRequired
+        | CheckpointSummaryStatus::HostInteraction
+        | CheckpointSummaryStatus::Suspended => TurnStatus::Interrupted,
         CheckpointSummaryStatus::Deferred => TurnStatus::Interrupted,
         CheckpointSummaryStatus::Pending | CheckpointSummaryStatus::Running => {
             return Err(invalid_bridge(
@@ -266,6 +269,24 @@ fn validate_projection(
             return Err(invalid_bridge(
                 "deferred checkpoint must not include reconciliation interruption details",
             ));
+        }
+    } else if matches!(
+        checkpoint.status,
+        CheckpointSummaryStatus::HostInteraction | CheckpointSummaryStatus::Suspended
+    ) {
+        let expected_wait = if checkpoint.status == CheckpointSummaryStatus::HostInteraction {
+            "host_interaction"
+        } else {
+            "suspended"
+        };
+        if completion_reason.is_some() || error.is_some() || wait_reason != Some(expected_wait) {
+            return Err(invalid_bridge(format!(
+                "{} checkpoint requires its wait reason and no completion or error",
+                expected_wait
+            )));
+        }
+        if interruption.is_some() {
+            return Err(invalid_bridge("host interaction/suspended checkpoint must not include reconciliation interruption details"));
         }
     } else if reconciliation {
         if completion_reason.is_some() || error.is_some() {
