@@ -7,7 +7,7 @@ pub(super) fn distributed_compiled_initial_messages(
 ) -> Option<(AgentTask, Vec<crate::types::Message>)> {
     operation.and_then(|operation| match operation {
         DistributedRunnerOperation::StartCompiled(task) => {
-            Some((task.clone(), task.initial_messages.clone()))
+            Some((task.as_ref().clone(), task.initial_messages.clone()))
         }
         _ => None,
     })

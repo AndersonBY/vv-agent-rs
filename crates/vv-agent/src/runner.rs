@@ -114,7 +114,7 @@ pub(super) struct CheckpointAdmission {
 
 enum DistributedRunnerOperation {
     Start,
-    StartCompiled(AgentTask),
+    StartCompiled(Box<AgentTask>),
     Finalize(Box<DistributedAdvanceDecision>),
 }
 

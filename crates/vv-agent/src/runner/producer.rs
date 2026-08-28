@@ -78,7 +78,9 @@ impl Runner {
                 None,
                 None,
                 None,
-                Some(super::DistributedRunnerOperation::StartCompiled(task)),
+                Some(super::DistributedRunnerOperation::StartCompiled(Box::new(
+                    task,
+                ))),
             )? {
                 super::SingleRunExecutionOutcome::DistributedStarted(handle) => Ok(handle),
                 super::SingleRunExecutionOutcome::Completed(_) => {
