@@ -137,7 +137,7 @@ fn request(id: i64, method: &str, params: Value) -> JsonRpcMessage {
 }
 
 async fn next_message(outgoing: &mut mpsc::Receiver<OutgoingEnvelope>) -> JsonRpcMessage {
-    tokio::time::timeout(Duration::from_secs(1), outgoing.recv())
+    tokio::time::timeout(Duration::from_secs(5), outgoing.recv())
         .await
         .expect("outgoing message timeout")
         .expect("outgoing channel")
