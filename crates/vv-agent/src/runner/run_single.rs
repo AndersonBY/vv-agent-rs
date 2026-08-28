@@ -1,5 +1,6 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
+use super::run_single_entry::distributed_compiled_initial_messages;
 use super::*;
 use crate::memory::MicrocompactionPolicy;
 
@@ -327,15 +328,9 @@ impl Runner {
             let initial_messages =
                 frozen_definition_messages(checkpoint).map_err(|error| error.to_string())?;
             (task, initial_messages)
-        } else if let Some(task) =
-            distributed_operation
-                .as_ref()
-                .and_then(|operation| match operation {
-                    DistributedRunnerOperation::StartCompiled(task) => Some(task.clone()),
-                    _ => None,
-                })
+        } else if let Some((task, initial_messages)) =
+            distributed_compiled_initial_messages(distributed_operation.as_ref())
         {
-            let initial_messages = task.initial_messages.clone();
             (task, initial_messages)
         } else {
             let prompt_bundle = self.build_instructions_with_context(InstructionBuildRequest {

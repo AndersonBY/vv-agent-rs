@@ -2,6 +2,17 @@
 
 use super::*;
 
+pub(super) fn distributed_compiled_initial_messages(
+    operation: Option<&DistributedRunnerOperation>,
+) -> Option<(AgentTask, Vec<crate::types::Message>)> {
+    operation.and_then(|operation| match operation {
+        DistributedRunnerOperation::StartCompiled(task) => {
+            Some((task.clone(), task.initial_messages.clone()))
+        }
+        _ => None,
+    })
+}
+
 impl Runner {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn run_single_agent(
