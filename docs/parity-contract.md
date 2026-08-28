@@ -18,9 +18,9 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock selects contract `8.0.1` at revision
-`24c5b365f03d211d552df998c1f30a0f7cbf4f0f`, release artifact SHA-256
-`8bbf4eca2a57c1c5e99c7f11f3dda8c7000a4af7125e633458106c2fa0c08a53`.
+The current lock selects contract `8.1.0` at revision
+`eb67dc6a3a7933ff413c0cd7a3594727e971a5d1`, release artifact SHA-256
+`9bf75cec30d04cda987beff4ae021cce62ec4624ba7547cd9440678869ee541f`.
 The current adoption state is not duplicated in this document. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
 as the machine-readable source for the current verified Python and Rust
@@ -100,7 +100,7 @@ A fixture parser or private helper test cannot replace a real public producer
 test. A field that is declared but ignored by a planner, executor, provider, or
 store remains a contract failure.
 
-## Contract 8.0.1 Boundaries
+## Contract 8.1.0 Boundaries
 
 ### Prompt Bundle And Provider Projection
 
@@ -236,6 +236,13 @@ normal guardrail, validation, append-once session, outbox, claim-bound or
 revision-bound CAS, delivery, and acknowledgement path. Duplicate finalizer
 delivery returns the retained terminal. Durable cross-process approval
 continuation is not implemented by this Rust slice.
+
+`Runner::start_distributed_compiled` accepts an already-compiled `AgentTask`,
+preserves its prepared prompt bundle, runtime fields, initial messages, and
+metadata in the first distributed envelope, and does not invoke compile-time
+instruction or context producers again. It returns the same passive handle as
+`start_distributed`; the existing distributed envelope and worker response wire
+shapes remain unchanged.
 
 ## Durable Deferred Tools
 

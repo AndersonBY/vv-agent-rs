@@ -1,18 +1,35 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vv_agent::runtime::backends::distributed::CycleEnqueuer;
 use vv_agent::{
     Agent, AgentStatus, AgentTask, CapabilityRef, CheckpointConfig, CheckpointStore, ClaimMode,
-    DistributedAdvanceDecision, DistributedBackend, DistributedCapabilities,
-    DistributedCapabilityRegistry, DistributedCycleWorker, DistributedDeliveryOutcome,
-    DistributedRunEnvelope, ExecutionMode, InMemoryCheckpointStore, LLMResponse, MemorySession,
-    ModelRef, NoToolPolicy, PromptBundle, ResumePolicy, RunConfig, Runner, RuntimeRecipe,
-    ScriptedLlmClient, ScriptedModelProvider, Session,
+    ContextError, ContextFragment, ContextProvider, ContextRequest, DistributedAdvanceDecision,
+    DistributedBackend, DistributedCapabilities, DistributedCapabilityRegistry,
+    DistributedCycleWorker, DistributedDeliveryOutcome, DistributedRunEnvelope, ExecutionMode,
+    InMemoryCheckpointStore, LLMResponse, MemorySession, ModelRef, NoToolPolicy, PromptBundle,
+    ResumePolicy, RunConfig, Runner, RuntimeRecipe, ScriptedLlmClient, ScriptedModelProvider,
+    Session,
 };
 
 #[derive(Default)]
 struct RecordingEnqueuer {
     envelopes: Mutex<Vec<DistributedRunEnvelope>>,
+}
+
+#[derive(Clone, Default)]
+struct CountingContextProvider {
+    calls: Arc<AtomicUsize>,
+}
+
+impl ContextProvider for CountingContextProvider {
+    fn fragments(
+        &self,
+        _request: &ContextRequest<'_>,
+    ) -> Result<Vec<ContextFragment>, ContextError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Vec::new())
+    }
 }
 
 impl RecordingEnqueuer {
@@ -188,7 +205,22 @@ async fn runner_starts_passively_and_finalizes_claimed_candidate_once() {
 
 #[tokio::test]
 async fn runner_starts_distributed_from_compiled_task_without_rebuilding_it() {
-    let fixture = distributed_fixture("runner-distributed-compiled", 2);
+    let mut fixture = distributed_fixture("runner-distributed-compiled", 2);
+    let context_provider = CountingContextProvider::default();
+    fixture
+        .config
+        .context_providers
+        .push(Arc::new(context_provider.clone()));
+    fixture
+        .config
+        .checkpoint_config
+        .as_mut()
+        .expect("checkpoint config")
+        .capability_refs
+        .insert(
+            "context_provider:0".to_string(),
+            CapabilityRef::new("context.runner-driver", "1").expect("context provider ref"),
+        );
     let mut task = AgentTask::new(
         "runner-distributed-compiled",
         "driver-model",
@@ -228,6 +260,7 @@ async fn runner_starts_distributed_from_compiled_task_without_rebuilding_it() {
         envelope.task.metadata.get("compiled_marker"),
         Some(&serde_json::Value::String("preserved".to_string()))
     );
+    assert_eq!(context_provider.calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

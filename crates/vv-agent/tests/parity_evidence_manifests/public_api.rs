@@ -144,6 +144,15 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 };
                 let _ = reference;
             }
+            "start_distributed_compiled" => {
+                let reference = |value: &vv_agent::Runner,
+                                 agent: &vv_agent::Agent,
+                                 task: vv_agent::AgentTask,
+                                 config: vv_agent::RunConfig| {
+                    std::mem::drop(value.start_distributed_compiled(agent, task, config));
+                };
+                let _ = reference;
+            }
             "finalize_distributed" => {
                 let reference = |value: &vv_agent::Runner,
                                  agent: &vv_agent::Agent,

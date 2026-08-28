@@ -18,9 +18,20 @@ jobs:
   publish:
     name: Publish vv-agent to crates.io
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6399:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     environment: crates-io
     env:
       VV_AGENT_RUN_LIVE_TESTS: "0"
+      VV_AGENT_TEST_REDIS_URL: redis://127.0.0.1:6399/15
       CARGO_BUILD_JOBS: "1"
 
     steps:

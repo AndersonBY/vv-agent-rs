@@ -8,24 +8,28 @@ for model-driven automation.
 
 ## Install
 
-The current crate version is `0.11.0`. Repository `HEAD` locks language-neutral
-Contract `8.0.1` while keeping a Rust-idiomatic API. The current cross-repository
+The current crate version is `0.12.0`. Repository `HEAD` locks language-neutral
+Contract `8.1.0` while keeping a Rust-idiomatic API. The current cross-repository
 adoption state and verified revisions live in the central support matrix.
 
 ```bash
-cargo add vv-agent@0.11.0
+cargo add vv-agent@0.12.0
 ```
 
 Enable the Apalis adapter with:
 
 ```bash
-cargo add vv-agent@0.11.0 --features apalis
+cargo add vv-agent@0.12.0 --features apalis
 ```
 
 Repository `HEAD` is forward-only: current readers accept only the current
 strict public and wire shapes.
 
-### 0.11.0 Highlights
+### 0.12.0 Highlights
+
+- Distributed runs can start from an already-compiled `AgentTask` without
+  rebuilding its prepared prompt, runtime fields, or compile-time producers;
+  the API remains enqueue-only and returns a passive handle.
 
 - Every admitted model dispatch is recorded in
   `result.token_usage().model_calls`, including agent cycles, Session Memory,
