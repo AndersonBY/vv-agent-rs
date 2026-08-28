@@ -1,6 +1,8 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use super::run_single_entry::distributed_compiled_initial_messages;
+use super::run_single_entry::{
+    distributed_checkpoint_options, distributed_compiled_initial_messages, result_terminal_flags,
+};
 use super::*;
 use crate::memory::MicrocompactionPolicy;
 
@@ -671,14 +673,11 @@ impl Runner {
             .clone()
             .or_else(|| self.default_run_config.workspace_backend.clone());
 
-        let distributed_terminal_decision = match &distributed_operation {
-            Some(DistributedRunnerOperation::Finalize(decision)) => Some(decision.as_ref()),
-            _ => None,
-        };
-        let distributed_lease_duration_ms = match &runtime.execution_backend {
-            RuntimeExecutionBackend::Distributed(backend) => Some(backend.lease_duration_ms()),
-            _ => None,
-        };
+        let (distributed_terminal_decision, distributed_lease_duration_ms) =
+            distributed_checkpoint_options(
+                distributed_operation.as_ref(),
+                &runtime.execution_backend,
+            );
         let CheckpointRuntimeState {
             controller: checkpoint_controller,
             mut terminal_replayed,
@@ -797,11 +796,7 @@ impl Runner {
         }
         result =
             prepare_checkpoint_terminal(checkpoint_controller.as_ref(), terminal_replayed, result)?;
-        let reconciliation_required = result.status == AgentStatus::ReconciliationRequired;
-        let operator_abort = result.status == AgentStatus::Failed
-            && (result.error_code.as_deref() == Some("operator_abort_with_unknown_outcome")
-                || result.error.as_deref() == Some("operator_abort_with_unknown_outcome"))
-            && result.resume_observation.is_some();
+        let (reconciliation_required, operator_abort, deferred) = result_terminal_flags(&result);
         if !terminal_replayed && !reconciliation_required && !operator_abort {
             result = apply_output_guardrails(agent, &run_context, result);
             result = apply_cancellation_precedence(result, cancellation_token.as_ref());
@@ -914,7 +909,6 @@ impl Runner {
                 }
             }
         }
-        let deferred = matches!(result.status, AgentStatus::Deferred);
         if !terminal_replayed && !reconciliation_required && !deferred {
             let event = terminal_event(
                 &result,
