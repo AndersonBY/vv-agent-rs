@@ -2,8 +2,9 @@ use super::*;
 
 #[test]
 fn redis_store_admits_and_recovers_with_durable_replay() {
-    let redis_url = std::env::var("VV_AGENT_TEST_REDIS_URL")
-        .unwrap_or_else(|_| "redis://127.0.0.1:6399/15".to_string());
+    let Ok(redis_url) = std::env::var("VV_AGENT_TEST_REDIS_URL") else {
+        return;
+    };
     let store = RedisCheckpointStore::new(&redis_url).expect("redis");
     let keep_fixture = std::env::var_os("VV_AGENT_KEEP_REDIS_FIXTURE").is_some();
     for checkpoint_key in store
