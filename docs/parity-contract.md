@@ -19,7 +19,7 @@ committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
 The current lock selects contract `8.1.0` at revision
-`eb67dc6a3a7933ff413c0cd7a3594727e971a5d1`, release artifact SHA-256
+`90b9b40ef91538b03b925a9f64eff69b6d73305a`, release artifact SHA-256
 `9bf75cec30d04cda987beff4ae021cce62ec4624ba7547cd9440678869ee541f`.
 The current adoption state is not duplicated in this document. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
