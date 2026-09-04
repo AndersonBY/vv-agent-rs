@@ -2,6 +2,26 @@
 
 use super::*;
 
+enum LeaseRenewalAttemptFailure {
+    Store(String),
+    Lease(LeaseRenewalFailure),
+}
+
+impl From<LeaseRenewalFailure> for LeaseRenewalAttemptFailure {
+    fn from(failure: LeaseRenewalFailure) -> Self {
+        Self::Lease(failure)
+    }
+}
+
+impl LeaseRenewalAttemptFailure {
+    fn message(self) -> String {
+        match self {
+            Self::Store(error) => error,
+            Self::Lease(failure) => failure.message,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_with_checkpoint_lease<T>(
     store: Arc<dyn CheckpointStore>,
@@ -13,7 +33,6 @@ pub(super) fn run_with_checkpoint_lease<T>(
     operation: impl FnOnce(&LeaseHeartbeatStatus) -> LeaseOperationResult<T>,
 ) -> Result<T, String> {
     let stopped = Arc::new((Mutex::new(false), Condvar::new()));
-    let heartbeat_status = LeaseHeartbeatStatus::new();
     let checkpoint_key = checkpoint_key.to_string();
     let claim_token = claim_token.to_string();
     let initial_checkpoint = load_checkpoint(store.as_ref(), &checkpoint_key)?;
@@ -33,7 +52,8 @@ pub(super) fn run_with_checkpoint_lease<T>(
         deadline_unix_ms,
         known_expiry,
     )
-    .map_err(|failure| format!("checkpoint lease heartbeat failed: {}", failure.message))?;
+    .map_err(|failure| format!("checkpoint lease heartbeat failed: {}", failure.message()))?;
+    let heartbeat_status = LeaseHeartbeatStatus::new(initial.lease_expires_at_ms);
 
     let result = std::thread::scope(|scope| {
         let stopped_for_thread = stopped.clone();
@@ -66,10 +86,21 @@ pub(super) fn run_with_checkpoint_lease<T>(
                     known_expiry,
                 ) {
                     Ok(renewal) => {
+                        status_for_thread.update_lease_expiry(renewal.lease_expires_at_ms);
                         known_expiry = renewal.lease_expires_at_ms;
                         interval = lease_heartbeat_interval(renewal.effective_lease_ms);
                     }
-                    Err(failure) => {
+                    Err(LeaseRenewalAttemptFailure::Store(_)) => {
+                        match now_unix_ms() {
+                            Ok(now) if now < known_expiry => continue,
+                            Ok(_) => status_for_thread
+                                .record(LeaseRenewalFailure::claim_lease_expired(), phase),
+                            Err(error) => status_for_thread
+                                .record(LeaseRenewalFailure::coordination(error), phase),
+                        }
+                        break;
+                    }
+                    Err(LeaseRenewalAttemptFailure::Lease(failure)) => {
                         status_for_thread.record(failure, phase);
                         break;
                     }
@@ -102,37 +133,42 @@ pub(super) fn run_with_checkpoint_lease<T>(
     Ok(result.value)
 }
 
-pub(super) fn renew_checkpoint_lease(
+fn renew_checkpoint_lease(
     store: &dyn CheckpointStore,
     checkpoint_key: &str,
     claim_token: &str,
     lease_duration_ms: u64,
     deadline_unix_ms: Option<u64>,
     known_expiry: u64,
-) -> Result<LeaseRenewal, LeaseRenewalFailure> {
+) -> Result<LeaseRenewal, LeaseRenewalAttemptFailure> {
     let now_ms = now_unix_ms().map_err(LeaseRenewalFailure::coordination)?;
+    if now_ms >= known_expiry {
+        return Err(LeaseRenewalFailure::claim_lease_expired().into());
+    }
     if deadline_unix_ms.is_some_and(|deadline| deadline <= now_ms) {
         return Err(LeaseRenewalFailure::coordination(format!(
             "distributed job deadline expired while renewing {checkpoint_key}"
-        )));
+        ))
+        .into());
     }
     let lease_expires_at_ms = lease_expiry_at(now_ms, lease_duration_ms, deadline_unix_ms)
         .map_err(LeaseRenewalFailure::coordination)?;
     let renewed = store
         .renew_checkpoint_claim(checkpoint_key, claim_token, lease_expires_at_ms, now_ms)
-        .map_err(|error| LeaseRenewalFailure::coordination(error.to_string()))?;
+        .map_err(|error| LeaseRenewalAttemptFailure::Store(error.to_string()))?;
     let observed_at_ms = now_unix_ms().map_err(LeaseRenewalFailure::coordination)?;
     if !renewed {
         return Err(
-            if observed_at_ms >= known_expiry || observed_at_ms >= lease_expires_at_ms {
+            (if observed_at_ms >= known_expiry || observed_at_ms >= lease_expires_at_ms {
                 LeaseRenewalFailure::claim_lease_expired()
             } else {
                 LeaseRenewalFailure::active_claim_lost()
-            },
+            })
+            .into(),
         );
     }
     if observed_at_ms >= known_expiry || observed_at_ms >= lease_expires_at_ms {
-        return Err(LeaseRenewalFailure::claim_lease_expired());
+        return Err(LeaseRenewalFailure::claim_lease_expired().into());
     }
     Ok(LeaseRenewal {
         lease_expires_at_ms,

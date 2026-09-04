@@ -453,6 +453,16 @@ impl CheckpointCoordinator {
         // Ordinary batches retain their existing per-tool journal path. This
         // keeps approval/short-circuit semantics unchanged when no deferred
         // outcome is present.
+        if self.controller.is_some() {
+            for entry in entries {
+                let Some(result) = entry.outcome.result() else {
+                    continue;
+                };
+                if let Err(error) = crate::checkpoint::validate_definitive_result(result) {
+                    return Some(self.failure(error, messages, cycles, shared_state));
+                }
+            }
+        }
         for entry in entries {
             let Some(controller) = self.controller.as_ref() else {
                 break;

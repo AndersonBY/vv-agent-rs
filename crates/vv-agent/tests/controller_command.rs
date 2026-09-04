@@ -714,8 +714,9 @@ fn sqlite_store_retains_host_record_and_recovery_across_reopen() {
 #[test]
 #[ignore = "requires a Python-seeded Redis v8 fixture and is run as an explicit cross-language probe"]
 fn redis_reads_python_seeded_host_receipt_and_notification_rows() {
-    let redis_url = std::env::var("VV_AGENT_TEST_REDIS_URL")
-        .unwrap_or_else(|_| "redis://127.0.0.1:6399/15".to_string());
+    let Ok(redis_url) = std::env::var("VV_AGENT_TEST_REDIS_URL") else {
+        return;
+    };
     let checkpoint_key = std::env::var("VV_AGENT_CROSS_REDIS_CHECKPOINT_KEY")
         .expect("VV_AGENT_CROSS_REDIS_CHECKPOINT_KEY");
     let interaction_id = std::env::var("VV_AGENT_CROSS_REDIS_INTERACTION_ID")

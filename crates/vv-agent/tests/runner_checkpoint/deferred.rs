@@ -376,3 +376,272 @@ async fn deferred_outbox_preflight_rejects_before_provider_effect() {
         "preflight rejection must not recreate the checkpoint or outbox"
     );
 }
+
+#[tokio::test]
+async fn started_ambiguous_tool_emits_only_reconciliation_lifecycle() {
+    let store = InMemoryCheckpointStore::new();
+    let ambiguous_tool = StaticTool::new(
+        "remote_write",
+        "Perform a remote write.",
+        json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false,
+        }),
+        Arc::new(|context, _arguments| {
+            ToolExecutionResult::error(context.tool_call_id.clone(), "outcome is unknown")
+                .with_error_code("tool_execution_failed")
+        }),
+    );
+    let runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "ambiguous-tool-model",
+            vec![LLMResponse::with_tool_calls(
+                "perform the remote write",
+                vec![ToolCall::new(
+                    "call-ambiguous",
+                    "remote_write",
+                    BTreeMap::new(),
+                )],
+            )],
+        ))
+        .workspace(".")
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("ambiguous-tool-agent")
+        .instructions("Perform the remote write.")
+        .model(ModelRef::named("ambiguous-tool-model"))
+        .tool(ambiguous_tool)
+        .build()
+        .expect("agent");
+
+    let result = runner
+        .run_with_config(
+            &agent,
+            "perform the write",
+            RunConfig::builder()
+                .max_cycles(1)
+                .no_tool_policy(NoToolPolicy::Finish)
+                .checkpoint_config(checkpoint_config(store.clone(), "ambiguous-tool"))
+                .build(),
+        )
+        .await
+        .expect("ambiguous run");
+
+    assert_eq!(result.status(), AgentStatus::ReconciliationRequired);
+    let events = result
+        .events()
+        .iter()
+        .map(|event| serde_json::to_value(event).expect("event wire"))
+        .collect::<Vec<_>>();
+    assert!(events.iter().any(|event| {
+        event["type"] == "operation_ambiguous" && event["operation_id"] == "op_tool_cycle_1_call_1"
+    }));
+    assert!(!events.iter().any(|event| {
+        event["type"] == "tool_call_completed" && event["tool_call_id"] == "call-ambiguous"
+    }));
+}
+
+#[tokio::test]
+async fn deferred_before_ambiguous_drops_the_staged_batch_fail_closed() {
+    let store = InMemoryCheckpointStore::new();
+    let deferred_runs = Arc::new(AtomicUsize::new(0));
+    let ambiguous_runs = Arc::new(AtomicUsize::new(0));
+    let deferred_runs_for_tool = deferred_runs.clone();
+    let ambiguous_runs_for_tool = ambiguous_runs.clone();
+    let schema = json!({
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false,
+    });
+    let deferred_tool = StaticTool::new(
+        "deferred_write",
+        "Start a deferred remote write.",
+        schema.clone(),
+        Arc::new(move |context, _arguments| {
+            deferred_runs_for_tool.fetch_add(1, Ordering::SeqCst);
+            let _ = context.defer();
+            ToolExecutionResult::success(context.tool_call_id.clone(), "deferred")
+        }),
+    );
+    let ambiguous_tool = StaticTool::new(
+        "ambiguous_write",
+        "Return an unknown remote-write outcome.",
+        schema,
+        Arc::new(move |context, _arguments| {
+            ambiguous_runs_for_tool.fetch_add(1, Ordering::SeqCst);
+            ToolExecutionResult::error(context.tool_call_id.clone(), "outcome is unknown")
+                .with_error_code("tool_execution_failed")
+        }),
+    );
+    let provider = ScriptedModelProvider::new(
+        "scripted",
+        "deferred-then-ambiguous-model",
+        vec![LLMResponse::with_tool_calls(
+            "start the deferred write, then perform the second write",
+            vec![
+                ToolCall::new("call-deferred", "deferred_write", BTreeMap::new()),
+                ToolCall::new("call-ambiguous", "ambiguous_write", BTreeMap::new()),
+            ],
+        )],
+    );
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(".")
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("deferred-then-ambiguous-agent")
+        .instructions("Start both remote writes.")
+        .model(ModelRef::named("deferred-then-ambiguous-model"))
+        .tool(deferred_tool)
+        .tool(ambiguous_tool)
+        .build()
+        .expect("agent");
+    let checkpoint_key = "deferred-then-ambiguous";
+    let result = runner
+        .run_with_config(
+            &agent,
+            "perform both writes",
+            RunConfig::builder()
+                .max_cycles(1)
+                .no_tool_policy(NoToolPolicy::Finish)
+                .checkpoint_config(checkpoint_config(store.clone(), checkpoint_key))
+                .build(),
+        )
+        .await
+        .expect("ambiguous run");
+
+    assert_eq!(result.status(), AgentStatus::ReconciliationRequired);
+    assert_eq!(deferred_runs.load(Ordering::SeqCst), 1);
+    assert_eq!(ambiguous_runs.load(Ordering::SeqCst), 1);
+
+    let checkpoint = store
+        .load_checkpoint(checkpoint_key)
+        .expect("load checkpoint")
+        .expect("checkpoint");
+    assert_eq!(checkpoint.status, CheckpointStatus::ReconciliationRequired);
+    assert!(checkpoint.claim_token.is_none());
+    assert!(checkpoint.claimed_cycle.is_none());
+    assert!(checkpoint.lease_expires_at_ms.is_none());
+    let journals = checkpoint
+        .tool_journal
+        .iter()
+        .map(|entry| (entry.tool_call_id.clone().expect("tool call id"), entry))
+        .collect::<BTreeMap<_, _>>();
+    let deferred = journals.get("call-deferred").expect("deferred journal");
+    assert_eq!(deferred.state, OperationState::Started);
+    assert!(deferred.deferred_handle.is_none());
+    assert!(deferred.result.is_none());
+    assert!(deferred.error.is_none());
+    let ambiguous = journals.get("call-ambiguous").expect("ambiguous journal");
+    assert_eq!(ambiguous.state, OperationState::Ambiguous);
+    assert!(ambiguous.deferred_handle.is_none());
+    assert!(ambiguous.result.is_none());
+    assert!(ambiguous.error.is_none());
+
+    let lifecycle_outbox = checkpoint
+        .event_outbox
+        .iter()
+        .filter(|entry| {
+            entry.event["type"] == "tool_call_deferred"
+                || entry.event["type"] == "tool_call_completed"
+        })
+        .collect::<Vec<_>>();
+    assert!(lifecycle_outbox.is_empty());
+    assert!(result.events().iter().all(|event| {
+        !matches!(
+            event.payload(),
+            RunEventPayload::ToolCallDeferred { .. } | RunEventPayload::ToolCallCompleted { .. }
+        )
+    }));
+    assert!(result
+        .events()
+        .iter()
+        .any(|event| { matches!(event.payload(), RunEventPayload::OperationAmbiguous { .. }) }));
+    assert!(result.events().iter().any(|event| {
+        matches!(
+            event.payload(),
+            RunEventPayload::ReconciliationRequired { .. }
+        )
+    }));
+}
+
+#[tokio::test]
+async fn completed_only_admission_rejects_invalid_success_error_code() {
+    let store = InMemoryCheckpointStore::new();
+    let tool = StaticTool::new(
+        "invalid_success",
+        "Return an invalid successful result.",
+        json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false,
+        }),
+        Arc::new(|context, _arguments| {
+            ToolExecutionResult::success(context.tool_call_id.clone(), "invalid")
+                .with_error_code("unexpected_success_error")
+        }),
+    );
+    let provider = ScriptedModelProvider::new(
+        "scripted",
+        "invalid-success-model",
+        vec![LLMResponse::with_tool_calls(
+            "return the invalid success",
+            vec![ToolCall::new(
+                "call-invalid-success",
+                "invalid_success",
+                BTreeMap::new(),
+            )],
+        )],
+    );
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(".")
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("invalid-success-agent")
+        .instructions("Run the tool.")
+        .model(ModelRef::named("invalid-success-model"))
+        .tool(tool)
+        .build()
+        .expect("agent");
+    let checkpoint_key = "invalid-success-admission";
+    let error = match runner
+        .run_with_config(
+            &agent,
+            "run the tool",
+            RunConfig::builder()
+                .max_cycles(1)
+                .no_tool_policy(NoToolPolicy::Finish)
+                .checkpoint_config(checkpoint_config(store.clone(), checkpoint_key))
+                .build(),
+        )
+        .await
+    {
+        Ok(_) => panic!("invalid success must fail checkpoint admission"),
+        Err(error) => error,
+    };
+    assert!(
+        error.contains("tool_result_invalid"),
+        "unexpected error: {error}"
+    );
+
+    let checkpoint = store
+        .load_checkpoint(checkpoint_key)
+        .expect("load checkpoint")
+        .expect("checkpoint");
+    let journal = checkpoint
+        .tool_journal
+        .iter()
+        .find(|entry| entry.tool_call_id.as_deref() == Some("call-invalid-success"))
+        .expect("invalid success journal");
+    assert_eq!(journal.state, OperationState::Started);
+    assert!(checkpoint
+        .event_outbox
+        .iter()
+        .all(|entry| entry.event["type"] != "tool_call_completed"));
+}

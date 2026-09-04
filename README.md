@@ -8,22 +8,40 @@ for model-driven automation.
 
 ## Install
 
-The current crate version is `0.12.0`. Repository `HEAD` locks language-neutral
-Contract `8.1.0` while keeping a Rust-idiomatic API. The current cross-repository
-adoption state and verified revisions live in the central support matrix.
+The current crate version is `0.12.1`. This release uses Contract `8.1.2` and
+exposes a Rust-idiomatic API.
 
 ```bash
-cargo add vv-agent@0.12.0
+cargo add vv-agent@0.12.1
 ```
 
 Enable the Apalis adapter with:
 
 ```bash
-cargo add vv-agent@0.12.0 --features apalis
+cargo add vv-agent@0.12.1 --features apalis
 ```
 
 Repository `HEAD` is forward-only: current readers accept only the current
 strict public and wire shapes.
+
+### 0.12.1 Highlights
+
+- Checkpoint lease heartbeats retry transient store failures, retain claim
+  ownership through commit, and keep terminal acknowledgement behind the
+  active-claim fence.
+- Durable model-call replay preserves operation identity across crash and retry
+  boundaries; max-cycle finalization remains explicit and fenced.
+- Deferred batches are admitted atomically. Timeout, cancellation,
+  connection-loss, execution-failure, and orchestrator-failure results without
+  `definitive_outcome=true` remain ambiguous; only definitive `SUCCESS` or
+  `ERROR` results resolve a deferred handle.
+- Distributed workers validate task and envelope capability state before claim.
+  Direct broker/provider approval references are rejected before side effects,
+  and checkpoint approval resume fails closed before approval consumption or
+  tool/session writes. Cross-process durable approval continuation is not
+  implemented.
+- Contract `8.1.2` defines strict checkpoint CAS, state-transition, and
+  fail-closed persistence boundaries.
 
 ### 0.12.0 Highlights
 

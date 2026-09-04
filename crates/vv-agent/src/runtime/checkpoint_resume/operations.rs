@@ -688,22 +688,7 @@ impl CheckpointResumeController {
             return Ok(None);
         }
 
-        let definitive = result
-            .metadata
-            .get("definitive_outcome")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let ambiguous_code = result.error_code.as_deref().is_some_and(|code| {
-            matches!(
-                code,
-                "tool_timeout"
-                    | "tool_cancelled"
-                    | "tool_connection_lost"
-                    | "tool_execution_failed"
-                    | "tool_orchestrator_error"
-            )
-        });
-        if ambiguous_code && !definitive {
+        if crate::checkpoint::is_ambiguous_tool_result(result) {
             let entry = self.find_tool_call_mut(cycle_index, &call.id)?;
             entry.state = OperationState::Ambiguous;
             entry.validate()?;

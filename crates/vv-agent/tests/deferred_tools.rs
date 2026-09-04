@@ -15,6 +15,9 @@ use vv_agent::{
 const CHECKPOINT_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec.json");
 const DEFERRED_FIXTURE: &str = include_str!("fixtures/parity/deferred_tool.json");
 
+#[path = "deferred_tools/ambiguity.rs"]
+mod ambiguity;
+
 fn minimal_checkpoint(key: &str) -> Checkpoint {
     let fixture: Value = serde_json::from_str(CHECKPOINT_FIXTURE).expect("checkpoint fixture");
     let mut payload = fixture["valid_cases"]
@@ -343,6 +346,72 @@ fn memory_store_returns_not_admitted_reconciliation_and_stale_decisions() {
         )
         .expect_err("unknown handle must be stale");
     assert_eq!(stale.code(), "deferred_resolution_stale");
+}
+
+#[test]
+fn memory_store_rejects_success_error_code_before_mixed_batch_write() {
+    for (index, error_code) in ["unexpected_success_error", "", "tool_execution_failed"]
+        .into_iter()
+        .enumerate()
+    {
+        let key = format!("success-error-code-{index}");
+        let deferred_digest = "a".repeat(64);
+        let completed_digest = "b".repeat(64);
+        let checkpoint = checkpoint_with_started_tools(
+            &key,
+            &[
+                ("op_deferred", "call_deferred", &deferred_digest),
+                ("op_completed", "call_completed", &completed_digest),
+            ],
+        );
+        let store = InMemoryCheckpointStore::new();
+        store
+            .create_checkpoint(checkpoint)
+            .expect("create checkpoint");
+        let claimed = store
+            .claim_checkpoint(&key, 1, "claim", 10_000, 1, ClaimMode::Continue)
+            .expect("claim checkpoint")
+            .expect("claimed checkpoint");
+        let before = store
+            .load_checkpoint(&key)
+            .expect("load before admission")
+            .expect("claimed checkpoint");
+        let handle = DeferredToolHandle::new(&key, "op_deferred", 1, deferred_digest)
+            .expect("deferred handle");
+        let invalid = ToolExecutionResult::success("call_completed", "must reject")
+            .with_error_code(error_code);
+        let error = store
+            .admit_deferred_batch(
+                &key,
+                claimed.revision,
+                "claim",
+                1,
+                &[
+                    batch_entry(
+                        "op_deferred",
+                        "call_deferred",
+                        &"a".repeat(64),
+                        ToolCallOutcome::deferred(handle),
+                    ),
+                    batch_entry(
+                        "op_completed",
+                        "call_completed",
+                        &completed_digest,
+                        ToolCallOutcome::completed(invalid),
+                    ),
+                ],
+            )
+            .expect_err("SUCCESS error_code must reject the complete batch");
+        assert_eq!(error.code(), "tool_result_invalid");
+        assert_eq!(
+            store
+                .load_checkpoint(&key)
+                .expect("load after admission")
+                .expect("checkpoint after admission"),
+            before,
+            "rejected mixed admission must not write a journal entry"
+        );
+    }
 }
 
 #[test]

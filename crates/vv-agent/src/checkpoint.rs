@@ -26,6 +26,7 @@ use canonical::{
     validate_capability_slot, validate_i_json, validate_pointer,
 };
 pub use controller::*;
+pub(crate) use deferred::is_ambiguous_tool_result;
 pub use deferred::*;
 
 pub const MAX_WIRE_INTEGER: u64 = (1_u64 << 53) - 1;
