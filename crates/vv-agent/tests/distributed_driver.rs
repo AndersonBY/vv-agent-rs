@@ -543,3 +543,32 @@ fn brokered_approval_is_rejected_before_first_enqueue() {
     assert!(error.contains("do not support brokered approval waits"));
     assert!(enqueuer.deliveries().is_empty());
 }
+
+#[test]
+fn direct_worker_rejects_brokered_approval_envelope_before_claim() {
+    let checkpoint = minimal_checkpoint("worker-approval");
+    let store = Arc::new(InMemoryCheckpointStore::new());
+    store
+        .create_checkpoint(checkpoint.clone())
+        .expect("create checkpoint");
+    let registry = DistributedCapabilityRegistry::new();
+    registry.register_checkpoint_store(checkpoint_ref(), store.clone());
+    let mut recipe = recipe();
+    recipe.capabilities.approval_provider_ref =
+        Some(CapabilityRef::new("approval.provider", "1").expect("provider ref"));
+    recipe.capabilities.approval_broker_ref =
+        Some(CapabilityRef::new("approval.broker", "1").expect("broker ref"));
+    let envelope = envelope(&checkpoint, task(&checkpoint, 10), recipe, 1);
+
+    let error = DistributedCycleWorker::new(registry)
+        .run_cycle(envelope)
+        .expect_err("direct worker approval rejection");
+
+    assert!(error.contains("do not support brokered approval waits"));
+    let persisted = store
+        .load_checkpoint("worker-approval")
+        .expect("load checkpoint")
+        .expect("checkpoint");
+    assert_eq!(persisted.revision, 0);
+    assert!(persisted.claim_token.is_none());
+}

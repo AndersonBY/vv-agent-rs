@@ -20,6 +20,9 @@ use super::support::{
 };
 use super::{effective_session_id, NormalizedInput, Runner};
 
+const CHECKPOINT_APPROVAL_RESUME_CONFIG_INVALID: &str =
+    "checkpoint_approval_resume_config_invalid: checkpoint approval resume requires a distinct explicit resume_if_present key";
+
 impl Runner {
     pub async fn resume(&self, state: RunState) -> Result<RunResult, String> {
         Box::pin(self.resume_with_optional_input(state, None)).await
@@ -85,6 +88,9 @@ impl Runner {
             Ok(None) => return None,
             Err(error) => return Some(Err(error)),
         };
+        if source.checkpoint_key().is_some() {
+            return Some(Err(CHECKPOINT_APPROVAL_RESUME_CONFIG_INVALID.to_string()));
+        }
         if !approval_snapshot_matches_result(source.result(), &approval) {
             return Some(Err(
                 "approved tool call does not match the captured interruption".to_string(),

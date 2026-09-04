@@ -7,21 +7,35 @@
 
 ## 安装
 
-当前 crate 版本为 `0.12.0`。仓库 `HEAD` 采用语言无关的 Contract `8.1.0`；当前跨仓采用
-状态和已验证 revision 以中央 support matrix 为准。
+当前 crate 版本为 `0.12.1`。本版本采用 Contract `8.1.2`，提供符合 Rust 语言习惯的
+API 写法。
 
 ```bash
-cargo add vv-agent@0.12.0
+cargo add vv-agent@0.12.1
 ```
 
 需要 Apalis adapter 时使用：
 
 ```bash
-cargo add vv-agent@0.12.0 --features apalis
+cargo add vv-agent@0.12.1 --features apalis
 ```
 
 Contract 8 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
 公共 API 与传输数据结构。需要旧协议的应用应固定旧 crate 版本。
+
+### 0.12.1 重点能力
+
+- checkpoint lease 的 heartbeat 会重试瞬时存储失败，持续保护 claim 所有权直到提交，终态
+  acknowledgement 也受 active-claim fence 保护。
+- 持久化模型调用 replay 会保留 operation identity，跨崩溃和重试不会重复分配；max-cycle
+  终态收尾保持显式并受 fence 保护。
+- deferred 批次采用原子 admission。没有 `definitive_outcome=true` 的 timeout、取消、连接
+  丢失、执行失败和 orchestrator 失败仍保持 ambiguous；只有确定性的 `SUCCESS` 或 `ERROR`
+  结果可以 resolve deferred handle。
+- 分布式 worker 在 claim 前校验 task 和 envelope capability。直接携带 broker/provider approval
+  引用的 envelope 会在副作用前被拒绝；checkpoint approval resume 也会在 approval consumption
+  或工具 / session 写入前 fail closed。跨进程 durable approval continuation 尚未实现。
+- Contract `8.1.2` 定义严格的 checkpoint CAS、状态转换和 fail-closed 持久化边界。
 
 ### 0.12.0 重点能力
 

@@ -94,6 +94,7 @@ fn bounded_result_fixture_mutations_are_rejected_by_the_real_reader() {
             case.get("base").is_some()
                 && case.get("mutation").is_some()
                 && case["expected_error_code"] != "cursor_offset_invalid"
+                && case["name"] != "success_result_has_non_null_error_code"
         })
     {
         let base = case["base"].as_str().expect("base result");
@@ -122,6 +123,25 @@ fn bounded_result_fixture_mutations_are_rejected_by_the_real_reader() {
             "optional field {field} must reject null"
         );
     }
+}
+
+#[test]
+fn bounded_success_error_code_is_rejected_by_deferred_validator() {
+    let contract = fixture(BOUNDED_FIXTURE);
+    let case = contract["invalid_cases"]
+        .as_array()
+        .expect("invalid cases")
+        .iter()
+        .find(|case| case["name"] == "success_result_has_non_null_error_code")
+        .expect("success error-code case");
+    let base = case["base"].as_str().expect("base result");
+    let mut payload = contract["canonical_results"][base].clone();
+    apply_mutation(&mut payload, &case["mutation"]);
+
+    let result = ToolExecutionResult::from_dict(&payload).expect("wire reader result");
+    let error = vv_agent::checkpoint::validate_definitive_result(&result)
+        .expect_err("SUCCESS results with error codes are invalid");
+    assert_eq!(error.code(), case["expected_error_code"]);
 }
 
 #[test]

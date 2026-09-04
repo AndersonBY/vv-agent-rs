@@ -18,10 +18,11 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock selects contract `8.1.0` at revision
-`90b9b40ef91538b03b925a9f64eff69b6d73305a`, release artifact SHA-256
-`9bf75cec30d04cda987beff4ae021cce62ec4624ba7547cd9440678869ee541f`.
-The current adoption state is not duplicated in this document. Treat
+The current lock adopts contract `8.1.2` at revision
+`2768c8f65bdd3014cdcc9f00b8534b3d02c045f1`, release artifact SHA-256
+`3010e377f62971cf160f37fe90c1312ba63557fe97b039fd5595a736d755ee8f`.
+The `8.1.2` adoption remains `pending-adoption` until both implementation
+snapshots and cross-language producer gates pass. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
 as the machine-readable source for the current verified Python and Rust
 revisions, verification timestamp, and cross-repository run URL.
@@ -100,7 +101,7 @@ A fixture parser or private helper test cannot replace a real public producer
 test. A field that is declared but ignored by a planner, executor, provider, or
 store remains a contract failure.
 
-## Contract 8.1.0 Boundaries
+## Contract 8.1.2 Boundaries
 
 ### Prompt Bundle And Provider Projection
 

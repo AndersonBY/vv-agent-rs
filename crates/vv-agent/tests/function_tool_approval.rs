@@ -4,11 +4,14 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use vv_agent::{
     Agent, AgentStatus, ApprovalDecision, ApprovalFuture, ApprovalPolicy, ApprovalProvider,
-    ApprovalRequest, ApprovalRequirement, CompletionReason, FunctionTool, LLMResponse,
-    MemorySession, ModelRef, RunConfig, Runner, ScriptStep, ScriptedModelProvider, Session,
-    ToolCall, ToolContext, ToolExposure, ToolOutput, ToolPolicy, ToolRunContext, ToolUseBehavior,
+    ApprovalRequest, ApprovalRequirement, CapabilityRef, CheckpointConfig, CheckpointStore,
+    CompletionReason, FunctionTool, InMemoryCheckpointStore, LLMResponse, MemorySession, ModelRef,
+    RunConfig, Runner, ScriptStep, ScriptedModelProvider, Session, ToolCall, ToolContext,
+    ToolExposure, ToolOutput, ToolPolicy, ToolRunContext, ToolUseBehavior,
 };
 
+#[path = "function_tool_approval/checkpoint.rs"]
+mod checkpoint;
 #[test]
 fn function_tool_approval_defaults_false_and_predicate_uses_context_and_arguments() {
     let default_tool = test_tool("default_tool", None);
@@ -61,7 +64,6 @@ fn function_tool_approval_defaults_false_and_predicate_uses_context_and_argument
         ApprovalRequirement::Required
     );
 }
-
 #[tokio::test]
 async fn on_request_static_approval_interrupts_before_handler_and_resume_executes_once() {
     let executions = Arc::new(AtomicUsize::new(0));

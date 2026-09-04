@@ -2,7 +2,10 @@
 
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    mpsc, Arc, Mutex,
+};
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -75,6 +78,7 @@ pub(crate) struct ToolOperationPlan {
 struct HeartbeatHandle {
     stop: mpsc::Sender<()>,
     error: Arc<Mutex<Option<CheckpointError>>>,
+    lease_expires_at_ms: Arc<AtomicU64>,
     thread: Option<JoinHandle<()>>,
 }
 

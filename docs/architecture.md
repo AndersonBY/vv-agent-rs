@@ -115,18 +115,19 @@ the previously known expiry and the new expiry it requested. Response checks
 use the conservative maximum of current wall time and request-start wall time
 plus monotonic elapsed time, covering wall-clock jumps in either direction.
 SQLite refreshes effective time after acquiring its write lock. Redis renewal
-uses one atomic script: Redis `TIME` validates both expiries and the original
-JSON is the compare-and-set value, so an expired or replaced owner cannot write
-a new expiry. The script distinguishes CAS loss from authoritative expiry, so
-commit-race suppression can apply only to claim consumption and never to an
-expired lease; authoritative expiry takes precedence when both conditions are
-observed. Heartbeat renewal uses an independent store connection and remains
-active through an explicit commit phase. A durable commit suppresses only an
-active-claim rejection from a renewal that started in that commit phase and
-returned before its applicable lease expiry. Renewals that started before
-commit, expired leases, and other coordination failures remain visible even if
-the checkpoint commit later succeeds. Rust's public `run_checkpointed_cycle`
-helper uses this same lifecycle with the default lease and no job deadline.
+uses the store's optimistic compare-and-set transaction over the checkpoint
+JSON and lease value (`WATCH`/`MULTI`/`EXEC` in the current adapter), so an
+expired or replaced owner cannot write a new expiry. A transaction conflict is
+kept distinct from authoritative expiry, so commit-race suppression can apply
+only to claim consumption and never to an expired lease; authoritative expiry
+takes precedence when both conditions are observed. Heartbeat renewal uses an
+independent store connection and remains active through an explicit commit
+phase. A durable commit suppresses only an active-claim rejection from a
+renewal that started in that commit phase and returned before its applicable
+lease expiry. Renewals that started before commit, expired leases, and other
+coordination failures remain visible even if the checkpoint commit later
+succeeds. Rust's public `run_checkpointed_cycle` helper uses this same lifecycle
+with the default lease and no job deadline.
 Redis connection I/O and non-renewal optimistic-transaction retries are bounded
 so stopping or unwinding a worker cannot wait forever on the heartbeat thread.
 

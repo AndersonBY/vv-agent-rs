@@ -18,6 +18,28 @@ pub const TOOL_CALL_OUTCOME_SCHEMA: &str = "vv-agent.tool-call-outcome.v2";
 pub const DEFERRED_RESOLVE_DECISION_SCHEMA: &str = "vv-agent.deferred-resolve-decision.v1";
 pub const RECONCILIATION_DECISION_SCHEMA: &str = "vv-agent.reconciliation-decision.v1";
 
+pub(crate) fn is_ambiguous_tool_result(result: &ToolExecutionResult) -> bool {
+    if result.status != ToolResultStatus::Error {
+        return false;
+    }
+    let definitive = result
+        .metadata
+        .get("definitive_outcome")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let ambiguous_code = result.error_code.as_deref().is_some_and(|code| {
+        matches!(
+            code,
+            "tool_timeout"
+                | "tool_cancelled"
+                | "tool_connection_lost"
+                | "tool_execution_failed"
+                | "tool_orchestrator_error"
+        )
+    });
+    ambiguous_code && !definitive
+}
+
 /// The only framework identity carried by a deferred provider callback.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct DeferredToolHandle {
@@ -684,6 +706,12 @@ pub struct DeferredBatchAdmission {
 }
 
 pub fn validate_definitive_result(result: &ToolExecutionResult) -> CheckpointResult<()> {
+    if result.status == ToolResultStatus::Success && result.error_code.is_some() {
+        return Err(CheckpointError::new(
+            "tool_result_invalid",
+            "SUCCESS results must not contain an error_code",
+        ));
+    }
     result
         .validate()
         .map_err(|error| CheckpointError::new("deferred_resolution_result_invalid", error))?;
@@ -694,6 +722,12 @@ pub fn validate_definitive_result(result: &ToolExecutionResult) -> CheckpointRes
         return Err(CheckpointError::new(
             "deferred_resolution_result_invalid",
             "deferred resolution requires SUCCESS or ERROR",
+        ));
+    }
+    if is_ambiguous_tool_result(result) {
+        return Err(CheckpointError::new(
+            "deferred_resolution_result_invalid",
+            "deferred resolution requires a definitive outcome",
         ));
     }
     Ok(())

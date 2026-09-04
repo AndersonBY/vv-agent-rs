@@ -1,8 +1,8 @@
 //! Pure checkpoint transitions for durable deferred tool batches.
 
 use crate::checkpoint::{
-    canonical_json_bytes, CheckpointError, CheckpointResult, CheckpointStatus, DeferredBatchEntry,
-    DeferredToolHandle, OperationState, ToolCallOutcome,
+    canonical_json_bytes, validate_definitive_result, CheckpointError, CheckpointResult,
+    CheckpointStatus, DeferredBatchEntry, DeferredToolHandle, OperationState, ToolCallOutcome,
 };
 use crate::events::{EventId, RunEvent, RunEventPayload, ToolStatus};
 use crate::runtime::state::OperationError;
@@ -81,8 +81,12 @@ pub fn admit_deferred_batch(
                         "completed result tool_call_id does not match the journal",
                     ));
                 }
-                result.validate().map_err(|error| {
-                    CheckpointError::new("deferred_batch_result_invalid", error)
+                validate_definitive_result(result).map_err(|error| {
+                    if error.code() == "deferred_resolution_result_invalid" {
+                        CheckpointError::new("deferred_batch_result_invalid", error.message())
+                    } else {
+                        error
+                    }
                 })?;
                 match result.status {
                     ToolResultStatus::Success => {
@@ -115,11 +119,14 @@ pub fn admit_deferred_batch(
     // The admission boundary classifies the complete model-tool batch.  A
     // caller that omits one still-started tool would otherwise release the
     // claim while leaving an external operation unclassified.
-    if snapshot
-        .tool_journal
-        .iter()
-        .any(|entry| entry.cycle_index == claimed_cycle && entry.state == OperationState::Started)
-    {
+    if has_current_cycle_state(
+        snapshot
+            .model_call_journal
+            .iter()
+            .chain(snapshot.tool_journal.iter()),
+        claimed_cycle,
+        &[OperationState::Started],
+    ) {
         return Err(CheckpointError::new(
             "deferred_batch_incomplete",
             "deferred batch must cover every started tool in the claimed cycle",
@@ -156,11 +163,15 @@ pub fn accept_deferred_batch(
     {
         return Ok((current.clone(), false));
     }
-    if current
-        .model_call_journal
-        .iter()
-        .any(|entry| entry.cycle_index == claimed_cycle && entry.state == OperationState::Ambiguous)
-    {
+    if has_current_cycle_state(
+        current.model_call_journal.iter(),
+        claimed_cycle,
+        &[
+            OperationState::Planned,
+            OperationState::Started,
+            OperationState::Ambiguous,
+        ],
+    ) {
         return Err(CheckpointError::new(
             "reconciliation_required",
             "accept_deferred batch must cover model and tool ambiguity before release",
@@ -227,14 +238,21 @@ pub fn accept_deferred_batch(
     // batch.  Releasing the recovery claim while another ambiguous entry is
     // left behind would falsely turn a partial authority decision into a
     // deferred barrier.
-    if snapshot
-        .tool_journal
-        .iter()
-        .any(|entry| entry.cycle_index == claimed_cycle && entry.state == OperationState::Ambiguous)
-    {
+    if has_current_cycle_state(
+        snapshot
+            .model_call_journal
+            .iter()
+            .chain(snapshot.tool_journal.iter()),
+        claimed_cycle,
+        &[
+            OperationState::Planned,
+            OperationState::Started,
+            OperationState::Ambiguous,
+        ],
+    ) {
         return Err(CheckpointError::new(
             "reconciliation_required",
-            "accept_deferred batch must cover every ambiguous tool in the current cycle",
+            "accept_deferred batch must cover every unresolved journal entry in the current cycle",
         ));
     }
     snapshot.status = CheckpointStatus::Deferred;
@@ -246,6 +264,14 @@ pub fn accept_deferred_batch(
         .ok_or_else(|| CheckpointError::new("checkpoint_revision_overflow", "revision overflow"))?;
     snapshot.validate()?;
     Ok((snapshot, true))
+}
+
+fn has_current_cycle_state<'a>(
+    mut entries: impl Iterator<Item = &'a crate::runtime::state::OperationJournalEntry>,
+    claimed_cycle: u64,
+    states: &[OperationState],
+) -> bool {
+    entries.any(|entry| entry.cycle_index == claimed_cycle && states.contains(&entry.state))
 }
 
 /// Returns true when a reconciliation decision batch is an exact replay of

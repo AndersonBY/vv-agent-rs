@@ -736,31 +736,32 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             task_token_usage(&controls),
                         ));
                     }
-                    let result = if execution_started
-                        && matches!(
-                            execution.result().status,
-                            ToolResultStatus::Success | ToolResultStatus::Error
-                        ) {
+                    let completed = matches!(execution.result().status, ToolResultStatus::Success | ToolResultStatus::Error);
+                    let ambiguous = execution_started
+                        && completed
+                        && crate::checkpoint::is_ambiguous_tool_result(execution.result());
+                    let result = if ambiguous {
+                        execution.result().clone()
+                    } else if execution_started && completed {
                         deferred_batch.capture_completed_execution(
                             &patched_call,
                             checkpoint_plan.as_deref(),
                             execution,
                         )
                     } else {
-                        let result = execution.complete();
-                        if execution_started {
-                            if let Some(result) = checkpoint.finish_tool(
-                                cycle_index,
-                                &patched_call,
-                                &result,
-                                || budget_snapshot(&budget_controller),
-                                (messages, cycles, shared_state),
-                            ) {
-                                return Some(result);
-                            }
-                        }
-                        result
+                        execution.complete()
                     };
+                    if execution_started && (!completed || ambiguous) {
+                        if let Some(result) = checkpoint.finish_tool(
+                            cycle_index,
+                            &patched_call,
+                            &result,
+                            || budget_snapshot(&budget_controller),
+                            (messages, cycles, shared_state),
+                        ) {
+                            return Some(result);
+                        }
+                    }
                     if matches!(
                         tool_kind,
                         Some(ToolSpecKind::Agent | ToolSpecKind::BackgroundAgent)

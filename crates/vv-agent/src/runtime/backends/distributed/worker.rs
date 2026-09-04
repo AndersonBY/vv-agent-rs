@@ -1,5 +1,8 @@
 use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Condvar, Mutex,
+};
 
 use crate::config::build_vv_llm_from_local_settings;
 use crate::llm::LlmClient;
@@ -11,6 +14,7 @@ use super::capabilities::{DistributedCapabilityRegistry, ResolvedDistributedCapa
 use super::checkpoint_worker::{
     run_distributed_cycle, DistributedCycleExecutor, DistributedDeliveryMetadata,
 };
+use super::contract::now_unix_ms;
 use super::contract::DistributedRunEnvelope;
 use super::dispatch::CycleDispatchResult;
 
@@ -37,6 +41,7 @@ impl Drop for LeaseHeartbeatStopGuard {
 #[derive(Clone)]
 pub(super) struct LeaseHeartbeatStatus {
     state: Arc<Mutex<LeaseHeartbeatState>>,
+    lease_expires_at_ms: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,13 +102,20 @@ pub(super) struct LeaseRenewal {
 }
 
 impl LeaseHeartbeatStatus {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(lease_expires_at_ms: u64) -> Self {
         Self {
             state: Arc::new(Mutex::new(LeaseHeartbeatState {
                 failure: None,
                 commit_phase: LeaseCommitPhase::NotStarted,
             })),
+            lease_expires_at_ms: Arc::new(AtomicU64::new(lease_expires_at_ms)),
         }
+    }
+
+    pub(super) fn update_lease_expiry(&self, lease_expires_at_ms: u64) {
+        let _ = self
+            .lease_expires_at_ms
+            .fetch_max(lease_expires_at_ms, Ordering::Release);
     }
 
     pub(super) fn commit_phase(&self) -> LeaseCommitPhase {
@@ -136,6 +148,10 @@ impl LeaseHeartbeatStatus {
                 "checkpoint lease heartbeat failed: {}",
                 failure.renewal.message
             ));
+        }
+        let now = now_unix_ms()?;
+        if now >= self.lease_expires_at_ms.load(Ordering::Acquire) {
+            return Err("checkpoint lease heartbeat failed: claim lease expired".to_string());
         }
         state.commit_phase = LeaseCommitPhase::InProgress;
         Ok(())
@@ -214,6 +230,13 @@ impl DistributedCycleWorker {
         delivery: DistributedDeliveryMetadata,
     ) -> Result<CycleDispatchResult, String> {
         envelope.validate()?;
+        if envelope.recipe.capabilities.approval_provider_ref.is_some()
+            || envelope.recipe.capabilities.approval_broker_ref.is_some()
+        {
+            return Err(
+                "nonblocking distributed runs do not support brokered approval waits".to_string(),
+            );
+        }
         envelope.ensure_not_expired()?;
         run_distributed_cycle(self, envelope, delivery)
     }
@@ -285,4 +308,19 @@ pub(super) fn combined_event_handler(
             handler(event);
         }
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn begin_commit_rejects_expired_shared_lease_without_mutating_phase() {
+        let heartbeat = LeaseHeartbeatStatus::new(u64::MIN);
+
+        let error = heartbeat.begin_commit().unwrap_err();
+
+        assert!(error.contains("claim lease expired"));
+        assert_eq!(heartbeat.commit_phase(), LeaseCommitPhase::NotStarted);
+    }
 }
