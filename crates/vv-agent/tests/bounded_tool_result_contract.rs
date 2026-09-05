@@ -94,7 +94,6 @@ fn bounded_result_fixture_mutations_are_rejected_by_the_real_reader() {
             case.get("base").is_some()
                 && case.get("mutation").is_some()
                 && case["expected_error_code"] != "cursor_offset_invalid"
-                && case["name"] != "success_result_has_non_null_error_code"
         })
     {
         let base = case["base"].as_str().expect("base result");
@@ -138,10 +137,27 @@ fn bounded_success_error_code_is_rejected_by_deferred_validator() {
     let mut payload = contract["canonical_results"][base].clone();
     apply_mutation(&mut payload, &case["mutation"]);
 
-    let result = ToolExecutionResult::from_dict(&payload).expect("wire reader result");
+    let reader_error = ToolExecutionResult::from_dict(&payload)
+        .expect_err("SUCCESS results with error codes are invalid at the generic reader");
+    let expected_error_code = case["expected_error_code"]
+        .as_str()
+        .expect("expected error code");
+    assert!(reader_error.contains(expected_error_code));
+    let serde_error = serde_json::from_value::<ToolExecutionResult>(payload.clone())
+        .expect_err("serde must reject SUCCESS results with error codes");
+    assert!(serde_error.to_string().contains(expected_error_code));
+    let result = ToolExecutionResult::success(
+        payload["tool_call_id"].as_str().expect("tool call id"),
+        payload["content"].as_str().expect("content"),
+    )
+    .with_error_code(payload["error_code"].as_str().expect("error code"));
+    let validation_error = result
+        .validate()
+        .expect_err("validate must reject SUCCESS results with error codes");
+    assert!(validation_error.contains(expected_error_code));
     let error = vv_agent::checkpoint::validate_definitive_result(&result)
         .expect_err("SUCCESS results with error codes are invalid");
-    assert_eq!(error.code(), case["expected_error_code"]);
+    assert_eq!(error.code(), expected_error_code);
 }
 
 #[test]

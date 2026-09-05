@@ -8,21 +8,31 @@ for model-driven automation.
 
 ## Install
 
-The current crate version is `0.12.1`. This release uses Contract `8.1.2` and
+The current crate version is `0.12.2`. This release uses Contract `8.1.2` and
 exposes a Rust-idiomatic API.
 
 ```bash
-cargo add vv-agent@0.12.1
+cargo add vv-agent@0.12.2
 ```
 
 Enable the Apalis adapter with:
 
 ```bash
-cargo add vv-agent@0.12.1 --features apalis
+cargo add vv-agent@0.12.2 --features apalis
 ```
 
 Repository `HEAD` is forward-only: current readers accept only the current
 strict public and wire shapes.
+
+### 0.12.2 Highlights
+
+- Generic `ToolExecutionResult` readers reject successful results carrying a
+  non-null `error_code` with `tool_result_invalid` across validation, mapping,
+  and serde paths.
+- Non-checkpoint `FunctionTool` handler errors and timeouts complete deferred
+  execution and emit typed `tool_call_completed` events, preserving App Server
+  item completion; checkpoint ambiguity remains reconciliation-only without a
+  fake completion.
 
 ### 0.12.1 Highlights
 
