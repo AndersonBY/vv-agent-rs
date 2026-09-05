@@ -736,10 +736,11 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             task_token_usage(&controls),
                         ));
                     }
-                    let completed = matches!(execution.result().status, ToolResultStatus::Success | ToolResultStatus::Error);
-                    let ambiguous = execution_started
-                        && completed
-                        && crate::checkpoint::is_ambiguous_tool_result(execution.result());
+                    let completed = matches!(
+                        execution.result().status,
+                        ToolResultStatus::Success | ToolResultStatus::Error
+                    );
+                    let ambiguous = checkpoint.is_ambiguous(&execution);
                     let result = if ambiguous {
                         execution.result().clone()
                     } else if execution_started && completed {

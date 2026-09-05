@@ -215,6 +215,11 @@ impl ToolExecutionResult {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if self.status == ToolResultStatus::Success && self.error_code.is_some() {
+            return Err(
+                "tool_result_invalid: SUCCESS results must not contain an error_code".to_string(),
+            );
+        }
         for forbidden in ["content", "instructions", "output", "stderr", "stdout"] {
             if self.metadata.contains_key(forbidden) {
                 return Err(format!(

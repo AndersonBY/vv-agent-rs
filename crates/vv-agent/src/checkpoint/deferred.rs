@@ -273,9 +273,16 @@ impl ToolCallOutcome {
     pub fn validate(&self) -> CheckpointResult<()> {
         match self {
             Self::Completed { result } => {
-                result
-                    .validate()
-                    .map_err(|error| CheckpointError::new("tool_call_outcome_invalid", error))?;
+                result.validate().map_err(|error| {
+                    let code = if result.status == ToolResultStatus::Success
+                        && result.error_code.is_some()
+                    {
+                        "tool_result_invalid"
+                    } else {
+                        "tool_call_outcome_invalid"
+                    };
+                    CheckpointError::new(code, error)
+                })?;
                 Ok(())
             }
             Self::Deferred { handle } => handle.validate(),

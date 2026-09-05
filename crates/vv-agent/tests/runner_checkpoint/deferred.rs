@@ -445,6 +445,142 @@ async fn started_ambiguous_tool_emits_only_reconciliation_lifecycle() {
 }
 
 #[tokio::test]
+async fn non_checkpoint_function_handler_error_emits_completed_lifecycle() {
+    let tool = FunctionTool::builder("handler_error")
+        .handler(|_context, _arguments: Value| async {
+            Err::<ToolOutput, _>("handler failed".to_string())
+        })
+        .build()
+        .expect("handler error tool");
+    let runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "handler-error-model",
+            vec![LLMResponse::with_tool_calls(
+                "run the failing handler",
+                vec![ToolCall::new(
+                    "call-handler-error",
+                    "handler_error",
+                    BTreeMap::new(),
+                )],
+            )],
+        ))
+        .workspace(tempfile::tempdir().expect("workspace").path())
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("handler-error-agent")
+        .instructions("Run the handler.")
+        .model(ModelRef::named("handler-error-model"))
+        .tool(tool)
+        .build()
+        .expect("agent");
+    let events = Arc::new(Mutex::new(Vec::<vv_agent::RunEvent>::new()));
+    let observed = events.clone();
+    let stream = Arc::new(move |event: &vv_agent::RunEvent| {
+        observed.lock().expect("events").push(event.clone());
+    });
+
+    runner
+        .run_with_config(
+            &agent,
+            "run the handler",
+            RunConfig::builder()
+                .max_cycles(1)
+                .no_tool_policy(NoToolPolicy::Finish)
+                .stream_arc(stream)
+                .build(),
+        )
+        .await
+        .expect("handler error run");
+
+    let events = events.lock().expect("events");
+    let completions = events
+        .iter()
+        .filter_map(|event| match event.payload() {
+            RunEventPayload::ToolCallCompleted {
+                tool_call_id,
+                error_code,
+                execution_started,
+                ..
+            } if tool_call_id == "call-handler-error" => {
+                Some((error_code.as_deref(), *execution_started))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(completions, [(Some("tool_execution_failed"), true)]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn non_checkpoint_function_tool_timeout_emits_completed_lifecycle() {
+    let tool = FunctionTool::builder("slow_handler")
+        .timeout(Duration::from_millis(10))
+        .handler(|_context, _arguments: Value| async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            Ok(ToolOutput::text("late"))
+        })
+        .build()
+        .expect("slow tool");
+    let runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "timeout-model",
+            vec![LLMResponse::with_tool_calls(
+                "run the slow handler",
+                vec![ToolCall::new(
+                    "call-timeout",
+                    "slow_handler",
+                    BTreeMap::new(),
+                )],
+            )],
+        ))
+        .workspace(tempfile::tempdir().expect("workspace").path())
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("timeout-agent")
+        .instructions("Run the slow handler.")
+        .model(ModelRef::named("timeout-model"))
+        .tool(tool)
+        .build()
+        .expect("agent");
+    let events = Arc::new(Mutex::new(Vec::<vv_agent::RunEvent>::new()));
+    let observed = events.clone();
+    let stream = Arc::new(move |event: &vv_agent::RunEvent| {
+        observed.lock().expect("events").push(event.clone());
+    });
+
+    runner
+        .run_with_config(
+            &agent,
+            "run the slow handler",
+            RunConfig::builder()
+                .max_cycles(1)
+                .no_tool_policy(NoToolPolicy::Finish)
+                .stream_arc(stream)
+                .build(),
+        )
+        .await
+        .expect("timeout run");
+
+    let events = events.lock().expect("events");
+    let completions = events
+        .iter()
+        .filter_map(|event| match event.payload() {
+            RunEventPayload::ToolCallCompleted {
+                tool_call_id,
+                error_code,
+                execution_started,
+                ..
+            } if tool_call_id == "call-timeout" => {
+                Some((error_code.as_deref(), *execution_started))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(completions, [(Some("tool_timeout"), true)]);
+}
+
+#[tokio::test]
 async fn deferred_before_ambiguous_drops_the_staged_batch_fail_closed() {
     let store = InMemoryCheckpointStore::new();
     let deferred_runs = Arc::new(AtomicUsize::new(0));

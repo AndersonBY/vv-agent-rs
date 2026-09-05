@@ -7,21 +7,29 @@
 
 ## 安装
 
-当前 crate 版本为 `0.12.1`。本版本采用 Contract `8.1.2`，提供符合 Rust 语言习惯的
+当前 crate 版本为 `0.12.2`。本版本采用 Contract `8.1.2`，提供符合 Rust 语言习惯的
 API 写法。
 
 ```bash
-cargo add vv-agent@0.12.1
+cargo add vv-agent@0.12.2
 ```
 
 需要 Apalis adapter 时使用：
 
 ```bash
-cargo add vv-agent@0.12.1 --features apalis
+cargo add vv-agent@0.12.2 --features apalis
 ```
 
 Contract 8 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
 公共 API 与传输数据结构。需要旧协议的应用应固定旧 crate 版本。
+
+### 0.12.2 重点能力
+
+- 通用 `ToolExecutionResult` reader 在 validate、字典和 serde 路径拒绝携带非空
+  `error_code` 的成功结果，并返回 `tool_result_invalid`。
+- 非 checkpoint 的 `FunctionTool` handler 错误和 timeout 会完成 deferred execution，并发送
+  typed `tool_call_completed` 事件，从而保留 App Server item completion；checkpoint ambiguous
+  仍只走 reconciliation，不发送伪造 completion。
 
 ### 0.12.1 重点能力
 

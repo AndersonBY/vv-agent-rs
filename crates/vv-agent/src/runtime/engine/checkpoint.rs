@@ -15,7 +15,9 @@ use crate::tools::{
     orchestrator::DeferredToolExecution, BeforeToolDispatch, ToolError, ToolRegistry,
     ToolRunOptions,
 };
-use crate::types::{AgentResult, CycleRecord, LLMResponse, Message, ToolCall, ToolExecutionResult};
+use crate::types::{
+    AgentResult, CycleRecord, LLMResponse, Message, ToolCall, ToolExecutionResult, ToolResultStatus,
+};
 
 use super::helpers::failed_agent_result;
 use crate::runtime::model_calls::{
@@ -180,6 +182,16 @@ impl CheckpointCoordinator {
             pending_error: Arc::new(Mutex::new(None)),
             model_call_ledger,
         }
+    }
+
+    pub(super) fn is_ambiguous(&self, execution: &DeferredToolExecution) -> bool {
+        self.controller.is_some()
+            && execution.execution_started()
+            && matches!(
+                execution.result().status,
+                ToolResultStatus::Success | ToolResultStatus::Error
+            )
+            && crate::checkpoint::is_ambiguous_tool_result(execution.result())
     }
 
     pub(super) fn begin_run_cycle(
