@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -16,6 +18,37 @@ pub struct CycleRecord {
     pub tool_calls: Vec<ToolCall>,
     pub tool_results: Vec<ToolExecutionResult>,
     pub memory_compacted: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentResultError {
+    pub code: String,
+    pub message: String,
+    pub retryable: bool,
+}
+
+impl AgentResultError {
+    pub fn new(code: impl Into<String>, message: impl Into<String>, retryable: bool) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            retryable,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.code.trim().is_empty() || self.message.trim().is_empty() {
+            return Err("AgentResult error code and message must be non-empty".to_string());
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for AgentResultError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.message.fmt(formatter)
+    }
 }
 
 impl CycleRecord {
@@ -51,11 +84,10 @@ pub struct AgentResult {
     pub budget_exhaustion: Option<BudgetExhaustion>,
     #[serde(default)]
     pub checkpoint_key: Option<String>,
-    #[serde(default)]
-    pub resume_observation: Option<ResumeObservation>,
+    pub resume_observations: Vec<ResumeObservation>,
     pub final_answer: Option<String>,
     pub wait_reason: Option<String>,
-    pub error: Option<String>,
+    pub error: Option<AgentResultError>,
     #[serde(default)]
     pub error_code: Option<String>,
     pub shared_state: Metadata,
@@ -74,7 +106,7 @@ impl Default for AgentResult {
             budget_usage: None,
             budget_exhaustion: None,
             checkpoint_key: None,
-            resume_observation: None,
+            resume_observations: Vec::new(),
             final_answer: None,
             wait_reason: None,
             error: None,
@@ -110,7 +142,7 @@ impl AgentResult {
             budget_usage: None,
             budget_exhaustion: None,
             checkpoint_key: None,
-            resume_observation: None,
+            resume_observations: Vec::new(),
             final_answer: Some(final_answer.into()),
             wait_reason: None,
             error: None,
@@ -121,6 +153,14 @@ impl AgentResult {
     }
 
     pub fn failed(error: impl Into<String>) -> Self {
+        Self::failed_with_code("agent_failed", error, false)
+    }
+
+    pub fn failed_with_code(
+        code: impl Into<String>,
+        error: impl Into<String>,
+        retryable: bool,
+    ) -> Self {
         Self {
             status: AgentStatus::Failed,
             messages: Vec::new(),
@@ -131,10 +171,10 @@ impl AgentResult {
             budget_usage: None,
             budget_exhaustion: None,
             checkpoint_key: None,
-            resume_observation: None,
+            resume_observations: Vec::new(),
             final_answer: None,
             wait_reason: None,
-            error: Some(error.into()),
+            error: Some(AgentResultError::new(code, error, retryable)),
             error_code: None,
             shared_state: Metadata::new(),
             token_usage: TaskTokenUsage::default(),

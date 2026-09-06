@@ -837,7 +837,15 @@ async fn run_public_runner_case(case: &Value) {
         assert_eq!(result.partial_output(), partial_output.as_str(), "{name}");
     }
     if let Some(error) = expected.get("error") {
-        assert_eq!(result.result().error.as_deref(), error.as_str(), "{name}");
+        assert_eq!(
+            result
+                .result()
+                .error
+                .as_ref()
+                .map(|error| error.message.as_str()),
+            error.as_str(),
+            "{name}"
+        );
     }
     if case["limits"].is_null() {
         assert_eq!(result.budget_usage(), None, "{name}");

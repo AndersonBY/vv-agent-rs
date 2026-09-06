@@ -10,7 +10,7 @@ mod tool_calls;
 pub use messages::{LLMResponse, Message, MessageRole};
 pub use metadata::{json_value_from_serializable, Metadata, ToolArguments, ToolSchema};
 pub(crate) use records::last_assistant_output;
-pub use records::{AgentResult, CycleRecord};
+pub use records::{AgentResult, AgentResultError, CycleRecord};
 pub use status::{
     AgentStatus, CompletionReason, CycleStatus, NoToolPolicy, ToolDirective, ToolResultStatus,
 };

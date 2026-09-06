@@ -34,7 +34,8 @@ fn cancellation_token_propagates_to_children_and_runtime() {
     assert_eq!(result.status, AgentStatus::Failed);
     assert!(result
         .error
-        .as_deref()
+        .as_ref()
+        .map(|error| error.message.as_str())
         .unwrap_or_default()
         .contains("cancelled"));
     assert!(result.cycles.is_empty());
@@ -123,7 +124,8 @@ fn execution_context_cancellation_token_is_honored_by_runtime() {
     assert_eq!(result.status, AgentStatus::Failed);
     assert!(result
         .error
-        .as_deref()
+        .as_ref()
+        .map(|error| error.message.as_str())
         .unwrap_or_default()
         .contains("cancelled"));
     assert!(result.cycles.is_empty());
@@ -171,7 +173,8 @@ fn cancellation_token_cancelled_by_before_cycle_provider_stops_before_llm() {
     assert_eq!(result.status, AgentStatus::Failed);
     assert!(result
         .error
-        .as_deref()
+        .as_ref()
+        .map(|error| error.message.as_str())
         .unwrap_or_default()
         .contains("cancelled"));
     assert_eq!(result.cycles.len(), 1);

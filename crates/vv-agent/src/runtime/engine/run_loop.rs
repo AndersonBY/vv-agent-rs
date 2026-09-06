@@ -10,8 +10,9 @@ use super::checkpoint::{CheckpointModelCompletion, CheckpointToolPlan, DeferredB
 use super::controls::{CheckpointRuntimeControl, RuntimeRunControls};
 use super::helpers::{
     cancelled_agent_result, collect_interruption_messages, controls_cancelled,
-    drain_steering_queue, failed_agent_result, finalize_terminal_projection,
-    image_notification_from_tool_result, project_cycle_cancellation, task_token_usage,
+    drain_steering_queue, emit_sub_run_completed, failed_agent_result,
+    finalize_terminal_projection, image_notification_from_tool_result, project_cycle_cancellation,
+    task_token_usage,
 };
 use super::lifecycle::{
     finalize_no_tool_cycle, finalize_tool_cycle, NoToolCycleFinalization, ToolCycleFinalization,
@@ -41,9 +42,7 @@ use crate::runtime::tool_call_runner::{
     apply_tool_use_behavior, normalize_tool_call_id, skipped_tool_result,
 };
 use crate::tools::ToolSpecKind;
-use crate::types::{
-    AgentResult, AgentTask, CompletionReason, ToolDirective, ToolExecutionResult, ToolResultStatus,
-};
+use crate::types::{AgentResult, AgentTask, CompletionReason, ToolDirective, ToolExecutionResult};
 use serde_json::Value;
 use std::collections::BTreeMap;
 impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
@@ -233,11 +232,10 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     &task,
                     &active_after_cycle_denials,
                 );
-                let llm_messages = compacted_messages.clone();
                 let (request_messages, request_tool_schemas) = hook_manager.apply_before_llm(
                     &task,
                     cycle_index,
-                    llm_messages,
+                    compacted_messages.clone(),
                     tool_schemas,
                     shared_state,
                 );
@@ -405,18 +403,15 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 "memory_compact_completed",
                                 memory_compact_event_payload(&completed),
                             );
-                            let retry_tool_schemas = self
-                                .planned_tool_schemas_with_after_cycle_denials(
-                                    &task,
-                                    &active_after_cycle_denials,
-                                );
-                            let llm_messages = compacted_messages.clone();
                             (request_messages, request_tool_schemas) = hook_manager
                                 .apply_before_llm(
                                     &task,
                                     cycle_index,
-                                    llm_messages,
-                                    retry_tool_schemas,
+                                    compacted_messages.clone(),
+                                    self.planned_tool_schemas_with_after_cycle_denials(
+                                        &task,
+                                        &active_after_cycle_denials,
+                                    ),
                                     shared_state,
                                 );
                             if let Err(error) = memory_manager.validate_model_recovery_surface(
@@ -572,6 +567,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         call.clone(),
                         &context,
                     );
+                    let source_call = call.clone();
                     let checkpoint_plan = checkpoint.plan_tool(
                         cycle_index,
                         &patched_call,
@@ -583,6 +579,8 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             let budget_usage = budget_snapshot(&budget_controller);
                             (idempotency, budget_usage)
                         },
+                        None,
+                        None,
                         messages,
                         cycles,
                         shared_state,
@@ -592,11 +590,12 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         CheckpointToolPlan::Stop(result) => return Some(*result),
                     };
                     checkpoint.set_tool_context_identity(&mut context, cycle_index, &patched_call);
-                    let tool_kind = self
-                        .tool_registry
-                        .get(&patched_call.name)
-                        .map(|spec| spec.kind)
-                        .ok();
+                    let is_sub_run = self.tool_registry.get(&patched_call.name).is_ok_and(|spec| {
+                        matches!(
+                            spec.kind,
+                            ToolSpecKind::Agent | ToolSpecKind::BackgroundAgent
+                        )
+                    });
                     let mut approval_failure = None;
                     let execution = if let Some(mut result) = short_circuit_result {
                         normalize_tool_call_id(&mut result, &call.id);
@@ -612,10 +611,8 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                         context.idempotency_key = checkpoint_plan
                             .as_ref()
                             .and_then(|plan| plan.idempotency_key.clone());
-                        tool_orchestrator.observe_result_without_execution(
-                            patched_call.clone(),
+                        crate::tools::orchestrator::DeferredToolExecution::without_lifecycle(
                             result,
-                            &tool_run_options,
                         )
                     } else {
                         let effective_tool_run_options = checkpoint.before_tool_dispatch(
@@ -631,13 +628,13 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 patched_call.clone(),
                                 &mut context,
                                 effective_tool_run_options.clone(),
-                                |call, effective_requirement, approval_context, tool_metadata| {
+                                |effective_call, effective_requirement, approval_context, tool_metadata| {
                                     let result = match approval_provider_result(
                                         self,
                                         &controls,
                                         &task,
                                         cycle_index,
-                                        call,
+                                        effective_call,
                                         effective_requirement,
                                         tool_metadata,
                                     ) {
@@ -645,7 +642,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                         Err(error) => {
                                             approval_failure = Some(error);
                                             return Some(approval_error_result(
-                                                call,
+                                                effective_call,
                                                 "approval_provider_error",
                                                 "Approval provider failed.",
                                             ));
@@ -660,7 +657,32 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                                 task: &task,
                                                 hook_manager: &hook_manager,
                                                 cycle_index,
-                                                call,
+                                                source_call: &source_call,
+                                                call: effective_call,
+                                                source_checkpoint_key: checkpoint_plan
+                                                    .as_ref()
+                                                    .and_then(|plan| plan.checkpoint_key.clone()),
+                                                source_operation_id: checkpoint_plan
+                                                    .as_ref()
+                                                    .and_then(|plan| plan.operation_id.clone()),
+                                                source_attempt: checkpoint_plan
+                                                    .as_ref()
+                                                    .and_then(|plan| plan.attempt),
+                                                source_request_digest: checkpoint_plan
+                                                    .as_ref()
+                                                    .and_then(|plan| plan.request_digest.clone()),
+                                                source_idempotency_key: checkpoint_plan
+                                                    .as_ref()
+                                                    .and_then(|plan| plan.idempotency_key.clone()),
+                                                source_idempotency_support: checkpoint_plan
+                                                    .as_ref()
+                                                    .map(|plan| plan.idempotency_support)
+                                                    .unwrap_or_else(|| {
+                                                        crate::runtime::run_definition::tool_idempotency_for(
+                                                            &self.tool_registry,
+                                                            &patched_call.name,
+                                                        )
+                                                    }),
                                                 context: approval_context,
                                                 options: &effective_tool_run_options,
                                                 orchestrator: &tool_orchestrator,
@@ -736,74 +758,55 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             task_token_usage(&controls),
                         ));
                     }
-                    let completed = matches!(
-                        execution.result().status,
-                        ToolResultStatus::Success | ToolResultStatus::Error
+                    let result = deferred_batch.resolve_execution(
+                        &patched_call,
+                        checkpoint_plan.as_deref(),
+                        execution,
                     );
-                    let ambiguous = checkpoint.is_ambiguous(&execution);
-                    let result = if ambiguous {
-                        execution.result().clone()
-                    } else if execution_started && completed {
-                        deferred_batch.capture_completed_execution(
-                            &patched_call,
-                            checkpoint_plan.as_deref(),
-                            execution,
-                        )
-                    } else {
-                        execution.complete()
-                    };
-                    if execution_started && (!completed || ambiguous) {
-                        if let Some(result) = checkpoint.finish_tool(
+                    let cancellation_observed = cancellation_token
+                        .is_some_and(CancellationToken::is_cancelled)
+                        || controls_cancelled(&controls);
+                    let definitive_receipt = matches!(
+                        result.status,
+                        crate::types::ToolResultStatus::Success
+                            | crate::types::ToolResultStatus::Error
+                    ) && !crate::checkpoint::is_ambiguous_tool_result(&result);
+                    if cancellation_observed && !definitive_receipt {
+                        *shared_state = context.shared_state.clone();
+                        cycles.push(cycle);
+                        return Some(cancelled_agent_result(
+                            messages.clone(),
+                            cycles.clone(),
+                            shared_state.clone(),
+                            task_token_usage(&controls),
+                        ));
+                    }
+                    if let Some(result) = checkpoint.finish_tool(
+                        cycle_index,
+                        &patched_call,
+                        &result,
+                        || budget_snapshot(&budget_controller),
+                        (messages, cycles, shared_state),
+                    ) {
+                        return Some(result);
+                    }
+                    if is_sub_run && execution_started {
+                        emit_sub_run_completed(
+                            self,
+                            &controls,
+                            &task,
                             cycle_index,
                             &patched_call,
                             &result,
-                            || budget_snapshot(&budget_controller),
-                            (messages, cycles, shared_state),
-                        ) {
-                            return Some(result);
-                        }
-                    }
-                    if matches!(
-                        tool_kind,
-                        Some(ToolSpecKind::Agent | ToolSpecKind::BackgroundAgent)
-                    ) && execution_started
-                    {
-                        self.emit_log(
-                            &controls,
-                            "sub_run_completed",
-                            BTreeMap::from([
-                                ("task_id".to_string(), Value::String(task.task_id.clone())),
-                                (
-                                    "agent_name".to_string(),
-                                    Value::String(
-                                        task.metadata
-                                            .get("agent_name")
-                                            .and_then(Value::as_str)
-                                            .unwrap_or(&task.task_id)
-                                            .to_string(),
-                                    ),
-                                ),
-                                ("cycle".to_string(), Value::from(cycle_index)),
-                                (
-                                    "parent_run_id".to_string(),
-                                    Value::String(task.task_id.clone()),
-                                ),
-                                (
-                                    "parent_tool_call_id".to_string(),
-                                    Value::String(patched_call.id.clone()),
-                                ),
-                                (
-                                    "status".to_string(),
-                                    super::logging::tool_result_status_value(result.status),
-                                ),
-                                (
-                                    "final_output".to_string(),
-                                    Value::String(result.content.clone()),
-                                ),
-                            ]),
                         );
                     }
-                    self.emit_tool_result(&controls, cycle_index, &patched_call, &result);
+                    self.emit_tool_result_owned(
+                        &controls,
+                        cycle_index,
+                        &patched_call,
+                        &result,
+                        checkpoint.owns_tool_receipt(cycle_index, &patched_call.id),
+                    );
                     let interruption_messages = collect_interruption_messages(&controls);
                     let steering_prompts = drain_steering_queue(&controls);
                     let steering_count = interruption_messages.len() + steering_prompts.len();
@@ -971,12 +974,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 .clone()
                 .map(CheckpointRuntimeControl::into_controller),
         );
-        if let Some(error) = checkpoint.take_llm_error() {
-            return Err(error);
-        }
-        if let Some(error) = pending_error {
-            return Err(error);
-        }
+        checkpoint.take_run_error(&mut pending_error)?;
         if backend_manages_checkpoint_cycles && !checkpoint.refresh_model_call_ledger()? {
             model_call_ledger
                 .replace(result.token_usage.model_calls.clone())

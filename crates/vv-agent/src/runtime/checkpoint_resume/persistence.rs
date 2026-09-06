@@ -259,6 +259,22 @@ impl CheckpointResumeController {
             .cloned()
     }
 
+    pub(crate) fn has_durable_tool_receipt(&self, cycle_index: u32, tool_call_id: &str) -> bool {
+        let Some(entry) = self.find_tool_call(cycle_index, tool_call_id) else {
+            return false;
+        };
+        self.checkpoint.as_ref().is_some_and(|checkpoint| {
+            checkpoint.event_outbox.iter().any(|outbox| {
+                outbox.event.get("type").and_then(Value::as_str) == Some("tool_call_completed")
+                    && outbox.event.get("tool_call_id").and_then(Value::as_str)
+                        == Some(tool_call_id)
+                    && outbox.event.get("operation_id").and_then(Value::as_str)
+                        == Some(entry.operation_id.as_str())
+                    && outbox.event.get("attempt").and_then(Value::as_u64) == Some(entry.attempt)
+            })
+        })
+    }
+
     pub(crate) fn deferred_tool_identity(
         &self,
         cycle_index: u32,
@@ -362,7 +378,7 @@ impl CheckpointResumeController {
             budget_usage: checkpoint.budget_usage.clone(),
             budget_exhaustion: None,
             checkpoint_key: Some(checkpoint.checkpoint_key.clone()),
-            resume_observation: None,
+            resume_observations: Vec::new(),
             final_answer: None,
             wait_reason: Some("deferred_pending".to_string()),
             error: None,
@@ -476,6 +492,13 @@ impl CheckpointResumeController {
                 .fetch_max(expiry, Ordering::Release);
         }
         self.require_checkpoint_mut()?.lease_expires_at_ms = Some(expiry);
+        self.reload()?;
+        if self.require_checkpoint()?.cancel_requested {
+            return Err(CheckpointError::new(
+                "checkpoint_cancel_requested",
+                "checkpoint cancellation was requested before external dispatch",
+            ));
+        }
         Ok(())
     }
 
@@ -628,7 +651,7 @@ fn lease_lost(message: &'static str) -> CheckpointError {
 }
 
 fn renew_heartbeat_once(
-    renew: impl FnOnce(u64, u64) -> CheckpointResult<bool>,
+    renew: impl FnOnce(u64, u64) -> CheckpointResult<CheckpointRenewalOutcome>,
     lease_duration_ms: u64,
     known_expiry: u64,
 ) -> CheckpointResult<Option<u64>> {
@@ -642,8 +665,11 @@ fn renew_heartbeat_once(
         CheckpointError::new("checkpoint_claim_invalid", "checkpoint lease overflow")
     })?;
     match renew(expiry, now) {
-        Ok(false) => Err(lease_lost("checkpoint heartbeat lost its claim")),
-        Ok(true) => {
+        Ok(CheckpointRenewalOutcome::ClaimLost { .. }) => {
+            Err(lease_lost("checkpoint heartbeat lost its claim"))
+        }
+        Ok(CheckpointRenewalOutcome::CancelRequested { .. })
+        | Ok(CheckpointRenewalOutcome::Renewed { .. }) => {
             let observed = now_ms()?;
             if observed >= known_expiry || observed >= expiry {
                 Err(lease_lost(
@@ -713,16 +739,47 @@ mod tests {
             .expect("transient store error is retryable"),
             None
         );
-        assert!(renew_heartbeat_once(|_, _| Ok(true), 1_000, known_expiry)
-            .expect("renewal retry")
-            .is_some());
+        assert!(renew_heartbeat_once(
+            |_, _| Ok(CheckpointRenewalOutcome::Renewed {
+                lease_expires_at_ms: known_expiry
+            }),
+            1_000,
+            known_expiry,
+        )
+        .expect("renewal retry")
+        .is_some());
 
-        let false_error = renew_heartbeat_once(|_, _| Ok(false), 1_000, known_expiry)
-            .expect_err("false renewal must fail closed");
+        let cancel_expiry = renew_heartbeat_once(
+            |_, _| {
+                Ok(CheckpointRenewalOutcome::CancelRequested {
+                    lease_expires_at_ms: known_expiry,
+                })
+            },
+            1_000,
+            known_expiry,
+        )
+        .expect("cancellation renewal keeps the claim alive")
+        .expect("cancellation renewal returns its lease expiry");
+        assert!(cancel_expiry > now);
+
+        let false_error = renew_heartbeat_once(
+            |_, _| Ok(CheckpointRenewalOutcome::ClaimLost { revision: 1 }),
+            1_000,
+            known_expiry,
+        )
+        .expect_err("false renewal must fail closed");
         assert_eq!(false_error.code(), "checkpoint_lease_lost");
 
-        let expired_error = renew_heartbeat_once(|_, _| Ok(true), 1_000, 0)
-            .expect_err("expired lease must fail closed");
+        let expired_error = renew_heartbeat_once(
+            |_, _| {
+                Ok(CheckpointRenewalOutcome::Renewed {
+                    lease_expires_at_ms: 1,
+                })
+            },
+            1_000,
+            0,
+        )
+        .expect_err("expired lease must fail closed");
         assert_eq!(expired_error.code(), "checkpoint_lease_lost");
     }
 
@@ -732,7 +789,9 @@ mod tests {
         let error = renew_heartbeat_once(
             |_, _| {
                 std::thread::sleep(Duration::from_millis(100));
-                Ok(true)
+                Ok(CheckpointRenewalOutcome::Renewed {
+                    lease_expires_at_ms: 1,
+                })
             },
             1_000,
             now + 50,

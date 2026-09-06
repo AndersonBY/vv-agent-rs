@@ -66,7 +66,8 @@ fn redis_claim_controller_command_wake(
             return Ok(Some(None));
         };
         let receipt = redis_decode_controller_receipt(&raw)?;
-        let _command = redis_load_controller_command(connection, command_id, command_digest)?;
+        let command = redis_load_controller_command(connection, command_id, command_digest)?;
+        redis_validate_controller_receipt_binding(&receipt, &command)?;
         if receipt.command_id != command_id || receipt.command_digest != command_digest {
             return Err(CheckpointError::new(
                 "controller_command_conflict",
@@ -94,7 +95,9 @@ fn redis_claim_controller_command_wake(
             ));
         }
         if wake.outbox_state == "claimed" {
-            if wake.claim_token.as_deref() == Some(claim_token) {
+            if wake.claim_token.as_deref() == Some(claim_token)
+                && wake.lease_expires_at_ms.is_some_and(|expiry| expiry > now_ms)
+            {
                 return Ok(Some(Some(receipt)));
             }
             if wake.lease_expires_at_ms.is_some_and(|expiry| expiry > now_ms) {
@@ -166,7 +169,8 @@ fn redis_complete_controller_command_wake(
             return Ok(Some(None));
         };
         let receipt = redis_decode_controller_receipt(&raw)?;
-        let _command = redis_load_controller_command(connection, command_id, command_digest)?;
+        let command = redis_load_controller_command(connection, command_id, command_digest)?;
+        redis_validate_controller_receipt_binding(&receipt, &command)?;
         if receipt.command_id != command_id || receipt.command_digest != command_digest {
             return Err(CheckpointError::new(
                 "controller_command_conflict",
@@ -250,7 +254,8 @@ fn redis_reconcile_controller_command_wake(
             return Ok(Some(None));
         };
         let receipt = redis_decode_controller_receipt(&raw)?;
-        let _command = redis_load_controller_command(connection, command_id, command_digest)?;
+        let command = redis_load_controller_command(connection, command_id, command_digest)?;
+        redis_validate_controller_receipt_binding(&receipt, &command)?;
         if receipt.command_id != command_id || receipt.command_digest != command_digest {
             return Err(CheckpointError::new(
                 "controller_command_conflict",
@@ -305,65 +310,122 @@ fn redis_reconcile_controller_command_wake(
     })
 }
 
-fn redis_reap_controller_command_wake(
+fn redis_reap_controller_command_wakes(
     store: &RedisCheckpointStore,
-    command_id: &str,
-    command_digest: &str,
+    checkpoint_key: &str,
     now_ms: u64,
-) -> CheckpointResult<bool> {
-    crate::checkpoint::validate_sha256(command_digest, "command_digest")?;
-    let receipt_key = RedisCheckpointStore::controller_command_key(command_id);
-    let command_key = RedisCheckpointStore::controller_command_payload_key(command_id);
-    let outbox_key = RedisCheckpointStore::controller_command_outbox_key(command_id);
-    store.controller_transaction(&[receipt_key.as_str(), command_key.as_str(), outbox_key.as_str()], |connection, pipeline| {
-        let Some(raw) = connection
-            .get::<_, Option<String>>(&receipt_key)
-            .map_err(redis_error)?
-        else {
-            return Ok(Some(false));
-        };
-        let receipt = redis_decode_controller_receipt(&raw)?;
-        let _command = redis_load_controller_command(connection, command_id, command_digest)?;
-        if receipt.command_id != command_id || receipt.command_digest != command_digest {
-            return Err(CheckpointError::new(
-                "controller_command_conflict",
-                "controller wake digest does not match receipt",
-            ));
-        }
-        let raw_outbox = connection
-            .get::<_, Option<String>>(&outbox_key)
-            .map_err(redis_error)?
-            .ok_or_else(|| {
-                CheckpointError::new(
+) -> CheckpointResult<Vec<crate::checkpoint::ControllerCommandWakeRecord>> {
+    let receipt_set_key = RedisCheckpointStore::controller_receipts_checkpoint_set_key(checkpoint_key);
+    store.controller_transaction(&[receipt_set_key.as_str()], |connection, pipeline| {
+        let receipt_keys = connection
+            .smembers::<_, Vec<String>>(&receipt_set_key)
+            .map_err(redis_error)?;
+        let mut candidates = Vec::new();
+        for receipt_key in receipt_keys {
+            if !receipt_key.starts_with(CONTROLLER_COMMAND_PREFIX) {
+                continue;
+            }
+            redis::cmd("WATCH")
+                .arg(&receipt_key)
+                .query::<()>(&mut *connection)
+                .map_err(redis_error)?;
+            let Some(raw_receipt) = connection
+                .get::<_, Option<String>>(&receipt_key)
+                .map_err(redis_error)?
+            else {
+                continue;
+            };
+            let receipt = redis_decode_controller_receipt(&raw_receipt)?;
+            if receipt_key != RedisCheckpointStore::controller_command_key(&receipt.command_id) {
+                return Err(CheckpointError::new(
                     "controller_command_conflict",
-                    "controller wake outbox is missing",
-                )
-            })?;
-        let wake = RedisControllerWakeOutbox::from_value(&serde_json::from_str(&raw_outbox)?)?;
-        redis_wake_outbox_matches_receipt(&wake, &receipt)?;
-        if wake.outbox_state != "claimed"
-            || wake.lease_expires_at_ms.is_none_or(|expiry| expiry > now_ms)
-        {
-            return Ok(Some(false));
+                    "controller receipt key does not match command identity",
+                ));
+            }
+            if receipt.handle.checkpoint_key != checkpoint_key
+                || receipt.outbox_action != "recovery_dispatch"
+            {
+                continue;
+            }
+            let command_key = RedisCheckpointStore::controller_command_payload_key(&receipt.command_id);
+            redis::cmd("WATCH")
+                .arg(&command_key)
+                .query::<()>(&mut *connection)
+                .map_err(redis_error)?;
+            let command = redis_load_controller_command(
+                connection,
+                &receipt.command_id,
+                &receipt.command_digest,
+            )?;
+            redis_validate_controller_receipt_binding(&receipt, &command)?;
+            let outbox_key = RedisCheckpointStore::controller_command_outbox_key(&receipt.command_id);
+            redis::cmd("WATCH")
+                .arg(&outbox_key)
+                .query::<()>(&mut *connection)
+                .map_err(redis_error)?;
+            let raw_outbox = connection
+                .get::<_, Option<String>>(&outbox_key)
+                .map_err(redis_error)?
+                .ok_or_else(|| {
+                    CheckpointError::new(
+                        "controller_command_conflict",
+                        "controller wake outbox is missing",
+                    )
+                })?;
+            let wake = RedisControllerWakeOutbox::from_value(&serde_json::from_str(&raw_outbox)?)?;
+            redis_wake_outbox_matches_receipt(&wake, &receipt)?;
+            let expired_claim = receipt.outbox_state == "claimed"
+                && wake
+                    .lease_expires_at_ms
+                    .is_some_and(|expiry| expiry <= now_ms);
+            if receipt.outbox_state == "pending" || expired_claim {
+                candidates.push((
+                    receipt.expected_revision,
+                    receipt.command_id.clone(),
+                    receipt_key,
+                    outbox_key,
+                    receipt,
+                    wake,
+                ));
+            }
         }
-        let mut updated = receipt;
-        updated.outbox_state = "pending".to_string();
-        updated.validate()?;
-        let mut updated_wake = RedisControllerWakeOutbox::from_receipt_unchecked(&updated)?;
-        updated_wake.last_error = Some("controller_wake_claim_expired".to_string());
-        updated_wake.validate()?;
-        pipeline
-            .set(
-                &receipt_key,
-                redis_encode_controller_receipt(&updated)?,
-            )
-            .ignore();
-        pipeline
-            .set(
-                &outbox_key,
-                serde_json::to_string(&updated_wake.to_value())?,
-            )
-            .ignore();
-        Ok(Some(true))
+        candidates.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        let mut reaped = Vec::with_capacity(candidates.len());
+        for (_, _, receipt_key, outbox_key, receipt, wake) in candidates {
+            if receipt.outbox_state == "pending" {
+                reaped.push(crate::checkpoint::ControllerCommandWakeRecord::from_receipt_lifecycle(
+                    &receipt,
+                    wake.outbox_id,
+                    wake.attempt,
+                    wake.claim_token,
+                    wake.lease_expires_at_ms,
+                    wake.delivered_at_ms,
+                    wake.last_error,
+                )?);
+                continue;
+            }
+            let mut updated = receipt;
+            updated.outbox_state = "pending".to_string();
+            updated.validate()?;
+            let mut updated_wake = RedisControllerWakeOutbox::from_receipt_unchecked(&updated)?;
+            updated_wake.last_error = Some("controller_wake_claim_expired".to_string());
+            updated_wake.validate()?;
+            pipeline
+                .set(&receipt_key, redis_encode_controller_receipt(&updated)?)
+                .ignore();
+            pipeline
+                .set(&outbox_key, serde_json::to_string(&updated_wake.to_value())?)
+                .ignore();
+            reaped.push(crate::checkpoint::ControllerCommandWakeRecord::from_receipt_lifecycle(
+                &updated,
+                updated_wake.outbox_id.clone(),
+                updated_wake.attempt,
+                updated_wake.claim_token.clone(),
+                updated_wake.lease_expires_at_ms,
+                updated_wake.delivered_at_ms,
+                updated_wake.last_error.clone(),
+            )?);
+        }
+        Ok(Some(reaped))
     })
 }

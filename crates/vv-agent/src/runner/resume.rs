@@ -4,7 +4,9 @@ use serde_json::Value;
 
 use crate::budget::{BudgetEnforcementBoundary, BudgetEvaluator};
 use crate::events::{RunEvent, RunEventPayload, ToolStatus};
-use crate::result::{PendingToolApproval, RunResult, RunResumeContext, RunState};
+use crate::result::{
+    ApprovalConsumption, PendingToolApproval, RunResult, RunResumeContext, RunState,
+};
 use crate::run_config::INITIAL_BUDGET_USAGE_METADATA_KEY;
 use crate::tools::ToolLifecycleEvent;
 use crate::types::{
@@ -22,6 +24,13 @@ use super::{effective_session_id, NormalizedInput, Runner};
 
 const CHECKPOINT_APPROVAL_RESUME_CONFIG_INVALID: &str =
     "checkpoint_approval_resume_config_invalid: checkpoint approval resume requires a distinct explicit resume_if_present key";
+
+#[derive(Clone)]
+pub(super) struct ApprovalResumeInvocation {
+    pub source_result: AgentResult,
+    pub source_trace_id: String,
+    pub approval: PendingToolApproval,
+}
 
 impl Runner {
     pub async fn resume(&self, state: RunState) -> Result<RunResult, String> {
@@ -46,7 +55,12 @@ impl Runner {
             return Err("run state does not include resume context".to_string());
         };
         let origin_runner = resume_context.runner.clone();
-        if let Some(result) = Box::pin(origin_runner.resume_approved_tool_call(
+        let approval_runner = if self.default_run_config.checkpoint_config.is_some() {
+            self
+        } else {
+            &origin_runner
+        };
+        if let Some(result) = Box::pin(approval_runner.resume_approved_tool_call_on_stack(
             &source,
             &resume_context,
             &approved_ids,
@@ -72,25 +86,67 @@ impl Runner {
         Ok(result)
     }
 
+    async fn resume_approved_tool_call_on_stack(
+        &self,
+        source: &RunResult,
+        resume_context: &RunResumeContext,
+        approved_ids: &[String],
+        approval_consumption: &ApprovalConsumption,
+        resume_input: Option<&NormalizedInput>,
+    ) -> Option<Result<RunResult, String>> {
+        let runner = self.clone();
+        let source = source.clone();
+        let resume_context = resume_context.clone();
+        let approved_ids = approved_ids.to_vec();
+        let approval_consumption = approval_consumption.clone();
+        let resume_input = resume_input.cloned();
+        let runtime = tokio::runtime::Handle::current();
+        match tokio::task::spawn_blocking(move || {
+            std::thread::Builder::new()
+                .name("vv-approval-resume".to_string())
+                .stack_size(4 * 1024 * 1024)
+                .spawn(move || {
+                    runtime.block_on(runner.resume_approved_tool_call(
+                        &source,
+                        &resume_context,
+                        &approved_ids,
+                        &approval_consumption,
+                        resume_input.as_ref(),
+                    ))
+                })
+                .map_err(|error| format!("approval resume worker spawn failed: {error}"))
+                .and_then(|worker| {
+                    worker
+                        .join()
+                        .map_err(|_| "approval resume worker panicked".to_string())
+                })
+        })
+        .await
+        {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => Some(Err(error)),
+            Err(error) => Some(Err(format!("approval resume task failed: {error}"))),
+        }
+    }
+
     async fn resume_approved_tool_call(
         &self,
         source: &RunResult,
         resume_context: &RunResumeContext,
         approved_ids: &[String],
-        approval_consumption: &Arc<Mutex<std::collections::BTreeSet<String>>>,
+        approval_consumption: &ApprovalConsumption,
         resume_input: Option<&NormalizedInput>,
     ) -> Option<Result<RunResult, String>> {
-        let approval = match select_approved_tool_context(
-            resume_context.pending_tool_approval.as_ref(),
-            approved_ids,
-        ) {
-            Ok(Some(approval)) => approval.clone(),
-            Ok(None) => return None,
-            Err(error) => return Some(Err(error)),
-        };
-        if source.checkpoint_key().is_some() {
-            return Some(Err(CHECKPOINT_APPROVAL_RESUME_CONFIG_INVALID.to_string()));
-        }
+        let approval = Box::new(
+            match select_approved_tool_context(
+                resume_context.pending_tool_approval.as_ref(),
+                approved_ids,
+            ) {
+                Ok(Some(approval)) => approval.clone(),
+                Ok(None) => return None,
+                Err(error) => return Some(Err(error)),
+            },
+        );
         if !approval_snapshot_matches_result(source.result(), &approval) {
             return Some(Err(
                 "approved tool call does not match the captured interruption".to_string(),
@@ -114,11 +170,13 @@ impl Runner {
             cancelled.partial_output = cancelled
                 .partial_output
                 .or_else(|| last_assistant_output(&cancelled.cycles));
-            cancelled.error = Some(
+            cancelled.error = Some(crate::types::AgentResultError::new(
+                "cancelled",
                 cancellation_token
                     .and_then(crate::runtime::CancellationToken::reason)
                     .unwrap_or_else(|| "run cancelled".to_string()),
-            );
+                false,
+            ));
             cancelled.budget_exhaustion = None;
             cancelled.final_answer = None;
             cancelled.wait_reason = None;
@@ -133,15 +191,68 @@ impl Runner {
                 Vec::new(),
             ));
         }
+        let target_checkpoint = self.default_run_config.checkpoint_config.clone();
+        let source_checkpoint_key = approval
+            .source_checkpoint_key
+            .clone()
+            .or_else(|| source.checkpoint_key().map(str::to_string));
+        if source_checkpoint_key.is_some() {
+            if approval.source_operation_id.is_none() || approval.source_attempt.is_none() {
+                return Some(Err(
+                    "checkpoint_journal_integrity_mismatch: captured source operation identity is incomplete"
+                        .to_string(),
+                ));
+            }
+            let valid_target = target_checkpoint.as_ref().is_some_and(|config| {
+                config.resume_policy == crate::checkpoint::ResumePolicy::ResumeIfPresent
+                    && config
+                        .key
+                        .as_deref()
+                        .is_some_and(|key| !key.trim().is_empty())
+                    && config.key.as_deref() != source_checkpoint_key.as_deref()
+            });
+            if !valid_target {
+                return Some(Err(CHECKPOINT_APPROVAL_RESUME_CONFIG_INVALID.to_string()));
+            }
+        } else if target_checkpoint.as_ref().is_some_and(|config| {
+            config.resume_policy != crate::checkpoint::ResumePolicy::ResumeIfPresent
+                || config
+                    .key
+                    .as_deref()
+                    .is_none_or(|key| key.trim().is_empty())
+        }) {
+            return Some(Err(CHECKPOINT_APPROVAL_RESUME_CONFIG_INVALID.to_string()));
+        }
+        let target_checkpoint_key = target_checkpoint
+            .as_ref()
+            .and_then(|config| config.key.clone());
         {
             let mut consumed = approval_consumption
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if !consumed.insert(approval.interruption_id.clone()) {
-                return Some(Err("approval_already_consumed".to_string()));
+            if let Some(previous_key) = consumed.get(&approval.interruption_id) {
+                if previous_key.as_ref() != target_checkpoint_key.as_ref()
+                    || target_checkpoint_key.is_none()
+                {
+                    return Some(Err("approval_already_consumed".to_string()));
+                }
+            } else {
+                consumed.insert(
+                    approval.interruption_id.clone(),
+                    target_checkpoint_key.clone(),
+                );
             }
         }
         let resumed_run_id = format!("run_{}", uuid::Uuid::new_v4().simple());
+        if let Some(target_checkpoint) = target_checkpoint {
+            return Some(self.resume_approved_checkpoint(
+                source,
+                resume_context,
+                *approval,
+                target_checkpoint,
+                resumed_run_id,
+            ));
+        }
         let budget_limits = resume_context
             .config
             .budget_limits
@@ -291,7 +402,11 @@ impl Runner {
                 agent_result.partial_output = last_assistant_output(&agent_result.cycles);
                 agent_result.final_answer = None;
                 agent_result.wait_reason = None;
-                agent_result.error = Some("Run budget exhausted.".to_string());
+                agent_result.error = Some(crate::types::AgentResultError::new(
+                    "run_budget_exhausted",
+                    "Run budget exhausted.",
+                    false,
+                ));
             }
             let payload = match exhaustion.clone() {
                 Some(budget_exhaustion) => RunEventPayload::BudgetExhausted {
@@ -467,6 +582,53 @@ impl Runner {
         )
     }
 
+    fn resume_approved_checkpoint(
+        &self,
+        source: &RunResult,
+        resume_context: &RunResumeContext,
+        approval: PendingToolApproval,
+        target_checkpoint: crate::checkpoint::CheckpointConfig,
+        resumed_run_id: String,
+    ) -> Result<RunResult, String> {
+        let mut config = resume_context.config.clone();
+        config.checkpoint_config = Some(target_checkpoint);
+        config.initial_messages = Some(source.result().messages.clone());
+        config.initial_shared_state = source.result().shared_state.clone();
+        config.trace_id = Some(source.trace_id().to_string());
+        set_initial_budget_usage(&mut config, source.budget_usage())?;
+        let interruption_id = approval.interruption_id.clone();
+        let invocation = ApprovalResumeInvocation {
+            source_result: source.result().clone(),
+            source_trace_id: source.trace_id().to_string(),
+            approval,
+        };
+        let result = match self.run_single_agent_operation(
+            &resume_context.agent,
+            NormalizedInput::from(source.input().to_string()),
+            config,
+            Some(Arc::new(Mutex::new(Vec::new()))),
+            None,
+            None,
+            Some(resumed_run_id),
+            None,
+            Some(invocation),
+        )? {
+            super::SingleRunExecutionOutcome::Completed(outcome) => outcome.result,
+            super::SingleRunExecutionOutcome::DistributedStarted(_) => {
+                return Err("approval resume cannot use distributed execution".to_string())
+            }
+        };
+        let mut events = source.events().to_vec();
+        events.extend_from_slice(result.events());
+        let mut metadata = result.metadata().clone();
+        metadata.insert("resumed".to_string(), Value::Bool(true));
+        metadata.insert(
+            "approved_interruption_id".to_string(),
+            Value::String(interruption_id),
+        );
+        Ok(result.with_events(events).with_metadata(metadata))
+    }
+
     #[allow(clippy::too_many_arguments)] // Keep the terminal commit context explicit and atomic.
     fn finalize_approval_terminal(
         &self,
@@ -572,7 +734,7 @@ fn persist_approval_lifecycle_events(
     Ok(events)
 }
 
-fn approval_lifecycle_run_event(
+pub(super) fn approval_lifecycle_run_event(
     observation: ToolLifecycleEvent,
     run_id: &str,
     trace_id: &str,
@@ -709,7 +871,10 @@ fn select_approved_tool_context<'a>(
 fn approval_snapshot_matches_result(result: &AgentResult, approval: &PendingToolApproval) -> bool {
     result.cycles.iter().any(|cycle| {
         cycle.index == approval.cycle_index
-            && cycle.tool_calls.iter().any(|call| call == &approval.call)
+            && cycle
+                .tool_calls
+                .iter()
+                .any(|call| call == &approval.source_call)
             && cycle.tool_results.iter().any(|tool_result| {
                 tool_result.tool_call_id == approval.call.id
                     && tool_result

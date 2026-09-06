@@ -1,7 +1,7 @@
 pub(super) const CREATE_CHECKPOINTS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS checkpoints (
     checkpoint_key TEXT PRIMARY KEY,
-    schema_version TEXT NOT NULL CHECK (schema_version = 'vv-agent.checkpoint.v8'),
+    schema_version TEXT NOT NULL CHECK (schema_version = 'vv-agent.checkpoint.v10'),
     run_definition_schema TEXT NOT NULL CHECK (run_definition_schema = 'vv-agent.run-definition.v5'),
     run_definition TEXT NOT NULL,
     task_id TEXT NOT NULL,
@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS checkpoints (
     resume_attempt INTEGER NOT NULL CHECK (resume_attempt >= 1),
     cycle_index INTEGER NOT NULL CHECK (cycle_index >= 0),
     status TEXT NOT NULL,
+    cancel_requested INTEGER NOT NULL CHECK (cancel_requested IN (0, 1)),
     active_host_interaction TEXT,
     suspended_origin TEXT,
     messages TEXT NOT NULL,

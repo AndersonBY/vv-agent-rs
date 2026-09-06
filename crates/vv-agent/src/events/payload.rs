@@ -266,6 +266,10 @@ pub enum RunEventPayload {
     RunCancelled {
         reason: String,
     },
+    CycleAborted {
+        logical_cycle: u64,
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

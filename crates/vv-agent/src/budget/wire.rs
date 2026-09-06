@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Deserializer};
+use serde::{ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{
     dimension_precedence, BudgetDimension, BudgetEnforcementBoundary, BudgetExhaustion,
@@ -9,6 +9,7 @@ use super::{
 };
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct HostCostWire {
     unit: String,
     #[serde(default)]
@@ -32,7 +33,38 @@ impl<'de> Deserialize<'de> for HostCost {
     }
 }
 
+impl Serialize for BudgetUnavailableDimension {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let include_all = self.reason == BudgetUnavailableReason::UsageMissing;
+        let field_count = 2
+            + usize::from(include_all || self.expected_unit.is_some())
+            + usize::from(include_all || self.observed_unit.is_some())
+            + usize::from(include_all || self.expected_currency.is_some())
+            + usize::from(include_all || self.observed_currency.is_some());
+        let mut state = serializer.serialize_struct("BudgetUnavailableDimension", field_count)?;
+        state.serialize_field("dimension", &self.dimension)?;
+        state.serialize_field("reason", &self.reason)?;
+        if include_all || self.expected_unit.is_some() {
+            state.serialize_field("expected_unit", &self.expected_unit)?;
+        }
+        if include_all || self.observed_unit.is_some() {
+            state.serialize_field("observed_unit", &self.observed_unit)?;
+        }
+        if include_all || self.expected_currency.is_some() {
+            state.serialize_field("expected_currency", &self.expected_currency)?;
+        }
+        if include_all || self.observed_currency.is_some() {
+            state.serialize_field("observed_currency", &self.observed_currency)?;
+        }
+        state.end()
+    }
+}
+
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct BudgetUnavailableDimensionWire {
     dimension: BudgetDimension,
     reason: BudgetUnavailableReason,
@@ -66,6 +98,7 @@ impl<'de> Deserialize<'de> for BudgetUnavailableDimension {
 }
 
 #[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RunBudgetLimitsWire {
     #[serde(default)]
     max_total_tokens: Option<u64>,
@@ -104,6 +137,7 @@ impl<'de> Deserialize<'de> for RunBudgetLimits {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct BudgetUsageSnapshotWire {
     cycles: u64,
     total_tokens: Option<u64>,
@@ -140,6 +174,7 @@ impl<'de> Deserialize<'de> for BudgetUsageSnapshot {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct BudgetExhaustionWire {
     dimension: BudgetDimension,
     #[serde(default)]

@@ -3,10 +3,11 @@ pub(super) fn supplemental_wire_fields(value: &Value, payload: &RunEventPayload)
         return Metadata::new();
     };
     let keys: &[&str] = match payload {
+        RunEventPayload::RunStateChanged { .. } => &["cancel_requested"],
         RunEventPayload::ToolCallPlanned { .. } | RunEventPayload::ToolCallStarted { .. } => {
             &["tool_metadata"]
         }
-        RunEventPayload::ToolCallCompleted { .. } => &["tool_metadata"],
+        RunEventPayload::ToolCallCompleted { .. } => &["tool_metadata", "checkpoint_key"],
         RunEventPayload::ToolCallDeferred { .. } => &["checkpoint_key"],
         RunEventPayload::ReconciliationResolved { .. } => &["claim_mode"],
         RunEventPayload::SubRunStarted { .. } => &["status"],
@@ -72,6 +73,9 @@ pub(super) fn add_constructed_supplemental_fields(
             ("status", Value::String("completed".to_string()))
         }
         RunEventPayload::RunCompleted { .. } => ("final_output", Value::Null),
+        RunEventPayload::RunFailed { .. } | RunEventPayload::RunCancelled { .. } => {
+            ("partial_output", Value::Null)
+        }
         _ => return,
     };
     fields.entry(key.to_string()).or_insert(value);

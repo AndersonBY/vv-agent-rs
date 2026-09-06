@@ -15,9 +15,19 @@ fn resume_event_fixture_round_trips_typed_payloads() {
         "operation_ambiguous",
         "reconciliation_required",
         "reconciliation_resolved",
+        "tool_call_deferred",
+        "tool_call_completed",
+        "tool_call_deferred",
+        "tool_call_completed",
+        "reconciliation_resolved",
+        "tool_call_deferred",
+        "cycle_aborted",
     ];
 
-    for (line, expected_type) in FIXTURE.lines().zip(expected_types) {
+    let lines = FIXTURE.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), expected_types.len());
+
+    for (line, expected_type) in lines.into_iter().zip(expected_types) {
         let expected: serde_json::Value = serde_json::from_str(line).expect("fixture JSON");
         let event: RunEvent = serde_json::from_str(line).expect("typed resume event");
         let encoded = serde_json::to_value(&event).expect("serialize resume event");
@@ -33,8 +43,26 @@ fn resume_event_fixture_round_trips_typed_payloads() {
                 | RunEventPayload::ReconciliationRequired { .. }
                 | RunEventPayload::ModelRetryDuplicateRisk { .. }
                 | RunEventPayload::ReconciliationResolved { .. }
+                | RunEventPayload::ToolCallDeferred { .. }
+                | RunEventPayload::ToolCallCompleted { .. }
+                | RunEventPayload::CycleAborted { .. }
         ));
     }
+}
+
+#[test]
+fn tool_call_completed_preserves_checkpoint_key_and_rejects_unknown_fields() {
+    let line = FIXTURE.lines().nth(11).expect("completed deferred event");
+    let expected: serde_json::Value = serde_json::from_str(line).expect("fixture JSON");
+    let event: RunEvent = serde_json::from_str(line).expect("typed completed event");
+    let encoded = serde_json::to_value(event).expect("serialize completed event");
+    assert_eq!(encoded["checkpoint_key"], expected["checkpoint_key"]);
+
+    let mut unknown = expected;
+    unknown["future_field"] = serde_json::json!(true);
+    let error = serde_json::from_value::<RunEvent>(unknown)
+        .expect_err("unknown tool completion field must be rejected");
+    assert!(error.to_string().contains("unknown fields: future_field"));
 }
 
 #[test]

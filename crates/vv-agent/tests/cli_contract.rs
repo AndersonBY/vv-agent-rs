@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use vv_agent::cli::{
     build_cli_task_from_resolved, parse_cli_args_from_with_default_settings,
     parse_cli_command_from_with_default_settings, result_payload, CliCommand, DebugCliCommand,
@@ -43,7 +43,7 @@ fn result(status: AgentStatus, error: Option<&str>) -> AgentResult {
         partial_output: None,
         final_answer: (status == AgentStatus::Completed).then(|| "done".to_string()),
         wait_reason: None,
-        error: error.map(str::to_string),
+        error: error.map(|message| vv_agent::AgentResultError::new("agent_failed", message, false)),
         error_code: None,
         messages: vec![],
         cycles: vec![],
@@ -52,7 +52,7 @@ fn result(status: AgentStatus, error: Option<&str>) -> AgentResult {
         budget_usage: None,
         budget_exhaustion: None,
         checkpoint_key: None,
-        resume_observation: None,
+        resume_observations: Vec::new(),
     }
 }
 
@@ -146,9 +146,19 @@ fn result_json_covers_success_failure_and_cancellation() {
     assert_eq!(success["status"], "completed");
     assert_eq!(success["final_answer"], "done");
     assert_eq!(failure["status"], "failed");
-    assert_eq!(failure["error"], "request failed");
+    assert_eq!(
+        failure["error"],
+        json!({"code": "agent_failed", "message": "request failed", "retryable": false})
+    );
     assert_eq!(cancellation["status"], "failed");
-    assert_eq!(cancellation["error"], "Operation was cancelled");
+    assert_eq!(
+        cancellation["error"],
+        json!({
+            "code": "agent_failed",
+            "message": "Operation was cancelled",
+            "retryable": false
+        })
+    );
 }
 
 #[test]

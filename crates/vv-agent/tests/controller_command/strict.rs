@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn strict_v8_readers_reject_old_versions_and_unknown_members() {
+fn strict_current_readers_reject_old_versions_and_unknown_members() {
     let request =
         HostInteractionRequest::new("interaction-strict", 1, "operation", "tool", "prompt")
             .expect("request");
@@ -61,6 +61,15 @@ fn host_request_and_public_outbox_redact_credentials_and_external_locators() {
         original,
     )
     .expect("request");
+    let mut raw_wire = request.to_value();
+    raw_wire["prompt"] = json!("Authorization: Bearer sk-live-123");
+    raw_wire["request_digest"] = json!(request.request_digest.clone());
+    assert_eq!(
+        HostInteractionRequest::from_value(&raw_wire)
+            .expect_err("wire prompt must already be sanitized")
+            .code(),
+        "host_interaction_fields_invalid"
+    );
     let text = &request.prompt;
     assert!(!text.contains("sk-live-123"));
     assert!(!text.contains("abc"));

@@ -20,11 +20,12 @@ macro_rules! redis_impl_tail {
                     "checkpoint does not exist",
                 ));
             };
-            let current = decode_storage(
+            let current = decode_storage_for_key(
                 &raw,
                 connection
                     .get::<_, Option<u64>>(&lease_key)
                     .map_err(redis_error)?,
+                checkpoint_key,
             )?;
             if crate::runtime::state::deferred_batch_is_idempotent(&current, decisions) {
                 return Ok(Some(crate::checkpoint::DeferredBatchAdmission {
@@ -107,6 +108,13 @@ macro_rules! redis_impl_tail {
         command_id: &str,
     ) -> CheckpointResult<Option<ControllerCommand>> {
         redis_get_controller_command(self, command_id)
+    }
+
+    fn find_resolved_pending_host_interaction(
+        &self,
+        checkpoint_key: &str,
+    ) -> CheckpointResult<Option<crate::checkpoint::HostInteractionRecord>> {
+        redis_find_resolved_pending_host_interaction(self, checkpoint_key)
     }
 
     fn claim_and_consume_host_interaction_response(
@@ -240,13 +248,12 @@ macro_rules! redis_impl_tail {
         redis_reconcile_controller_command_wake(self, command_id, command_digest, outcome, now_ms)
     }
 
-    fn reap_controller_command_wake(
+    fn reap_controller_command_wakes(
         &self,
-        command_id: &str,
-        command_digest: &str,
+        checkpoint_key: &str,
         now_ms: u64,
-    ) -> CheckpointResult<bool> {
-        redis_reap_controller_command_wake(self, command_id, command_digest, now_ms)
+    ) -> CheckpointResult<Vec<ControllerCommandWakeRecord>> {
+        redis_reap_controller_command_wakes(self, checkpoint_key, now_ms)
     }
 
     fn delete_checkpoint(&self, checkpoint_key: &str) -> CheckpointResult<()> {

@@ -164,7 +164,8 @@ async fn live_deepseek_session_memory_probe_accounts_for_every_model_call() {
             RunConfig::builder()
                 .max_cycles(1)
                 .no_tool_policy(vv_agent::NoToolPolicy::Finish)
-                .metadata("session_memory_enabled", json!(true))
+                .session_memory_enabled(true)
+                .metadata("session_id", json!("deepseek-session-memory-probe"))
                 .metadata("session_memory_min_tokens", json!(1))
                 .metadata("session_memory_min_text_messages", json!(1))
                 .build(),

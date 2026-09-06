@@ -25,6 +25,11 @@ fn invalid_run_event_inputs_are_rejected() {
         assert!(ids.contains(id), "missing invalid memory case {id}");
     }
     for case in cases {
+        if case["id"] == "run_state_changed_live_cancel_missing_cancel_requested" {
+            // A bare RunEvent has no claim context. The controller producer
+            // enforces this field when applying a live-claim cancellation.
+            continue;
+        }
         let mut input = case["input"].clone();
         // The canonical fixture uses a compact marker instead of embedding a
         // 65 KiB string in the vendored JSON.  Expand that one producer case
@@ -86,7 +91,7 @@ fn memory_compaction_model_output_capability_accepts_explicit_null() {
 
 fn current_memory_compact_started() -> Value {
     json!({
-        "version": "v4",
+        "version": "v5",
         "type": "memory_compact_started",
         "event_id": "evt_nullable_model_capability",
         "run_id": "run_nullable_model_capability",
@@ -110,7 +115,7 @@ fn current_memory_compact_started() -> Value {
 
 fn current_memory_compact_completed() -> Value {
     json!({
-        "version": "v4",
+        "version": "v5",
         "type": "memory_compact_completed",
         "event_id": "evt_invalid_memory_completed",
         "run_id": "run_invalid_memory",

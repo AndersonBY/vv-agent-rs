@@ -9,11 +9,11 @@ use sha2::{Digest, Sha256};
 
 use crate::checkpoint::{
     notification_id_for, record_id_for, CheckpointError, CheckpointResult, ClaimMode,
-    ControllerCommand, ControllerCommandReceipt, ControllerCommandResolution, EventCursor,
-    HostInteractionNotificationPayload, HostInteractionNotificationRecord, HostInteractionOutcome,
-    HostInteractionRecord, HostInteractionRecoveryEnvelope, HostInteractionRecoveryResult,
-    HostInteractionRequest, NotificationOutboxState, HOST_INTERACTION_NOTIFICATION_SCHEMA,
-    HOST_INTERACTION_RECORD_SCHEMA,
+    ControllerCommand, ControllerCommandReceipt, ControllerCommandResolution,
+    ControllerCommandWakeRecord, EventCursor, HostInteractionNotificationPayload,
+    HostInteractionNotificationRecord, HostInteractionOutcome, HostInteractionRecord,
+    HostInteractionRecoveryEnvelope, HostInteractionRecoveryResult, HostInteractionRequest,
+    NotificationOutboxState, HOST_INTERACTION_NOTIFICATION_SCHEMA, HOST_INTERACTION_RECORD_SCHEMA,
 };
 use crate::events::{EventId, RunEvent, RunEventPayload};
 use crate::runtime::checkpoint_codec::{checkpoint_from_json, checkpoint_to_json};
@@ -113,7 +113,7 @@ impl RedisCheckpointStore {
     /// Canonical companion key for the closed command payload.
     ///
     /// The receipt, command payload, and wake outbox are intentionally
-    /// separate Redis values.  This is the cross-language v8 layout used by
+    /// separate Redis values.  This is the cross-language v10 layout used by
     /// The same closed layout is used by the other implementation; a receipt must never be decoded as an envelope that
     /// happens to contain the command again.
     pub fn controller_command_payload_key(command_id: &str) -> String {
@@ -156,6 +156,7 @@ impl RedisCheckpointStore {
         connection: &mut Connection,
         data_key: &str,
         lease_key: &str,
+        checkpoint_key: &str,
     ) -> CheckpointResult<Option<Checkpoint>> {
         for _ in 0..TRANSACTION_MAX_ATTEMPTS {
             let Some(raw) = connection
@@ -170,15 +171,51 @@ impl RedisCheckpointStore {
             let raw_again = connection
                 .get::<_, Option<String>>(data_key)
                 .map_err(redis_error)?;
-            if raw_again.as_deref() != Some(raw.as_str()) {
+            let lease_again = connection
+                .get::<_, Option<u64>>(lease_key)
+                .map_err(redis_error)?;
+            if raw_again.as_deref() != Some(raw.as_str()) || lease_again != lease {
                 continue;
             }
-            return decode_storage(&raw, lease).map(Some);
+            let checkpoint = decode_storage_for_key(&raw, lease, checkpoint_key)?;
+            return Ok(Some(checkpoint));
         }
         Err(CheckpointError::new(
             "checkpoint_store_read_conflict",
             "Redis checkpoint load could not obtain a stable snapshot",
         ))
+    }
+
+    fn redis_time_ms(connection: &mut Connection) -> CheckpointResult<u64> {
+        let (seconds, micros): (i64, i64) =
+            redis::cmd("TIME").query(connection).map_err(redis_error)?;
+        let seconds = u64::try_from(seconds).map_err(|_| {
+            CheckpointError::new(
+                "checkpoint_store_redis_time_invalid",
+                "Redis TIME returned a negative timestamp",
+            )
+        })?;
+        let micros = u64::try_from(micros).map_err(|_| {
+            CheckpointError::new(
+                "checkpoint_store_redis_time_invalid",
+                "Redis TIME returned a negative microsecond value",
+            )
+        })?;
+        if micros >= 1_000_000 {
+            return Err(CheckpointError::new(
+                "checkpoint_store_redis_time_invalid",
+                "Redis TIME returned an invalid microsecond value",
+            ));
+        }
+        seconds
+            .checked_mul(1_000)
+            .and_then(|value| value.checked_add(micros / 1_000))
+            .ok_or_else(|| {
+                CheckpointError::new(
+                    "checkpoint_store_redis_time_invalid",
+                    "Redis TIME is outside the checkpoint integer range",
+                )
+            })
     }
 
     fn transaction<T>(
@@ -196,7 +233,16 @@ impl RedisCheckpointStore {
                 .map_err(redis_error)?;
             let mut pipeline = redis::pipe();
             pipeline.atomic();
-            match operation(&mut connection, &mut pipeline)? {
+            let operation_result = match operation(&mut connection, &mut pipeline) {
+                Ok(result) => result,
+                Err(error) => {
+                    redis::cmd("UNWATCH")
+                        .query::<()>(&mut *connection)
+                        .map_err(redis_error)?;
+                    return Err(error);
+                }
+            };
+            match operation_result {
                 None => {
                     redis::cmd("UNWATCH")
                         .query::<()>(&mut *connection)
@@ -220,7 +266,81 @@ impl RedisCheckpointStore {
                             return Ok(value);
                         }
                         Ok(None) => continue,
-                        Err(error) => return Err(redis_error(error)),
+                        Err(error) => {
+                            let transaction_error = redis_error(error);
+                            redis::cmd("UNWATCH")
+                                .query::<()>(&mut *connection)
+                                .map_err(redis_error)?;
+                            return Err(transaction_error);
+                        }
+                    }
+                }
+            }
+        }
+        Err(CheckpointError::new(
+            "checkpoint_store_transaction_retry_exhausted",
+            "Redis checkpoint transaction retry limit exceeded",
+        ))
+    }
+
+    fn claim_transaction<T>(
+        &self,
+        data_key: &str,
+        lease_key: &str,
+        host_set_key: &str,
+        operation: impl Fn(&mut Connection, &mut Pipeline) -> CheckpointResult<Option<T>>,
+    ) -> CheckpointResult<T> {
+        let mut connection = self.lock()?;
+        for _ in 0..TRANSACTION_MAX_ATTEMPTS {
+            let mut watch = redis::cmd("WATCH");
+            watch.arg(data_key).arg(lease_key).arg(host_set_key);
+            watch.query::<()>(&mut *connection).map_err(redis_error)?;
+            let host_record_keys: Vec<String> =
+                connection.smembers(host_set_key).map_err(redis_error)?;
+            for host_record_key in &host_record_keys {
+                redis::cmd("WATCH")
+                    .arg(host_record_key)
+                    .query::<()>(&mut *connection)
+                    .map_err(redis_error)?;
+            }
+            let mut pipeline = redis::pipe();
+            pipeline.atomic();
+            let operation_result = match operation(&mut connection, &mut pipeline) {
+                Ok(result) => result,
+                Err(error) => {
+                    redis::cmd("UNWATCH")
+                        .query::<()>(&mut *connection)
+                        .map_err(redis_error)?;
+                    return Err(error);
+                }
+            };
+            match operation_result {
+                None => {
+                    redis::cmd("UNWATCH")
+                        .query::<()>(&mut *connection)
+                        .map_err(redis_error)?;
+                    return Err(CheckpointError::new(
+                        "checkpoint_store_conflict",
+                        "checkpoint operation did not match its compare-and-set precondition",
+                    ));
+                }
+                Some(value) => {
+                    pipeline.cmd("PING").ignore();
+                    match pipeline.query::<Option<()>>(&mut *connection) {
+                        Ok(Some(())) => {
+                            redis::cmd("UNWATCH")
+                                .query::<()>(&mut *connection)
+                                .map_err(redis_error)?;
+                            return Ok(value);
+                        }
+                        Ok(None) => continue,
+                        Err(error) => {
+                            let transaction_error = redis_error(error);
+                            redis::cmd("UNWATCH")
+                                .query::<()>(&mut *connection)
+                                .map_err(redis_error)?;
+                            return Err(transaction_error);
+                        }
                     }
                 }
             }
@@ -254,7 +374,16 @@ impl RedisCheckpointStore {
             watch.query::<()>(&mut *connection).map_err(redis_error)?;
             let mut pipeline = redis::pipe();
             pipeline.atomic();
-            match operation(&mut connection, &mut pipeline)? {
+            let operation_result = match operation(&mut connection, &mut pipeline) {
+                Ok(result) => result,
+                Err(error) => {
+                    redis::cmd("UNWATCH")
+                        .query::<()>(&mut *connection)
+                        .map_err(redis_error)?;
+                    return Err(error);
+                }
+            };
+            match operation_result {
                 None => {
                     redis::cmd("UNWATCH")
                         .query::<()>(&mut *connection)
@@ -278,7 +407,13 @@ impl RedisCheckpointStore {
                             return Ok(value);
                         }
                         Ok(None) => continue,
-                        Err(error) => return Err(redis_error(error)),
+                        Err(error) => {
+                            let transaction_error = redis_error(error);
+                            redis::cmd("UNWATCH")
+                                .query::<()>(&mut *connection)
+                                .map_err(redis_error)?;
+                            return Err(transaction_error);
+                        }
                     }
                 }
             }
@@ -303,7 +438,16 @@ impl RedisCheckpointStore {
             watch.query::<()>(&mut *connection).map_err(redis_error)?;
             let mut pipeline = redis::pipe();
             pipeline.atomic();
-            match operation(&mut connection, &mut pipeline)? {
+            let operation_result = match operation(&mut connection, &mut pipeline) {
+                Ok(result) => result,
+                Err(error) => {
+                    redis::cmd("UNWATCH")
+                        .query::<()>(&mut *connection)
+                        .map_err(redis_error)?;
+                    return Err(error);
+                }
+            };
+            match operation_result {
                 None => {
                     redis::cmd("UNWATCH")
                         .query::<()>(&mut *connection)
@@ -323,7 +467,13 @@ impl RedisCheckpointStore {
                             return Ok(value);
                         }
                         Ok(None) => continue,
-                        Err(error) => return Err(redis_error(error)),
+                        Err(error) => {
+                            let transaction_error = redis_error(error);
+                            redis::cmd("UNWATCH")
+                                .query::<()>(&mut *connection)
+                                .map_err(redis_error)?;
+                            return Err(transaction_error);
+                        }
                     }
                 }
             }

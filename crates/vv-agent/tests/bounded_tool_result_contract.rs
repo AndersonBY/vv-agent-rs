@@ -1,7 +1,7 @@
 use serde_json::{Map, Value};
 use vv_agent::runtime::backends::distributed::CycleDispatchResult;
 use vv_agent::runtime::checkpoint_codec::{checkpoint_from_value, checkpoint_to_value};
-use vv_agent::{AgentResult, OperationJournalEntry, ToolExecutionResult};
+use vv_agent::{AgentResult, OperationJournalEntry, ToolDirective, ToolExecutionResult};
 
 const BOUNDED_FIXTURE: &str = include_str!("fixtures/parity/bounded_tool_result.json");
 const RESULT_FIXTURE: &str = include_str!("fixtures/parity/result_public.json");
@@ -79,6 +79,39 @@ fn canonical_bounded_results_use_real_strict_readers_and_tool_projection() {
             case["name"]
         );
     }
+}
+
+#[test]
+fn v12_failed_receipt_preserves_metadata_directive_and_digest_source() {
+    let contract = fixture(JOURNAL_FIXTURE);
+    let payload = contract["valid_entries"]
+        .as_array()
+        .expect("journal entries")
+        .iter()
+        .find(|entry| entry["name"] == "tool_failed")
+        .expect("failed journal entry")["entry"]
+        .clone();
+    let entry = OperationJournalEntry::from_value(&payload).expect("failed journal reader");
+    let result = ToolExecutionResult::from_dict(
+        entry
+            .result
+            .as_ref()
+            .expect("failed receipt result is durable"),
+    )
+    .expect("failed receipt result");
+
+    assert_eq!(result.directive, ToolDirective::WaitUser);
+    assert_eq!(
+        result.metadata.get("provider"),
+        Some(&Value::String("gateway".to_string()))
+    );
+    assert_eq!(result.metadata.get("retryable"), Some(&Value::Bool(false)));
+    assert_eq!(result.to_message().content, "rejected");
+    assert_eq!(entry.to_value(), payload);
+    assert_eq!(
+        entry.result_digest.as_deref(),
+        Some("3b398ff7e2a60d6ada6c071bf0371d1a14624450c959a292d2e360a0d9a96c79")
+    );
 }
 
 #[test]

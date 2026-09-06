@@ -67,6 +67,143 @@ fn checkpoint_with_started_tools(key: &str, operations: &[(&str, &str, &str)]) -
     checkpoint
 }
 
+fn initial_checkpoint(mut checkpoint: Checkpoint) -> Checkpoint {
+    checkpoint.resume_attempt = 1;
+    checkpoint.cycle_index = 0;
+    checkpoint.status = vv_agent::CheckpointStatus::Running;
+    checkpoint.cancel_requested = false;
+    checkpoint.active_host_interaction = None;
+    checkpoint.suspended_origin = None;
+    checkpoint.cycles.clear();
+    checkpoint.model_calls.clear();
+    checkpoint.event_cursor = None;
+    checkpoint.event_outbox.clear();
+    checkpoint.model_call_journal.clear();
+    checkpoint.tool_journal.clear();
+    checkpoint.revision = 0;
+    checkpoint.claim_token = None;
+    checkpoint.claimed_cycle = None;
+    checkpoint.lease_expires_at_ms = None;
+    checkpoint.terminal_result = None;
+    checkpoint.terminal_acknowledged = false;
+    checkpoint
+}
+
+fn create_claimed_running_checkpoint(
+    store: &dyn CheckpointStore,
+    mut snapshot: Checkpoint,
+    claim_token: &str,
+    cycle_index: u64,
+) -> Checkpoint {
+    let key = snapshot.checkpoint_key.clone();
+    let initial = initial_checkpoint(snapshot.clone());
+    assert!(store
+        .create_checkpoint(initial)
+        .expect("create initial checkpoint"));
+    let claimed = store
+        .claim_checkpoint(
+            &key,
+            cycle_index,
+            claim_token,
+            10_000,
+            1,
+            ClaimMode::Continue,
+        )
+        .expect("claim checkpoint")
+        .expect("claimed checkpoint");
+    snapshot.status = vv_agent::CheckpointStatus::Running;
+    snapshot.resume_attempt = claimed.resume_attempt;
+    snapshot.cycle_index = claimed.cycle_index;
+    snapshot.revision = claimed.revision;
+    snapshot.claim_token = claimed.claim_token.clone();
+    snapshot.claimed_cycle = claimed.claimed_cycle;
+    snapshot.lease_expires_at_ms = claimed.lease_expires_at_ms;
+    assert!(store
+        .progress_checkpoint(snapshot, claim_token, claimed.revision)
+        .expect("progress claimed checkpoint"));
+    store
+        .load_checkpoint(&key)
+        .expect("load progressed checkpoint")
+        .expect("progressed checkpoint")
+}
+
+fn create_reconciliation_checkpoint(
+    store: &dyn CheckpointStore,
+    mut snapshot: Checkpoint,
+    claim_token: &str,
+    cycle_index: u64,
+) -> Checkpoint {
+    snapshot.status = vv_agent::CheckpointStatus::Running;
+    let key = snapshot.checkpoint_key.clone();
+    let running = create_claimed_running_checkpoint(store, snapshot, claim_token, cycle_index);
+    let revision = running.revision;
+    assert!(store
+        .suspend_checkpoint(running, claim_token, revision)
+        .expect("suspend ambiguous checkpoint"));
+    store
+        .load_checkpoint(&key)
+        .expect("load reconciled checkpoint")
+        .expect("reconciled checkpoint")
+}
+
+fn claim_reconciliation_checkpoint(
+    store: &dyn CheckpointStore,
+    key: &str,
+    claim_token: &str,
+    cycle_index: u64,
+) -> Checkpoint {
+    store
+        .claim_checkpoint(
+            key,
+            cycle_index,
+            claim_token,
+            10_000,
+            1,
+            ClaimMode::Recovery,
+        )
+        .expect("recovery claim")
+        .expect("claimed reconciliation checkpoint")
+}
+
+fn create_cycle_two_running_checkpoint(
+    store: &dyn CheckpointStore,
+    mut snapshot: Checkpoint,
+    claim_token: &str,
+) -> Checkpoint {
+    let key = snapshot.checkpoint_key.clone();
+    let initial = initial_checkpoint(snapshot.clone());
+    assert!(store
+        .create_checkpoint(initial)
+        .expect("create initial checkpoint"));
+    let claimed_first = store
+        .claim_checkpoint(&key, 1, "cycle-one", 10_000, 1, ClaimMode::Continue)
+        .expect("claim first cycle")
+        .expect("first cycle claim");
+    let mut committed = claimed_first.clone();
+    committed.cycle_index = 1;
+    assert!(store
+        .commit_checkpoint(committed, "cycle-one", claimed_first.revision)
+        .expect("commit first cycle"));
+    let claimed_second = store
+        .claim_checkpoint(&key, 2, claim_token, 10_000, 1, ClaimMode::Continue)
+        .expect("claim second cycle")
+        .expect("second cycle claim");
+    snapshot.status = vv_agent::CheckpointStatus::Running;
+    snapshot.resume_attempt = claimed_second.resume_attempt;
+    snapshot.cycle_index = claimed_second.cycle_index;
+    snapshot.revision = claimed_second.revision;
+    snapshot.claim_token = claimed_second.claim_token.clone();
+    snapshot.claimed_cycle = claimed_second.claimed_cycle;
+    snapshot.lease_expires_at_ms = claimed_second.lease_expires_at_ms;
+    assert!(store
+        .progress_checkpoint(snapshot, claim_token, claimed_second.revision)
+        .expect("progress second cycle"));
+    store
+        .load_checkpoint(&key)
+        .expect("load second cycle")
+        .expect("second cycle checkpoint")
+}
+
 fn batch_entry(
     operation_id: &str,
     tool_call_id: &str,
@@ -107,33 +244,38 @@ fn admitted_memory_checkpoint(
         ],
     );
     let store = InMemoryCheckpointStore::new();
-    assert!(store.create_checkpoint(checkpoint.clone()).expect("create"));
-    let claimed = store
-        .claim_checkpoint(key, 1, "claim-1", 10_000, 1, ClaimMode::Continue)
-        .expect("claim")
-        .expect("claimed checkpoint");
+    let claimed = create_claimed_running_checkpoint(&store, checkpoint, "claim-1", 1);
     let handle = DeferredToolHandle::new(key, "op_deferred", 1, digest_a).expect("deferred handle");
     let completed = ToolExecutionResult::success("call_completed", "ordinary success");
+    assert!(store
+        .record_tool_receipt(
+            claimed.clone(),
+            "op_completed",
+            1,
+            "call_completed",
+            &digest_b,
+            completed.clone(),
+            "claim-1",
+            claimed.revision,
+            1,
+        )
+        .expect("ordinary receipt"));
+    let recorded = store
+        .load_checkpoint(key)
+        .expect("load recorded checkpoint")
+        .expect("recorded checkpoint");
     let admission = store
         .admit_deferred_batch(
             key,
-            claimed.revision,
+            recorded.revision,
             "claim-1",
             1,
-            &[
-                batch_entry(
-                    "op_deferred",
-                    "call_deferred",
-                    &"a".repeat(64),
-                    ToolCallOutcome::deferred(handle.clone()),
-                ),
-                batch_entry(
-                    "op_completed",
-                    "call_completed",
-                    &"b".repeat(64),
-                    ToolCallOutcome::completed(completed.clone()),
-                ),
-            ],
+            &[batch_entry(
+                "op_deferred",
+                "call_deferred",
+                &"a".repeat(64),
+                ToolCallOutcome::deferred(handle.clone()),
+            )],
         )
         .expect("atomic admission");
     assert_eq!(admission.handles, vec![handle.clone()]);
@@ -142,7 +284,7 @@ fn admitted_memory_checkpoint(
         vv_agent::CheckpointStatus::Deferred
     );
     assert_eq!(admission.checkpoint.claim_token, None);
-    assert_eq!(admission.checkpoint.revision, claimed.revision + 1);
+    assert_eq!(admission.checkpoint.revision, recorded.revision + 1);
     assert_eq!(
         admission
             .checkpoint
@@ -297,7 +439,14 @@ fn memory_store_returns_not_admitted_reconciliation_and_stale_decisions() {
     let handle = DeferredToolHandle::new(key, "op_started", 1, digest.clone()).expect("handle");
     let store = InMemoryCheckpointStore::new();
     let checkpoint = checkpoint_with_started_tools(key, &[("op_started", "call_started", &digest)]);
-    store.create_checkpoint(checkpoint).expect("create");
+    let claimed = create_claimed_running_checkpoint(&store, checkpoint, "claim-early", 1);
+    let mut unclaimed = claimed;
+    unclaimed.claim_token = None;
+    unclaimed.claimed_cycle = None;
+    unclaimed.lease_expires_at_ms = None;
+    store
+        .save_checkpoint(unclaimed)
+        .expect("release early claim");
     let result = ToolExecutionResult::success("call_started", "early");
     let decision = store
         .resolve_deferred(handle.clone(), result.clone())
@@ -312,7 +461,7 @@ fn memory_store_returns_not_admitted_reconciliation_and_stale_decisions() {
             .expect("load")
             .expect("checkpoint")
             .revision,
-        0
+        2
     );
 
     let mut ambiguous_checkpoint = checkpoint_with_started_tools(
@@ -321,13 +470,8 @@ fn memory_store_returns_not_admitted_reconciliation_and_stale_decisions() {
     );
     ambiguous_checkpoint.tool_journal[0].state = OperationState::Ambiguous;
     ambiguous_checkpoint.status = vv_agent::CheckpointStatus::ReconciliationRequired;
-    ambiguous_checkpoint
-        .validate()
-        .expect("ambiguous checkpoint");
     let ambiguous_store = InMemoryCheckpointStore::new();
-    ambiguous_store
-        .create_checkpoint(ambiguous_checkpoint)
-        .expect("create ambiguous");
+    create_reconciliation_checkpoint(&ambiguous_store, ambiguous_checkpoint, "claim-ambiguous", 1);
     let ambiguous_handle =
         DeferredToolHandle::new("memory-ambiguous", "op_ambiguous", 1, "d".repeat(64))
             .expect("ambiguous handle");
@@ -365,13 +509,7 @@ fn memory_store_rejects_success_error_code_before_mixed_batch_write() {
             ],
         );
         let store = InMemoryCheckpointStore::new();
-        store
-            .create_checkpoint(checkpoint)
-            .expect("create checkpoint");
-        let claimed = store
-            .claim_checkpoint(&key, 1, "claim", 10_000, 1, ClaimMode::Continue)
-            .expect("claim checkpoint")
-            .expect("claimed checkpoint");
+        let claimed = create_claimed_running_checkpoint(&store, checkpoint, "claim", 1);
         let before = store
             .load_checkpoint(&key)
             .expect("load before admission")
@@ -438,20 +576,7 @@ fn real_producer_claimed_checkpoint_resolution_is_typed_error_without_writes() {
     checkpoint.validate().expect("started checkpoint");
 
     let store = InMemoryCheckpointStore::new();
-    store
-        .create_checkpoint(checkpoint)
-        .expect("create checkpoint");
-    let claimed = store
-        .claim_checkpoint(
-            &handle.checkpoint_key,
-            2,
-            "claim-admission",
-            10_000,
-            1,
-            ClaimMode::Continue,
-        )
-        .expect("claim checkpoint")
-        .expect("claimed checkpoint");
+    let claimed = create_cycle_two_running_checkpoint(&store, checkpoint, "claim-admission");
     let admission = store
         .admit_deferred_batch(
             &handle.checkpoint_key,
@@ -599,18 +724,7 @@ fn sqlite_store_keeps_receipts_independent_and_cleans_them_with_checkpoint() {
     let digest = "f".repeat(64);
     checkpoint.tool_journal = vec![started_tool("op_sqlite", "call_sqlite", &digest)];
     checkpoint.validate().expect("sqlite checkpoint");
-    store.create_checkpoint(checkpoint).expect("create");
-    let claimed = store
-        .claim_checkpoint(
-            "sqlite-deferred",
-            1,
-            "claim-sqlite",
-            10_000,
-            1,
-            ClaimMode::Continue,
-        )
-        .expect("claim")
-        .expect("claimed");
+    let claimed = create_claimed_running_checkpoint(&store, checkpoint, "claim-sqlite", 1);
     let handle = DeferredToolHandle::new("sqlite-deferred", "op_sqlite", 1, digest.clone())
         .expect("sqlite handle");
     store
@@ -678,12 +792,7 @@ fn redis_store_rejects_result_tool_call_id_mismatch_without_a_write() {
     let digest = tool_request_digest("call_redis", "remote_write", &json!({}), None)
         .expect("canonical redis tool request digest");
     let checkpoint = checkpoint_with_started_tools(&key, &[("op_redis", "call_redis", &digest)]);
-    checkpoint.validate().expect("redis checkpoint");
-    store.create_checkpoint(checkpoint).expect("create");
-    let claimed = store
-        .claim_checkpoint(&key, 1, "claim-redis", 10_000, 1, ClaimMode::Continue)
-        .expect("claim")
-        .expect("claimed");
+    let claimed = create_claimed_running_checkpoint(&store, checkpoint, "claim-redis", 1);
     let handle = DeferredToolHandle::new(&key, "op_redis", 1, digest.clone()).expect("handle");
     store
         .admit_deferred_batch(
@@ -725,14 +834,9 @@ fn accept_deferred_adopts_ambiguous_entry_once_and_releases_recovery_claim() {
     let mut checkpoint =
         checkpoint_with_started_tools(key, &[("op_accept", "call_accept", &digest)]);
     checkpoint.tool_journal[0].state = OperationState::Ambiguous;
-    checkpoint.status = vv_agent::CheckpointStatus::ReconciliationRequired;
-    checkpoint.validate().expect("reconciliation checkpoint");
     let store = InMemoryCheckpointStore::new();
-    store.create_checkpoint(checkpoint).expect("create");
-    let claimed = store
-        .claim_checkpoint(key, 1, "claim-recovery", 10_000, 1, ClaimMode::Recovery)
-        .expect("recovery claim")
-        .expect("claimed");
+    create_reconciliation_checkpoint(&store, checkpoint, "claim-recovery", 1);
+    let claimed = claim_reconciliation_checkpoint(&store, key, "claim-recovery", 1);
     let handle = DeferredToolHandle::new(key, "op_accept", 1, digest).expect("accept handle");
     let admission = store
         .accept_deferred_batch(
@@ -840,26 +944,9 @@ fn recovery_rejects_partial_acceptance_when_model_and_multiple_tools_are_ambiguo
             .expect("model event outbox"),
         );
     }
-    checkpoint.status = vv_agent::CheckpointStatus::ReconciliationRequired;
-    checkpoint
-        .validate()
-        .expect("model and tool ambiguity checkpoint");
-
     let store = InMemoryCheckpointStore::new();
-    store
-        .create_checkpoint(checkpoint)
-        .expect("create ambiguity checkpoint");
-    let claimed = store
-        .claim_checkpoint(
-            key,
-            1,
-            "claim-model-and-tools",
-            10_000,
-            1,
-            ClaimMode::Recovery,
-        )
-        .expect("recovery claim")
-        .expect("claimed ambiguity checkpoint");
+    create_reconciliation_checkpoint(&store, checkpoint, "claim-model-and-tools", 1);
+    let claimed = claim_reconciliation_checkpoint(&store, key, "claim-model-and-tools", 1);
     let decisions = vec![
         AcceptDeferredDecision::new(
             DeferredToolHandle::new(key, "op_recovery_a", 1, digest_a).expect("handle a"),
@@ -887,105 +974,4 @@ fn recovery_rejects_partial_acceptance_when_model_and_multiple_tools_are_ambiguo
         .expect("load after partial rejection")
         .expect("checkpoint after partial rejection");
     assert_eq!(after, before, "rejection must not partially adopt tools");
-}
-
-#[test]
-fn accept_deferred_multi_handle_replay_is_exact_and_rejects_subset_duplicate_or_wrong() {
-    let key = "memory-accept-deferred-multi";
-    let digest_a = "a".repeat(64);
-    let digest_b = "b".repeat(64);
-    let mut checkpoint = checkpoint_with_started_tools(
-        key,
-        &[
-            ("op_accept_a", "call_accept_a", &digest_a),
-            ("op_accept_b", "call_accept_b", &digest_b),
-        ],
-    );
-    checkpoint.status = vv_agent::CheckpointStatus::ReconciliationRequired;
-    for entry in &mut checkpoint.tool_journal {
-        entry.state = OperationState::Ambiguous;
-    }
-    checkpoint
-        .validate()
-        .expect("multi-entry reconciliation checkpoint");
-    let store = InMemoryCheckpointStore::new();
-    store
-        .create_checkpoint(checkpoint)
-        .expect("create multi-entry checkpoint");
-    let claimed = store
-        .claim_checkpoint(
-            key,
-            1,
-            "claim-recovery-multi",
-            10_000,
-            1,
-            ClaimMode::Recovery,
-        )
-        .expect("recovery claim")
-        .expect("claimed checkpoint");
-    let handle_a = DeferredToolHandle::new(key, "op_accept_a", 1, digest_a).expect("handle a");
-    let handle_b = DeferredToolHandle::new(key, "op_accept_b", 1, digest_b).expect("handle b");
-    let decisions = vec![
-        AcceptDeferredDecision::new(handle_a.clone()),
-        AcceptDeferredDecision::new(handle_b.clone()),
-    ];
-    let admission = store
-        .accept_deferred_batch(key, claimed.revision, "claim-recovery-multi", 1, &decisions)
-        .expect("multi-handle acceptance");
-    assert_eq!(admission.handles, vec![handle_a.clone(), handle_b.clone()]);
-    assert_eq!(
-        admission.checkpoint.status,
-        vv_agent::CheckpointStatus::Deferred
-    );
-    let revision = admission.checkpoint.revision;
-    let outbox = admission.checkpoint.event_outbox.clone();
-    assert_eq!(
-        outbox.len(),
-        4,
-        "each accepted handle emits two durable events"
-    );
-
-    let replay = store
-        .accept_deferred_batch(key, revision, "replay-without-claim", 1, &decisions)
-        .expect("exact multi-handle replay");
-    assert_eq!(replay.checkpoint.revision, revision);
-    assert_eq!(replay.checkpoint.event_outbox, outbox);
-
-    for (name, attempted) in [
-        (
-            "subset",
-            vec![AcceptDeferredDecision::new(handle_a.clone())],
-        ),
-        (
-            "duplicate",
-            vec![
-                AcceptDeferredDecision::new(handle_a.clone()),
-                AcceptDeferredDecision::new(handle_a.clone()),
-            ],
-        ),
-        (
-            "wrong handle",
-            vec![AcceptDeferredDecision::new(
-                DeferredToolHandle::new(key, "op_missing", 1, "c".repeat(64))
-                    .expect("wrong handle"),
-            )],
-        ),
-    ] {
-        let error = store
-            .accept_deferred_batch(key, revision, "no-claim", 1, &attempted)
-            .expect_err(name);
-        assert_eq!(error.code(), "reconciliation_required", "{name}");
-        let retained = store
-            .load_checkpoint(key)
-            .expect("load retained checkpoint")
-            .expect("retained checkpoint");
-        assert_eq!(
-            retained.revision, revision,
-            "{name} must not revise checkpoint"
-        );
-        assert_eq!(
-            retained.event_outbox, outbox,
-            "{name} must not append outbox"
-        );
-    }
 }

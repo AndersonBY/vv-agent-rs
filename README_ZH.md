@@ -7,21 +7,34 @@
 
 ## 安装
 
-当前 crate 版本为 `0.12.2`。本版本采用 Contract `8.1.2`，提供符合 Rust 语言习惯的
+当前 crate 版本为 `0.14.0`。本版本采用 Contract `12.0.0`，提供符合 Rust 语言习惯的
 API 写法。
 
 ```bash
-cargo add vv-agent@0.12.2
+cargo add vv-agent@0.14.0
 ```
 
 需要 Apalis adapter 时使用：
 
 ```bash
-cargo add vv-agent@0.12.2 --features apalis
+cargo add vv-agent@0.14.0 --features apalis
 ```
 
-Contract 8 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
+Contract 12 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
 公共 API 与传输数据结构。需要旧协议的应用应固定旧 crate 版本。
+
+### 0.14.0 重点能力
+
+- checkpoint v10 将取消请求作为持久化状态，并通过 typed renewal outcome 区分
+  `renewed`、`cancel_requested` 和 `claim_lost`。普通工具 receipt 采用 identity-first、原子且
+  保留 claim 的写入；deferred admission 只接受尚未完成的 deferred 工具。
+- claimed cancellation、operator abort 和 lease loss 会将未知工具效果收口为
+  `tool_cancelled`，并输出排序去重的 `resume_observations`。
+- Contract 12 统一普通与 deferred definitive receipt 的
+  `evt_receipt_<identity_key>` 事件身份，并在 Memory、SQLite、Redis store 中提供按
+  checkpoint 隔离的 controller wake recovery。
+- 普通失败和未知结果会保留完整 canonical `ToolExecutionResult` 及 digest；
+  `OperationError` 仅作为规范化诊断投影，恢复时直接重放持久化 result。
 
 ### 0.12.2 重点能力
 
@@ -43,7 +56,7 @@ Contract 8 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取�
 - 分布式 worker 在 claim 前校验 task 和 envelope capability。直接携带 broker/provider approval
   引用的 envelope 会在副作用前被拒绝；checkpoint approval resume 也会在 approval consumption
   或工具 / session 写入前 fail closed。跨进程 durable approval continuation 尚未实现。
-- Contract `8.1.2` 定义严格的 checkpoint CAS、状态转换和 fail-closed 持久化边界。
+- Contract `12.0.0` 定义严格的 checkpoint CAS、状态转换和 fail-closed 持久化边界。
 
 ### 0.12.0 重点能力
 
@@ -68,10 +81,10 @@ Contract 8 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取�
 - `MicrocompactionPolicy` 可以配置触发比例、目标比例、受保护的最近 cycle 数和最小结果
   长度。内建工具与自定义工具的旧结果默认都可归档；只有完整内容已经写入不可变 artifact，
   且模型仍能调用 `read_file` 时才会替换。精简标记只暴露短预览和逻辑恢复路径。
-- 持久化执行统一使用 `vv-agent.checkpoint.v8`、
+- 持久化执行统一使用 `vv-agent.checkpoint.v10`、
   `vv-agent.run-definition.v5`、`vv-agent.distributed-run.v5` 和
-  `vv-agent.distributed-worker-response.v3`，严格限定恢复与分布式 controller 边界。
-  `RunEvent` 使用 wire version `v4`，SQLite session store 使用
+  `vv-agent.distributed-worker-response.v4`，严格限定恢复与分布式 controller 边界。
+  `RunEvent` 使用 wire version `v5`，SQLite session store 使用
   `PRAGMA user_version=2`。
 - 持久化 deferred 工具通过 `ToolContext::defer` 和一次性的
   `admit_deferred_batch` barrier 工作。Memory、SQLite、Redis 都保留独立的 resolution
@@ -273,7 +286,7 @@ while let Some(event) = events.next().await {
 let result = handle.result().await?;
 ```
 
-每个 `RunEvent` 都是 v4 envelope，包含 `event_id`、`run_id`、`trace_id`、
+每个 `RunEvent` 都是 v5 envelope，包含 `event_id`、`run_id`、`trace_id`、
 可选 session/parent 标识、时间、metadata 和 typed `RunEventPayload`。
 `JsonlRunEventStore` 可以 append 事件并 replay 一个 run，也可以通过 parent run id
 带出子事件。

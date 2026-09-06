@@ -1,4 +1,4 @@
-//! Checkpoint v8 state and store contract.
+//! Checkpoint v10 state and store contract.
 
 use std::collections::BTreeMap;
 
@@ -9,13 +9,17 @@ use crate::budget::BudgetUsageSnapshot;
 use crate::checkpoint::{
     canonical_json_bytes, validate_checkpoint_key, validate_extension_namespace, validate_sha256,
     CheckpointError, CheckpointResult, CheckpointStatus, ClaimMode, EventCursor, OperationKind,
-    OperationState, ToolIdempotency, MAX_EXTENSION_ENTRY_BYTES, MAX_WIRE_INTEGER,
+    OperationState, ResumeObservation, ToolIdempotency, MAX_EXTENSION_ENTRY_BYTES,
+    MAX_WIRE_INTEGER,
 };
 use crate::checkpoint::{
-    DeferredToolHandle, HostInteractionAdmissionContext, HostInteractionRequest, SuspendedOrigin,
+    DeferredToolHandle, HostInteractionAdmissionContext, HostInteractionRecord,
+    HostInteractionRequest, SuspendedOrigin,
 };
 use crate::events::RunEvent;
-use crate::types::{CycleRecord, Message, ModelCallOperation, ModelCallRecord};
+use crate::types::{
+    CycleRecord, Message, ModelCallOperation, ModelCallRecord, ToolExecutionResult,
+};
 
 mod deferred;
 mod journal;
@@ -34,10 +38,10 @@ pub const CHECKPOINT_SCHEMA: &str = crate::checkpoint::CHECKPOINT_SCHEMA;
 pub const RUN_DEFINITION_SCHEMA: &str = crate::checkpoint::RUN_DEFINITION_SCHEMA;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OperationError {
     pub code: String,
     pub message: String,
-    #[serde(default)]
     pub retryable: bool,
 }
 
@@ -75,6 +79,16 @@ impl OperationError {
                 "operation error must be an object",
             )
         })?;
+        const FIELDS: [&str; 3] = ["code", "message", "retryable"];
+        if let Some(field) = object
+            .keys()
+            .find(|field| !FIELDS.contains(&field.as_str()))
+        {
+            return Err(CheckpointError::new(
+                "operation_error_invalid",
+                format!("operation error contains unknown field: {field}"),
+            ));
+        }
         let error = Self {
             code: required_string(object, "code", "operation_error_invalid")?.to_string(),
             message: required_string(object, "message", "operation_error_invalid")?.to_string(),
@@ -102,6 +116,8 @@ pub struct OperationJournalEntry {
     pub state: OperationState,
     pub request_digest: String,
     pub idempotency_key: Option<String>,
+    pub identity_key: Option<String>,
+    pub result_digest: Option<String>,
     pub response: Option<Value>,
     pub error: Option<OperationError>,
     pub tool_call_id: Option<String>,
@@ -110,6 +126,7 @@ pub struct OperationJournalEntry {
     pub idempotency_support: Option<ToolIdempotency>,
     pub result: Option<Value>,
     pub deferred_handle: Option<DeferredToolHandle>,
+    pub resume_observation: Option<ResumeObservation>,
     pub model_operation: Option<ModelCallOperation>,
     pub backend: Option<String>,
     pub model: Option<String>,
@@ -243,7 +260,7 @@ impl EventOutboxEntry {
             ));
         }
         if let Some(cursor) = &self.cursor {
-            validate_json(cursor, "event outbox cursor")?;
+            EventCursor::from_value(cursor)?;
         }
         Ok(())
     }
@@ -323,6 +340,38 @@ impl EventOutboxEntry {
     }
 }
 
+pub(crate) fn append_event_outbox_once(
+    outbox: &mut Vec<EventOutboxEntry>,
+    mut candidate: EventOutboxEntry,
+) -> CheckpointResult<()> {
+    let Some(existing) = outbox
+        .iter()
+        .find(|entry| entry.event_id == candidate.event_id)
+    else {
+        outbox.push(candidate);
+        return Ok(());
+    };
+    existing.verify_payload()?;
+    if let Some(created_at) = existing.event.get("created_at").cloned() {
+        candidate
+            .event
+            .as_object_mut()
+            .ok_or_else(|| {
+                CheckpointError::new("checkpoint_event_invalid", "outbox event must be an object")
+            })?
+            .insert("created_at".to_string(), created_at);
+        candidate.payload_digest = crate::checkpoint::event_payload_digest(&candidate.event)?;
+        candidate.validate()?;
+    }
+    if existing.event == candidate.event && existing.payload_digest == candidate.payload_digest {
+        return Ok(());
+    }
+    Err(CheckpointError::new(
+        "event_identity_conflict",
+        "event id is already bound to a different payload",
+    ))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Checkpoint {
     pub schema_version: String,
@@ -336,6 +385,7 @@ pub struct Checkpoint {
     pub resume_attempt: u64,
     pub cycle_index: u64,
     pub status: CheckpointStatus,
+    pub cancel_requested: bool,
     pub active_host_interaction: Option<HostInteractionRequest>,
     pub suspended_origin: Option<SuspendedOrigin>,
     pub messages: Vec<Message>,
@@ -370,6 +420,7 @@ impl Default for Checkpoint {
             resume_attempt: 1,
             cycle_index: 0,
             status: CheckpointStatus::Running,
+            cancel_requested: false,
             active_host_interaction: None,
             suspended_origin: None,
             messages: Vec::new(),
@@ -427,12 +478,18 @@ impl Checkpoint {
             return false;
         };
         result
-            .get("error_code")
+            .get("error")
+            .and_then(Value::as_object)
+            .and_then(|error| error.get("code"))
             .and_then(Value::as_str)
-            .is_some_and(|code| code == "operator_abort_with_unknown_outcome")
-            || result
-                .get("resume_observation")
-                .is_some_and(|value| !value.is_null())
+            .is_some_and(|code| {
+                matches!(
+                    code,
+                    "operator_abort_with_unknown_outcome"
+                        | "cancelled_with_unknown_outcome"
+                        | "lease_lost_with_unknown_outcome"
+                )
+            })
     }
 }
 
@@ -494,7 +551,25 @@ pub trait CheckpointStore: Send + Sync {
         claim_token: &str,
         lease_expires_at_ms: u64,
         now_ms: u64,
-    ) -> CheckpointResult<bool>;
+    ) -> CheckpointResult<crate::checkpoint::CheckpointRenewalOutcome>;
+    #[allow(clippy::too_many_arguments)]
+    fn record_tool_receipt(
+        &self,
+        _checkpoint: Checkpoint,
+        _operation_id: &str,
+        _attempt: u64,
+        _tool_call_id: &str,
+        _request_digest: &str,
+        _result: ToolExecutionResult,
+        _claim_token: &str,
+        _expected_revision: u64,
+        _claimed_cycle: u64,
+    ) -> CheckpointResult<bool> {
+        Err(CheckpointError::new(
+            "checkpoint_store_receipt_unsupported",
+            "checkpoint store does not implement tool receipt recording",
+        ))
+    }
     fn record_event_delivery(
         &self,
         checkpoint_key: &str,
@@ -626,6 +701,19 @@ pub trait CheckpointStore: Send + Sync {
         Err(CheckpointError::new(
             "controller_command_unsupported",
             "checkpoint store does not expose controller commands",
+        ))
+    }
+
+    /// Read the one resolved response record that a suspended host-origin
+    /// resume wake must hand to the combined recovery CAS.  This is an
+    /// internal store read; the record remains behind the framework boundary.
+    fn find_resolved_pending_host_interaction(
+        &self,
+        _checkpoint_key: &str,
+    ) -> CheckpointResult<Option<HostInteractionRecord>> {
+        Err(CheckpointError::new(
+            "host_interaction_recovery_unsupported",
+            "checkpoint store does not expose resolved host interactions",
         ))
     }
 
@@ -762,12 +850,14 @@ pub trait CheckpointStore: Send + Sync {
         ))
     }
 
-    fn reap_controller_command_wake(
+    /// Return pending or expired claimed recovery wakes in deterministic order.
+    /// The returned records include the retained receipt fences and complete
+    /// outbox lifecycle metadata; ambiguous wakes are never returned.
+    fn reap_controller_command_wakes(
         &self,
-        _command_id: &str,
-        _command_digest: &str,
+        _checkpoint_key: &str,
         _now_ms: u64,
-    ) -> CheckpointResult<bool> {
+    ) -> CheckpointResult<Vec<crate::checkpoint::ControllerCommandWakeRecord>> {
         Err(CheckpointError::new(
             "controller_command_outbox_unsupported",
             "checkpoint store does not implement controller wake lifecycle",

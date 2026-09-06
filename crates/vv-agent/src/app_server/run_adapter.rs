@@ -542,7 +542,8 @@ impl AppServerRunAdapter {
                     result
                         .result()
                         .error
-                        .clone()
+                        .as_ref()
+                        .map(|error| error.message.clone())
                         .or_else(|| result.result().wait_reason.clone())
                         .or_else(|| Some("Turn failed".to_string()))
                 } else {

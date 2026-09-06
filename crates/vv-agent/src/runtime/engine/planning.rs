@@ -19,7 +19,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
     }
 }
 
-pub(super) fn block_on_engine_tool_run<'a, T>(
+pub(crate) fn block_on_engine_tool_run<'a, T>(
     future: impl std::future::Future<Output = Result<T, ToolError>> + 'a,
 ) -> Result<T, ToolError> {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {

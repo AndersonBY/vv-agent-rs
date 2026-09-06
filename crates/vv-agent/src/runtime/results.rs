@@ -1,6 +1,9 @@
 use serde_json::Value;
 
-use crate::types::{LLMResponse, Message, ToolExecutionResult};
+use crate::types::{
+    last_assistant_output, AgentResult, AgentStatus, CompletionReason, CycleRecord, LLMResponse,
+    Message, Metadata, TaskTokenUsage, ToolExecutionResult,
+};
 
 pub(super) fn assistant_message_from_response(response: &LLMResponse) -> Message {
     let mut message = Message::assistant(response.content.clone());
@@ -40,4 +43,35 @@ pub(crate) fn extract_wait_reason(result: &ToolExecutionResult) -> String {
         .and_then(Value::as_str)
         .map(str::to_string)
         .unwrap_or_else(|| result.content.clone())
+}
+
+pub(crate) fn cancelled_agent_result(
+    messages: Vec<Message>,
+    cycles: Vec<CycleRecord>,
+    shared_state: Metadata,
+    token_usage: TaskTokenUsage,
+) -> AgentResult {
+    let partial_output = last_assistant_output(&cycles);
+    AgentResult {
+        status: AgentStatus::Failed,
+        messages,
+        cycles,
+        completion_reason: Some(CompletionReason::Cancelled),
+        completion_tool_name: None,
+        partial_output,
+        budget_usage: None,
+        budget_exhaustion: None,
+        checkpoint_key: None,
+        resume_observations: Vec::new(),
+        final_answer: None,
+        wait_reason: None,
+        error: Some(crate::types::AgentResultError::new(
+            "cancelled",
+            "Operation was cancelled",
+            false,
+        )),
+        error_code: None,
+        shared_state,
+        token_usage,
+    }
 }

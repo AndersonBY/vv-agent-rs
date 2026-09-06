@@ -70,7 +70,7 @@ totals do not prove cache-accounting availability.
 | `crates/vv-agent/src/model_settings.rs` | Public model-call settings aligned with common `vv-llm` request options. |
 | `crates/vv-agent/src/output_validation.rs` | Typed host output-validation result, context, and tools-free repair request contracts. |
 | `crates/vv-agent/src/sessions.rs` | Public `Session` storage contract and in-memory implementation. |
-| `crates/vv-agent/src/events.rs` | v2 run event envelope and typed serializable payloads for SDK consumers. |
+| `crates/vv-agent/src/events.rs` | v5 run event envelope and typed serializable payloads for SDK consumers. |
 | `crates/vv-agent/src/types/` | Public protocol types, dictionaries, messages, tasks, statuses, records, and token usage. |
 | `crates/vv-agent/src/llm/` | LLM trait, scripted test client, `vv-llm` bridge, endpoint failover, streaming, prompt cache, and request normalization. |
 | `crates/vv-agent/src/runtime/` | Agent runtime, cycle execution, hooks, cancellation, shell runtime, background sessions, sub-agents, state stores, and execution backends. |
@@ -184,7 +184,7 @@ Core responsibilities:
 - `InteractiveAgentClient` / `InteractiveSession`: embedded stateful control over
   `Runner`, `RunHandle`, and `Session`, including steering and queued follow-up
   turns.
-- `RunEvent`: v4 envelope with stable identity fields and a typed payload.
+- `RunEvent`: v5 envelope with stable identity fields and a typed payload.
 - `RunEventStore`: append-only event storage and replay by run lineage. Replay
   includes direct child runs by default; callers can explicitly request only
   the selected run.
@@ -353,7 +353,7 @@ boundary with a monotonic clock and also report lower-case `status`,
 `finish`, or `wait_user`. Planned and started events contain normalized
 arguments and optional typed metadata. Completed events contain the outcome
 fields and optional typed metadata. Cancellation, process loss, or a panic
-after started may leave no completed observation; checkpoint v5's operation
+after started may leave no completed observation; checkpoint v10's operation
 journal, not telemetry, is authoritative for recovery ambiguity.
 
 `ToolLifecycleCallback` and `ToolLifecycleEvent` are exported Rust extension

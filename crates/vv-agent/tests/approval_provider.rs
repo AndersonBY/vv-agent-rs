@@ -207,7 +207,11 @@ async fn approval_provider_failure_fails_run_without_faking_a_denial() {
 
     assert_eq!(result.status(), AgentStatus::Failed);
     assert_eq!(
-        result.result().error.as_deref(),
+        result
+            .result()
+            .error
+            .as_ref()
+            .map(|error| error.message.as_str()),
         Some("approval provider unavailable")
     );
     assert!(executions.lock().expect("executions lock").is_empty());
@@ -303,7 +307,11 @@ async fn direct_cancellation_token_unblocks_pending_approval_without_running_too
         .expect("cancelled result");
     assert_eq!(result.status(), AgentStatus::Failed);
     assert_eq!(
-        result.result().error.as_deref(),
+        result
+            .result()
+            .error
+            .as_ref()
+            .map(|error| error.message.as_str()),
         Some("Operation was cancelled")
     );
     assert_eq!(handle.state().status, RunHandleStatus::Cancelled);

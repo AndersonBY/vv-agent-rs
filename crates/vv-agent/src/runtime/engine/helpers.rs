@@ -11,6 +11,8 @@ use crate::types::{
 
 use super::{AgentRuntime, RuntimeRunControls};
 
+pub(super) use crate::runtime::cancelled_agent_result;
+
 pub(super) fn drain_steering_queue(controls: &RuntimeRunControls) -> Vec<String> {
     let Some(queue) = &controls.steering_queue else {
         return Vec::new();
@@ -53,6 +55,50 @@ pub(super) fn image_notification_from_tool_result(
         .map(|image_path| Message::user(format!("[Image loaded] {image_path}")))
 }
 
+pub(super) fn emit_sub_run_completed<C: LlmClient>(
+    runtime: &AgentRuntime<C>,
+    controls: &RuntimeRunControls,
+    task: &AgentTask,
+    cycle_index: u32,
+    patched_call: &crate::types::ToolCall,
+    result: &ToolExecutionResult,
+) {
+    runtime.emit_log(
+        controls,
+        "sub_run_completed",
+        BTreeMap::from([
+            ("task_id".to_string(), Value::String(task.task_id.clone())),
+            (
+                "agent_name".to_string(),
+                Value::String(
+                    task.metadata
+                        .get("agent_name")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&task.task_id)
+                        .to_string(),
+                ),
+            ),
+            ("cycle".to_string(), Value::from(cycle_index)),
+            (
+                "parent_run_id".to_string(),
+                Value::String(task.task_id.clone()),
+            ),
+            (
+                "parent_tool_call_id".to_string(),
+                Value::String(patched_call.id.clone()),
+            ),
+            (
+                "status".to_string(),
+                super::logging::tool_result_status_value(result.status),
+            ),
+            (
+                "final_output".to_string(),
+                Value::String(result.content.clone()),
+            ),
+        ]),
+    );
+}
+
 pub(super) fn controls_cancelled(controls: &RuntimeRunControls) -> bool {
     controls
         .effective_cancellation_token()
@@ -85,7 +131,7 @@ pub(super) fn project_cycle_cancellation<C: LlmClient>(
             ),
         ]),
     );
-    Some(cancelled_agent_result(
+    Some(crate::runtime::cancelled_agent_result(
         messages.to_vec(),
         cycles.to_vec(),
         shared_state.clone(),
@@ -127,33 +173,6 @@ pub(super) fn seed_skill_state_from_task_metadata(
     }
 }
 
-pub(super) fn cancelled_agent_result(
-    messages: Vec<Message>,
-    cycles: Vec<CycleRecord>,
-    shared_state: BTreeMap<String, Value>,
-    token_usage: TaskTokenUsage,
-) -> AgentResult {
-    let partial_output = last_assistant_output(&cycles);
-    AgentResult {
-        status: AgentStatus::Failed,
-        messages,
-        cycles,
-        completion_reason: Some(CompletionReason::Cancelled),
-        completion_tool_name: None,
-        partial_output,
-        budget_usage: None,
-        budget_exhaustion: None,
-        checkpoint_key: None,
-        resume_observation: None,
-        final_answer: None,
-        wait_reason: None,
-        error: Some("Operation was cancelled".to_string()),
-        error_code: None,
-        shared_state,
-        token_usage,
-    }
-}
-
 pub(super) fn failed_agent_result(
     messages: Vec<Message>,
     cycles: Vec<CycleRecord>,
@@ -172,10 +191,14 @@ pub(super) fn failed_agent_result(
         budget_usage: None,
         budget_exhaustion: None,
         checkpoint_key: None,
-        resume_observation: None,
+        resume_observations: Vec::new(),
         final_answer: None,
         wait_reason: None,
-        error: Some(error),
+        error: Some(crate::types::AgentResultError::new(
+            "agent_failed",
+            error,
+            false,
+        )),
         error_code: None,
         shared_state,
         token_usage,

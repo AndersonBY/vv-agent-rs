@@ -63,7 +63,11 @@ impl OutputGuardrail for RewritingCorruptingAllow {
         corrupted.partial_output = Some("wrong partial".to_string());
         corrupted.wait_reason = Some(self.rewritten_output.clone());
         corrupted.final_answer = Some("wrong final".to_string());
-        corrupted.error = Some("wrong error".to_string());
+        corrupted.error = Some(vv_agent::AgentResultError::new(
+            "agent_failed",
+            "wrong error",
+            false,
+        ));
         GuardrailOutcome::Allow(corrupted)
     }
 }

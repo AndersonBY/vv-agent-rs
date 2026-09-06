@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use crate::checkpoint::{
     notification_id_for, record_id_for, CheckpointError, CheckpointResult, ClaimMode,
     ControllerCommand, ControllerCommandReceipt, ControllerCommandResolution,
-    ControllerCommandVariant, ControllerCommandWake, EventCursor,
+    ControllerCommandVariant, ControllerCommandWake, ControllerCommandWakeRecord, EventCursor,
     HostInteractionNotificationPayload, HostInteractionNotificationRecord, HostInteractionOutcome,
     HostInteractionRecord, HostInteractionRecoveryEnvelope, HostInteractionRecoveryResult,
     HostInteractionRequest, HostInteractionResponse, NotificationOutboxState, ResumeObservation,
@@ -14,11 +14,15 @@ use crate::checkpoint::{
 };
 use crate::events::{EventId, RunEvent, RunEventPayload};
 use crate::runtime::state::{
-    apply_claim, claim_candidate, prepare_ack, prepare_commit, prepare_event_delivery,
-    prepare_finalize, prepare_finalize_claimed, prepare_progress, prepare_suspend, Checkpoint,
-    CheckpointStore,
+    apply_claim, claim_candidate, close_unresolved_tools, prepare_ack, prepare_commit,
+    prepare_event_delivery, prepare_finalize, prepare_finalize_claimed, prepare_progress,
+    prepare_suspend, prepare_tool_receipt, Checkpoint, CheckpointStore,
 };
-use crate::types::{AgentResult, CompletionReason};
+use crate::runtime::stores::controller_helpers::{
+    append_cancel_requested_event, append_control_event, append_control_event_with_result,
+    control_result,
+};
+use crate::types::CompletionReason;
 
 #[derive(Debug, Clone, Default)]
 struct ControllerLedger {

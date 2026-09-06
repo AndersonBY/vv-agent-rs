@@ -5,7 +5,7 @@ fn store_identity(&self) -> String {
 }
 
     fn create_checkpoint(&self, checkpoint: Checkpoint) -> CheckpointResult<bool> {
-        checkpoint.validate()?;
+        crate::runtime::state::validate_checkpoint_creation(&checkpoint)?;
         let mut checkpoints = self.lock()?;
         if checkpoints.contains_key(&checkpoint.checkpoint_key) {
             return Ok(false);
@@ -35,9 +35,19 @@ fn store_identity(&self) -> String {
             ));
         }
         let mut checkpoints = self.lock()?;
+        let ledger = self.controller_lock()?;
         let Some(current) = checkpoints.get(checkpoint_key).cloned() else {
             return Ok(None);
         };
+        if ledger.host_interactions.values().any(|record| {
+            record.checkpoint_key == checkpoint_key
+                && matches!(record.state.as_str(), "resolved_pending" | "resolved_claimed")
+        }) {
+            return Err(CheckpointError::new(
+                "host_interaction_recovery_required",
+                "checkpoint has an unresolved host interaction response",
+            ));
+        }
         if !claim_candidate(&current, cycle_index, now_ms, claim_mode)? {
             return Ok(None);
         }
@@ -64,8 +74,7 @@ fn store_identity(&self) -> String {
         let Some(current) = checkpoints.get(&checkpoint.checkpoint_key).cloned() else {
             return Ok(false);
         };
-        let Some(updated) = prepare_progress(&current, checkpoint, claim_token, expected_revision)?
-        else {
+        let Some(updated) = prepare_progress(&current, checkpoint, claim_token, expected_revision)? else {
             return Ok(false);
         };
         checkpoints.insert(updated.checkpoint_key.clone(), updated);
@@ -149,7 +158,7 @@ fn store_identity(&self) -> String {
         claim_token: &str,
         lease_expires_at_ms: u64,
         now_ms: u64,
-    ) -> CheckpointResult<bool> {
+    ) -> CheckpointResult<crate::checkpoint::CheckpointRenewalOutcome> {
         if claim_token.trim().is_empty() || lease_expires_at_ms <= now_ms {
             return Err(CheckpointError::new(
                 "checkpoint_claim_invalid",
@@ -158,16 +167,83 @@ fn store_identity(&self) -> String {
         }
         let mut checkpoints = self.lock()?;
         let Some(checkpoint) = checkpoints.get_mut(checkpoint_key) else {
-            return Ok(false);
+            return Ok(crate::checkpoint::CheckpointRenewalOutcome::ClaimLost { revision: 0 });
         };
         if checkpoint.claim_token.as_deref() != Some(claim_token)
             || checkpoint
                 .lease_expires_at_ms
                 .is_none_or(|expiry| expiry <= now_ms)
         {
-            return Ok(false);
+            return Ok(crate::checkpoint::CheckpointRenewalOutcome::ClaimLost {
+                revision: checkpoint.revision,
+            });
         }
         checkpoint.lease_expires_at_ms = Some(lease_expires_at_ms);
+        Ok(if checkpoint.cancel_requested {
+            crate::checkpoint::CheckpointRenewalOutcome::CancelRequested {
+                lease_expires_at_ms,
+            }
+        } else {
+            crate::checkpoint::CheckpointRenewalOutcome::Renewed {
+                lease_expires_at_ms,
+            }
+        })
+    }
+
+    fn record_tool_receipt(
+        &self,
+        checkpoint: Checkpoint,
+        operation_id: &str,
+        attempt: u64,
+        tool_call_id: &str,
+        request_digest: &str,
+        result: crate::types::ToolExecutionResult,
+        claim_token: &str,
+        expected_revision: u64,
+        claimed_cycle: u64,
+    ) -> CheckpointResult<bool> {
+        crate::checkpoint::validate_definitive_result(&result)?;
+        let identity_key = crate::checkpoint::tool_receipt_identity_key(
+            &checkpoint.checkpoint_key,
+            operation_id,
+            attempt,
+            tool_call_id,
+            request_digest,
+        )?;
+        let result_digest = crate::checkpoint::tool_result_digest(&result)?;
+        let mut checkpoints = self.lock()?;
+        let Some(current) = checkpoints.get(&checkpoint.checkpoint_key).cloned() else {
+            return Ok(false);
+        };
+        if let Some(existing) = current
+            .tool_journal
+            .iter()
+            .find(|entry| entry.identity_key.as_deref() == Some(identity_key.as_str()))
+        {
+            if existing.result_digest.as_deref() == Some(result_digest.as_str()) {
+                return Ok(true);
+            }
+            return Err(CheckpointError::new(
+                "tool_receipt_conflict",
+                "tool receipt conflicts with the retained identity",
+            ));
+        }
+        let Some(updated) = prepare_tool_receipt(
+            &current,
+            &checkpoint,
+            operation_id,
+            attempt,
+            tool_call_id,
+            request_digest,
+            &result,
+            claim_token,
+            expected_revision,
+            claimed_cycle,
+        )?
+        else {
+            return Ok(false);
+        };
+        checkpoints.insert(updated.checkpoint_key.clone(), updated);
         Ok(true)
     }
 
@@ -322,6 +398,14 @@ fn store_identity(&self) -> String {
         let event_digest = event.payload_digest.clone();
         let mut updated = checkpoint.clone();
         let journal = &mut updated.tool_journal[index];
+        journal.identity_key = Some(crate::checkpoint::tool_receipt_identity_key(
+            &updated.checkpoint_key,
+            &journal.operation_id,
+            journal.attempt,
+            journal.tool_call_id.as_deref().unwrap_or_default(),
+            &journal.request_digest,
+        )?);
+        journal.result_digest = Some(crate::checkpoint::tool_result_digest(&result)?);
         match result.status {
             crate::types::ToolResultStatus::Success => {
                 journal.state = crate::checkpoint::OperationState::Succeeded;
@@ -329,14 +413,15 @@ fn store_identity(&self) -> String {
             }
             crate::types::ToolResultStatus::Error => {
                 journal.state = crate::checkpoint::OperationState::Failed;
-                journal.error = Some(crate::runtime::state::OperationError::new(
-                    result
-                        .error_code
-                        .clone()
-                        .unwrap_or_else(|| "tool_error".to_string()),
-                    result.content.clone(),
-                    false,
-                ));
+                journal.result = Some(result.to_dict());
+                journal.error = Some(
+                    crate::runtime::state::operation_error_from_tool_result(&result),
+                );
+                if result.error_code.as_deref() == Some("tool_outcome_unknown") {
+                    journal.resume_observation = Some(
+                        crate::runtime::state::unknown_tool_observation(journal),
+                    );
+                }
             }
             _ => unreachable!(),
         }

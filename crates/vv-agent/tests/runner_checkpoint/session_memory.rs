@@ -126,7 +126,7 @@ impl CheckpointStore for FailAfterSessionMemoryReceiptStore {
         claim_token: &str,
         lease_expires_at_ms: u64,
         now_ms: u64,
-    ) -> Result<bool, CheckpointError> {
+    ) -> Result<vv_agent::CheckpointRenewalOutcome, CheckpointError> {
         self.inner
             .renew_checkpoint_claim(checkpoint_key, claim_token, lease_expires_at_ms, now_ms)
     }

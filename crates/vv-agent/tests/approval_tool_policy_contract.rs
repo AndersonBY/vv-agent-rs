@@ -362,7 +362,11 @@ async fn approval_provider_failure_matches_the_canonical_fixture() {
     assert_eq!(failure.status, "failed");
     assert_eq!(result.status(), AgentStatus::Failed);
     assert_eq!(
-        result.result().error.as_deref(),
+        result
+            .result()
+            .error
+            .as_ref()
+            .map(|error| error.message.as_str()),
         Some(failure.message.as_str())
     );
     assert_eq!(executions.load(Ordering::SeqCst) > 0, failure.tool_executes);

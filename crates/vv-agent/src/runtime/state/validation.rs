@@ -200,6 +200,47 @@ pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
                 "journal cycle_index must equal the active cycle",
             ));
         }
+        if entry.kind == OperationKind::Tool
+            && matches!(
+                entry.state,
+                OperationState::Succeeded | OperationState::Failed
+            )
+        {
+            let tool_call_id = entry.tool_call_id.as_deref().ok_or_else(|| {
+                CheckpointError::new(
+                    "operation_receipt_identity_invalid",
+                    "closed tool journal entry is missing tool_call_id",
+                )
+            })?;
+            let expected_identity = crate::checkpoint::tool_receipt_identity_key(
+                &checkpoint.checkpoint_key,
+                &entry.operation_id,
+                entry.attempt,
+                tool_call_id,
+                &entry.request_digest,
+            )?;
+            if entry.identity_key.as_deref() != Some(expected_identity.as_str()) {
+                return Err(CheckpointError::new(
+                    "operation_receipt_identity_invalid",
+                    "closed tool journal identity_key does not match its operation identity",
+                ));
+            }
+            if let Some(result) = &entry.result {
+                let result =
+                    crate::types::ToolExecutionResult::from_dict(result).map_err(|error| {
+                        CheckpointError::new(
+                            "operation_receipt_identity_invalid",
+                            format!("closed tool result is invalid: {error}"),
+                        )
+                    })?;
+                if result.tool_call_id != tool_call_id {
+                    return Err(CheckpointError::new(
+                        "operation_receipt_identity_invalid",
+                        "closed tool result tool_call_id does not match its journal",
+                    ));
+                }
+            }
+        }
     }
     if checkpoint
         .model_call_journal
@@ -245,35 +286,35 @@ pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
             "reconciliation_required needs an ambiguous journal and no claim",
         ));
     }
-    if checkpoint.status == CheckpointStatus::Deferred {
-        let deferred_entries = checkpoint
-            .tool_journal
-            .iter()
-            .filter(|entry| entry.state == OperationState::Deferred)
-            .collect::<Vec<_>>();
-        if deferred_entries.is_empty() || checkpoint.claim_token.is_some() {
+    let deferred_entries = checkpoint
+        .tool_journal
+        .iter()
+        .filter(|entry| entry.state == OperationState::Deferred)
+        .collect::<Vec<_>>();
+    if checkpoint.status == CheckpointStatus::Deferred
+        && (deferred_entries.is_empty() || checkpoint.claim_token.is_some())
+    {
+        return Err(CheckpointError::new(
+            "checkpoint_status_invalid",
+            "deferred checkpoint requires a deferred journal and no claim",
+        ));
+    }
+    for entry in deferred_entries {
+        let Some(handle) = &entry.deferred_handle else {
             return Err(CheckpointError::new(
                 "checkpoint_status_invalid",
-                "deferred checkpoint requires a deferred journal and no claim",
+                "deferred journal entry requires a handle",
             ));
-        }
-        for entry in deferred_entries {
-            let Some(handle) = &entry.deferred_handle else {
-                return Err(CheckpointError::new(
-                    "checkpoint_status_invalid",
-                    "deferred journal entry requires a handle",
-                ));
-            };
-            if handle.checkpoint_key != checkpoint.checkpoint_key
-                || handle.operation_id != entry.operation_id
-                || handle.attempt != entry.attempt
-                || handle.request_digest != entry.request_digest
-            {
-                return Err(CheckpointError::new(
-                    "checkpoint_status_invalid",
-                    "deferred handle identity does not match checkpoint journal",
-                ));
-            }
+        };
+        if handle.checkpoint_key != checkpoint.checkpoint_key
+            || handle.operation_id != entry.operation_id
+            || handle.attempt != entry.attempt
+            || handle.request_digest != entry.request_digest
+        {
+            return Err(CheckpointError::new(
+                "checkpoint_status_invalid",
+                "deferred handle identity does not match checkpoint journal",
+            ));
         }
     }
     if checkpoint.status == CheckpointStatus::Running
@@ -285,14 +326,26 @@ pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
             "running checkpoint with ambiguity needs an active recovery claim",
         ));
     }
-    if checkpoint.terminal_result.is_some()
-        && (!checkpoint.model_call_journal.is_empty() || !checkpoint.tool_journal.is_empty())
-        && !checkpoint.is_operator_abort_terminal()
-    {
-        return Err(CheckpointError::new(
-            "checkpoint_status_invalid",
-            "terminal checkpoint cannot retain active journals",
-        ));
+    if checkpoint.terminal_result.is_some() {
+        let has_active_journal = checkpoint
+            .model_call_journal
+            .iter()
+            .chain(checkpoint.tool_journal.iter())
+            .any(|entry| {
+                matches!(
+                    entry.state,
+                    OperationState::Planned
+                        | OperationState::Started
+                        | OperationState::Deferred
+                        | OperationState::Ambiguous
+                )
+            });
+        if has_active_journal {
+            return Err(CheckpointError::new(
+                "checkpoint_status_invalid",
+                "terminal checkpoint cannot retain active journals",
+            ));
+        }
     }
     if let Some(result) = &checkpoint.terminal_result {
         validate_json(result, "terminal_result")?;
@@ -324,6 +377,63 @@ pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
                 "terminal result model-call ledger does not match checkpoint",
             ));
         }
+    }
+    Ok(())
+}
+
+/// Validate the only state that may be inserted by the create operation.
+///
+/// `validate_checkpoint` also accepts durable lifecycle states, so stores must
+/// apply these creation invariants before inserting a new record.
+pub fn validate_checkpoint_creation(checkpoint: &Checkpoint) -> CheckpointResult<()> {
+    validate_checkpoint(checkpoint)?;
+    let invalid = |message: &str| CheckpointError::new("checkpoint_initial_invalid", message);
+    if checkpoint.revision != 0 {
+        return Err(invalid("new checkpoints must start at revision zero"));
+    }
+    if checkpoint.resume_attempt != 1 {
+        return Err(invalid("new checkpoints must start at resume_attempt one"));
+    }
+    if checkpoint.claim_token.is_some()
+        || checkpoint.claimed_cycle.is_some()
+        || checkpoint.lease_expires_at_ms.is_some()
+    {
+        return Err(invalid("new checkpoints must not carry an execution claim"));
+    }
+    if checkpoint.status.is_terminal()
+        || checkpoint.terminal_result.is_some()
+        || checkpoint.terminal_acknowledged
+    {
+        return Err(invalid("new checkpoints must be non-terminal"));
+    }
+    // The create operation may atomically stage its own lifecycle event. No
+    // other durable outbox state belongs in an initial checkpoint.
+    let has_only_creation_event = match checkpoint.event_outbox.as_slice() {
+        [] => true,
+        [entry] => {
+            entry.state == "pending"
+                && entry.cursor.is_none()
+                && entry.event.get("type").and_then(Value::as_str) == Some("checkpoint_created")
+                && entry.event.get("cycle_index").and_then(Value::as_u64) == Some(0)
+                && entry.event.get("checkpoint_key").and_then(Value::as_str)
+                    == Some(checkpoint.checkpoint_key.as_str())
+                && entry.event.get("resume_attempt").and_then(Value::as_u64) == Some(1)
+        }
+        _ => false,
+    };
+    if checkpoint.cancel_requested
+        || checkpoint.active_host_interaction.is_some()
+        || checkpoint.suspended_origin.is_some()
+        || checkpoint.event_cursor.is_some()
+        || !checkpoint.cycles.is_empty()
+        || !checkpoint.model_calls.is_empty()
+        || !has_only_creation_event
+        || !checkpoint.model_call_journal.is_empty()
+        || !checkpoint.tool_journal.is_empty()
+    {
+        return Err(invalid(
+            "new checkpoints must not carry persisted lifecycle state",
+        ));
     }
     Ok(())
 }

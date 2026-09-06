@@ -143,8 +143,11 @@ fn public_export_path(id: &str) -> &'static str {
         "result.budget_exhaustion" => {
             export_type!(vv_agent::BudgetExhaustion, "vv_agent::BudgetExhaustion")
         }
-        "result.resume_observation" => {
-            export_type!(vv_agent::ResumeObservation, "vv_agent::ResumeObservation")
+        "result.resume_observations" => {
+            export_type!(
+                Vec<vv_agent::ResumeObservation>,
+                "Vec<vv_agent::ResumeObservation>"
+            )
         }
         "run_handle.live" => export_type!(vv_agent::RunHandle, "vv_agent::RunHandle"),
         "run_handle.snapshot" => {
@@ -467,6 +470,11 @@ fn public_export_path(id: &str) -> &'static str {
             vv_agent::ControllerCommandReceipt,
             "vv_agent::ControllerCommandReceipt"
         ),
+        "runtime_backend.reap_controller_command_wakes" => {
+            let _ = <dyn vv_agent::CheckpointStore>::reap_controller_command_wakes;
+            let _ = std::mem::size_of::<vv_agent::ControllerCommandWakeRecord>();
+            "vv_agent::CheckpointStore::reap_controller_command_wakes"
+        }
         "runtime_backend.host_interaction_request" => export_type!(
             vv_agent::HostInteractionRequest,
             "vv_agent::HostInteractionRequest"

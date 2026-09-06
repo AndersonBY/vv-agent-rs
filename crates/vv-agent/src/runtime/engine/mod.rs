@@ -23,4 +23,5 @@ pub use controls::{
     RunEventHandler, RuntimeRunControls,
 };
 pub(crate) use helpers::build_initial_messages;
+pub(crate) use planning::block_on_engine_tool_run;
 pub use session_api::*;

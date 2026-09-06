@@ -64,6 +64,7 @@ struct SqlValues {
     resume_attempt: i64,
     cycle_index: i64,
     status: String,
+    cancel_requested: i64,
     active_host_interaction: Option<String>,
     suspended_origin: Option<String>,
     messages: String,
@@ -100,6 +101,7 @@ impl SqlValues {
             resume_attempt: to_i64(checkpoint.resume_attempt, "resume_attempt")?,
             cycle_index: to_i64(checkpoint.cycle_index, "cycle_index")?,
             status: string_field(object, "status")?,
+            cancel_requested: i64::from(checkpoint.cancel_requested),
             active_host_interaction: nullable_json_field(object, "active_host_interaction")?,
             suspended_origin: nullable_json_field(object, "suspended_origin")?,
             messages: json_field(object, "messages")?,
@@ -127,7 +129,7 @@ impl SqlValues {
         })
     }
 
-    fn params(&self) -> [&(dyn rusqlite::ToSql + Sync); 29] {
+    fn params(&self) -> [&(dyn rusqlite::ToSql + Sync); 30] {
         [
             &self.checkpoint_key,
             &self.schema_version,
@@ -140,6 +142,7 @@ impl SqlValues {
             &self.resume_attempt,
             &self.cycle_index,
             &self.status,
+            &self.cancel_requested,
             &self.active_host_interaction,
             &self.suspended_origin,
             &self.messages,
@@ -180,16 +183,16 @@ fn update_row(
             UPDATE checkpoints SET
                 schema_version = ?1, run_definition_schema = ?2, run_definition = ?3,
                 task_id = ?4, root_run_id = ?5, trace_id = ?6, run_definition_digest = ?7,
-                resume_attempt = ?8, cycle_index = ?9, status = ?10,
-                active_host_interaction = ?11, suspended_origin = ?12,
-                messages = ?13, cycles = ?14, model_calls = ?15, shared_state = ?16,
-                budget_usage = ?17, event_cursor = ?18, event_outbox = ?19,
-                extension_state = ?20, model_call_journal = ?21, tool_journal = ?22,
-                revision = ?23, claim_token = ?24, claimed_cycle = ?25,
-                lease_expires_at_ms = ?26, terminal_result = ?27,
-                terminal_acknowledged = ?28
-            WHERE checkpoint_key = ?29 AND revision = ?30
-              AND (?31 IS NULL OR claim_token = ?31)
+                resume_attempt = ?8, cycle_index = ?9, status = ?10, cancel_requested = ?11,
+                active_host_interaction = ?12, suspended_origin = ?13,
+                messages = ?14, cycles = ?15, model_calls = ?16, shared_state = ?17,
+                budget_usage = ?18, event_cursor = ?19, event_outbox = ?20,
+                extension_state = ?21, model_call_journal = ?22, tool_journal = ?23,
+                revision = ?24, claim_token = ?25, claimed_cycle = ?26,
+                lease_expires_at_ms = ?27, terminal_result = ?28,
+                terminal_acknowledged = ?29
+            WHERE checkpoint_key = ?30 AND revision = ?31
+              AND (?32 IS NULL OR claim_token = ?32)
             "#,
             params![
                 values.schema_version,
@@ -202,6 +205,7 @@ fn update_row(
                 values.resume_attempt,
                 values.cycle_index,
                 values.status,
+                values.cancel_requested,
                 values.active_host_interaction,
                 values.suspended_origin,
                 values.messages,
@@ -235,7 +239,7 @@ fn load_row(connection: &Connection, checkpoint_key: &str) -> CheckpointResult<O
             r#"
             SELECT checkpoint_key, schema_version, run_definition_schema, run_definition,
                    task_id, root_run_id, trace_id, run_definition_digest, resume_attempt,
-                   cycle_index, status, active_host_interaction, suspended_origin,
+                   cycle_index, status, cancel_requested, active_host_interaction, suspended_origin,
                    messages, cycles, model_calls, shared_state,
                    budget_usage, event_cursor, event_outbox, extension_state,
                    model_call_journal, tool_journal, revision, claim_token, claimed_cycle,
@@ -260,7 +264,7 @@ fn load_row_transaction(
             r#"
             SELECT checkpoint_key, schema_version, run_definition_schema, run_definition,
                    task_id, root_run_id, trace_id, run_definition_digest, resume_attempt,
-                   cycle_index, status, active_host_interaction, suspended_origin,
+                   cycle_index, status, cancel_requested, active_host_interaction, suspended_origin,
                    messages, cycles, model_calls, shared_state,
                    budget_usage, event_cursor, event_outbox, extension_state,
                    model_call_journal, tool_journal, revision, claim_token, claimed_cycle,
@@ -288,24 +292,25 @@ fn row_to_checkpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<CheckpointResu
     let resume_attempt: i64 = row.get(8)?;
     let cycle_index: i64 = row.get(9)?;
     let status: String = row.get(10)?;
-    let active_host_interaction: Option<String> = row.get(11)?;
-    let suspended_origin: Option<String> = row.get(12)?;
-    let messages: String = row.get(13)?;
-    let cycles: String = row.get(14)?;
-    let model_calls: String = row.get(15)?;
-    let shared_state: String = row.get(16)?;
-    let budget_usage: Option<String> = row.get(17)?;
-    let event_cursor: Option<String> = row.get(18)?;
-    let event_outbox: String = row.get(19)?;
-    let extension_state: String = row.get(20)?;
-    let model_call_journal: String = row.get(21)?;
-    let tool_journal: String = row.get(22)?;
-    let revision: i64 = row.get(23)?;
-    let claim_token: Option<String> = row.get(24)?;
-    let claimed_cycle: Option<i64> = row.get(25)?;
-    let lease_expires_at_ms: Option<i64> = row.get(26)?;
-    let terminal_result: Option<String> = row.get(27)?;
-    let terminal_acknowledged: i64 = row.get(28)?;
+    let cancel_requested: i64 = row.get(11)?;
+    let active_host_interaction: Option<String> = row.get(12)?;
+    let suspended_origin: Option<String> = row.get(13)?;
+    let messages: String = row.get(14)?;
+    let cycles: String = row.get(15)?;
+    let model_calls: String = row.get(16)?;
+    let shared_state: String = row.get(17)?;
+    let budget_usage: Option<String> = row.get(18)?;
+    let event_cursor: Option<String> = row.get(19)?;
+    let event_outbox: String = row.get(20)?;
+    let extension_state: String = row.get(21)?;
+    let model_call_journal: String = row.get(22)?;
+    let tool_journal: String = row.get(23)?;
+    let revision: i64 = row.get(24)?;
+    let claim_token: Option<String> = row.get(25)?;
+    let claimed_cycle: Option<i64> = row.get(26)?;
+    let lease_expires_at_ms: Option<i64> = row.get(27)?;
+    let terminal_result: Option<String> = row.get(28)?;
+    let terminal_acknowledged: i64 = row.get(29)?;
 
     let result = (|| {
         let mut object = Map::new();
@@ -329,6 +334,10 @@ fn row_to_checkpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<CheckpointResu
         );
         object.insert("cycle_index".to_string(), Value::from(to_u64(cycle_index)?));
         object.insert("status".to_string(), Value::String(status));
+        object.insert(
+            "cancel_requested".to_string(),
+            Value::Bool(cancel_requested != 0),
+        );
         object.insert(
             "active_host_interaction".to_string(),
             optional_value(active_host_interaction.as_deref())?,

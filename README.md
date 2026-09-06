@@ -8,21 +8,35 @@ for model-driven automation.
 
 ## Install
 
-The current crate version is `0.12.2`. This release uses Contract `8.1.2` and
+The current crate version is `0.14.0`. This release uses Contract `12.0.0` and
 exposes a Rust-idiomatic API.
 
 ```bash
-cargo add vv-agent@0.12.2
+cargo add vv-agent@0.14.0
 ```
 
 Enable the Apalis adapter with:
 
 ```bash
-cargo add vv-agent@0.12.2 --features apalis
+cargo add vv-agent@0.14.0 --features apalis
 ```
 
 Repository `HEAD` is forward-only: current readers accept only the current
 strict public and wire shapes.
+
+### 0.14.0 Highlights
+
+- Checkpoint v10 carries cancellation as durable state and returns typed lease
+  renewal outcomes. Ordinary tool receipts are identity-first, atomic, and
+  claim-preserving; deferred admission accepts only unresolved deferred tools.
+- Claimed cancellation, operator abort, and lease loss close unknown tool
+  effects with `tool_cancelled` and sorted `resume_observations`.
+- Contract 12 gives ordinary and deferred definitive receipts the shared
+  `evt_receipt_<identity_key>` event identity and checkpoint-scoped controller
+  wake recovery across Memory, SQLite, and Redis stores.
+- Ordinary failed and unknown tool receipts retain the complete canonical
+  `ToolExecutionResult` plus digest; `OperationError` is only its normalized
+  diagnostic projection, and recovery replays the retained result directly.
 
 ### 0.12.2 Highlights
 
@@ -50,7 +64,7 @@ strict public and wire shapes.
   and checkpoint approval resume fails closed before approval consumption or
   tool/session writes. Cross-process durable approval continuation is not
   implemented.
-- Contract `8.1.2` defines strict checkpoint CAS, state-transition, and
+- Contract `12.0.0` defines strict checkpoint CAS, state-transition, and
   fail-closed persistence boundaries.
 
 ### 0.12.0 Highlights
@@ -85,10 +99,10 @@ strict public and wire shapes.
   tools default to archive retention; replacement requires a complete immutable
   artifact and a model-visible `read_file` recovery path. Compact markers expose
   only a bounded excerpt and logical recovery path.
-- Durable execution uses `vv-agent.checkpoint.v8`,
+- Durable execution uses `vv-agent.checkpoint.v10`,
   `vv-agent.run-definition.v5`, `vv-agent.distributed-run.v5`, and
-  `vv-agent.distributed-worker-response.v3` for strict recovery and
-  distributed-controller boundaries. `RunEvent` uses wire version `v4`, and
+  `vv-agent.distributed-worker-response.v4` for strict recovery and
+  distributed-controller boundaries. `RunEvent` uses wire version `v5`, and
   SQLite session stores use `PRAGMA user_version=2`.
 - Durable deferred tools use `ToolContext::defer` and one atomic
   `admit_deferred_batch` barrier. Memory, SQLite, and Redis retain independent
@@ -302,7 +316,7 @@ while let Some(event) = events.next().await {
 let result = handle.result().await?;
 ```
 
-Each `RunEvent` is a v4 envelope with `event_id`, `run_id`, `trace_id`,
+Each `RunEvent` is a v5 envelope with `event_id`, `run_id`, `trace_id`,
 optional session and parent identifiers, timing, metadata, and a typed
 `RunEventPayload`. `JsonlRunEventStore` can append events and replay a run,
 including child events linked by parent run id.

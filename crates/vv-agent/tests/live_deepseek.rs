@@ -1,7 +1,10 @@
 use std::env;
 use std::path::PathBuf;
 
-use vv_agent::{handoff, Agent, AgentStatus, ModelRef, RunConfig, Runner, VvLlmModelProvider};
+use vv_agent::{
+    handoff, Agent, AgentStatus, ModelRef, NoToolPolicy, RunConfig, Runner, ToolPolicy,
+    VvLlmModelProvider,
+};
 
 #[path = "live_support/deepseek_accounting.rs"]
 mod deepseek_accounting;
@@ -14,13 +17,21 @@ async fn live_deepseek_v4_pro_finishes_runner_task() {
         return;
     }
     let (runner, model) = live_runner().expect("runner");
-    let agent = live_agent("deepseek-runner", "你是执行 Agent。直接完成任务。", &model);
+    let agent = live_agent(
+        "deepseek-runner",
+        "你是执行 Agent。直接回答用户问题，回答中必须包含类型名 Agent；不要调用工具或向用户提问。",
+        &model,
+    );
 
     let result = runner
         .run_with_config(
             &agent,
-            "用一句话回答：vv-agent-rs 的 SDK 入口是什么？",
-            RunConfig::builder().max_cycles(6).build(),
+            "用一句话回答：vv-agent-rs 的 SDK 入口是什么？回答中必须包含类型名 Agent；不要调用工具或向用户提问。",
+            RunConfig::builder()
+                .max_cycles(6)
+                .no_tool_policy(NoToolPolicy::Finish)
+                .tool_policy(ToolPolicy::default().allow_only(Vec::<String>::new()))
+                .build(),
         )
         .await
         .expect("run live task");
@@ -37,10 +48,20 @@ async fn live_deepseek_v4_pro_runs_handoff_facade() {
         return;
     }
     let (runner, model) = live_runner().expect("runner");
-    let researcher = live_agent("researcher", "你收集事实并简短回答。", &model);
+    let researcher = Agent::builder("researcher")
+        .instructions("收到转交的问题后直接用一句话回答，不要询问澄清或调用其它工具。")
+        .model(model.clone())
+        .no_tool_policy(NoToolPolicy::Finish)
+        .tool_policy(ToolPolicy::default().allow_only(Vec::<String>::new()))
+        .build()
+        .expect("researcher agent");
     let triage = Agent::builder("triage")
-        .instructions("需要事实回答时转交 researcher。")
+        .instructions(
+            "必须立即调用 transfer_to_researcher，把用户的问题交给 researcher；不要调用其它工具、不要检查工作区、不要向用户澄清。researcher 返回后直接完成回答。",
+        )
         .model(model)
+        .no_tool_policy(NoToolPolicy::Finish)
+        .tool_policy(ToolPolicy::default().allow_only(["transfer_to_researcher"]))
         .handoff(handoff(&researcher).description("事实收集任务"))
         .build()
         .expect("triage agent");
@@ -48,8 +69,11 @@ async fn live_deepseek_v4_pro_runs_handoff_facade() {
     let result = runner
         .run_with_config(
             &triage,
-            "研究并回答：Runner 负责什么？",
-            RunConfig::builder().max_cycles(8).build(),
+            "请立即转交 researcher 研究 vv-agent-rs 中 Runner 的职责，并用一句话回答；不要向我提问。",
+            RunConfig::builder()
+                .max_cycles(8)
+                .no_tool_policy(NoToolPolicy::Finish)
+                .build(),
         )
         .await
         .expect("run handoff");

@@ -708,7 +708,7 @@ fn validate_checkpoint_policy(value: Option<&Value>) -> CheckpointResult<()> {
     }
     if !matches!(
         object.get("ambiguous_tool_policy").and_then(Value::as_str),
-        Some("require_reconciliation" | "retry_idempotent_only")
+        Some("require_reconciliation" | "retry_idempotent_only" | "surface_to_model")
     ) {
         return definition_error(
             "run_definition.checkpoint_policy.ambiguous_tool_policy is invalid",

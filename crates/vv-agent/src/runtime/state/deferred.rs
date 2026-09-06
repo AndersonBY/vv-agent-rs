@@ -1,11 +1,10 @@
 //! Pure checkpoint transitions for durable deferred tool batches.
 
 use crate::checkpoint::{
-    canonical_json_bytes, validate_definitive_result, CheckpointError, CheckpointResult,
-    CheckpointStatus, DeferredBatchEntry, DeferredToolHandle, OperationState, ToolCallOutcome,
+    canonical_json_bytes, CheckpointError, CheckpointResult, CheckpointStatus, DeferredBatchEntry,
+    DeferredToolHandle, OperationState, ToolCallOutcome,
 };
 use crate::events::{EventId, RunEvent, RunEventPayload, ToolStatus};
-use crate::runtime::state::OperationError;
 use crate::types::{ToolExecutionResult, ToolResultStatus};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -32,11 +31,14 @@ pub fn admit_deferred_batch(
     let mut deferred_count = 0usize;
     for batch in entries {
         batch.validate()?;
-        let Some(index) = snapshot
-            .tool_journal
-            .iter()
-            .position(|entry| entry.operation_id == batch.operation_id)
-        else {
+        let Some(index) = snapshot.tool_journal.iter().position(|entry| {
+            entry.operation_id == batch.operation_id
+                && entry.cycle_index == batch.cycle_index
+                && entry.attempt == batch.attempt
+                && entry.request_digest == batch.request_digest
+                && entry.tool_call_id.as_deref() == Some(batch.tool_call_id.as_str())
+                && entry.tool_name.as_deref() == Some(batch.tool_name.as_str())
+        }) else {
             return Err(CheckpointError::new(
                 "deferred_batch_not_admitted",
                 "deferred batch operation is not in the active tool journal",
@@ -75,44 +77,11 @@ pub fn admit_deferred_batch(
                 snapshot.event_outbox.push(event);
             }
             ToolCallOutcome::Completed { result } => {
-                if result.tool_call_id != batch.tool_call_id {
-                    return Err(CheckpointError::new(
-                        "deferred_batch_result_invalid",
-                        "completed result tool_call_id does not match the journal",
-                    ));
-                }
-                validate_definitive_result(result).map_err(|error| {
-                    if error.code() == "deferred_resolution_result_invalid" {
-                        CheckpointError::new("deferred_batch_result_invalid", error.message())
-                    } else {
-                        error
-                    }
-                })?;
-                match result.status {
-                    ToolResultStatus::Success => {
-                        journal.result = Some(result.to_dict());
-                        journal.state = OperationState::Succeeded;
-                    }
-                    ToolResultStatus::Error => {
-                        journal.error = Some(OperationError::new(
-                            result
-                                .error_code
-                                .clone()
-                                .unwrap_or_else(|| "tool_error".to_string()),
-                            result.content.clone(),
-                            false,
-                        ));
-                        journal.state = OperationState::Failed;
-                    }
-                    _ => {
-                        return Err(CheckpointError::new(
-                            "deferred_batch_result_invalid",
-                            "admission completed result must be SUCCESS or ERROR",
-                        ));
-                    }
-                }
-                let event = completed_event(&snapshot, batch, result, None)?;
-                snapshot.event_outbox.push(event);
+                let _ = (journal, result);
+                return Err(CheckpointError::new(
+                    "deferred_admission_completed_outcome_invalid",
+                    "admit_deferred_batch accepts only unresolved deferred outcomes; record ordinary receipts first",
+                ));
             }
         }
     }
@@ -337,8 +306,8 @@ fn deferred_event(
         .as_object_mut()
         .expect("serialized RunEvent must be an object");
     object.remove("agent_name");
-    // These optional admission fields are part of the v4 resume-event
-    // projection.  Keep them symmetric with reconciliation events while the
+    // These optional admission fields are part of the current resume-event
+    // projection. Keep them symmetric with reconciliation events while the
     // handle remains the source of exact identity.
     object.insert(
         "checkpoint_key".to_string(),
@@ -399,14 +368,12 @@ fn reconciliation_event(
             claim_mode: Some(crate::checkpoint::ClaimMode::Recovery),
         },
     );
-    event.event_id = EventId::stable(format!(
-        "evt_deferred_{}_reconciliation",
-        journal
-            .tool_call_id
-            .as_deref()
-            .unwrap_or(&journal.operation_id)
-    ))
-    .map_err(|error| CheckpointError::new("checkpoint_event_invalid", error))?;
+    let tool_call_id = journal
+        .tool_call_id
+        .as_deref()
+        .unwrap_or(&journal.operation_id);
+    event.event_id = EventId::stable(format!("evt_deferred_{tool_call_id}_reconciliation"))
+        .map_err(|error| CheckpointError::new("checkpoint_event_invalid", error))?;
     outbox(event)
 }
 
@@ -414,7 +381,7 @@ fn completed_event(
     checkpoint: &Checkpoint,
     batch: &DeferredBatchEntry,
     result: &ToolExecutionResult,
-    event_id: Option<String>,
+    event_id: String,
 ) -> CheckpointResult<crate::runtime::state::EventOutboxEntry> {
     let status = match result.status {
         ToolResultStatus::Success => ToolStatus::Success,
@@ -440,18 +407,7 @@ fn completed_event(
             attempt: Some(batch.attempt as u32),
         },
     );
-    let id = event_id.unwrap_or_else(|| {
-        format!(
-            "evt_deferred_{}_{}",
-            batch.tool_call_id,
-            if result.status == ToolResultStatus::Success {
-                "completed"
-            } else {
-                "failed"
-            }
-        )
-    });
-    event.event_id = EventId::stable(id)
+    event.event_id = EventId::stable(event_id)
         .map_err(|error| CheckpointError::new("checkpoint_event_invalid", error))?;
     outbox(event)
 }
@@ -482,30 +438,42 @@ pub fn receipt_event(
     journal: &crate::runtime::state::OperationJournalEntry,
     result: &ToolExecutionResult,
 ) -> CheckpointResult<crate::runtime::state::EventOutboxEntry> {
+    let tool_call_id = journal.tool_call_id.as_deref().ok_or_else(|| {
+        CheckpointError::new(
+            "tool_receipt_identity_invalid",
+            "tool receipt journal is missing tool_call_id",
+        )
+    })?;
+    if tool_call_id != result.tool_call_id {
+        return Err(CheckpointError::new(
+            "tool_receipt_identity_invalid",
+            "tool receipt result tool_call_id does not match the journal",
+        ));
+    }
     let batch = DeferredBatchEntry {
         operation_id: journal.operation_id.clone(),
         cycle_index: journal.cycle_index,
         attempt: journal.attempt,
         request_digest: journal.request_digest.clone(),
-        tool_call_id: journal.tool_call_id.clone().unwrap_or_default(),
+        tool_call_id: tool_call_id.to_string(),
         tool_name: journal.tool_name.clone().unwrap_or_default(),
         idempotency_key: journal.idempotency_key.clone(),
         idempotency_support: journal.idempotency_support.unwrap_or_default(),
         outcome: ToolCallOutcome::completed(result.clone()),
     };
-    let event_id = format!(
-        "evt_deferred_{}_{}",
-        journal
-            .tool_call_id
-            .as_deref()
-            .unwrap_or(&journal.operation_id),
-        if result.status == ToolResultStatus::Success {
-            "completed"
-        } else {
-            "failed"
-        }
-    );
-    completed_event(checkpoint, &batch, result, Some(event_id))
+    let identity_key = crate::checkpoint::tool_receipt_identity_key(
+        &checkpoint.checkpoint_key,
+        &batch.operation_id,
+        batch.attempt,
+        &batch.tool_call_id,
+        &batch.request_digest,
+    )?;
+    completed_event(
+        checkpoint,
+        &batch,
+        result,
+        format!("evt_receipt_{identity_key}"),
+    )
 }
 
 pub fn handle_key(value: &DeferredToolHandle) -> CheckpointResult<String> {

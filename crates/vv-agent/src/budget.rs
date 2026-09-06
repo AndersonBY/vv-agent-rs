@@ -51,6 +51,7 @@ pub enum BudgetExhaustionReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BudgetUnavailableReason {
+    AccountingMissing,
     UsageMissing,
     MeterMissing,
     MeterUnavailable,
@@ -98,7 +99,7 @@ pub trait HostCostMeter: Send + Sync {
     fn read(&self) -> Result<Option<HostCost>, String>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BudgetUnavailableDimension {
     pub dimension: BudgetDimension,
     pub reason: BudgetUnavailableReason,

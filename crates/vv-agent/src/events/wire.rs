@@ -91,7 +91,7 @@ pub(super) fn validate_event_wire_shape(value: &Value) -> Result<(), String> {
                 "error_code",
             ],
         ),
-        "run_state_changed" => (&["state"], &["state"]),
+        "run_state_changed" => (&["state", "cancel_requested"], &["state"]),
         "host_interaction_requested" => (
             &[
                 "checkpoint_key",
@@ -177,6 +177,7 @@ pub(super) fn validate_event_wire_shape(value: &Value) -> Result<(), String> {
                 "operation_id",
                 "attempt",
                 "tool_metadata",
+                "checkpoint_key",
             ],
             &[
                 "tool_call_id",
@@ -441,8 +442,37 @@ pub(super) fn validate_event_wire_shape(value: &Value) -> Result<(), String> {
             ],
             &["reason"],
         ),
+        "cycle_aborted" => (
+            &["logical_cycle", "reason"],
+            &["logical_cycle", "reason", "cycle_index"],
+        ),
         other => return Err(format!("unsupported run event type `{other}`")),
     };
+
+    if event_type == "run_state_changed" {
+        if object
+            .get("metadata")
+            .and_then(Value::as_object)
+            .is_some_and(|metadata| metadata.contains_key("cancel_requested"))
+        {
+            return Err(
+                "run_state_changed cancel_requested must be a top-level typed field".to_string(),
+            );
+        }
+        if let Some(transition) = object.get("cancel_requested") {
+            let transition = transition.as_object().ok_or_else(|| {
+                "run_state_changed cancel_requested must be an object".to_string()
+            })?;
+            if transition.len() != 2
+                || transition.get("from") != Some(&Value::Bool(false))
+                || transition.get("to") != Some(&Value::Bool(true))
+            {
+                return Err(
+                    "run_state_changed cancel_requested must record false to true".to_string(),
+                );
+            }
+        }
+    }
 
     let unknown = object
         .keys()

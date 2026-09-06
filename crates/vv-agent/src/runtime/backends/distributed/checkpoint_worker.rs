@@ -13,12 +13,12 @@ use crate::runtime::checkpoint_resume::{
 };
 use crate::runtime::run_definition::validate_distributed_run_definition;
 use crate::runtime::state::{
-    validate_extension_state_size, Checkpoint, CheckpointStore, ExtensionStateEntry, OperationError,
+    validate_extension_state_size, Checkpoint, CheckpointStore, ExtensionStateEntry,
 };
 use crate::runtime::tool_planner::project_tool_policy;
 use crate::runtime::{CheckpointRuntimeControl, ExecutionContext, RuntimeRunControls};
-use crate::types::AgentResult;
 use crate::types::AgentStatus;
+use crate::types::{AgentResult, ToolExecutionResult};
 use crate::{ModelRef, RunContext};
 
 use super::capabilities::ResolvedDistributedCapabilities;
@@ -119,6 +119,108 @@ impl DistributedCheckpointProgress {
         Ok(self.checkpoint.clone())
     }
 
+    pub fn record_tool_receipt(
+        &mut self,
+        operation_id: &str,
+        attempt: u64,
+        tool_call_id: &str,
+        request_digest: &str,
+        result: ToolExecutionResult,
+    ) -> Result<bool, String> {
+        let claimed_cycle = self
+            .checkpoint
+            .claimed_cycle
+            .ok_or_else(|| "tool receipt requires an active claimed cycle".to_string())?;
+        let recorded = self
+            .store
+            .record_tool_receipt(
+                self.checkpoint.clone(),
+                operation_id,
+                attempt,
+                tool_call_id,
+                request_digest,
+                result,
+                &self.claim_token,
+                self.checkpoint.revision,
+                claimed_cycle,
+            )
+            .map_err(|error| error.to_string())?;
+        if recorded {
+            self.reload()?;
+        }
+        Ok(recorded)
+    }
+
+    fn deliver_pending_outbox(
+        &mut self,
+        event_store: Option<&dyn RunEventStore>,
+        event_sink: &CheckpointEventSink,
+    ) -> Result<(), String> {
+        loop {
+            let pending = self
+                .checkpoint
+                .event_outbox
+                .iter()
+                .find(|entry| {
+                    entry.state == "pending"
+                        && entry.event.get("type").and_then(serde_json::Value::as_str)
+                            == Some("tool_call_completed")
+                })
+                .cloned();
+            let Some(pending) = pending else {
+                return Ok(());
+            };
+            pending
+                .verify_payload()
+                .map_err(|error| error.to_string())?;
+            let event: RunEvent = serde_json::from_value(pending.event.clone())
+                .map_err(|error| format!("checkpoint event payload is invalid: {error}"))?;
+            let cursor = if let Some(event_store) = event_store {
+                event_store
+                    .append_once(&pending.event_id, &pending.payload_digest, &event)
+                    .map_err(|error| error.to_string())?
+            } else {
+                EventCursor::new(
+                    crate::runtime::backends::CapabilityRef::new("events.raw-sink", "1")
+                        .map_err(|error| error.to_string())?,
+                    serde_json::json!({"event_id": pending.event_id}),
+                    Some(pending.event_id.clone()),
+                )
+            };
+            event_sink(event).map_err(|error| error.to_string())?;
+            let recorded = self
+                .store
+                .record_event_delivery(
+                    &self.checkpoint.checkpoint_key,
+                    Some(&self.claim_token),
+                    self.checkpoint.revision,
+                    &pending.event_id,
+                    &pending.payload_digest,
+                    cursor.clone(),
+                )
+                .map_err(|error| error.to_string())?;
+            if !recorded {
+                self.reload()?;
+                let cursor_value =
+                    serde_json::to_value(&cursor).map_err(|error| error.to_string())?;
+                let matching = self
+                    .checkpoint
+                    .event_outbox
+                    .iter()
+                    .find(|entry| entry.event_id == pending.event_id);
+                if !matching.is_some_and(|entry| {
+                    entry.state == "delivered"
+                        && entry.payload_digest == pending.payload_digest
+                        && entry.cursor.as_ref() == Some(&cursor_value)
+                }) {
+                    return Err("checkpoint event delivery lost its revision".to_string());
+                }
+            } else {
+                self.reload()?;
+            }
+        }
+    }
+
     pub fn accept_deferred_batch(
         &mut self,
         decisions: &[crate::checkpoint::AcceptDeferredDecision],
@@ -214,9 +316,14 @@ pub(super) fn run_distributed_cycle(
         return CycleDispatchResult::committed(checkpoint.cycle_index, checkpoint.revision);
     }
     validate_resume_attempt_observation(&envelope, &checkpoint, delivery)?;
+    let retained_host_recovery_claim = checkpoint
+        .claim_token
+        .as_deref()
+        .is_some_and(|token| token.starts_with("host-recovery:"));
     if checkpoint
         .lease_expires_at_ms
         .is_some_and(|lease| lease > now_ms)
+        && !retained_host_recovery_claim
     {
         return Ok(CycleDispatchResult::pending());
     }
@@ -238,32 +345,44 @@ pub(super) fn run_distributed_cycle(
         .expect("checkpoint executor checked above");
 
     let claim_mode = effective_claim_mode(&envelope, &checkpoint, delivery, now_ms);
-    let lease_expires_at_ms = lease_expiry_at(
-        now_ms,
-        envelope.lease_duration_ms,
-        envelope.deadline_unix_ms,
-    )?;
-    let claim_token = uuid::Uuid::new_v4().simple().to_string();
-    let resume_attempt_before_claim = checkpoint.resume_attempt;
-    let Some(claimed) = store
-        .claim_checkpoint(
-            checkpoint_key,
-            u64::from(envelope.cycle_index),
-            &claim_token,
-            lease_expires_at_ms,
-            now_ms,
-            claim_mode,
-        )
-        .map_err(|error| format!("retryable distributed delivery conflict: {error}"))?
-    else {
-        let latest = load_checkpoint(store.as_ref(), checkpoint_key)?;
-        validate_envelope_checkpoint_identity(&envelope, &latest)?;
-        if latest.terminal_result.is_some() {
-            return terminal_replay(&latest);
+    let (claim_token, claimed, retained_claim) = if retained_host_recovery_claim {
+        if checkpoint.claimed_cycle != Some(u64::from(envelope.cycle_index)) {
+            return Err("retained host response claim cycle does not match envelope".to_string());
         }
-        return Ok(CycleDispatchResult::pending());
+        let claim_token = checkpoint
+            .claim_token
+            .clone()
+            .ok_or_else(|| "retained host response claim token disappeared".to_string())?;
+        (claim_token, checkpoint.clone(), true)
+    } else {
+        let lease_expires_at_ms = lease_expiry_at(
+            now_ms,
+            envelope.lease_duration_ms,
+            envelope.deadline_unix_ms,
+        )?;
+        let claim_token = uuid::Uuid::new_v4().simple().to_string();
+        let resume_attempt_before_claim = checkpoint.resume_attempt;
+        let Some(claimed) = store
+            .claim_checkpoint(
+                checkpoint_key,
+                u64::from(envelope.cycle_index),
+                &claim_token,
+                lease_expires_at_ms,
+                now_ms,
+                claim_mode,
+            )
+            .map_err(|error| format!("retryable distributed delivery conflict: {error}"))?
+        else {
+            let latest = load_checkpoint(store.as_ref(), checkpoint_key)?;
+            validate_envelope_checkpoint_identity(&envelope, &latest)?;
+            if latest.terminal_result.is_some() {
+                return terminal_replay(&latest);
+            }
+            return Ok(CycleDispatchResult::pending());
+        };
+        validate_claimed_resume_attempt(resume_attempt_before_claim, &claimed, claim_mode)?;
+        (claim_token, claimed, false)
     };
-    validate_claimed_resume_attempt(resume_attempt_before_claim, &claimed, claim_mode)?;
 
     let action = run_with_checkpoint_lease(
         store.clone(),
@@ -278,7 +397,7 @@ pub(super) fn run_distributed_cycle(
                     DistributedCheckpointProgress::new(store.clone(), claim_token.clone(), claimed);
                 initialize_extensions(config, &resolved, &mut progress)?;
 
-                if claim_mode == ClaimMode::Recovery {
+                if claim_mode == ClaimMode::Recovery && !retained_claim {
                     match reconcile_recovery(config, &resolved, &mut progress)? {
                         RecoveryDisposition::Continue => {}
                         RecoveryDisposition::Deferred => {
@@ -312,10 +431,15 @@ pub(super) fn run_distributed_cycle(
                 match outcome {
                     DistributedCycleOutcome::Continue(mut checkpoint) => {
                         snapshot_extensions(config, &resolved, &mut checkpoint)?;
+                        let event_store =
+                            runtime::checkpoint_event_store_adapter(&envelope, &resolved)?;
+                        let event_sink = runtime::checkpoint_event_sink(&resolved);
                         commit_cycle(
                             checkpoint,
                             &mut progress,
                             heartbeat_status,
+                            event_store.as_deref(),
+                            &event_sink,
                             u64::from(envelope.cycle_index),
                         )?;
                         let committed = load_checkpoint(store.as_ref(), checkpoint_key)?;

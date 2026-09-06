@@ -513,7 +513,10 @@ pub(super) fn checkpoint_projection(
     }
     Ok((
         Some(checkpoint_summary(&checkpoint)),
-        result.resume_observation().map(interruption_summary),
+        result
+            .resume_observations()
+            .first()
+            .map(interruption_summary),
     ))
 }
 
@@ -566,7 +569,10 @@ fn resume_response_from_result(
         turn_id: request.turn_id.clone(),
         run_id: checkpoint.root_run_id.clone(),
         status: turn_status(result.status),
-        final_output: result.final_answer.clone().or_else(|| result.error.clone()),
+        final_output: result
+            .final_answer
+            .clone()
+            .or_else(|| result.error.as_ref().map(|error| error.message.clone())),
         completion_reason: result
             .completion_reason
             .map(|reason| reason.as_str().to_string()),
@@ -574,9 +580,9 @@ fn resume_response_from_result(
         partial_output: result.partial_output.clone(),
         wait_reason: result.wait_reason.clone(),
         checkpoint: Some(checkpoint_summary(checkpoint)),
-        interruption: result.resume_observation.as_ref().map(interruption_summary),
+        interruption: result.resume_observations.first().map(interruption_summary),
         error: (result.status == AgentStatus::Failed)
-            .then(|| result.error.clone())
+            .then(|| result.error.as_ref().map(|error| error.message.clone()))
             .flatten(),
     }
 }

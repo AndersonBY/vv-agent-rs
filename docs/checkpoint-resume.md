@@ -1,6 +1,6 @@
 # Durable Checkpoint And Resume
 
-Checkpoint v8 is an opt-in Runner capability. It preserves the last committed
+Checkpoint v10 is an opt-in Runner capability. It preserves the last committed
 cycle, operation receipts, budget usage, extension state, event cursor, claim,
 lease, and retained terminal result. The language-neutral behavior is defined
 by the locked `vv-agent-contract`; this document records the Rust producer and
@@ -14,10 +14,10 @@ used by the scheduler process. A distributed worker resolves the same logical
 store through `RuntimeRecipe.capabilities.checkpoint_store_ref` and its
 `DistributedCapabilityRegistry`.
 
-Enabled records require `schema_version=vv-agent.checkpoint.v8` and
+Enabled records require `schema_version=vv-agent.checkpoint.v10` and
 `run_definition_schema=vv-agent.run-definition.v5`. Distributed workers accept
 only `vv-agent.distributed-run.v5` and return only
-`vv-agent.distributed-worker-response.v3`; no other current record or envelope
+`vv-agent.distributed-worker-response.v4`; no other current record or envelope
 shape is read or repaired.
 
 `CheckpointConfig` intentionally keeps concrete `store` and reconstructable
@@ -42,11 +42,11 @@ synthesized and no stored definition or digest is rewritten.
 
 Execution telemetry is not a durable receipt. A `tool_call_started` event may
 exist without `tool_call_completed` after cancellation, process loss, or an
-exception. The checkpoint v8 operation journal remains authoritative for
+exception. The checkpoint v10 operation journal remains authoritative for
 whether an operation is planned, started, committed, replayable, or ambiguous;
 neither `duration_ms` nor a lifecycle observer provides exactly-once effects.
 
-The typed `RunEvent` envelope uses the strict current `v4` discriminator.
+The typed `RunEvent` envelope uses the strict current `v5` discriminator.
 Readers require every current field, reject unknown fields, and never dispatch
 to an older decoder. Checkpoint outbox entries must contain a canonical current
 `RunEvent`, match its embedded `event_id`, and match the recorded payload
@@ -70,6 +70,11 @@ Only one component owns a claim at a time:
    persistence, the durable session observation, terminal outbox staging,
    claimed terminal finalization, event delivery, terminal acknowledgement,
    and only then returns to the host.
+
+Renewal reports `renewed`, `cancel_requested`, or `claim_lost`. A live cancel
+therefore stops the worker before another external dispatch; claimed cycle
+closures use `cancelled_with_unknown_outcome` or
+`lease_lost_with_unknown_outcome` when the in-flight outcome is not known.
 
 Transport payloads are never ownership proof. The only response variants are
 `Pending`, `Committed`, `TerminalCandidate`, and `TerminalReplay`; transport
@@ -102,7 +107,7 @@ transition share the same checkpoint progress boundary.
 
 ## Worker Reconstruction
 
-`DistributedCycleWorker::new()` has a production checkpoint-v8 executor. It
+`DistributedCycleWorker::new()` has a production checkpoint-v10 executor. It
 resolves the declared model, workspace, toolset, policy, hooks, observers,
 budget meter, extensions, and reconciliation provider, then rebuilds an inline
 single-cycle `AgentRuntime`. `with_checkpoint_executor()` remains available for
@@ -169,7 +174,7 @@ state as a non-terminal interrupted turn with `waitReason=deferred_pending`.
 
 ## Host Interaction And Controller Commands
 
-`HostInteractionRequest` is a closed, credential-redacted v8 wire value. The
+`HostInteractionRequest` is a closed, credential-redacted current wire value. The
 producer binds it to the one active logical-cycle claim and atomically writes
 the `host_interaction` checkpoint projection, an active interaction record, a
 `host_interaction_requested` event, and the independent UI notification

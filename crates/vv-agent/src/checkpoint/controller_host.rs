@@ -301,6 +301,17 @@ impl HostInteractionRequest {
             ],
             "host_interaction_fields_invalid",
         )?;
+        let prompt = required_string(
+            &object,
+            "prompt",
+            "host_interaction_fields_invalid",
+        )?;
+        if sanitize_host_text(prompt) != prompt {
+            return Err(error(
+                "host_interaction_fields_invalid",
+                "prompt must be credential-redacted and contain no external locator",
+            ));
+        }
         let request = Self {
             schema_version: required_string(
                 &object,
@@ -331,11 +342,7 @@ impl HostInteractionRequest {
             )?
             .to_string(),
             request_digest: required_digest(&object, "request_digest")?,
-            prompt: sanitize_host_text(required_string(
-                &object,
-                "prompt",
-                "host_interaction_fields_invalid",
-            )?),
+            prompt: prompt.to_string(),
         };
         request.validate()?;
         Ok(request)

@@ -218,6 +218,18 @@ pub(super) fn validate_checkpoint_wire_fields(
                 );
             }
         }
+        RunEventPayload::CycleAborted {
+            logical_cycle,
+            reason,
+        } => {
+            let cycle = require_lifecycle_cycle()?;
+            if *logical_cycle != u64::from(cycle).saturating_add(1) {
+                return Err("cycle_aborted logical_cycle must equal cycle_index + 1".to_string());
+            }
+            if !matches!(reason.as_str(), "cancelled" | "operator_abort" | "lease_lost") {
+                return Err("cycle_aborted reason is unsupported".to_string());
+            }
+        }
         _ => {}
     }
     Ok(())

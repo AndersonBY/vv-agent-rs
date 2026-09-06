@@ -5,26 +5,37 @@ macro_rules! redis_impl_core {
     }
 
     fn create_checkpoint(&self, checkpoint: Checkpoint) -> CheckpointResult<bool> {
-        checkpoint.validate()?;
+        crate::runtime::state::validate_checkpoint_creation(&checkpoint)?;
         let data_key = Self::data_key(&checkpoint.checkpoint_key);
         let lease_key = Self::lease_key(&checkpoint.checkpoint_key);
         let payload = checkpoint_to_json(&checkpoint, MAX_EXTENSION_STATE_BYTES)?;
-        let mut connection = self.lock()?;
-        let created: bool = connection.set_nx(&data_key, payload).map_err(redis_error)?;
-        if created {
-            connection.del::<_, ()>(&lease_key).map_err(redis_error)?;
-            connection
-                .sadd::<_, _, ()>(CHECKPOINT_KEYS_INDEX, checkpoint.checkpoint_key)
-                .map_err(redis_error)?;
-        }
-        Ok(created)
+        self.transaction(&data_key, &lease_key, |connection, pipeline| {
+            if connection
+                .get::<_, Option<String>>(&data_key)
+                .map_err(redis_error)?
+                .is_some()
+            {
+                return Ok(Some(false));
+            }
+            pipeline.set_nx(&data_key, payload.as_str()).ignore();
+            pipeline.del(&lease_key).ignore();
+            pipeline
+                .sadd(CHECKPOINT_KEYS_INDEX, &checkpoint.checkpoint_key)
+                .ignore();
+            Ok(Some(true))
+        })
     }
 
     fn load_checkpoint(&self, checkpoint_key: &str) -> CheckpointResult<Option<Checkpoint>> {
         let data_key = Self::data_key(checkpoint_key);
         let lease_key = Self::lease_key(checkpoint_key);
         let mut connection = self.lock()?;
-        Self::load_from_connection(&mut connection, &data_key, &lease_key)
+        Self::load_from_connection(
+            &mut connection,
+            &data_key,
+            &lease_key,
+            checkpoint_key,
+        )
     }
 
     fn claim_checkpoint(
@@ -44,7 +55,12 @@ macro_rules! redis_impl_core {
         }
         let data_key = Self::data_key(checkpoint_key);
         let lease_key = Self::lease_key(checkpoint_key);
-        let result = self.transaction(&data_key, &lease_key, |connection, pipeline| {
+        let host_set_key = Self::host_interactions_checkpoint_set_key(checkpoint_key);
+        let result = self.claim_transaction(
+            &data_key,
+            &lease_key,
+            &host_set_key,
+            |connection, pipeline| {
             let Some(raw) = connection
                 .get::<_, Option<String>>(&data_key)
                 .map_err(redis_error)?
@@ -54,7 +70,33 @@ macro_rules! redis_impl_core {
             let lease = connection
                 .get::<_, Option<u64>>(&lease_key)
                 .map_err(redis_error)?;
-            let current = decode_storage(&raw, lease)?;
+            let current = decode_storage_for_key(&raw, lease, checkpoint_key)?;
+            for record_key in connection
+                .smembers::<_, Vec<String>>(&host_set_key)
+                .map_err(redis_error)?
+            {
+                let Some(raw_record) = connection
+                    .get::<_, Option<String>>(&record_key)
+                    .map_err(redis_error)?
+                else {
+                    continue;
+                };
+                let record = redis_decode_host_record(&raw_record)?;
+                if !redis_host_record_binding_matches(&record, checkpoint_key, &record_key, None) {
+                    return Err(CheckpointError::new(
+                        "host_interaction_conflict",
+                        "Redis host interaction reverse-index record is bound to a different key",
+                    ));
+                }
+                if record.checkpoint_key == checkpoint_key
+                    && matches!(record.state.as_str(), "resolved_pending" | "resolved_claimed")
+                {
+                    return Err(CheckpointError::new(
+                        "host_interaction_recovery_required",
+                        "checkpoint has an unresolved host interaction response",
+                    ));
+                }
+            }
             if !claim_candidate(&current, cycle_index, now_ms, claim_mode)? {
                 return Ok(None);
             }
@@ -70,7 +112,8 @@ macro_rules! redis_impl_core {
             pipeline.set(&data_key, payload).ignore();
             pipeline.set(&lease_key, lease_expires_at_ms).ignore();
             Ok(Some(claimed))
-        });
+        },
+        );
         match result {
             Ok(value) => Ok(Some(value)),
             Err(error) if error.code() == "checkpoint_store_conflict" => Ok(None),
@@ -148,11 +191,12 @@ macro_rules! redis_impl_core {
             else {
                 return Ok(None);
             };
-            let current = decode_storage(
+            let current = decode_storage_for_key(
                 &raw,
                 connection
                     .get::<_, Option<u64>>(&lease_key)
                     .map_err(redis_error)?,
+                &checkpoint.checkpoint_key,
             )?;
             let Some(updated) = prepare_finalize(&current, checkpoint.clone(), expected_revision)?
             else {
@@ -176,7 +220,7 @@ macro_rules! redis_impl_core {
         claim_token: &str,
         lease_expires_at_ms: u64,
         now_ms: u64,
-    ) -> CheckpointResult<bool> {
+    ) -> CheckpointResult<crate::checkpoint::CheckpointRenewalOutcome> {
         if claim_token.trim().is_empty() || lease_expires_at_ms <= now_ms {
             return Err(CheckpointError::new(
                 "checkpoint_claim_invalid",
@@ -186,6 +230,7 @@ macro_rules! redis_impl_core {
         let data_key = Self::data_key(checkpoint_key);
         let lease_key = Self::lease_key(checkpoint_key);
         let result = self.transaction(&data_key, &lease_key, |connection, pipeline| {
+            let effective_now_ms = now_ms.max(Self::redis_time_ms(connection)?);
             let Some(raw) = connection
                 .get::<_, Option<String>>(&data_key)
                 .map_err(redis_error)?
@@ -195,18 +240,108 @@ macro_rules! redis_impl_core {
             let current_lease = connection
                 .get::<_, Option<u64>>(&lease_key)
                 .map_err(redis_error)?;
-            let current = decode_storage(&raw, current_lease)?;
+            let current = decode_storage_for_key(&raw, current_lease, checkpoint_key)?;
             if current.claim_token.as_deref() != Some(claim_token)
                 || current
                     .lease_expires_at_ms
-                    .is_none_or(|expiry| expiry <= now_ms)
+                    .is_none_or(|expiry| expiry <= effective_now_ms)
             {
                 return Ok(None);
             }
             pipeline.set(&lease_key, lease_expires_at_ms).ignore();
-            Ok(Some(true))
+            Ok(Some(if current.cancel_requested {
+                crate::checkpoint::CheckpointRenewalOutcome::CancelRequested {
+                    lease_expires_at_ms,
+                }
+            } else {
+                crate::checkpoint::CheckpointRenewalOutcome::Renewed {
+                    lease_expires_at_ms,
+                }
+            }))
         });
         match result {
+            Ok(value) => Ok(value),
+            Err(error) if error.code() == "checkpoint_store_conflict" => {
+                let revision = self
+                    .load_checkpoint(checkpoint_key)?
+                    .map(|checkpoint| checkpoint.revision)
+                    .unwrap_or(0);
+                Ok(crate::checkpoint::CheckpointRenewalOutcome::ClaimLost { revision })
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn record_tool_receipt(
+        &self,
+        checkpoint: Checkpoint,
+        operation_id: &str,
+        attempt: u64,
+        tool_call_id: &str,
+        request_digest: &str,
+        result: crate::types::ToolExecutionResult,
+        claim_token: &str,
+        expected_revision: u64,
+        claimed_cycle: u64,
+    ) -> CheckpointResult<bool> {
+        crate::checkpoint::validate_definitive_result(&result)?;
+        let identity_key = crate::checkpoint::tool_receipt_identity_key(
+            &checkpoint.checkpoint_key,
+            operation_id,
+            attempt,
+            tool_call_id,
+            request_digest,
+        )?;
+        let result_digest = crate::checkpoint::tool_result_digest(&result)?;
+        let data_key = Self::data_key(&checkpoint.checkpoint_key);
+        let lease_key = Self::lease_key(&checkpoint.checkpoint_key);
+        let outcome = self.transaction(&data_key, &lease_key, |connection, pipeline| {
+            let Some(raw) = connection
+                .get::<_, Option<String>>(&data_key)
+                .map_err(redis_error)?
+            else {
+                return Ok(Some(false));
+            };
+            let current = decode_storage_for_key(
+                &raw,
+                connection
+                    .get::<_, Option<u64>>(&lease_key)
+                    .map_err(redis_error)?,
+                &checkpoint.checkpoint_key,
+            )?;
+            if let Some(existing) = current
+                .tool_journal
+                .iter()
+                .find(|entry| entry.identity_key.as_deref() == Some(identity_key.as_str()))
+            {
+                if existing.result_digest.as_deref() == Some(result_digest.as_str()) {
+                    return Ok(Some(true));
+                }
+                return Err(CheckpointError::new(
+                    "tool_receipt_conflict",
+                    "tool receipt conflicts with the retained identity",
+                ));
+            }
+            let Some(updated) = crate::runtime::state::prepare_tool_receipt(
+                &current,
+                &checkpoint,
+                operation_id,
+                attempt,
+                tool_call_id,
+                request_digest,
+                &result,
+                claim_token,
+                expected_revision,
+                claimed_cycle,
+            )?
+            else {
+                return Ok(Some(false));
+            };
+            let payload = checkpoint_to_json(&updated, MAX_EXTENSION_STATE_BYTES)?;
+            pipeline.set(&data_key, payload).ignore();
+            Ok(Some(true))
+        });
+        match outcome {
             Ok(value) => Ok(value),
             Err(error) if error.code() == "checkpoint_store_conflict" => Ok(false),
             Err(error) => Err(error),
@@ -227,11 +362,12 @@ macro_rules! redis_impl_core {
             else {
                 return Ok(None);
             };
-            let current = decode_storage(
+            let current = decode_storage_for_key(
                 &raw,
                 connection
                     .get::<_, Option<u64>>(&lease_key)
                     .map_err(redis_error)?,
+                checkpoint_key,
             )?;
             let Some(updated) = prepare_ack(&current, expected_revision)? else {
                 return Ok(None);
@@ -266,11 +402,12 @@ macro_rules! redis_impl_core {
             else {
                 return Ok(None);
             };
-            let current = decode_storage(
+            let current = decode_storage_for_key(
                 &raw,
                 connection
                     .get::<_, Option<u64>>(&lease_key)
                     .map_err(redis_error)?,
+                checkpoint_key,
             )?;
             let Some(updated) = prepare_event_delivery(
                 &current,
@@ -317,11 +454,12 @@ macro_rules! redis_impl_core {
                     "checkpoint does not exist",
                 ));
             };
-            let current = decode_storage(
+            let current = decode_storage_for_key(
                 &raw,
                 connection
                     .get::<_, Option<u64>>(&lease_key)
                     .map_err(redis_error)?,
+                checkpoint_key,
             )?;
             let (updated, handles) = crate::runtime::state::admit_deferred_batch(
                 &current,
@@ -376,6 +514,12 @@ macro_rules! redis_impl_core {
                     .map_err(redis_error)?
                 {
                     let receipt = decode_receipt(&raw_receipt)?;
+                    if receipt.handle_key != handle_key || receipt.handle != handle {
+                        return Err(CheckpointError::new(
+                            "deferred_receipt_identity_invalid",
+                            "Redis receipt does not match the exact deferred handle",
+                        ));
+                    }
                     if receipt.result_digest == result_digest {
                         return Ok(Some(DeferredResolveDecision::Replayed { receipt }));
                     }
@@ -393,11 +537,12 @@ macro_rules! redis_impl_core {
                         "checkpoint does not exist",
                     ));
                 };
-                let checkpoint = decode_storage(
+                let checkpoint = decode_storage_for_key(
                     &raw,
                     connection
                         .get::<_, Option<u64>>(&lease_key)
                         .map_err(redis_error)?,
+                    &handle.checkpoint_key,
                 )?;
                 let Some(index) = checkpoint.tool_journal.iter().position(|entry| {
                     entry.operation_id == handle.operation_id
@@ -441,6 +586,14 @@ macro_rules! redis_impl_core {
                 let event_digest = event.payload_digest.clone();
                 let mut updated = checkpoint.clone();
                 let journal = &mut updated.tool_journal[index];
+                journal.identity_key = Some(crate::checkpoint::tool_receipt_identity_key(
+                    &updated.checkpoint_key,
+                    &journal.operation_id,
+                    journal.attempt,
+                    journal.tool_call_id.as_deref().unwrap_or_default(),
+                    &journal.request_digest,
+                )?);
+                journal.result_digest = Some(crate::checkpoint::tool_result_digest(&result)?);
                 match result.status {
                     crate::types::ToolResultStatus::Success => {
                         journal.state = OperationState::Succeeded;
@@ -448,14 +601,15 @@ macro_rules! redis_impl_core {
                     }
                     crate::types::ToolResultStatus::Error => {
                         journal.state = OperationState::Failed;
-                        journal.error = Some(crate::runtime::state::OperationError::new(
-                            result
-                                .error_code
-                                .clone()
-                                .unwrap_or_else(|| "tool_error".to_string()),
-                            result.content.clone(),
-                            false,
-                        ));
+                        journal.result = Some(result.to_dict());
+                        journal.error = Some(
+                            crate::runtime::state::operation_error_from_tool_result(&result),
+                        );
+                        if result.error_code.as_deref() == Some("tool_outcome_unknown") {
+                            journal.resume_observation = Some(
+                                crate::runtime::state::unknown_tool_observation(journal),
+                            );
+                        }
                     }
                     _ => unreachable!(),
                 }

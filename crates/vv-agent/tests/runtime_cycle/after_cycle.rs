@@ -109,7 +109,7 @@ fn after_cycle_stop_cannot_project_tool_completion_as_success() {
     assert_eq!(result.completion_reason, Some(CompletionReason::Failed));
     assert!(result.final_answer.is_none());
     assert_eq!(
-        result.error.as_deref(),
+        result.error.as_ref().map(|error| error.message.as_str()),
         Some("host.policy_stop: Host policy stopped this run.")
     );
 }
@@ -137,7 +137,8 @@ fn after_cycle_steer_at_max_cycles_fails_closed() {
     assert_eq!(result.status, AgentStatus::Failed);
     assert!(result
         .error
-        .as_deref()
+        .as_ref()
+        .map(|error| error.message.as_str())
         .is_some_and(|error| error.starts_with("after_cycle_steer_unavailable:")));
 }
 
@@ -233,7 +234,8 @@ fn invalid_after_cycle_control_state_fails_before_model_call() {
     assert!(result.cycles.is_empty());
     assert!(result
         .error
-        .as_deref()
+        .as_ref()
+        .map(|error| error.message.as_str())
         .is_some_and(|error| error.starts_with("after_cycle_control_state_invalid:")));
 }
 

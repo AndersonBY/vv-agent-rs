@@ -27,11 +27,12 @@ fn redis_claim_and_consume_host_interaction_response(
                     "checkpoint does not exist",
                 )
             })?;
-        let current = decode_storage(
+        let current = decode_storage_for_key(
             &raw,
             connection
                 .get::<_, Option<u64>>(&lease_key)
                 .map_err(redis_error)?,
+            &envelope.checkpoint_key,
         )?;
         let raw_record = connection
             .get::<_, Option<String>>(&record_key)
@@ -43,10 +44,15 @@ fn redis_claim_and_consume_host_interaction_response(
                 )
             })?;
         let record = redis_decode_host_record(&raw_record)?;
-        if record.record_id != envelope.record_id {
+        if !redis_host_record_binding_matches(
+            &record,
+            &envelope.checkpoint_key,
+            &record_key,
+            Some(&envelope.record_id),
+        ) {
             return Err(CheckpointError::new(
                 "host_interaction_recovery_stale",
-                "record identity does not match envelope",
+                "record identity or storage key does not match envelope",
             ));
         }
         if record.state == "consumed" {
@@ -252,6 +258,20 @@ fn redis_decode_host_record(raw: &str) -> CheckpointResult<HostInteractionRecord
     HostInteractionRecord::from_value(&serde_json::from_str(raw)?)
 }
 
+fn redis_host_record_binding_matches(
+    record: &HostInteractionRecord,
+    checkpoint_key: &str,
+    storage_key: &str,
+    expected_record_id: Option<&str>,
+) -> bool {
+    record.checkpoint_key == checkpoint_key
+        && RedisCheckpointStore::host_interaction_key(
+            &record.checkpoint_key,
+            &record.interaction_id,
+        ) == storage_key
+        && expected_record_id.is_none_or(|record_id| record.record_id == record_id)
+}
+
 fn redis_encode_notification(
     notification: &HostInteractionNotificationRecord,
 ) -> CheckpointResult<String> {
@@ -401,6 +421,23 @@ fn redis_decode_notification(raw: &str) -> CheckpointResult<HostInteractionNotif
     Ok(record)
 }
 
+fn redis_validate_notification_binding(
+    notification: &HostInteractionNotificationRecord,
+    notification_id: &str,
+    storage_key: &str,
+) -> CheckpointResult<()> {
+    if notification.notification_id != notification_id
+        || RedisCheckpointStore::host_interaction_notification_key(&notification.notification_id)
+            != storage_key
+    {
+        return Err(CheckpointError::new(
+            "notification_conflict",
+            "Redis notification key does not match notification identity",
+        ));
+    }
+    Ok(())
+}
+
 fn redis_get_host_interaction_notification(
     store: &RedisCheckpointStore,
     notification_id: &str,
@@ -410,7 +447,12 @@ fn redis_get_host_interaction_notification(
     let raw = connection
         .get::<_, Option<String>>(&key)
         .map_err(redis_error)?;
-    raw.as_deref().map(redis_decode_notification).transpose()
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let notification = redis_decode_notification(&raw)?;
+    redis_validate_notification_binding(&notification, notification_id, &key)?;
+    Ok(Some(notification))
 }
 
 fn redis_sanitize_public_prompt(prompt: &str) -> String {
@@ -440,6 +482,7 @@ fn redis_claim_host_interaction_notification(
             return Ok(Some(None));
         };
         let mut notification = redis_decode_notification(&raw)?;
+        redis_validate_notification_binding(&notification, notification_id, &key)?;
         if notification.payload_digest != payload_digest {
             return Err(CheckpointError::new(
                 "notification_conflict",
@@ -489,6 +532,7 @@ fn redis_complete_host_interaction_notification(
             return Ok(Some(None));
         };
         let mut notification = redis_decode_notification(&raw)?;
+        redis_validate_notification_binding(&notification, notification_id, &key)?;
         if notification.payload_digest != payload_digest
             || notification.outbox_state != NotificationOutboxState::Claimed
             || notification.claim_token.as_deref() != Some(claim_token)
@@ -548,6 +592,7 @@ fn redis_reconcile_host_interaction_notification(
             return Ok(Some(None));
         };
         let mut notification = redis_decode_notification(&raw)?;
+        redis_validate_notification_binding(&notification, notification_id, &key)?;
         if notification.payload_digest != payload_digest {
             return Err(CheckpointError::new(
                 "notification_conflict",
@@ -626,10 +671,7 @@ fn redis_reap_host_interaction_record(
             &RedisCheckpointStore::host_interactions_checkpoint_set_key(checkpoint_key),
         )
         .map_err(redis_error)?;
-    let candidates = keys
-        .into_iter()
-        .filter(|key| key.starts_with(HOST_INTERACTION_PREFIX))
-        .collect::<Vec<_>>();
+    let candidates = keys;
     drop(connection);
     for record_key in candidates {
         let data_key = RedisCheckpointStore::data_key(checkpoint_key);
@@ -643,20 +685,26 @@ fn redis_reap_host_interaction_record(
                 return Ok(Some(false));
             };
             let mut record = redis_decode_host_record(&raw)?;
+            if !redis_host_record_binding_matches(&record, checkpoint_key, &record_key, None) {
+                return Err(CheckpointError::new(
+                    "host_interaction_conflict",
+                    "Redis host interaction reverse-index record is bound to a different key",
+                ));
+            }
             let Some(checkpoint_raw) = connection
                 .get::<_, Option<String>>(&data_key)
                 .map_err(redis_error)?
             else {
                 return Ok(Some(false));
             };
-            let checkpoint = decode_storage(
+            let checkpoint = decode_storage_for_key(
                 &checkpoint_raw,
                 connection
                     .get::<_, Option<u64>>(&lease_key)
                     .map_err(redis_error)?,
+                checkpoint_key,
             )?;
             if record.record_id != record_id
-                || record.checkpoint_key != checkpoint_key
                 || record.state != "resolved_claimed"
                 || record.claim_token.is_none()
                 || record
@@ -686,4 +734,43 @@ fn redis_reap_host_interaction_record(
         }
     }
     Ok(false)
+}
+
+fn redis_find_resolved_pending_host_interaction(
+    store: &RedisCheckpointStore,
+    checkpoint_key: &str,
+) -> CheckpointResult<Option<HostInteractionRecord>> {
+    let mut connection = store.lock()?;
+    let record_keys = connection
+        .smembers::<_, Vec<String>>(
+            &RedisCheckpointStore::host_interactions_checkpoint_set_key(checkpoint_key),
+        )
+        .map_err(redis_error)?;
+    let mut record = None;
+    for record_key in record_keys {
+        let Some(raw) = connection
+            .get::<_, Option<String>>(&record_key)
+            .map_err(redis_error)?
+        else {
+            continue;
+        };
+        let candidate = redis_decode_host_record(&raw)?;
+        if !redis_host_record_binding_matches(&candidate, checkpoint_key, &record_key, None) {
+            return Err(CheckpointError::new(
+                "host_interaction_conflict",
+                "Redis host interaction reverse-index record is bound to a different key",
+            ));
+        }
+        if candidate.state != "resolved_pending" {
+            continue;
+        }
+        if record.is_some() {
+            return Err(CheckpointError::new(
+                "host_interaction_recovery_stale",
+                "checkpoint has multiple resolved host interaction records",
+            ));
+        }
+        record = Some(candidate);
+    }
+    Ok(record)
 }

@@ -32,9 +32,18 @@ pub(super) fn distributed_checkpoint_options<'a>(
 pub(super) fn result_terminal_flags(result: &AgentResult) -> (bool, bool, bool) {
     let reconciliation_required = result.status == AgentStatus::ReconciliationRequired;
     let operator_abort = result.status == AgentStatus::Failed
-        && (result.error_code.as_deref() == Some("operator_abort_with_unknown_outcome")
-            || result.error.as_deref() == Some("operator_abort_with_unknown_outcome"))
-        && result.resume_observation.is_some();
+        && matches!(
+            result
+                .error_code
+                .as_deref()
+                .or(result.error.as_ref().map(|error| error.code.as_str())),
+            Some(
+                "operator_abort_with_unknown_outcome"
+                    | "cancelled_with_unknown_outcome"
+                    | "lease_lost_with_unknown_outcome"
+            )
+        )
+        && !result.resume_observations.is_empty();
     let deferred = matches!(result.status, AgentStatus::Deferred);
     (reconciliation_required, operator_abort, deferred)
 }
@@ -59,6 +68,7 @@ impl Runner {
             event_sender,
             checkpoint_admission_sender,
             run_id_override,
+            None,
             None,
         )? {
             SingleRunExecutionOutcome::Completed(outcome) => Ok(*outcome),

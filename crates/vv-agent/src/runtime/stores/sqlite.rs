@@ -1,4 +1,4 @@
-//! SQLite checkpoint v8 store.
+//! SQLite checkpoint v10 store.
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use crate::checkpoint::{
     notification_id_for, record_id_for, CheckpointError, CheckpointResult, ClaimMode,
     ControllerCommand, ControllerCommandReceipt, ControllerCommandResolution,
-    ControllerCommandVariant, ControllerCommandWake, EventCursor,
+    ControllerCommandVariant, ControllerCommandWake, ControllerCommandWakeRecord, EventCursor,
     HostInteractionNotificationPayload, HostInteractionNotificationRecord, HostInteractionOutcome,
     HostInteractionRecord, HostInteractionRecoveryEnvelope, HostInteractionRecoveryResult,
     HostInteractionRequest, HostInteractionResponse, NotificationOutboxState, ResumeObservation,
@@ -16,11 +16,15 @@ use crate::checkpoint::{
 use crate::events::{EventId, RunEvent, RunEventPayload};
 use crate::runtime::checkpoint_codec::{checkpoint_from_value, checkpoint_to_value};
 use crate::runtime::state::{
-    apply_claim, claim_candidate, prepare_ack, prepare_commit, prepare_event_delivery,
-    prepare_finalize, prepare_finalize_claimed, prepare_progress, prepare_suspend, Checkpoint,
-    CheckpointStore,
+    apply_claim, claim_candidate, close_unresolved_tools, prepare_ack, prepare_commit,
+    prepare_event_delivery, prepare_finalize, prepare_finalize_claimed, prepare_progress,
+    prepare_suspend, Checkpoint, CheckpointStore,
 };
-use crate::types::{AgentResult, CompletionReason};
+use crate::runtime::stores::controller_helpers::{
+    append_cancel_requested_event, append_control_event, append_control_event_with_result,
+    control_result,
+};
+use crate::types::CompletionReason;
 
 #[path = "sqlite_deferred.rs"]
 mod sqlite_deferred;
@@ -67,16 +71,16 @@ impl SqliteCheckpointStore {
                 INSERT INTO checkpoints (
                     checkpoint_key, schema_version, run_definition_schema, run_definition,
                     task_id, root_run_id, trace_id, run_definition_digest, resume_attempt,
-                    cycle_index, status, active_host_interaction, suspended_origin,
+                    cycle_index, status, cancel_requested, active_host_interaction, suspended_origin,
                     messages, cycles, model_calls, shared_state,
                     budget_usage, event_cursor, event_outbox, extension_state,
                     model_call_journal, tool_journal, revision, claim_token,
                     claimed_cycle, lease_expires_at_ms, terminal_result,
                     terminal_acknowledged
                 ) VALUES (
-                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                    ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26,
-                    ?27, ?28, ?29
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27,
+                ?28, ?29, ?30
                 )
                 ON CONFLICT(checkpoint_key) DO UPDATE SET
                     schema_version = excluded.schema_version,
@@ -89,6 +93,7 @@ impl SqliteCheckpointStore {
                     resume_attempt = excluded.resume_attempt,
                     cycle_index = excluded.cycle_index,
                     status = excluded.status,
+                    cancel_requested = excluded.cancel_requested,
                     active_host_interaction = excluded.active_host_interaction,
                     suspended_origin = excluded.suspended_origin,
                     messages = excluded.messages,
@@ -329,7 +334,7 @@ impl CheckpointStore for SqliteCheckpointStore {
     }
 
     fn create_checkpoint(&self, checkpoint: Checkpoint) -> CheckpointResult<bool> {
-        checkpoint.validate()?;
+        crate::runtime::state::validate_checkpoint_creation(&checkpoint)?;
         let values = SqlValues::from_checkpoint(&checkpoint)?;
         let connection = self.lock()?;
         let changed = connection
@@ -338,16 +343,16 @@ impl CheckpointStore for SqliteCheckpointStore {
                 INSERT OR IGNORE INTO checkpoints (
                     checkpoint_key, schema_version, run_definition_schema, run_definition,
                     task_id, root_run_id, trace_id, run_definition_digest, resume_attempt,
-                    cycle_index, status, active_host_interaction, suspended_origin,
+                    cycle_index, status, cancel_requested, active_host_interaction, suspended_origin,
                     messages, cycles, model_calls, shared_state,
                     budget_usage, event_cursor, event_outbox, extension_state,
                     model_call_journal, tool_journal, revision, claim_token,
                     claimed_cycle, lease_expires_at_ms, terminal_result,
                     terminal_acknowledged
                 ) VALUES (
-                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                    ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26,
-                    ?27, ?28, ?29
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                    ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27,
+                    ?28, ?29, ?30
                 )
                 "#,
                 values.params(),
@@ -384,6 +389,19 @@ impl CheckpointStore for SqliteCheckpointStore {
             transaction.commit().map_err(sqlite_error)?;
             return Ok(None);
         };
+        let recovery_required: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM host_interaction_records WHERE checkpoint_key = ?1 AND state IN ('resolved_pending', 'resolved_claimed'))",
+                params![checkpoint_key],
+                |row| row.get(0),
+            )
+            .map_err(sqlite_error)?;
+        if recovery_required {
+            return Err(CheckpointError::new(
+                "host_interaction_recovery_required",
+                "checkpoint has an unresolved host interaction response",
+            ));
+        }
         if !claim_candidate(&current, cycle_index, now_ms, claim_mode)? {
             transaction.commit().map_err(sqlite_error)?;
             return Ok(None);
@@ -491,7 +509,7 @@ impl CheckpointStore for SqliteCheckpointStore {
         claim_token: &str,
         lease_expires_at_ms: u64,
         now_ms: u64,
-    ) -> CheckpointResult<bool> {
+    ) -> CheckpointResult<crate::checkpoint::CheckpointRenewalOutcome> {
         if claim_token.trim().is_empty() || lease_expires_at_ms <= now_ms {
             return Err(CheckpointError::new(
                 "checkpoint_claim_invalid",
@@ -504,7 +522,7 @@ impl CheckpointStore for SqliteCheckpointStore {
             .map_err(sqlite_error)?;
         let Some(current) = load_row_transaction(&transaction, checkpoint_key)? else {
             transaction.commit().map_err(sqlite_error)?;
-            return Ok(false);
+            return Ok(crate::checkpoint::CheckpointRenewalOutcome::ClaimLost { revision: 0 });
         };
         if current.claim_token.as_deref() != Some(claim_token)
             || current
@@ -512,7 +530,9 @@ impl CheckpointStore for SqliteCheckpointStore {
                 .is_none_or(|expiry| expiry <= now_ms)
         {
             transaction.commit().map_err(sqlite_error)?;
-            return Ok(false);
+            return Ok(crate::checkpoint::CheckpointRenewalOutcome::ClaimLost {
+                revision: current.revision,
+            });
         }
         let changed = transaction
             .execute(
@@ -526,7 +546,46 @@ impl CheckpointStore for SqliteCheckpointStore {
             )
             .map_err(sqlite_error)?;
         transaction.commit().map_err(sqlite_error)?;
-        Ok(changed == 1)
+        if changed != 1 {
+            return Ok(crate::checkpoint::CheckpointRenewalOutcome::ClaimLost {
+                revision: current.revision,
+            });
+        }
+        Ok(if current.cancel_requested {
+            crate::checkpoint::CheckpointRenewalOutcome::CancelRequested {
+                lease_expires_at_ms,
+            }
+        } else {
+            crate::checkpoint::CheckpointRenewalOutcome::Renewed {
+                lease_expires_at_ms,
+            }
+        })
+    }
+
+    fn record_tool_receipt(
+        &self,
+        checkpoint: Checkpoint,
+        operation_id: &str,
+        attempt: u64,
+        tool_call_id: &str,
+        request_digest: &str,
+        result: crate::types::ToolExecutionResult,
+        claim_token: &str,
+        expected_revision: u64,
+        claimed_cycle: u64,
+    ) -> CheckpointResult<bool> {
+        sqlite_deferred::record_tool_receipt(
+            self,
+            checkpoint,
+            operation_id,
+            attempt,
+            tool_call_id,
+            request_digest,
+            result,
+            claim_token,
+            expected_revision,
+            claimed_cycle,
+        )
     }
 
     fn acknowledge_terminal(
@@ -690,6 +749,13 @@ impl CheckpointStore for SqliteCheckpointStore {
         sqlite_get_controller_command(self, command_id)
     }
 
+    fn find_resolved_pending_host_interaction(
+        &self,
+        checkpoint_key: &str,
+    ) -> CheckpointResult<Option<crate::checkpoint::HostInteractionRecord>> {
+        sqlite_find_resolved_pending_host_interaction(self, checkpoint_key)
+    }
+
     fn claim_and_consume_host_interaction_response(
         &self,
         envelope: HostInteractionRecoveryEnvelope,
@@ -821,13 +887,12 @@ impl CheckpointStore for SqliteCheckpointStore {
         sqlite_reconcile_controller_command_wake(self, command_id, command_digest, outcome, now_ms)
     }
 
-    fn reap_controller_command_wake(
+    fn reap_controller_command_wakes(
         &self,
-        command_id: &str,
-        command_digest: &str,
+        checkpoint_key: &str,
         now_ms: u64,
-    ) -> CheckpointResult<bool> {
-        sqlite_reap_controller_command_wake(self, command_id, command_digest, now_ms)
+    ) -> CheckpointResult<Vec<ControllerCommandWakeRecord>> {
+        sqlite_reap_controller_command_wakes(self, checkpoint_key, now_ms)
     }
 }
 

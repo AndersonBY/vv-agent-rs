@@ -750,3 +750,10 @@ fn sqlite_reconcile_host_interaction_notification(
 
 
 include!("sqlite_interaction_wake.rs");
+
+fn sqlite_current_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}

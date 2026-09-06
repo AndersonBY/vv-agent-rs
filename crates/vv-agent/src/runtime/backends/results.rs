@@ -53,7 +53,12 @@ where
     for offset in 0..cycle_count {
         let cycle_index = cycle_index_start.saturating_add(offset);
         if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
-            return cancelled_backend_result(messages, cycles, shared_state);
+            return crate::runtime::cancelled_agent_result(
+                messages,
+                cycles,
+                shared_state,
+                TaskTokenUsage::default(),
+            );
         }
         if let Some(result) = cycle_executor(
             cycle_index,
@@ -78,37 +83,10 @@ where
         budget_usage: None,
         budget_exhaustion: None,
         checkpoint_key: None,
-        resume_observation: None,
+        resume_observations: Vec::new(),
         final_answer: Some("Reached max cycles without finish signal.".to_string()),
         wait_reason: None,
         error: None,
-        error_code: None,
-        shared_state,
-        token_usage,
-    }
-}
-
-pub(crate) fn cancelled_backend_result(
-    messages: Vec<Message>,
-    cycles: Vec<CycleRecord>,
-    shared_state: Metadata,
-) -> AgentResult {
-    let token_usage = TaskTokenUsage::default();
-    let partial_output = last_assistant_output(&cycles);
-    AgentResult {
-        status: AgentStatus::Failed,
-        messages,
-        cycles,
-        completion_reason: Some(CompletionReason::Cancelled),
-        completion_tool_name: None,
-        partial_output,
-        budget_usage: None,
-        budget_exhaustion: None,
-        checkpoint_key: None,
-        resume_observation: None,
-        final_answer: None,
-        wait_reason: None,
-        error: Some("Operation was cancelled".to_string()),
         error_code: None,
         shared_state,
         token_usage,
@@ -133,10 +111,14 @@ pub(crate) fn failed_backend_result(
         budget_usage: None,
         budget_exhaustion: None,
         checkpoint_key: None,
-        resume_observation: None,
+        resume_observations: Vec::new(),
         final_answer: None,
         wait_reason: None,
-        error: Some(error),
+        error: Some(crate::types::AgentResultError::new(
+            "agent_failed",
+            error,
+            false,
+        )),
         error_code: None,
         shared_state,
         token_usage,
