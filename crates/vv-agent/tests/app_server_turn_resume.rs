@@ -921,8 +921,10 @@ async fn concurrent_standard_app_servers_have_one_checkpoint_claim_winner() {
         "checkpointKey": checkpoint_key,
     });
     tokio::join!(
-        processor_a.process_message(connection_a, request(3, "turn/resume", params.clone())),
-        processor_b.process_message(connection_b, request(3, "turn/resume", params)),
+        Box::pin(
+            processor_a.process_message(connection_a, request(3, "turn/resume", params.clone()))
+        ),
+        Box::pin(processor_b.process_message(connection_b, request(3, "turn/resume", params))),
     );
 
     let JsonRpcMessage::Response(response_a) = next_message(&mut outgoing_a).await else {
