@@ -48,7 +48,7 @@ pub use processes::{
     kill_process_tree, read_captured_output, remove_captured_output, start_captured_process,
     start_captured_process_with_env, wait_for_child, CapturedProcess,
 };
-pub(crate) use results::{extract_final_message, extract_wait_reason};
+pub(crate) use results::{cancelled_agent_result, extract_final_message, extract_wait_reason};
 pub use state::{Checkpoint, CheckpointStore, OperationJournalEntry};
 pub use stores::memory::InMemoryCheckpointStore;
 pub use sub_agent_sessions::{

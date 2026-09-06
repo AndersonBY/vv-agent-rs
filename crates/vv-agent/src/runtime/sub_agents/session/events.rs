@@ -64,7 +64,7 @@ impl RuntimeSubAgentSession {
                     result
                         .error
                         .clone()
-                        .map(Value::String)
+                        .map(|error| Value::String(error.message))
                         .unwrap_or(Value::Null),
                 ),
             ]),

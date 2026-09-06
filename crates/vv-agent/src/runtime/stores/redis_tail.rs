@@ -15,11 +15,12 @@ impl RedisCheckpointStore {
             else {
                 return Ok(None);
             };
-            let current = decode_storage(
+            let current = decode_storage_for_key(
                 &raw,
                 connection
                     .get::<_, Option<u64>>(&lease_key)
                     .map_err(redis_error)?,
+                &checkpoint.checkpoint_key,
             )?;
             let updated = match kind {
                 ReplaceKind::Progress => {
@@ -76,6 +77,21 @@ fn decode_storage(raw: &str, lease: Option<u64>) -> CheckpointResult<Checkpoint>
     let payload = serde_json::to_string(&value)
         .map_err(|error| CheckpointError::new("checkpoint_json_invalid", error.to_string()))?;
     checkpoint_from_json(&payload, MAX_EXTENSION_STATE_BYTES)
+}
+
+fn decode_storage_for_key(
+    raw: &str,
+    lease: Option<u64>,
+    checkpoint_key: &str,
+) -> CheckpointResult<Checkpoint> {
+    let checkpoint = decode_storage(raw, lease)?;
+    if checkpoint.checkpoint_key != checkpoint_key {
+        return Err(CheckpointError::new(
+            "checkpoint_store_conflict",
+            "Redis checkpoint payload is bound to a different checkpoint key",
+        ));
+    }
+    Ok(checkpoint)
 }
 
 fn encode_receipt(receipt: &crate::checkpoint::DeferredReceipt) -> CheckpointResult<String> {

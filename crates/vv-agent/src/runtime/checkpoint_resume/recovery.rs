@@ -204,9 +204,37 @@ impl CheckpointResumeController {
                 deferred_decisions.push(AcceptDeferredDecision::new(handle));
                 continue;
             }
-            {
+            let checkpoint_key = self.checkpoint_key()?.to_string();
+            let unknown_tool_outcome = decision.kind == ReconciliationDecisionKind::RecordFailure
+                && entry.kind == OperationKind::Tool
+                && decision
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.code == "tool_outcome_unknown");
+            let receipt_result =
+                crate::runtime::checkpoint_resume::reconciliation_tool_result(&entry, &decision)?;
+            let receipt = {
                 let current = self.find_operation_mut(entry.kind, &entry.operation_id)?;
-                apply_reconciliation_decision(current, &decision)?;
+                apply_reconciliation_decision(
+                    current,
+                    &decision,
+                    &checkpoint_key,
+                    unknown_tool_outcome.then_some(&observation),
+                )?;
+                receipt_result
+                    .as_ref()
+                    .map(|result| (current.clone(), result.clone()))
+            };
+            if let Some((receipt_entry, receipt_result)) = receipt {
+                let event = crate::runtime::state::receipt_event(
+                    self.require_checkpoint()?,
+                    &receipt_entry,
+                    &receipt_result,
+                )?;
+                crate::runtime::state::append_event_outbox_once(
+                    &mut self.require_checkpoint_mut()?.event_outbox,
+                    event,
+                )?;
             }
             self.progress()?;
             let event = self.checkpoint_event(
@@ -249,6 +277,7 @@ impl CheckpointResumeController {
             return Ok(decision);
         }
         if entry.kind == OperationKind::Model
+            && entry.attempt < 2
             && self.config.ambiguous_model_policy == AmbiguousModelPolicy::RetryWithDuplicateRisk
         {
             let event = self.checkpoint_event(
@@ -272,6 +301,17 @@ impl CheckpointResumeController {
             && entry.idempotency_support == Some(ToolIdempotency::Supported)
         {
             return Ok(ReconciliationDecision::retry());
+        }
+        if entry.kind == OperationKind::Tool
+            && self.config.ambiguous_tool_policy == AmbiguousToolPolicy::SurfaceToModel
+        {
+            return Ok(ReconciliationDecision::record_failure(
+                crate::checkpoint::ReconciliationError::new(
+                    "tool_outcome_unknown",
+                    "The tool outcome is unknown.",
+                    false,
+                ),
+            ));
         }
         Ok(ReconciliationDecision::defer())
     }
@@ -390,6 +430,13 @@ impl CheckpointResumeController {
 
     pub(super) fn queue_outbox_event(&mut self, event: RunEvent) -> CheckpointResult<()> {
         queue_event(self.require_checkpoint_mut()?, event)
+    }
+
+    pub(super) fn queue_outbox_entry(&mut self, event: EventOutboxEntry) -> CheckpointResult<()> {
+        crate::runtime::state::append_event_outbox_once(
+            &mut self.require_checkpoint_mut()?.event_outbox,
+            event,
+        )
     }
 
     pub(super) fn deliver_pending_outbox(&mut self) -> CheckpointResult<()> {

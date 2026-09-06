@@ -4,23 +4,29 @@ use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::tempdir;
 
+use vv_agent::checkpoint::controller_receipt_outbox_id;
 use vv_agent::runtime::checkpoint_codec::checkpoint_from_value;
 use vv_agent::{
     derive_controller_command_id, CheckpointStore, ClaimMode, ControllerCommand,
-    ControllerCommandResolution, ControllerCommandVariant, ControllerHandle,
-    HostInteractionAdmissionContext, HostInteractionMessage, HostInteractionRecord,
-    HostInteractionRecoveryEnvelope, HostInteractionRequest, HostInteractionResponse,
-    InMemoryCheckpointStore, NotificationOutboxState, RedisCheckpointStore, SqliteCheckpointStore,
+    ControllerCommandResolution, ControllerCommandVariant, ControllerCommandWakeRecord,
+    ControllerHandle, HostInteractionAdmissionContext, HostInteractionMessage,
+    HostInteractionRecord, HostInteractionRecoveryEnvelope, HostInteractionRequest,
+    HostInteractionResponse, InMemoryCheckpointStore, NotificationOutboxState,
+    RedisCheckpointStore, SqliteCheckpointStore,
 };
 
 const CODEC_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec.json");
 
+#[path = "controller_command/cancel.rs"]
+mod controller_command_cancel;
 #[path = "controller_command/notification_abort.rs"]
 mod controller_command_notification_abort;
 #[path = "controller_command/redis.rs"]
 mod controller_command_redis;
 #[path = "controller_command/strict.rs"]
 mod controller_command_strict;
+#[path = "controller_command/wake_reaper.rs"]
+mod controller_command_wake_reaper;
 
 #[test]
 fn app_server_command_id_matches_contract_golden() {
@@ -56,6 +62,188 @@ fn reconciliation_checkpoint(key: &str) -> vv_agent::Checkpoint {
     let mut payload = payload;
     payload["checkpoint_key"] = json!(key);
     checkpoint_from_value(&payload, 262_144).expect("valid reconciliation checkpoint")
+}
+
+fn create_reconciliation_checkpoint(store: &dyn CheckpointStore, target: vv_agent::Checkpoint) {
+    let key = target.checkpoint_key.clone();
+    let journal = target.tool_journal.clone();
+    let mut seed = target;
+    seed.revision = 0;
+    seed.resume_attempt = 1;
+    seed.cycle_index = 0;
+    seed.status = vv_agent::CheckpointStatus::Running;
+    seed.cancel_requested = false;
+    seed.active_host_interaction = None;
+    seed.suspended_origin = None;
+    seed.cycles.clear();
+    seed.model_calls.clear();
+    seed.event_cursor = None;
+    seed.event_outbox.clear();
+    seed.model_call_journal.clear();
+    seed.tool_journal.clear();
+    seed.claim_token = None;
+    seed.claimed_cycle = None;
+    seed.lease_expires_at_ms = None;
+    seed.terminal_result = None;
+    seed.terminal_acknowledged = false;
+    assert!(store.create_checkpoint(seed).expect("create seed"));
+
+    let claimed = store
+        .claim_checkpoint(
+            &key,
+            1,
+            "reconciliation-owner",
+            400,
+            300,
+            ClaimMode::Continue,
+        )
+        .expect("claim first cycle")
+        .expect("first cycle claim");
+    assert!(store
+        .progress_checkpoint(claimed.clone(), "reconciliation-owner", claimed.revision,)
+        .expect("progress first cycle"));
+    let mut committed = store
+        .load_checkpoint(&key)
+        .expect("load progressed checkpoint")
+        .expect("progressed checkpoint");
+    committed.cycle_index = 1;
+    assert!(store
+        .commit_checkpoint(committed, "reconciliation-owner", claimed.revision + 1)
+        .expect("commit first cycle"));
+
+    let mut recovered = store
+        .claim_checkpoint(
+            &key,
+            2,
+            "reconciliation-owner-2",
+            600,
+            500,
+            ClaimMode::Recovery,
+        )
+        .expect("claim recovery cycle")
+        .expect("recovery cycle claim");
+    recovered.tool_journal = journal;
+    assert!(store
+        .suspend_checkpoint(recovered, "reconciliation-owner-2", claimed.revision + 3,)
+        .expect("suspend reconciliation checkpoint"));
+}
+
+fn assert_active_wake_replay_is_zero_write(store: &dyn CheckpointStore, command_id: &str) {
+    let checkpoint = minimal_checkpoint();
+    let key = checkpoint.checkpoint_key.clone();
+    let run_id = checkpoint.root_run_id.clone();
+    let trace_id = checkpoint.trace_id.clone();
+    assert!(store
+        .create_checkpoint(checkpoint)
+        .expect("create checkpoint"));
+    let claimed = store
+        .claim_checkpoint(&key, 1, "execution-owner", 100, 0, ClaimMode::Continue)
+        .expect("claim checkpoint")
+        .expect("claimed checkpoint");
+    let request = HostInteractionRequest::new(
+        format!("{command_id}-interaction"),
+        1,
+        format!("{command_id}-operation"),
+        format!("{command_id}-tool"),
+        "Choose one.",
+    )
+    .expect("request");
+    let admission =
+        HostInteractionAdmissionContext::new(&key, claimed.revision, "execution-owner", 1, 0, 100)
+            .expect("admission");
+    let outcome = store
+        .produce_host_interaction(request.clone(), &admission)
+        .expect("produce host interaction");
+    let command = ControllerCommand::new(
+        command_id,
+        ControllerHandle::new(&key, &run_id, &trace_id).expect("handle"),
+        1,
+        outcome.checkpoint_revision,
+        ControllerCommandVariant::HostInteractionResponse {
+            interaction_id: request.interaction_id.clone(),
+            logical_cycle: request.logical_cycle,
+            operation_id: request.operation_id.clone(),
+            tool_call_id: request.tool_call_id.clone(),
+            request_digest: request.request_digest.clone(),
+            response: HostInteractionMessage::user("approved").expect("response"),
+        },
+    )
+    .expect("command");
+    let receipt = store
+        .admit_controller_command(command.clone())
+        .expect("admit command");
+    assert_eq!(receipt.outbox_state, "pending");
+    let claimed = store
+        .claim_controller_command_wake(
+            &command.command_id,
+            &command.command_digest,
+            "wake-owner-a",
+            100,
+            1,
+        )
+        .expect("claim wake")
+        .expect("claimed wake");
+    assert_eq!(claimed.outbox_attempt, 1);
+    assert_eq!(
+        store
+            .claim_controller_command_wake(
+                &command.command_id,
+                &command.command_digest,
+                "wake-owner-a",
+                200,
+                2,
+            )
+            .expect("same-owner replay")
+            .expect("same-owner receipt"),
+        claimed
+    );
+    assert!(store
+        .claim_controller_command_wake(
+            &command.command_id,
+            &command.command_digest,
+            "wake-owner-b",
+            300,
+            2,
+        )
+        .is_err());
+    assert_eq!(
+        store
+            .get_controller_command_receipt(&command.command_id)
+            .expect("receipt")
+            .expect("stored receipt")
+            .outbox_attempt,
+        1
+    );
+}
+
+#[test]
+fn active_wake_same_owner_replay_is_zero_write_memory_and_sqlite() {
+    let memory = InMemoryCheckpointStore::new();
+    assert_active_wake_replay_is_zero_write(&memory, "memory-active-wake");
+    let directory = tempdir().expect("tempdir");
+    let sqlite =
+        SqliteCheckpointStore::new(directory.path().join("checkpoint.sqlite")).expect("sqlite");
+    assert_active_wake_replay_is_zero_write(&sqlite, "sqlite-active-wake");
+}
+
+#[test]
+fn sqlite_checkpoint_upsert_preserves_cancel_requested() {
+    let directory = tempdir().expect("tempdir");
+    let store =
+        SqliteCheckpointStore::new(directory.path().join("checkpoint.sqlite")).expect("sqlite");
+    let mut checkpoint = minimal_checkpoint();
+    store
+        .save_checkpoint(checkpoint.clone())
+        .expect("initial upsert");
+    checkpoint.cancel_requested = true;
+    store.save_checkpoint(checkpoint).expect("cancel upsert");
+    assert!(
+        store
+            .load_checkpoint("checkpoint-controller-test")
+            .expect("load")
+            .expect("checkpoint")
+            .cancel_requested
+    );
 }
 
 fn admission_context(
@@ -235,7 +423,7 @@ fn sqlite_reaper_cas_requires_matching_expired_checkpoint_claim() {
         .load_checkpoint(&key)
         .expect("load running checkpoint")
         .expect("running checkpoint");
-    let claimed = store
+    let error = store
         .claim_checkpoint(
             &key,
             current.cycle_index + 1,
@@ -244,23 +432,61 @@ fn sqlite_reaper_cas_requires_matching_expired_checkpoint_claim() {
             0,
             ClaimMode::Continue,
         )
-        .expect("execution claim")
-        .expect("claimed execution");
+        .expect_err("ordinary claim must stop at host recovery barrier");
+    assert_eq!(error.code(), "host_interaction_recovery_required");
+    let unchanged = store
+        .load_checkpoint(&key)
+        .expect("load after rejected claim")
+        .expect("checkpoint after rejected claim");
+    assert_eq!(unchanged, current);
 
     let connection = rusqlite::Connection::open(&path).expect("open raw sqlite connection");
+    connection
+        .execute(
+            "UPDATE checkpoints SET claim_token = ?1, claimed_cycle = ?2, lease_expires_at_ms = ?3 WHERE checkpoint_key = ?4",
+            rusqlite::params![
+                "reaper-owner",
+                (current.cycle_index + 1) as i64,
+                200_i64,
+                key
+            ],
+        )
+        .expect("stage matching checkpoint claim");
     connection
         .execute(
             "UPDATE host_interaction_records SET state = 'resolved_claimed', claim_token = ?1, lease_expires_at_ms = ?2 WHERE record_id = ?3 AND checkpoint_key = ?4",
             rusqlite::params!["different-owner", 200_i64, admitted.record_id, key],
         )
         .expect("stage stale record claim");
+    let before_claimed_barrier = store
+        .load_checkpoint(&key)
+        .expect("load before resolved-claimed barrier")
+        .expect("checkpoint before resolved-claimed barrier");
+    let error = store
+        .claim_checkpoint(
+            &key,
+            current.cycle_index + 1,
+            "another-owner",
+            300,
+            0,
+            ClaimMode::Continue,
+        )
+        .expect_err("resolved claimed record must stop ordinary claim");
+    assert_eq!(error.code(), "host_interaction_recovery_required");
+    assert_eq!(
+        store
+            .load_checkpoint(&key)
+            .expect("load after resolved-claimed barrier")
+            .expect("checkpoint after resolved-claimed barrier"),
+        before_claimed_barrier
+    );
     assert!(!store
         .reap_host_interaction_record(&admitted.record_id, &key, 201)
         .expect("stale reaper"));
     connection
         .execute(
             "UPDATE host_interaction_records SET claim_token = ?1 WHERE record_id = ?2 AND checkpoint_key = ?3",
-            rusqlite::params![claimed.claim_token.as_deref(), admitted.record_id, key],
+            rusqlite::params!["reaper-owner", admitted.record_id, key],
         )
         .expect("stage matching record claim");
     assert!(store
@@ -294,7 +520,7 @@ fn abort_reconciliation_is_terminal_and_emits_ordered_control_events() {
     let handle =
         ControllerHandle::new(&key, &checkpoint.root_run_id, &checkpoint.trace_id).expect("handle");
     let store = InMemoryCheckpointStore::new();
-    store.create_checkpoint(checkpoint).expect("create");
+    create_reconciliation_checkpoint(&store, checkpoint);
     let command = ControllerCommand::new(
         "command-abort-memory",
         handle,
@@ -325,31 +551,37 @@ fn abort_reconciliation_is_terminal_and_emits_ordered_control_events() {
         "abort keeps an explicit failed completion reason"
     );
     assert_eq!(
-        terminal["error_code"],
+        terminal["error"]["code"],
         json!("operator_abort_with_unknown_outcome")
     );
-    assert_eq!(checkpoint.event_outbox.len(), 2);
+    assert_eq!(
+        terminal["error"]["message"],
+        json!("Operator accepted that the external outcome is unknown.")
+    );
+    assert_eq!(checkpoint.event_outbox.len(), 3);
     let events = checkpoint
         .event_outbox
         .iter()
         .map(|entry| entry.event.clone())
         .collect::<Vec<_>>();
-    assert_eq!(events[0]["type"], json!("run_state_changed"));
-    assert_eq!(events[1]["type"], json!("run_failed"));
+    assert_eq!(events[0]["type"], json!("cycle_aborted"));
+    assert_eq!(events[1]["type"], json!("run_state_changed"));
+    assert_eq!(events[2]["type"], json!("run_failed"));
     assert_eq!(events[0]["cycle_index"], json!(1));
     assert_eq!(events[1]["cycle_index"], json!(1));
+    assert_eq!(events[2]["cycle_index"], json!(1));
     assert_ne!(
-        checkpoint.event_outbox[0].event_id, checkpoint.event_outbox[1].event_id,
+        checkpoint.event_outbox[1].event_id, checkpoint.event_outbox[2].event_id,
         "control event IDs must be distinct within one command"
     );
-    assert_eq!(events[1]["completion_reason"], json!("failed"));
+    assert_eq!(events[2]["completion_reason"], json!("failed"));
     assert_eq!(
-        events[1]["error"],
+        events[2]["error"],
         json!("failed"),
         "C17 abort uses the public failed error on the event wire"
     );
     assert_eq!(
-        events[1]["metadata"]["error_code"],
+        events[2]["metadata"]["error_code"],
         json!("operator_abort_with_unknown_outcome")
     );
 }
@@ -363,7 +595,7 @@ fn abort_reconciliation_is_supported_by_sqlite() {
     let key = checkpoint.checkpoint_key.clone();
     let handle =
         ControllerHandle::new(&key, &checkpoint.root_run_id, &checkpoint.trace_id).expect("handle");
-    store.create_checkpoint(checkpoint).expect("create");
+    create_reconciliation_checkpoint(&store, checkpoint);
     let command = ControllerCommand::new(
         "command-abort-sqlite",
         handle,
@@ -384,9 +616,9 @@ fn abort_reconciliation_is_supported_by_sqlite() {
         .expect("load")
         .expect("checkpoint");
     assert_eq!(checkpoint.status, vv_agent::CheckpointStatus::Failed);
-    assert_eq!(checkpoint.event_outbox.len(), 2);
+    assert_eq!(checkpoint.event_outbox.len(), 3);
     assert_eq!(
-        checkpoint.event_outbox[1].event["completion_reason"],
+        checkpoint.event_outbox[2].event["completion_reason"],
         json!("failed")
     );
 }
@@ -466,6 +698,24 @@ fn memory_store_admits_replays_and_consumes_response_once() {
     assert_eq!(receipt.resulting_status, "running");
     assert_eq!(wake.action, "recovery_dispatch");
     assert_eq!(wake.logical_cycle, 1);
+    let before_barrier = store
+        .load_checkpoint(&key)
+        .expect("load before ordinary recovery claim")
+        .expect("checkpoint before ordinary recovery claim");
+    for (claim_mode, claim_token) in [
+        (ClaimMode::Continue, "ordinary-continue"),
+        (ClaimMode::Recovery, "ordinary-recovery"),
+    ] {
+        let error = store
+            .claim_checkpoint(&key, 2, claim_token, 1_000_000, 0, claim_mode)
+            .expect_err("ordinary claim must stop at host recovery barrier");
+        assert_eq!(error.code(), "host_interaction_recovery_required");
+        let after_barrier = store
+            .load_checkpoint(&key)
+            .expect("load after rejected ordinary claim")
+            .expect("checkpoint after rejected ordinary claim");
+        assert_eq!(after_barrier, before_barrier);
+    }
     assert_eq!(
         store
             .resolve_controller_command(command.clone())
@@ -643,6 +893,24 @@ fn sqlite_store_retains_host_record_and_recovery_across_reopen() {
     store
         .resolve_controller_command(command.clone())
         .expect("response admission");
+    let before_barrier = store
+        .load_checkpoint(&key)
+        .expect("load before sqlite recovery barrier")
+        .expect("sqlite checkpoint before recovery barrier");
+    for (claim_mode, claim_token) in [
+        (ClaimMode::Continue, "sqlite-ordinary-continue"),
+        (ClaimMode::Recovery, "sqlite-ordinary-recovery"),
+    ] {
+        let error = store
+            .claim_checkpoint(&key, 2, claim_token, 1_000_000, 0, claim_mode)
+            .expect_err("ordinary sqlite claim must stop at host recovery barrier");
+        assert_eq!(error.code(), "host_interaction_recovery_required");
+        let after_barrier = store
+            .load_checkpoint(&key)
+            .expect("load after rejected sqlite claim")
+            .expect("sqlite checkpoint after rejected claim");
+        assert_eq!(after_barrier, before_barrier);
+    }
     let claimed_wake = store
         .claim_controller_command_wake(
             &command.command_id,
@@ -709,292 +977,5 @@ fn sqlite_store_retains_host_record_and_recovery_across_reopen() {
             .last()
             .map(|message| message.content.as_str()),
         Some("sqlite-approved")
-    );
-}
-#[test]
-#[ignore = "requires a Python-seeded Redis v8 fixture and is run as an explicit cross-language probe"]
-fn redis_reads_python_seeded_host_receipt_and_notification_rows() {
-    let Ok(redis_url) = std::env::var("VV_AGENT_TEST_REDIS_URL") else {
-        return;
-    };
-    let checkpoint_key = std::env::var("VV_AGENT_CROSS_REDIS_CHECKPOINT_KEY")
-        .expect("VV_AGENT_CROSS_REDIS_CHECKPOINT_KEY");
-    let interaction_id = std::env::var("VV_AGENT_CROSS_REDIS_INTERACTION_ID")
-        .expect("VV_AGENT_CROSS_REDIS_INTERACTION_ID");
-    let notification_id = std::env::var("VV_AGENT_CROSS_REDIS_NOTIFICATION_ID")
-        .expect("VV_AGENT_CROSS_REDIS_NOTIFICATION_ID");
-    let command_id =
-        std::env::var("VV_AGENT_CROSS_REDIS_COMMAND_ID").expect("VV_AGENT_CROSS_REDIS_COMMAND_ID");
-    let expected_request_digest = std::env::var("VV_AGENT_CROSS_REDIS_REQUEST_DIGEST")
-        .expect("VV_AGENT_CROSS_REDIS_REQUEST_DIGEST");
-    let expected_notification_digest = std::env::var("VV_AGENT_CROSS_REDIS_NOTIFICATION_DIGEST")
-        .expect("VV_AGENT_CROSS_REDIS_NOTIFICATION_DIGEST");
-
-    let store = RedisCheckpointStore::new(&redis_url).expect("redis");
-    let checkpoint = store
-        .load_checkpoint(&checkpoint_key)
-        .expect("load Python checkpoint")
-        .expect("Python checkpoint exists");
-    assert_eq!(checkpoint.checkpoint_key, checkpoint_key);
-
-    let notification = store
-        .get_host_interaction_notification(&notification_id)
-        .expect("decode Python notification")
-        .expect("Python notification exists");
-    assert_eq!(notification.notification_id, notification_id);
-    assert_eq!(notification.checkpoint_key, checkpoint_key);
-    assert_eq!(notification.payload.interaction_id, interaction_id);
-    assert_eq!(notification.payload_digest, expected_notification_digest);
-    assert_eq!(notification.payload.prompt, "Cross-language host prompt");
-
-    let receipt = store
-        .get_controller_command_receipt(&command_id)
-        .expect("decode Python controller receipt")
-        .expect("Python controller receipt exists");
-    let command = store
-        .get_controller_command(&command_id)
-        .expect("decode Python controller command")
-        .expect("Python controller command exists");
-    assert_eq!(receipt.command_id, command.command_id);
-    assert_eq!(receipt.command_digest, command.command_digest);
-    assert_eq!(command.handle.checkpoint_key, checkpoint_key);
-    assert!(matches!(
-        command.command,
-        ControllerCommandVariant::HostInteractionResponse { .. }
-    ));
-
-    let client = redis::Client::open(redis_url.as_str()).expect("redis client");
-    let mut connection = client.get_connection().expect("redis connection");
-    let record_key = RedisCheckpointStore::host_interaction_key(&checkpoint_key, &interaction_id);
-    let record_wire: Value = serde_json::from_str(
-        &connection
-            .get::<_, String>(&record_key)
-            .expect("Python host record wire"),
-    )
-    .expect("host record JSON");
-    let record = HostInteractionRecord::from_value(&record_wire).expect("strict host record");
-    assert_eq!(record.checkpoint_key, checkpoint_key);
-    assert_eq!(record.interaction_id, interaction_id);
-    assert_eq!(record.request_digest, expected_request_digest);
-
-    let notification_key =
-        RedisCheckpointStore::host_interaction_notification_key(&notification_id);
-    let notification_wire: Value = serde_json::from_str(
-        &connection
-            .get::<_, String>(&notification_key)
-            .expect("Python notification wire"),
-    )
-    .expect("notification JSON");
-    assert_eq!(
-        notification_wire["payload_digest"],
-        expected_notification_digest
-    );
-
-    // Rust owns the next lifecycle transitions; the Python probe reads this
-    // same row afterward, proving that notification reconciliation is not a
-    // language-local shadow store.
-    let claim = store
-        .claim_host_interaction_notification(
-            &notification_id,
-            &expected_notification_digest,
-            "cross-rust-owner",
-            1_000,
-            100,
-        )
-        .expect("Rust notification claim")
-        .expect("claimable Python notification");
-    let claim_token = claim.claim_token.as_deref().expect("claim token");
-    let ambiguous = store
-        .complete_host_interaction_notification(
-            &notification_id,
-            &expected_notification_digest,
-            claim_token,
-            claim.attempt,
-            "ambiguous",
-            101,
-            Some("cross-language observer ambiguity"),
-        )
-        .expect("Rust notification ambiguity")
-        .expect("ambiguous notification");
-    assert_eq!(ambiguous.outbox_state, NotificationOutboxState::Ambiguous);
-    let delivered = store
-        .reconcile_host_interaction_notification(
-            &notification_id,
-            &expected_notification_digest,
-            "delivered",
-            200,
-            None,
-        )
-        .expect("Rust notification reconciliation")
-        .expect("reconciled notification");
-    assert_eq!(delivered.outbox_state, NotificationOutboxState::Delivered);
-}
-
-#[test]
-fn sqlite_public_notification_redacts_all_credential_markers() {
-    let directory = tempdir().expect("tempdir");
-    let path = directory.path().join("redaction.sqlite");
-    let store = SqliteCheckpointStore::new(&path).expect("open sqlite");
-    let mut checkpoint = minimal_checkpoint();
-    checkpoint.checkpoint_key = "checkpoint-controller-redaction".to_string();
-    let key = checkpoint.checkpoint_key.clone();
-    store.create_checkpoint(checkpoint).expect("create");
-    store
-        .claim_checkpoint(
-            &key,
-            1,
-            "redaction-worker",
-            1_000_000,
-            0,
-            ClaimMode::Continue,
-        )
-        .expect("claim");
-    let request = HostInteractionRequest::new(
-        "interaction-redaction",
-        1,
-        "operation-redaction",
-        "tool-redaction",
-        "Choose normally api_key=secret-api password=hunter2 Authorization: Bearer bearer-secret sk-live-secret token=token-secret at https://example.invalid/run?secret=abc",
-    )
-    .expect("request");
-    store
-        .produce_host_interaction(
-            request,
-            &admission_context(&store, &key, "redaction-worker", 0),
-        )
-        .expect("produce");
-    let connection = rusqlite::Connection::open(&path).expect("read sqlite");
-    let payload: String = connection
-        .query_row(
-            "SELECT payload FROM host_interaction_notification_outbox",
-            [],
-            |row| row.get(0),
-        )
-        .expect("notification payload");
-    assert!(payload.contains("Choose normally"));
-    for secret in [
-        "secret-api",
-        "hunter2",
-        "bearer-secret",
-        "sk-live-secret",
-        "token-secret",
-    ] {
-        assert!(!payload.contains(secret), "secret leaked: {secret}");
-    }
-    assert!(payload.matches("[credential redacted]").count() >= 5);
-    assert!(payload.contains("[external locator redacted]"));
-    assert!(!payload.contains("example.invalid"));
-}
-
-#[test]
-fn controller_suspend_resume_is_fenced_and_replayable() {
-    let store = InMemoryCheckpointStore::new();
-    let checkpoint = minimal_checkpoint();
-    let key = checkpoint.checkpoint_key.clone();
-    let handle =
-        ControllerHandle::new(&key, &checkpoint.root_run_id, &checkpoint.trace_id).expect("handle");
-    store.create_checkpoint(checkpoint).expect("create");
-    let suspend = ControllerCommand::new(
-        "command-suspend",
-        handle.clone(),
-        1,
-        0,
-        ControllerCommandVariant::Suspend,
-    )
-    .expect("suspend");
-    let suspended = store
-        .resolve_controller_command(suspend.clone())
-        .expect("suspend command");
-    assert_eq!(suspended.kind(), "applied");
-    assert_eq!(
-        store
-            .load_checkpoint(&key)
-            .expect("load")
-            .expect("checkpoint")
-            .status,
-        vv_agent::CheckpointStatus::Suspended
-    );
-    assert_eq!(
-        store
-            .resolve_controller_command(suspend)
-            .expect("suspend replay")
-            .kind(),
-        "replayed"
-    );
-    let resume = ControllerCommand::new(
-        "command-resume",
-        handle,
-        1,
-        1,
-        ControllerCommandVariant::Resume,
-    )
-    .expect("resume");
-    let resumed = store
-        .resolve_controller_command(resume)
-        .expect("resume command");
-    match resumed {
-        ControllerCommandResolution::Applied { wake, .. } => {
-            assert_eq!(wake.action, "recovery_dispatch");
-            assert_eq!(wake.logical_cycle, 1);
-        }
-        other => panic!("unexpected resolution: {other:?}"),
-    }
-    assert_eq!(
-        store
-            .load_checkpoint(&key)
-            .expect("load")
-            .expect("checkpoint")
-            .status,
-        vv_agent::CheckpointStatus::Running
-    );
-}
-
-#[test]
-fn controller_cancel_is_terminal_and_never_fabricates_a_second_transition() {
-    let store = InMemoryCheckpointStore::new();
-    let checkpoint = minimal_checkpoint();
-    let key = checkpoint.checkpoint_key.clone();
-    let handle =
-        ControllerHandle::new(&key, &checkpoint.root_run_id, &checkpoint.trace_id).expect("handle");
-    store.create_checkpoint(checkpoint).expect("create");
-    let cancel = ControllerCommand::new(
-        "command-cancel",
-        handle.clone(),
-        1,
-        0,
-        ControllerCommandVariant::Cancel,
-    )
-    .expect("cancel");
-    store
-        .resolve_controller_command(cancel)
-        .expect("cancel command");
-    let terminal = store
-        .load_checkpoint(&key)
-        .expect("load")
-        .expect("checkpoint");
-    assert_eq!(terminal.status, vv_agent::CheckpointStatus::Failed);
-    assert!(terminal.terminal_result.is_some());
-    let stale = ControllerCommand::new(
-        "command-cancel-stale",
-        handle,
-        1,
-        0,
-        ControllerCommandVariant::Resume,
-    )
-    .expect("stale command");
-    assert!(matches!(
-        store
-            .resolve_controller_command(stale)
-            .expect("terminal command is a closed rejected resolution"),
-        ControllerCommandResolution::Rejected { error }
-            if error.starts_with("controller_command_stale:")
-    ));
-    assert_eq!(
-        store
-            .load_checkpoint(&key)
-            .expect("reload")
-            .expect("checkpoint")
-            .revision,
-        1
     );
 }

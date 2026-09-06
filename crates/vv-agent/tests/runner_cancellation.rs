@@ -107,7 +107,8 @@ fn parent_cancellation_is_derived_by_runtime_sub_agent_session() {
     assert_eq!(result.status, AgentStatus::Failed);
     assert!(result
         .error
-        .as_deref()
+        .as_ref()
+        .map(|error| error.message.as_str())
         .is_some_and(|error| error.to_ascii_lowercase().contains("cancel")));
     let sub_task_result = result
         .cycles
@@ -386,7 +387,11 @@ async fn cancelled_result_skips_output_guardrails_and_preserves_cancellation_err
     );
     assert_eq!(result.final_output(), Some("cancelled by caller"));
     assert_eq!(
-        result.result().error.as_deref(),
+        result
+            .result()
+            .error
+            .as_ref()
+            .map(|error| error.message.as_str()),
         Some("cancelled by caller")
     );
     let terminal = result.events().last().expect("terminal event");

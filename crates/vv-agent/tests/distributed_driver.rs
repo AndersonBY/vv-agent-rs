@@ -13,9 +13,10 @@ use vv_agent::runtime::checkpoint_codec::checkpoint_from_value;
 use vv_agent::types::AgentTask;
 use vv_agent::{
     AgentResult, AmbiguousModelPolicy, AmbiguousToolPolicy, CheckpointStatus, CheckpointStore,
-    ClaimMode, CycleDispatchResult, DeferredBatchEntry, DeferredToolHandle,
-    InMemoryCheckpointStore, OperationJournalEntry, OperationState, PromptBundle, ResumePolicy,
-    RuntimeRecipe, ToolCallOutcome, ToolIdempotency,
+    ClaimMode, ControllerCommand, ControllerCommandVariant, ControllerHandle, CycleDispatchResult,
+    DeferredBatchEntry, DeferredToolHandle, HostInteractionAdmissionContext,
+    HostInteractionMessage, HostInteractionRequest, InMemoryCheckpointStore, OperationJournalEntry,
+    OperationState, PromptBundle, ResumePolicy, RuntimeRecipe, ToolCallOutcome, ToolIdempotency,
 };
 
 const CODEC_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec.json");
@@ -58,6 +59,66 @@ fn minimal_checkpoint(key: &str) -> vv_agent::Checkpoint {
     fixture_checkpoint("minimal_running", key)
 }
 
+fn initial_checkpoint(mut checkpoint: vv_agent::Checkpoint) -> vv_agent::Checkpoint {
+    checkpoint.resume_attempt = 1;
+    checkpoint.cycle_index = 0;
+    checkpoint.status = CheckpointStatus::Running;
+    checkpoint.cancel_requested = false;
+    checkpoint.active_host_interaction = None;
+    checkpoint.suspended_origin = None;
+    checkpoint.cycles.clear();
+    checkpoint.model_calls.clear();
+    checkpoint.event_cursor = None;
+    checkpoint.event_outbox.clear();
+    checkpoint.model_call_journal.clear();
+    checkpoint.tool_journal.clear();
+    checkpoint.revision = 0;
+    checkpoint.claim_token = None;
+    checkpoint.claimed_cycle = None;
+    checkpoint.lease_expires_at_ms = None;
+    checkpoint.terminal_result = None;
+    checkpoint.terminal_acknowledged = false;
+    checkpoint
+}
+
+fn create_claimed_snapshot(
+    store: &InMemoryCheckpointStore,
+    mut snapshot: vv_agent::Checkpoint,
+    claim_token: &str,
+    lease_expires_at_ms: u64,
+    now_ms: u64,
+) -> vv_agent::Checkpoint {
+    let key = snapshot.checkpoint_key.clone();
+    assert!(store
+        .create_checkpoint(initial_checkpoint(snapshot.clone()))
+        .expect("create initial checkpoint"));
+    let claimed = store
+        .claim_checkpoint(
+            &key,
+            1,
+            claim_token,
+            lease_expires_at_ms,
+            now_ms,
+            ClaimMode::Continue,
+        )
+        .expect("claim checkpoint")
+        .expect("claimed checkpoint");
+    snapshot.status = CheckpointStatus::Running;
+    snapshot.resume_attempt = claimed.resume_attempt;
+    snapshot.cycle_index = claimed.cycle_index;
+    snapshot.revision = claimed.revision;
+    snapshot.claim_token = claimed.claim_token.clone();
+    snapshot.claimed_cycle = claimed.claimed_cycle;
+    snapshot.lease_expires_at_ms = claimed.lease_expires_at_ms;
+    assert!(store
+        .progress_checkpoint(snapshot, claim_token, claimed.revision)
+        .expect("progress claimed checkpoint"));
+    store
+        .load_checkpoint(&key)
+        .expect("load progressed checkpoint")
+        .expect("progressed checkpoint")
+}
+
 fn admitted_deferred_checkpoint(key: &str) -> (vv_agent::Checkpoint, Arc<InMemoryCheckpointStore>) {
     let digest = "a".repeat(64);
     let operation_id = "op_tool_cycle_1_call_deferred";
@@ -78,13 +139,7 @@ fn admitted_deferred_checkpoint(key: &str) -> (vv_agent::Checkpoint, Arc<InMemor
     checkpoint.tool_journal = vec![journal];
     checkpoint.validate().expect("started deferred checkpoint");
     let store = InMemoryCheckpointStore::new();
-    store
-        .create_checkpoint(checkpoint.clone())
-        .expect("create started checkpoint");
-    let claimed = store
-        .claim_checkpoint(key, 1, "claim-deferred", 10_000, 1, ClaimMode::Continue)
-        .expect("claim deferred checkpoint")
-        .expect("claimed deferred checkpoint");
+    let claimed = create_claimed_snapshot(&store, checkpoint, "claim-deferred", 10_000, 1);
     let handle =
         DeferredToolHandle::new(key, operation_id, 1, digest.clone()).expect("deferred handle");
     let admission = store
@@ -207,9 +262,15 @@ fn build_backend(
     Arc<RecordingEnqueuer>,
 ) {
     let store = Arc::new(InMemoryCheckpointStore::new());
+    let initial = initial_checkpoint(checkpoint.clone());
     store
-        .create_checkpoint(checkpoint)
-        .expect("create checkpoint");
+        .create_checkpoint(initial.clone())
+        .expect("create initial checkpoint");
+    if checkpoint != initial {
+        store
+            .save_checkpoint(checkpoint)
+            .expect("seed checkpoint state");
+    }
     let registry = DistributedCapabilityRegistry::new();
     registry.register_checkpoint_store(checkpoint_ref(), store.clone());
     let enqueuer = Arc::new(RecordingEnqueuer::default());
@@ -235,6 +296,253 @@ fn start_enqueues_only_cycle_one_and_returns_passive_handle() {
     assert_eq!(deliveries[0].0.cycle_index, 1);
     assert_eq!(deliveries[0].0.claim_mode, ClaimMode::Continue);
     assert_eq!(deliveries[0].1, None);
+}
+
+#[test]
+fn advance_consumes_host_response_before_dispatch_and_retains_execution_claim() {
+    let key = "driver-host-response";
+    let store = Arc::new(InMemoryCheckpointStore::new());
+    let checkpoint = minimal_checkpoint(key);
+    store
+        .create_checkpoint(checkpoint.clone())
+        .expect("create checkpoint");
+    let now_ms = now_unix_ms();
+    let lease_expires_at_ms = now_ms + 60_000;
+    let claimed = store
+        .claim_checkpoint(
+            key,
+            1,
+            "worker-host-response",
+            lease_expires_at_ms,
+            now_ms,
+            ClaimMode::Continue,
+        )
+        .expect("claim checkpoint")
+        .expect("claimed checkpoint");
+    let request = HostInteractionRequest::new(
+        "interaction-driver-response",
+        1,
+        "operation-driver-response",
+        "tool-driver-response",
+        "Choose.",
+    )
+    .expect("request");
+    let admitted = store
+        .produce_host_interaction(
+            request.clone(),
+            &HostInteractionAdmissionContext::new(
+                key,
+                claimed.revision,
+                "worker-host-response",
+                1,
+                now_ms,
+                lease_expires_at_ms,
+            )
+            .expect("admission context"),
+        )
+        .expect("host interaction admission");
+    let command = ControllerCommand::new(
+        "command-driver-response",
+        ControllerHandle::new(key, &checkpoint.root_run_id, &checkpoint.trace_id).expect("handle"),
+        1,
+        admitted.checkpoint_revision,
+        ControllerCommandVariant::HostInteractionResponse {
+            interaction_id: request.interaction_id.clone(),
+            logical_cycle: request.logical_cycle,
+            operation_id: request.operation_id.clone(),
+            tool_call_id: request.tool_call_id.clone(),
+            request_digest: request.request_digest.clone(),
+            response: HostInteractionMessage::user("Accepted.").expect("response"),
+        },
+    )
+    .expect("controller command");
+    let receipt = match store
+        .resolve_controller_command(command)
+        .expect("resolve host response")
+    {
+        vv_agent::ControllerCommandResolution::Applied { receipt, wake } => {
+            assert_eq!(wake.action, "recovery_dispatch");
+            receipt
+        }
+        other => panic!("unexpected resolution: {other:?}"),
+    };
+    let current = store
+        .load_checkpoint(key)
+        .expect("load admitted checkpoint")
+        .expect("admitted checkpoint");
+    let previous = envelope(&current, task(&current, 10), recipe(), 1);
+    let registry = DistributedCapabilityRegistry::new();
+    registry.register_checkpoint_store(checkpoint_ref(), store.clone());
+    let enqueuer = Arc::new(RecordingEnqueuer::default());
+    let backend = DistributedBackend::nonblocking(recipe(), registry, enqueuer.clone());
+
+    let decision = backend
+        .advance(
+            &previous,
+            DistributedDeliveryOutcome::worker(CycleDispatchResult::pending()),
+        )
+        .expect("advance host response");
+    assert!(matches!(
+        decision,
+        DistributedAdvanceDecision::Dispatch { ref envelope, .. }
+            if envelope.cycle_index == 1
+                && envelope.claim_mode == ClaimMode::Recovery
+                && envelope.resume_attempt == 2
+    ));
+    assert_eq!(enqueuer.deliveries().len(), 1);
+    let recovered = store
+        .load_checkpoint(key)
+        .expect("load recovered checkpoint")
+        .expect("recovered checkpoint");
+    assert_eq!(recovered.claimed_cycle, Some(1));
+    assert!(recovered
+        .claim_token
+        .as_deref()
+        .is_some_and(|token| token.starts_with("host-recovery:")));
+    assert_eq!(recovered.resume_attempt, 2);
+    assert!(recovered
+        .messages
+        .iter()
+        .any(|message| message.content == "Accepted."));
+    assert_eq!(
+        store
+            .get_controller_command_receipt(&receipt.command_id)
+            .expect("load delivered receipt")
+            .expect("delivered receipt")
+            .outbox_state,
+        "delivered"
+    );
+}
+
+#[test]
+fn advance_resolves_suspended_host_resume_wake_from_the_durable_record() {
+    let key = "driver-suspended-host-resume";
+    let store = Arc::new(InMemoryCheckpointStore::new());
+    let checkpoint = minimal_checkpoint(key);
+    store
+        .create_checkpoint(checkpoint.clone())
+        .expect("create checkpoint");
+    let now_ms = now_unix_ms();
+    let claimed = store
+        .claim_checkpoint(
+            key,
+            1,
+            "worker-suspended-host",
+            now_ms + 60_000,
+            now_ms,
+            ClaimMode::Continue,
+        )
+        .expect("claim checkpoint")
+        .expect("claimed checkpoint");
+    let request = HostInteractionRequest::new(
+        "interaction-suspended-driver",
+        1,
+        "operation-suspended-driver",
+        "tool-suspended-driver",
+        "Choose.",
+    )
+    .expect("request");
+    let admitted = store
+        .produce_host_interaction(
+            request.clone(),
+            &HostInteractionAdmissionContext::new(
+                key,
+                claimed.revision,
+                "worker-suspended-host",
+                1,
+                now_ms,
+                claimed.lease_expires_at_ms.expect("claim lease"),
+            )
+            .expect("admission context"),
+        )
+        .expect("host interaction admission");
+    let handle =
+        ControllerHandle::new(key, &checkpoint.root_run_id, &checkpoint.trace_id).expect("handle");
+    let suspend = ControllerCommand::new(
+        "command-suspended-driver",
+        handle.clone(),
+        1,
+        admitted.checkpoint_revision,
+        ControllerCommandVariant::Suspend,
+    )
+    .expect("suspend command");
+    let suspended_revision = match store.resolve_controller_command(suspend).expect("suspend") {
+        vv_agent::ControllerCommandResolution::Applied { receipt, .. } => {
+            receipt.resulting_revision
+        }
+        other => panic!("unexpected suspend resolution: {other:?}"),
+    };
+    let response = ControllerCommand::new(
+        "command-suspended-response-driver",
+        handle.clone(),
+        1,
+        suspended_revision,
+        ControllerCommandVariant::HostInteractionResponse {
+            interaction_id: request.interaction_id.clone(),
+            logical_cycle: request.logical_cycle,
+            operation_id: request.operation_id.clone(),
+            tool_call_id: request.tool_call_id.clone(),
+            request_digest: request.request_digest.clone(),
+            response: HostInteractionMessage::user("Accepted after resume.").expect("response"),
+        },
+    )
+    .expect("response command");
+    let response_revision = match store
+        .resolve_controller_command(response)
+        .expect("response")
+    {
+        vv_agent::ControllerCommandResolution::Applied { receipt, wake } => {
+            assert_eq!(wake.action, "none");
+            receipt.resulting_revision
+        }
+        other => panic!("unexpected response resolution: {other:?}"),
+    };
+    let resume = ControllerCommand::new(
+        "command-suspended-resume-driver",
+        handle,
+        1,
+        response_revision,
+        ControllerCommandVariant::Resume,
+    )
+    .expect("resume command");
+    match store.resolve_controller_command(resume).expect("resume") {
+        vv_agent::ControllerCommandResolution::Applied { receipt, wake } => {
+            assert_eq!(receipt.resulting_status, "running");
+            assert_eq!(wake.action, "recovery_dispatch");
+        }
+        other => panic!("unexpected resume resolution: {other:?}"),
+    }
+    let current = store
+        .load_checkpoint(key)
+        .expect("load resumed checkpoint")
+        .expect("resumed checkpoint");
+    let previous = envelope(&current, task(&current, 10), recipe(), 1);
+    let registry = DistributedCapabilityRegistry::new();
+    registry.register_checkpoint_store(checkpoint_ref(), store.clone());
+    let enqueuer = Arc::new(RecordingEnqueuer::default());
+    let backend = DistributedBackend::nonblocking(recipe(), registry, enqueuer.clone());
+    let decision = backend
+        .advance(
+            &previous,
+            DistributedDeliveryOutcome::worker(CycleDispatchResult::pending()),
+        )
+        .expect("advance suspended host resume");
+    assert!(matches!(
+        decision,
+        DistributedAdvanceDecision::Dispatch { ref envelope, .. }
+            if envelope.cycle_index == 1
+                && envelope.claim_mode == ClaimMode::Recovery
+                && envelope.resume_attempt == 2
+    ));
+    assert_eq!(enqueuer.deliveries().len(), 1);
+    let recovered = store
+        .load_checkpoint(key)
+        .expect("load recovered checkpoint")
+        .expect("recovered checkpoint");
+    assert!(recovered
+        .messages
+        .iter()
+        .any(|message| message.content == "Accepted after resume."));
 }
 
 #[test]

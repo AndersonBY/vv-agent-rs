@@ -6,8 +6,8 @@ use vv_agent::{
     Agent, AgentStatus, ApprovalDecision, ApprovalFuture, ApprovalPolicy, ApprovalProvider,
     ApprovalRequest, ApprovalRequirement, CapabilityRef, CheckpointConfig, CheckpointStore,
     CompletionReason, FunctionTool, InMemoryCheckpointStore, LLMResponse, MemorySession, ModelRef,
-    RunConfig, Runner, ScriptStep, ScriptedModelProvider, Session, ToolCall, ToolContext,
-    ToolExposure, ToolOutput, ToolPolicy, ToolRunContext, ToolUseBehavior,
+    ResumePolicy, RunConfig, Runner, ScriptStep, ScriptedModelProvider, Session, ToolCall,
+    ToolContext, ToolExposure, ToolOutput, ToolPolicy, ToolRunContext, ToolUseBehavior,
 };
 
 #[path = "function_tool_approval/checkpoint.rs"]

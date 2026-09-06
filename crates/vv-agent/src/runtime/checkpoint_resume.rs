@@ -16,9 +16,10 @@ use crate::budget::BudgetUsageSnapshot;
 use crate::checkpoint::{
     event_payload_digest, operation_request_digest, run_definition_digest, AcceptDeferredDecision,
     AmbiguousModelPolicy, AmbiguousToolPolicy, CheckpointConfig, CheckpointError,
-    CheckpointExtension, CheckpointResult, CheckpointStatus, ClaimMode, EventCursor, OperationKind,
-    OperationState, ReconciliationDecision, ReconciliationDecisionKind, ReconciliationProvider,
-    ResumeObservation, ResumePolicy, ToolIdempotency, OPERATION_REQUEST_SCHEMA,
+    CheckpointExtension, CheckpointRenewalOutcome, CheckpointResult, CheckpointStatus, ClaimMode,
+    EventCursor, OperationKind, OperationState, ReconciliationDecision, ReconciliationDecisionKind,
+    ReconciliationProvider, ResumeObservation, ResumePolicy, ToolIdempotency,
+    OPERATION_REQUEST_SCHEMA,
 };
 use crate::event_store::RunEventStore;
 use crate::events::{RunEvent, RunEventPayload};
@@ -71,6 +72,11 @@ pub(crate) enum ModelOperationOutcome {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ToolOperationPlan {
+    pub checkpoint_key: Option<String>,
+    pub operation_id: Option<String>,
+    pub attempt: Option<u64>,
+    pub request_digest: Option<String>,
+    pub idempotency_support: ToolIdempotency,
     pub idempotency_key: Option<String>,
     pub replay_result: Option<ToolExecutionResult>,
 }
@@ -126,24 +132,8 @@ fn queue_event(checkpoint: &mut Checkpoint, event: RunEvent) -> CheckpointResult
             format!("run event cannot be serialized: {error}"),
         )
     })?;
-    let event_id = event.event_id().as_str().to_string();
-    let candidate = EventOutboxEntry::pending(event_id.clone(), event_value)?;
-    if let Some(existing) = checkpoint
-        .event_outbox
-        .iter()
-        .find(|entry| entry.event_id == event_id)
-    {
-        existing.verify_payload()?;
-        if existing.payload_digest != candidate.payload_digest {
-            return Err(CheckpointError::new(
-                "event_identity_conflict",
-                format!("checkpoint event id {event_id:?} has conflicting payload bytes"),
-            ));
-        }
-        return Ok(());
-    }
-    checkpoint.event_outbox.push(candidate);
-    Ok(())
+    let candidate = EventOutboxEntry::pending(event.event_id().as_str(), event_value)?;
+    crate::runtime::state::append_event_outbox_once(&mut checkpoint.event_outbox, candidate)
 }
 
 fn raw_event_cursor(event_id: &str) -> CheckpointResult<EventCursor> {
@@ -205,7 +195,7 @@ fn reconciliation_result(checkpoint: &Checkpoint, observation: ResumeObservation
         budget_usage: checkpoint.budget_usage.clone(),
         budget_exhaustion: None,
         checkpoint_key: Some(checkpoint.checkpoint_key.clone()),
-        resume_observation: Some(observation),
+        resume_observations: vec![observation],
         final_answer: None,
         wait_reason: None,
         error: None,
@@ -219,29 +209,73 @@ fn operator_abort_result(checkpoint: &Checkpoint, observation: ResumeObservation
     let mut result = reconciliation_result(checkpoint, observation);
     result.status = AgentStatus::Failed;
     result.completion_reason = Some(crate::types::CompletionReason::Failed);
-    result.error = Some("failed".to_string());
+    result.error = Some(crate::types::AgentResultError::new(
+        "operator_abort_with_unknown_outcome",
+        "Operator accepted that the external outcome is unknown.",
+        false,
+    ));
     result.error_code = Some("operator_abort_with_unknown_outcome".to_string());
     result
 }
 
-fn apply_reconciliation_decision(
+pub(crate) fn apply_reconciliation_decision(
     entry: &mut OperationJournalEntry,
     decision: &ReconciliationDecision,
+    checkpoint_key: &str,
+    unknown_tool_observation: Option<&ResumeObservation>,
 ) -> CheckpointResult<()> {
     match decision.kind {
         ReconciliationDecisionKind::Retry => entry.retry()?,
-        ReconciliationDecisionKind::ReplaySuccess => {
-            entry.state = OperationState::Succeeded;
-            entry.response = decision.response.clone();
-            entry.result = decision.result.clone();
-            entry.error = None;
-            entry.validate()?;
-        }
+        ReconciliationDecisionKind::ReplaySuccess => match entry.kind {
+            OperationKind::Model => {
+                entry.state = OperationState::Succeeded;
+                entry.response = decision.response.clone();
+                entry.result = None;
+                entry.error = None;
+                entry.validate()?;
+            }
+            OperationKind::Tool => {
+                let result = reconciliation_tool_result(entry, decision)?
+                    .expect("tool replay_success must carry a result");
+                entry.identity_key = Some(crate::checkpoint::tool_receipt_identity_key(
+                    checkpoint_key,
+                    &entry.operation_id,
+                    entry.attempt,
+                    entry.tool_call_id.as_deref().unwrap_or_default(),
+                    &entry.request_digest,
+                )?);
+                entry.result_digest = Some(crate::checkpoint::tool_result_digest(&result)?);
+                entry.resume_observation = None;
+                entry.deferred_handle = None;
+                entry.state = OperationState::Succeeded;
+                entry.response = None;
+                entry.result = Some(result.to_dict());
+                entry.error = None;
+                entry.validate()?;
+            }
+        },
         ReconciliationDecisionKind::RecordFailure => {
             let error = decision.error.as_ref().expect("decision validated");
+            if entry.kind == OperationKind::Tool {
+                let synthetic_result = reconciliation_tool_result(entry, decision)?
+                    .expect("tool record_failure must carry a synthetic result");
+                entry.identity_key = Some(crate::checkpoint::tool_receipt_identity_key(
+                    checkpoint_key,
+                    &entry.operation_id,
+                    entry.attempt,
+                    entry.tool_call_id.as_deref().unwrap_or_default(),
+                    &entry.request_digest,
+                )?);
+                entry.result_digest =
+                    Some(crate::checkpoint::tool_result_digest(&synthetic_result)?);
+                entry.resume_observation = (error.code == "tool_outcome_unknown")
+                    .then(|| unknown_tool_observation.cloned())
+                    .flatten();
+                entry.deferred_handle = None;
+                entry.result = Some(synthetic_result.to_dict());
+            }
             entry.state = OperationState::Failed;
             entry.response = None;
-            entry.result = None;
             entry.error = Some(OperationError::new(
                 &error.code,
                 &error.message,
@@ -265,6 +299,54 @@ fn apply_reconciliation_decision(
     Ok(())
 }
 
+pub(crate) fn reconciliation_tool_result(
+    entry: &OperationJournalEntry,
+    decision: &ReconciliationDecision,
+) -> CheckpointResult<Option<ToolExecutionResult>> {
+    if entry.kind != OperationKind::Tool {
+        return Ok(None);
+    }
+    let result = match decision.kind {
+        ReconciliationDecisionKind::ReplaySuccess => {
+            let value = decision.result.as_ref().ok_or_else(|| {
+                CheckpointError::new(
+                    "reconciliation_decision_invalid",
+                    "tool replay_success requires a result",
+                )
+            })?;
+            ToolExecutionResult::from_dict(value).map_err(|error| {
+                CheckpointError::new(
+                    "reconciliation_decision_invalid",
+                    format!("tool replay_success result is invalid: {error}"),
+                )
+            })?
+        }
+        ReconciliationDecisionKind::RecordFailure => {
+            let error = decision.error.as_ref().expect("decision validated");
+            let mut result = ToolExecutionResult::error(
+                entry.tool_call_id.as_deref().unwrap_or_default(),
+                error.message.clone(),
+            )
+            .with_error_code(error.code.clone());
+            if error.retryable {
+                result
+                    .metadata
+                    .insert("retryable".to_string(), Value::Bool(true));
+            }
+            result
+        }
+        _ => return Ok(None),
+    };
+    if result.tool_call_id != entry.tool_call_id.as_deref().unwrap_or_default() {
+        return Err(CheckpointError::new(
+            "reconciliation_decision_invalid",
+            "tool reconciliation result does not match the journal call id",
+        ));
+    }
+    crate::checkpoint::validate_definitive_result(&result)?;
+    Ok(Some(result))
+}
+
 fn checkpoint_status(status: AgentStatus) -> CheckpointResult<CheckpointStatus> {
     match status {
         AgentStatus::WaitUser => Ok(CheckpointStatus::WaitUser),
@@ -279,10 +361,18 @@ fn checkpoint_status(status: AgentStatus) -> CheckpointResult<CheckpointStatus> 
 }
 
 fn is_operator_abort(result: &AgentResult) -> bool {
-    result.status == AgentStatus::Failed
-        && (result.error_code.as_deref() == Some("operator_abort_with_unknown_outcome")
-            || result.error.as_deref() == Some("operator_abort_with_unknown_outcome"))
-        && result.resume_observation.is_some()
+    let error_code = result
+        .error_code
+        .as_deref()
+        .or_else(|| result.error.as_ref().map(|error| error.code.as_str()));
+    matches!(
+        error_code,
+        Some(
+            "operator_abort_with_unknown_outcome"
+                | "cancelled_with_unknown_outcome"
+                | "lease_lost_with_unknown_outcome"
+        )
+    )
 }
 
 fn now_ms() -> CheckpointResult<u64> {
@@ -307,4 +397,62 @@ fn verify_event_digest(entry: &EventOutboxEntry) -> CheckpointResult<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn recovery_event(payload: RunEventPayload, created_at: f64) -> RunEvent {
+        let mut event = RunEvent::new("run", "trace", "agent", Some(1), payload);
+        event.created_at = created_at;
+        event
+            .with_event_id("evt_stable_recovery")
+            .expect("stable event id")
+    }
+
+    #[test]
+    fn recovery_events_reuse_existing_payload_and_reject_real_conflicts() {
+        let mut checkpoint = Checkpoint::default();
+        let ambiguous = recovery_event(
+            RunEventPayload::OperationAmbiguous {
+                checkpoint_key: "checkpoint".to_string(),
+                operation_id: "operation".to_string(),
+                operation_kind: OperationKind::Tool,
+                risk: "unknown_tool_side_effect".to_string(),
+                idempotency_support: Some(ToolIdempotency::Unknown),
+            },
+            1.0,
+        );
+        queue_event(&mut checkpoint, ambiguous.clone()).expect("first ambiguous event");
+        let mut replayed = ambiguous.clone();
+        replayed.created_at = 2.0;
+        queue_event(&mut checkpoint, replayed).expect("ambiguous replay is idempotent");
+        assert_eq!(checkpoint.event_outbox.len(), 1);
+        assert_eq!(checkpoint.event_outbox[0].event["created_at"], 1.0);
+
+        let replayed = recovery_event(
+            RunEventPayload::OperationReplayed {
+                checkpoint_key: "checkpoint".to_string(),
+                operation_id: "operation".to_string(),
+                operation_kind: OperationKind::Tool,
+                receipt_state: OperationState::Succeeded,
+            },
+            3.0,
+        );
+        let mut replay_checkpoint = Checkpoint::default();
+        queue_event(&mut replay_checkpoint, replayed.clone()).expect("first replay event");
+        let mut replayed_retry = replayed;
+        replayed_retry.created_at = 4.0;
+        queue_event(&mut replay_checkpoint, replayed_retry).expect("replayed event is idempotent");
+        assert_eq!(replay_checkpoint.event_outbox.len(), 1);
+        assert_eq!(replay_checkpoint.event_outbox[0].event["created_at"], 3.0);
+
+        let mut conflict = ambiguous;
+        if let RunEventPayload::OperationAmbiguous { risk, .. } = &mut conflict.payload {
+            *risk = "different-risk".to_string();
+        }
+        let error = queue_event(&mut checkpoint, conflict).expect_err("payload conflict");
+        assert_eq!(error.code(), "event_identity_conflict");
+    }
 }

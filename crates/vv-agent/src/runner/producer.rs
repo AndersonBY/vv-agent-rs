@@ -48,6 +48,7 @@ impl Runner {
                 None,
                 None,
                 Some(super::DistributedRunnerOperation::Start),
+                None,
             )? {
                 super::SingleRunExecutionOutcome::DistributedStarted(handle) => Ok(handle),
                 super::SingleRunExecutionOutcome::Completed(_) => {
@@ -81,6 +82,7 @@ impl Runner {
                 Some(super::DistributedRunnerOperation::StartCompiled(Box::new(
                     task,
                 ))),
+                None,
             )? {
                 super::SingleRunExecutionOutcome::DistributedStarted(handle) => Ok(handle),
                 super::SingleRunExecutionOutcome::Completed(_) => {
@@ -136,6 +138,7 @@ impl Runner {
                 Some(super::DistributedRunnerOperation::Finalize(Box::new(
                     decision,
                 ))),
+                None,
             )? {
                 super::SingleRunExecutionOutcome::Completed(outcome) => Ok(outcome.result),
                 super::SingleRunExecutionOutcome::DistributedStarted(_) => {
@@ -365,7 +368,8 @@ impl Runner {
                             result
                                 .result()
                                 .error
-                                .clone()
+                                .as_ref()
+                                .map(|error| error.message.clone())
                                 .unwrap_or_else(|| "Operation was cancelled".to_string()),
                         )
                     }
@@ -411,6 +415,6 @@ fn run_result_was_cancelled(result: &RunResult) -> bool {
         && result
             .result()
             .error
-            .as_deref()
-            .is_some_and(|error| error.to_ascii_lowercase().contains("cancel"))
+            .as_ref()
+            .is_some_and(|error| error.message.to_ascii_lowercase().contains("cancel"))
 }

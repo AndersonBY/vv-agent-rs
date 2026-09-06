@@ -20,6 +20,8 @@ impl OperationJournalEntry {
             state: OperationState::Planned,
             request_digest: request_digest.into(),
             idempotency_key: None,
+            identity_key: None,
+            result_digest: None,
             response: None,
             error: None,
             tool_call_id: None,
@@ -28,6 +30,7 @@ impl OperationJournalEntry {
             idempotency_support: None,
             result: None,
             deferred_handle: None,
+            resume_observation: None,
             model_operation: Some(model_operation),
             backend: Some(backend.into()),
             model: Some(model.into()),
@@ -55,6 +58,8 @@ impl OperationJournalEntry {
             state: OperationState::Planned,
             request_digest: request_digest.into(),
             idempotency_key,
+            identity_key: None,
+            result_digest: None,
             response: None,
             error: None,
             tool_call_id: Some(tool_call_id.into()),
@@ -63,6 +68,7 @@ impl OperationJournalEntry {
             idempotency_support: Some(idempotency_support),
             result: None,
             deferred_handle: None,
+            resume_observation: None,
             model_operation: None,
             backend: None,
             model: None,
@@ -101,6 +107,15 @@ impl OperationJournalEntry {
         if let Some(result) = &self.result {
             validate_json(result, "operation result")?;
         }
+        if let Some(identity_key) = &self.identity_key {
+            validate_sha256(identity_key, "operation identity_key")?;
+        }
+        if let Some(result_digest) = &self.result_digest {
+            validate_sha256(result_digest, "operation result_digest")?;
+        }
+        if let Some(observation) = &self.resume_observation {
+            observation.validate()?;
+        }
         if let Some(handle) = &self.deferred_handle {
             handle.validate()?;
             if self.kind != OperationKind::Tool {
@@ -115,6 +130,15 @@ impl OperationJournalEntry {
         }
         match self.kind {
             OperationKind::Model => {
+                if self.identity_key.is_some()
+                    || self.result_digest.is_some()
+                    || self.resume_observation.is_some()
+                {
+                    return Err(CheckpointError::new(
+                        "operation_kind_fields_invalid",
+                        "model journal entries cannot contain tool receipt fields",
+                    ));
+                }
                 if self.tool_call_id.is_some()
                     || self.tool_name.is_some()
                     || self.arguments.is_some()
@@ -222,17 +246,138 @@ impl OperationJournalEntry {
                         "succeeded operation requires one success receipt",
                     ));
                 }
+                if self.kind == OperationKind::Tool
+                    && (self.identity_key.is_none() || self.result_digest.is_none())
+                {
+                    return Err(CheckpointError::new(
+                        "operation_receipt_identity_required",
+                        "closed tool receipt requires identity_key and result_digest",
+                    ));
+                }
+                if self.kind == OperationKind::Tool {
+                    let result = self.result.as_ref().expect("checked above");
+                    let receipt =
+                        crate::types::ToolExecutionResult::from_dict(result).map_err(|error| {
+                            CheckpointError::new(
+                                "operation_receipt_invalid",
+                                format!("tool result is not a canonical execution result: {error}"),
+                            )
+                        })?;
+                    if receipt.to_dict() != *result {
+                        return Err(CheckpointError::new(
+                            "operation_receipt_invalid",
+                            "tool journal result is not in canonical wire form",
+                        ));
+                    }
+                    let expected = crate::checkpoint::tool_result_digest(&receipt)?;
+                    if self.result_digest.as_deref() != Some(expected.as_str()) {
+                        return Err(CheckpointError::new(
+                            "tool_receipt_digest_invalid",
+                            "tool journal result_digest does not match the canonical result",
+                        ));
+                    }
+                }
             }
             OperationState::Failed => {
-                if self.error.is_none() || self.response.is_some() || self.result.is_some() {
+                if self.error.is_none() || self.response.is_some() {
                     return Err(CheckpointError::new(
                         "operation_error_required",
                         "failed operation requires one typed error",
                     ));
                 }
+                if self.kind == OperationKind::Tool {
+                    if self.identity_key.is_none() {
+                        return Err(CheckpointError::new(
+                            "operation_receipt_identity_required",
+                            "closed tool receipt requires identity_key",
+                        ));
+                    }
+                    let error = self.error.as_ref().expect("checked above");
+                    let synthetic_closure = error.code == "tool_cancelled" && self.result.is_none();
+                    if synthetic_closure {
+                        if self.result_digest.is_some() {
+                            return Err(CheckpointError::new(
+                                "operation_closure_receipt_forbidden",
+                                "cancelled tool closure must not carry result_digest",
+                            ));
+                        }
+                        if self.resume_observation.is_none() {
+                            return Err(CheckpointError::new(
+                                "operation_resume_observation_required",
+                                "cancelled tool closure requires resume_observation",
+                            ));
+                        }
+                    } else {
+                        let result_value = self.result.as_ref().ok_or_else(|| {
+                            CheckpointError::new(
+                                "operation_result_required",
+                                "ordinary failed tool receipt requires result",
+                            )
+                        })?;
+                        if result_value.get("status_code").and_then(Value::as_str) != Some("ERROR")
+                        {
+                            return Err(CheckpointError::new(
+                                "operation_failed_result_status_invalid",
+                                "failed tool receipt result must have status_code=ERROR",
+                            ));
+                        }
+                        let result = crate::types::ToolExecutionResult::from_dict(result_value)
+                            .map_err(|error| {
+                                CheckpointError::new(
+                                    "operation_result_invalid",
+                                    format!("tool result is not canonical: {error}"),
+                                )
+                            })?;
+                        if result.to_dict() != *result_value {
+                            return Err(CheckpointError::new(
+                                "operation_result_invalid",
+                                "tool journal result is not in canonical wire form",
+                            ));
+                        }
+                        let result_digest = self.result_digest.as_deref().ok_or_else(|| {
+                            CheckpointError::new(
+                                "operation_result_digest_required",
+                                "closed tool receipt requires result_digest",
+                            )
+                        })?;
+                        let expected_digest = crate::checkpoint::tool_result_digest(&result)?;
+                        if result_digest != expected_digest {
+                            return Err(CheckpointError::new(
+                                "operation_result_digest_mismatch",
+                                "tool journal result_digest does not match the canonical result",
+                            ));
+                        }
+                        let expected_error = operation_error_from_tool_result(&result);
+                        if self.error.as_ref() != Some(&expected_error) {
+                            return Err(CheckpointError::new(
+                                "operation_error_projection_mismatch",
+                                "failed tool error does not match the canonical result projection",
+                            ));
+                        }
+                        if error.code == "tool_outcome_unknown" {
+                            if self.resume_observation.is_none() {
+                                return Err(CheckpointError::new(
+                                    "operation_resume_observation_required",
+                                    "tool_outcome_unknown requires resume_observation",
+                                ));
+                            }
+                        } else if self.resume_observation.is_some() {
+                            return Err(CheckpointError::new(
+                                "operation_resume_observation_forbidden",
+                                "ordinary failed receipts must not carry resume_observation",
+                            ));
+                        }
+                    }
+                }
             }
             OperationState::Planned | OperationState::Started | OperationState::Ambiguous => {
-                if self.response.is_some() || self.result.is_some() || self.error.is_some() {
+                if self.response.is_some()
+                    || self.result.is_some()
+                    || self.error.is_some()
+                    || self.identity_key.is_some()
+                    || self.result_digest.is_some()
+                    || self.resume_observation.is_some()
+                {
                     return Err(CheckpointError::new(
                         "operation_receipt_unexpected",
                         "non-terminal operation cannot contain a receipt",
@@ -240,7 +385,13 @@ impl OperationJournalEntry {
                 }
             }
             OperationState::Deferred => {
-                if self.result.is_some() || self.error.is_some() || self.deferred_handle.is_none() {
+                if self.result.is_some()
+                    || self.error.is_some()
+                    || self.deferred_handle.is_none()
+                    || self.identity_key.is_some()
+                    || self.result_digest.is_some()
+                    || self.resume_observation.is_some()
+                {
                     return Err(CheckpointError::new(
                         "operation_deferred_invalid",
                         "deferred operation requires a handle and no result or error",
@@ -271,6 +422,18 @@ impl OperationJournalEntry {
                 .clone()
                 .map_or(Value::Null, Value::String),
         );
+        if let Some(identity_key) = &self.identity_key {
+            object.insert(
+                "identity_key".to_string(),
+                Value::String(identity_key.clone()),
+            );
+        }
+        if let Some(result_digest) = &self.result_digest {
+            object.insert(
+                "result_digest".to_string(),
+                Value::String(result_digest.clone()),
+            );
+        }
         match self.kind {
             OperationKind::Model => {
                 object.insert(
@@ -323,6 +486,12 @@ impl OperationJournalEntry {
                         serde_json::to_value(handle).expect("deferred handle serializes"),
                     );
                 }
+                if let Some(observation) = &self.resume_observation {
+                    object.insert(
+                        "resume_observation".to_string(),
+                        serde_json::to_value(observation).expect("resume observation serializes"),
+                    );
+                }
             }
         }
         object.insert(
@@ -352,12 +521,15 @@ impl OperationJournalEntry {
             "tool_name",
             "arguments",
             "idempotency_key",
+            "identity_key",
+            "result_digest",
             "idempotency_support",
             "state",
             "response",
             "result",
             "error",
             "deferred_handle",
+            "resume_observation",
             "model_operation",
             "backend",
             "model",
@@ -368,7 +540,7 @@ impl OperationJournalEntry {
             .find(|field| !FIELDS.contains(&field.as_str()))
         {
             return Err(CheckpointError::new(
-                "operation_journal_invalid",
+                "operation_entry_unknown_field",
                 format!("operation journal contains unknown field: {field}"),
             ));
         }
@@ -400,6 +572,8 @@ impl OperationJournalEntry {
             )?
             .to_string(),
             idempotency_key: optional_string(object, "idempotency_key")?,
+            identity_key: optional_string(object, "identity_key")?,
+            result_digest: optional_string(object, "result_digest")?,
             response: object
                 .get("response")
                 .filter(|value| !value.is_null())
@@ -449,6 +623,18 @@ impl OperationJournalEntry {
                         CheckpointError::new(
                             "operation_deferred_handle_invalid",
                             "invalid deferred handle",
+                        )
+                    })
+                })
+                .transpose()?,
+            resume_observation: object
+                .get("resume_observation")
+                .filter(|value| !value.is_null())
+                .map(|value| {
+                    serde_json::from_value(value.clone()).map_err(|_| {
+                        CheckpointError::new(
+                            "operation_resume_observation_invalid",
+                            "invalid resume observation",
                         )
                     })
                 })

@@ -77,6 +77,81 @@ pub(super) fn admit_deferred_batch(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn record_tool_receipt(
+    store: &SqliteCheckpointStore,
+    checkpoint: crate::runtime::state::Checkpoint,
+    operation_id: &str,
+    attempt: u64,
+    tool_call_id: &str,
+    request_digest: &str,
+    result: ToolExecutionResult,
+    claim_token: &str,
+    expected_revision: u64,
+    claimed_cycle: u64,
+) -> CheckpointResult<bool> {
+    crate::checkpoint::validate_definitive_result(&result)?;
+    let identity_key = crate::checkpoint::tool_receipt_identity_key(
+        &checkpoint.checkpoint_key,
+        operation_id,
+        attempt,
+        tool_call_id,
+        request_digest,
+    )?;
+    let result_digest = crate::checkpoint::tool_result_digest(&result)?;
+    let mut connection = store.lock()?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sqlite_error)?;
+    let Some(current) = load_row_transaction(&transaction, &checkpoint.checkpoint_key)? else {
+        transaction.commit().map_err(sqlite_error)?;
+        return Ok(false);
+    };
+    if let Some(existing) = current
+        .tool_journal
+        .iter()
+        .find(|entry| entry.identity_key.as_deref() == Some(identity_key.as_str()))
+    {
+        let replay = existing.result_digest.as_deref() == Some(result_digest.as_str());
+        transaction.commit().map_err(sqlite_error)?;
+        if replay {
+            return Ok(true);
+        }
+        return Err(CheckpointError::new(
+            "tool_receipt_conflict",
+            "tool receipt conflicts with the retained identity",
+        ));
+    }
+    let Some(updated) = crate::runtime::state::prepare_tool_receipt(
+        &current,
+        &checkpoint,
+        operation_id,
+        attempt,
+        tool_call_id,
+        request_digest,
+        &result,
+        claim_token,
+        expected_revision,
+        claimed_cycle,
+    )?
+    else {
+        transaction.commit().map_err(sqlite_error)?;
+        return Ok(false);
+    };
+    let values = SqlValues::from_checkpoint(&updated)?;
+    if !update_row(
+        &transaction,
+        &values,
+        Some(expected_revision),
+        Some(claim_token),
+    )? {
+        transaction.commit().map_err(sqlite_error)?;
+        return Ok(false);
+    }
+    transaction.commit().map_err(sqlite_error)?;
+    Ok(true)
+}
+
 pub(super) fn resolve_deferred(
     store: &SqliteCheckpointStore,
     handle: crate::checkpoint::DeferredToolHandle,
@@ -151,6 +226,14 @@ pub(super) fn resolve_deferred(
     let event_digest = event.payload_digest.clone();
     let mut updated = checkpoint.clone();
     let journal = &mut updated.tool_journal[index];
+    journal.identity_key = Some(crate::checkpoint::tool_receipt_identity_key(
+        &updated.checkpoint_key,
+        &journal.operation_id,
+        journal.attempt,
+        journal.tool_call_id.as_deref().unwrap_or_default(),
+        &journal.request_digest,
+    )?);
+    journal.result_digest = Some(crate::checkpoint::tool_result_digest(&result)?);
     match result.status {
         ToolResultStatus::Success => {
             journal.state = OperationState::Succeeded;
@@ -158,14 +241,14 @@ pub(super) fn resolve_deferred(
         }
         ToolResultStatus::Error => {
             journal.state = OperationState::Failed;
-            journal.error = Some(crate::runtime::state::OperationError::new(
-                result
-                    .error_code
-                    .clone()
-                    .unwrap_or_else(|| "tool_error".to_string()),
-                result.content.clone(),
-                false,
+            journal.result = Some(result.to_dict());
+            journal.error = Some(crate::runtime::state::operation_error_from_tool_result(
+                &result,
             ));
+            if result.error_code.as_deref() == Some("tool_outcome_unknown") {
+                journal.resume_observation =
+                    Some(crate::runtime::state::unknown_tool_observation(journal));
+            }
         }
         _ => unreachable!(),
     }
@@ -270,7 +353,7 @@ pub(super) fn load_receipt_transaction(
 ) -> CheckpointResult<Option<DeferredReceipt>> {
     let row = transaction
         .query_row(
-            "SELECT handle_key, handle, result, result_digest, event_id, event_payload_digest, receipt_status
+            "SELECT handle_key, checkpoint_key, handle, result, result_digest, event_id, event_payload_digest, receipt_status
              FROM deferred_resolution_receipts WHERE handle_key = ?1",
             params![handle_key],
             |row| {
@@ -282,6 +365,7 @@ pub(super) fn load_receipt_transaction(
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
                     row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
                 ))
             },
         )
@@ -290,6 +374,7 @@ pub(super) fn load_receipt_transaction(
     row.map(
         |(
             handle_key,
+            checkpoint_key,
             handle,
             result,
             result_digest,
@@ -297,9 +382,16 @@ pub(super) fn load_receipt_transaction(
             event_payload_digest,
             receipt_status,
         )| {
-            let handle = serde_json::from_str(&handle).map_err(|error| {
-                CheckpointError::new("deferred_receipt_invalid", error.to_string())
-            })?;
+            let handle: crate::checkpoint::DeferredToolHandle = serde_json::from_str(&handle)
+                .map_err(|error| {
+                    CheckpointError::new("deferred_receipt_invalid", error.to_string())
+                })?;
+            if checkpoint_key != handle.checkpoint_key {
+                return Err(CheckpointError::new(
+                    "deferred_receipt_identity_invalid",
+                    "receipt checkpoint_key does not match the exact handle",
+                ));
+            }
             let result = serde_json::from_str(&result).map_err(|error| {
                 CheckpointError::new("deferred_receipt_invalid", error.to_string())
             })?;

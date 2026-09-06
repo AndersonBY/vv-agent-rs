@@ -1,5 +1,128 @@
 use super::*;
 
+async fn assert_checkpointed_started_tool_lifecycle_event_is_emitted_once(
+    checkpoint_key: &str,
+    tool_call_id: &str,
+    result_status: ToolResultStatus,
+    directive: vv_agent::ToolDirective,
+    expected_status: AgentStatus,
+) {
+    let store = InMemoryCheckpointStore::new();
+    let tool = StaticTool::new(
+        "checkpointed_tool",
+        "Return a checkpointed tool outcome.",
+        json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false,
+        }),
+        Arc::new(move |context, _arguments| {
+            let mut result =
+                ToolExecutionResult::success(context.tool_call_id.clone(), "checkpointed");
+            result.status = result_status;
+            result.directive = directive;
+            result
+        }),
+    );
+    let provider = ScriptedModelProvider::new(
+        "scripted",
+        "checkpointed-tool-model",
+        vec![LLMResponse::with_tool_calls(
+            "run the checkpointed tool",
+            vec![ToolCall::new(
+                tool_call_id,
+                "checkpointed_tool",
+                BTreeMap::new(),
+            )],
+        )],
+    );
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(".")
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("checkpointed-tool-agent")
+        .instructions("Run the checkpointed tool.")
+        .model(ModelRef::named("checkpointed-tool-model"))
+        .tool(tool)
+        .build()
+        .expect("agent");
+
+    let result = runner
+        .run_with_config(
+            &agent,
+            "run the checkpointed tool",
+            RunConfig::builder()
+                .max_cycles(1)
+                .no_tool_policy(NoToolPolicy::Finish)
+                .checkpoint_config(checkpoint_config(store.clone(), checkpoint_key))
+                .build(),
+        )
+        .await
+        .expect("checkpointed tool run");
+    assert_eq!(result.status(), expected_status);
+
+    let completions = result
+        .events()
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.payload(),
+                RunEventPayload::ToolCallCompleted { tool_call_id: id, .. }
+                    if id == tool_call_id
+            )
+        })
+        .count();
+    assert_eq!(
+        completions, 1,
+        "tool lifecycle completion event must be projected once"
+    );
+
+    let persisted = store
+        .load_checkpoint(checkpoint_key)
+        .expect("load checkpoint")
+        .expect("checkpoint");
+    let outbox_completions = persisted
+        .event_outbox
+        .iter()
+        .filter(|entry| {
+            entry.event["type"] == "tool_call_completed"
+                && entry.event["tool_call_id"] == tool_call_id
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outbox_completions.len(),
+        1,
+        "durable tool receipt must own one completion event"
+    );
+    assert_eq!(outbox_completions[0].state, "delivered");
+}
+
+#[tokio::test]
+async fn checkpointed_started_success_lifecycle_event_projects_one_completion() {
+    assert_checkpointed_started_tool_lifecycle_event_is_emitted_once(
+        "checkpointed-started-success",
+        "call-checkpointed-success",
+        ToolResultStatus::Success,
+        vv_agent::ToolDirective::Continue,
+        AgentStatus::MaxCycles,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn checkpointed_started_wait_user_lifecycle_event_projects_one_completion() {
+    assert_checkpointed_started_tool_lifecycle_event_is_emitted_once(
+        "checkpointed-started-wait-user",
+        "call-checkpointed-wait-user",
+        ToolResultStatus::WaitResponse,
+        vv_agent::ToolDirective::WaitUser,
+        AgentStatus::WaitUser,
+    )
+    .await;
+}
+
 #[tokio::test]
 async fn deferred_admission_projects_each_lifecycle_event_once_from_outbox() {
     let store = InMemoryCheckpointStore::new();
@@ -146,7 +269,7 @@ async fn deferred_admission_projects_each_lifecycle_event_once_from_outbox() {
 }
 
 #[tokio::test]
-async fn deferred_batch_keeps_non_definitive_tool_statuses_out_of_admission() {
+async fn non_definitive_tool_statuses_require_reconciliation_before_admission() {
     let store = InMemoryCheckpointStore::new();
     let schema = || {
         json!({
@@ -236,58 +359,21 @@ async fn deferred_batch_keeps_non_definitive_tool_statuses_out_of_admission() {
         .await
         .expect("mixed batch run");
 
-    assert_eq!(result.status(), AgentStatus::Deferred);
+    assert_eq!(result.status(), AgentStatus::ReconciliationRequired);
     let checkpoint = store
         .load_checkpoint("mixed-status-batch")
         .expect("load checkpoint")
         .expect("checkpoint");
-    assert_eq!(checkpoint.status, CheckpointStatus::Deferred);
+    assert_eq!(checkpoint.status, CheckpointStatus::ReconciliationRequired);
     assert!(checkpoint.claim_token.is_none());
-    let states = checkpoint
+    assert!(checkpoint
         .tool_journal
         .iter()
-        .filter_map(|entry| {
-            entry
-                .tool_call_id
-                .clone()
-                .map(|tool_call_id| (tool_call_id, entry.state))
-        })
-        .collect::<BTreeMap<_, _>>();
-    assert_eq!(states["call-deferred"], OperationState::Deferred);
-    assert_eq!(states["call-wait"], OperationState::Succeeded);
-    assert_eq!(states["call-running"], OperationState::Failed);
-    assert_eq!(states["call-compress"], OperationState::Failed);
-
-    let lifecycle = result
+        .any(|entry| entry.state == OperationState::Ambiguous));
+    assert!(!result
         .events()
         .iter()
-        .filter(|event| {
-            matches!(
-                event.payload(),
-                RunEventPayload::ToolCallDeferred { .. }
-                    | RunEventPayload::ToolCallCompleted { .. }
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        lifecycle.len(),
-        4,
-        "the deferred batch must not reject or duplicate non-definitive statuses"
-    );
-    assert_eq!(
-        lifecycle
-            .iter()
-            .filter(|event| matches!(event.payload(), RunEventPayload::ToolCallDeferred { .. }))
-            .count(),
-        1
-    );
-    assert_eq!(
-        lifecycle
-            .iter()
-            .filter(|event| matches!(event.payload(), RunEventPayload::ToolCallCompleted { .. }))
-            .count(),
-        3
-    );
+        .any(|event| matches!(event.payload(), RunEventPayload::ToolCallDeferred { .. })));
 }
 
 #[tokio::test]

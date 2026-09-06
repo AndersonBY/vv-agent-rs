@@ -1,10 +1,16 @@
-use std::panic::{catch_unwind, AssertUnwindSafe};
-
 use super::run_single_entry::{
-    distributed_checkpoint_options, distributed_compiled_initial_messages, result_terminal_flags,
+    distributed_checkpoint_options, distributed_compiled_initial_messages,
 };
 use super::*;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+mod approval_resume;
+mod finalize;
 use crate::memory::MicrocompactionPolicy;
+use approval_resume::run_approval_resume;
+use finalize::{
+    checkpoint_result_new_items, close_checkpoint_controller, prepare_checkpoint_result,
+    validate_checkpoint_result,
+};
 
 impl Runner {
     #[allow(clippy::too_many_arguments)]
@@ -18,6 +24,7 @@ impl Runner {
         mut checkpoint_admission_sender: Option<CheckpointAdmissionSender>,
         run_id_override: Option<String>,
         distributed_operation: Option<DistributedRunnerOperation>,
+        approval_invocation: Option<ApprovalResumeInvocation>,
     ) -> Result<SingleRunExecutionOutcome, String> {
         let checkpoint_config = config
             .checkpoint_config
@@ -672,7 +679,6 @@ impl Runner {
             .workspace_backend
             .clone()
             .or_else(|| self.default_run_config.workspace_backend.clone());
-
         let (distributed_terminal_decision, distributed_lease_duration_ms) =
             distributed_checkpoint_options(
                 distributed_operation.as_ref(),
@@ -680,7 +686,7 @@ impl Runner {
             );
         let CheckpointRuntimeState {
             controller: checkpoint_controller,
-            mut terminal_replayed,
+            terminal_replayed,
             replayed_result,
             initial_budget_usage,
             initial_messages: checkpoint_initial_messages,
@@ -742,7 +748,7 @@ impl Runner {
                 .or_else(|| self.default_run_config.interruption_messages.clone()),
             cancellation_token: cancellation_token.clone(),
             execution_context: Some(ExecutionContext {
-                event_handler,
+                event_handler: event_handler.clone(),
                 metadata: task.metadata.clone(),
                 approval_provider,
                 approval_broker,
@@ -774,60 +780,60 @@ impl Runner {
                 .map(CheckpointRuntimeControl::new),
             ..RuntimeRunControls::default()
         };
-        let mut result = if let Some(replayed_result) = replayed_result {
+        let result = if let Some(replayed_result) = replayed_result {
             replayed_result
         } else if let Some(DistributedAdvanceDecision::FinalizeRequired { result, .. }) =
             distributed_terminal_decision
         {
             result.clone()
+        } else if let Some(invocation) = approval_invocation.as_ref() {
+            let controller = checkpoint_controller.as_ref().ok_or_else(|| {
+                "checkpoint_config_invalid: approval resume requires a target checkpoint"
+                    .to_string()
+            })?;
+            run_approval_resume(
+                invocation,
+                controller,
+                task,
+                &run_context,
+                event_handler.clone(),
+                &definition_registry,
+                controls,
+                &runtime,
+            )?
         } else {
             runtime
                 .run_with_controls(task, controls)
                 .map_err(|error| error.to_string())?
         };
-        (result, terminal_replayed) =
-            replay_checkpoint_terminal(checkpoint_controller.as_ref(), terminal_replayed, result)?;
-        if let Some(error) = event_store_error
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-        {
-            return Err(error);
-        }
-        result =
-            prepare_checkpoint_terminal(checkpoint_controller.as_ref(), terminal_replayed, result)?;
-        let (reconciliation_required, operator_abort, deferred) = result_terminal_flags(&result);
-        if !terminal_replayed && !reconciliation_required && !operator_abort {
-            result = apply_output_guardrails(agent, &run_context, result);
-            result = apply_cancellation_precedence(result, cancellation_token.as_ref());
-        }
-        let output_type_validation_error = if !reconciliation_required && !operator_abort {
-            output_type_validation_error(agent, &result)
-        } else {
-            None
-        };
-        let (validated_result, output_validation_error) = if terminal_replayed {
-            (result, output_type_validation_error)
-        } else {
-            apply_optional_output_validation(
+        let (mut result, terminal_replayed, reconciliation_required, operator_abort, deferred) =
+            prepare_checkpoint_result(
+                checkpoint_controller.as_ref(),
+                terminal_replayed,
+                result,
+                &event_store_error,
                 agent,
                 &run_context,
-                result,
-                output_type_validation_error,
-            )
-        };
+                cancellation_token.as_ref(),
+            )?;
+        let (validated_result, output_validation_error) = validate_checkpoint_result(
+            agent,
+            &run_context,
+            result,
+            terminal_replayed,
+            reconciliation_required,
+            operator_abort,
+        );
         result = validated_result;
         let handoff = extract_handoff(&result);
-        let new_items = if terminal_replayed || reconciliation_required || operator_abort {
-            Vec::new()
-        } else {
-            result
-                .messages
-                .get(session_result_prefix_len..)
-                .unwrap_or_default()
-                .to_vec()
-        };
-        if !terminal_replayed && !reconciliation_required && !operator_abort {
+        let new_items = checkpoint_result_new_items(
+            &result,
+            session_result_prefix_len,
+            terminal_replayed,
+            reconciliation_required,
+            deferred,
+        );
+        if !terminal_replayed && !reconciliation_required && !deferred {
             if let Some(session) = session.as_ref() {
                 let approval_call_ids = result
                     .cycles
@@ -931,12 +937,7 @@ impl Runner {
                 handler(&event);
             }
         }
-        if let Some(controller) = checkpoint_controller.as_ref() {
-            controller
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .close();
-        }
+        close_checkpoint_controller(checkpoint_controller.as_ref());
         let ended_run_span = if let Some(error) = output_validation_error.as_ref() {
             trace.finish("failed", Some(("error", Value::String(error.clone()))))
         } else {
@@ -946,7 +947,7 @@ impl Runner {
                     .final_answer
                     .clone()
                     .or_else(|| result.wait_reason.clone())
-                    .or_else(|| result.error.clone())
+                    .or_else(|| result.error.as_ref().map(|error| error.message.clone()))
                     .map(|output| ("final_output", Value::String(output))),
             )
         };

@@ -18,11 +18,10 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock adopts contract `8.1.2` at revision
-`2768c8f65bdd3014cdcc9f00b8534b3d02c045f1`, release artifact SHA-256
-`3010e377f62971cf160f37fe90c1312ba63557fe97b039fd5595a736d755ee8f`.
-The `8.1.2` adoption remains `pending-adoption` until both implementation
-snapshots and cross-language producer gates pass. Treat
+The current lock adopts contract `12.0.0` at revision
+`3e082ce2a850192e8b6f4dec6a14f1f06ccddef2`, release artifact SHA-256
+`45d39c17c9bc1a883eaae2073f04afd7fb55d6d9e3076459aad8f37450618b7b`.
+The current adoption state is not duplicated in this document. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
 as the machine-readable source for the current verified Python and Rust
 revisions, verification timestamp, and cross-repository run URL.
@@ -101,7 +100,28 @@ A fixture parser or private helper test cannot replace a real public producer
 test. A field that is declared but ignored by a planner, executor, provider, or
 store remains a contract failure.
 
-## Contract 8.1.2 Boundaries
+## Contract 12.0.0 Boundaries
+
+Definitive ordinary and deferred tool receipts use the closed RFC 8785 receipt
+identity object `{attempt, checkpoint_key, operation_id, request_digest,
+tool_call_id}`. The durable completion event ID is exactly
+`evt_receipt_<identity_key>`; status, result digest, suffixes, and version
+markers do not affect the identity. Replays preserve the retained event and
+created-at values, while a different result for the same identity is a typed
+zero-write conflict.
+
+Controller wake recovery is checkpoint-scoped through
+`CheckpointStore::reap_controller_command_wakes(checkpoint_key, now_ms)`. The
+Memory, SQLite, and Redis stores reuse their existing receipt indexes and CAS
+boundaries, return complete `ControllerCommandWakeRecord` values for pending or
+expired claimed `recovery_dispatch` wakes in `(expected_revision, command_id)`
+order, and never return ambiguous or cross-checkpoint rows. Distributed
+host-response recovery consumes the wake through the combined
+checkpoint/interaction CAS before model or tool work and hands the retained
+`host-recovery:` execution claim to the worker without a second claim or
+resume-attempt increment.
+
+## Current Runtime Boundaries
 
 ### Prompt Bundle And Provider Projection
 
@@ -155,13 +175,13 @@ usage, and error outcome.
 
 Task-neutral observations remain typed diagnostics. A diagnostic cannot replace
 model, budget, cancellation, tool, approval, checkpoint, or terminal lifecycle
-events. `RunEvent` version `v4` is the strict current wire discriminator; stale,
+events. `RunEvent` version `v5` is the strict current wire discriminator; stale,
 missing, unknown, and malformed fields are rejected rather than routed through
 an older decoder.
 
 ### Durable Accounting
 
-Checkpoints require `vv-agent.checkpoint.v8`, and run definitions require
+Checkpoints require `vv-agent.checkpoint.v10`, and run definitions require
 `vv-agent.run-definition.v5`. The run definition stores `prompt_bundle` and
 never stores an independent flattened prompt. The checkpoint owns the complete
 ordered run-level model-call ledger. A started model journal entry and started
@@ -175,6 +195,15 @@ derived merge from that response. The merge key is the normalized category and
 case-folded, whitespace-normalized content, so replay does not duplicate an
 existing fact. Producer coverage for the crash boundary and terminal replay is
 in `crates/vv-agent/tests/runner_checkpoint.rs`.
+
+Contract `12.0.0` persists every ordinary definitive `ERROR` tool receipt as
+the complete strict `ToolExecutionResult` plus its digest. `OperationError` is
+only the normalized projection of that result; resume verifies the digest and
+reconstructs the tool `Message` from the result, preserving metadata, directive,
+and artifact or cursor recovery fields. A model-visible `tool_outcome_unknown`
+is an ordinary failed receipt with the complete result, digest, and retained
+unknown-effect observation. Only synthetic terminal `tool_cancelled` closures
+remain resultless and omit a definitive digest.
 
 ### Model Usage And Memory
 
@@ -211,7 +240,7 @@ unchanged.
 Distributed workers accept only `vv-agent.distributed-run.v5`; its `task`
 contains `prompt_bundle` and has no `system_prompt` field. Workers and
 dispatchers exchange only the closed
-`vv-agent.distributed-worker-response.v3` wire. The implementation in
+`vv-agent.distributed-worker-response.v4` wire. The implementation in
 `runtime/backends/distributed/dispatch.rs` has exactly `pending`, `committed`,
 `terminal_candidate`, and `terminal_replay` variants. The replaced `finished`
 and terminal boolean combination is neither produced nor accepted. A candidate
@@ -235,8 +264,13 @@ the durable checkpoint and returns the passive handle;
 `Runner::finalize_distributed` consumes only `FinalizeRequired` and reuses the
 normal guardrail, validation, append-once session, outbox, claim-bound or
 revision-bound CAS, delivery, and acknowledgement path. Duplicate finalizer
-delivery returns the retained terminal. Durable cross-process approval
-continuation is not implemented by this Rust slice.
+delivery returns the retained terminal. Approval continuation from a
+checkpointed `WAIT_USER` result uses a distinct explicit `ResumeIfPresent`
+target key. The approval claim is bound to that key, the target checkpoint is
+seeded with the captured tool operation before any side effect, and the
+approved tool resumes through the normal journal, receipt, append-once session,
+preterminal, and terminal-finalization path without a model call. Replaying the
+same target is idempotent; a different target key is rejected.
 
 `Runner::start_distributed_compiled` accepts an already-compiled `AgentTask`,
 preserves its prepared prompt bundle, runtime fields, initial messages, and
@@ -245,9 +279,29 @@ instruction or context producers again. It returns the same passive handle as
 `start_distributed`; the existing distributed envelope and worker response wire
 shapes remain unchanged.
 
+## Durable Cycle Ownership And Receipts
+
+The current producer carries `cancel_requested` in checkpoint v10. A live cancel
+sets the signal without advancing the revision or releasing the claim; renewal
+returns the typed `renewed`, `cancel_requested`, or `claim_lost` outcome. A
+successful cycle uses `commit_cycle`; cancellation, operator abort, and lease
+loss use the claimed terminal finalizer.
+
+Every ordinary definitive `SUCCESS` or `ERROR` tool result goes through one
+`record_tool_receipt` mutation. Identity-first replay is zero-write, conflicting
+results return `tool_receipt_conflict`, and a successful receipt retains the
+claim while atomically writing the journal, result digest, completed event, and
+revision. `admit_deferred_batch` accepts only unresolved deferred entries and
+releases the claim once after ordinary receipts have been recorded.
+
+Unknown started tool outcomes close as `tool_cancelled` with a concrete
+`resume_observation`; terminal results expose the sorted unique plural
+`resume_observations` list. Terminal codecs accept closed journals but reject
+active operation entries.
+
 ## Durable Deferred Tools
 
-Contract 8 adds one provider-neutral result boundary for tools whose external
+The current contract retains the provider-neutral result boundary for tools whose external
 acceptance finishes after the current worker invocation. The framework creates
 an opaque `DeferredToolHandle` through `ToolContext::defer`; handlers never
 construct checkpoint journals, claims, provider/job identifiers, or callback
@@ -256,9 +310,10 @@ metadata. Without an active durable checkpoint the factory returns a completed
 
 `ToolCallOutcome` is the closed `vv-agent.tool-call-outcome.v2` wire: a
 completed `ToolExecutionResult` or a deferred handle. Deferred is not a
-`ToolExecutionResult` status. A model-tool batch is admitted once through the
-checkpoint store (`admit_deferred_batch`), atomically persisting all completed
-and deferred journal entries, lifecycle outbox events, the deferred barrier,
+`ToolExecutionResult` status. Ordinary completed outcomes are first persisted
+through `record_tool_receipt`; the model-tool batch is then admitted once
+through the checkpoint store (`admit_deferred_batch`) with deferred entries
+only, atomically writing their lifecycle outbox events, the deferred barrier,
 and one claim release. `CheckpointStatus::Deferred` blocks new model cycles
 until every handle resolves.
 
@@ -279,7 +334,7 @@ Recovery acceptance is an all-or-none `accept_deferred_batch` CAS under an
 active recovery claim. It validates exact handles, records a
 `reconciliation_resolved` audit plus `tool_call_deferred` events, and is
 idempotent on exact replay without a second claim or revision. Distributed
-workers keep the existing `vv-agent.distributed-worker-response.v3` pending
+workers keep the existing `vv-agent.distributed-worker-response.v4` pending
 wire; the nonblocking driver waits with `deferred_pending` and performs no
 worker polling or new response variant. App Server maps the state to a
 non-terminal interrupted turn with `waitReason=deferred_pending` and a normal
@@ -364,7 +419,7 @@ event. `memory_compact_started` includes `microcompact_target`,
 `artifact_failure_count`, plus the strongest applied mode and a
 message-content comparison as `changed`.
 Provider callbacks, runtime payloads, and `runner/event_stream.rs` journal
-projections reuse the same `event_id` and `created_at`. The current `v4`
+projections reuse the same `event_id` and `created_at`. The current `v5`
 decoder rejects missing, unknown, stale, and malformed fields; it has no
 alternate historical decoder. No capacity or compaction branch inspects
 task category, answer meaning, or semantic progress.
@@ -454,6 +509,6 @@ the central support matrix at `pending-adoption` or `in-progress`.
 The current Rust gate may emit ts-rs warnings that it cannot parse the serde
 attributes `deny_unknown_fields` and `deserialize_with =
 "deserialize_input_items"`. These warnings are from TypeScript metadata
-generation; the runtime serde readers still enforce the strict v8 wire. The
+generation; the runtime serde readers still enforce the strict v10 wire. The
 attributes must remain on the Rust readers until ts-rs supports them rather
 than being removed to silence the warning.

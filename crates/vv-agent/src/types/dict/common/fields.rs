@@ -20,13 +20,6 @@ pub(in crate::types::dict) fn read_required_string<'a>(
         .ok_or_else(|| format!("missing required string field {key:?}"))
 }
 
-pub(in crate::types::dict) fn read_string(
-    object: &Map<String, Value>,
-    key: &str,
-) -> Option<String> {
-    object.get(key).and_then(Value::as_str).map(str::to_string)
-}
-
 pub(in crate::types::dict) fn read_optional_string(
     object: &Map<String, Value>,
     key: &str,
@@ -36,26 +29,6 @@ pub(in crate::types::dict) fn read_optional_string(
         .filter(|value| !value.is_null())
         .and_then(Value::as_str)
         .map(str::to_string)
-}
-
-pub(in crate::types::dict) fn read_bool(
-    object: &Map<String, Value>,
-    key: &str,
-    default: bool,
-) -> bool {
-    object.get(key).and_then(Value::as_bool).unwrap_or(default)
-}
-
-pub(in crate::types::dict) fn read_u32(
-    object: &Map<String, Value>,
-    key: &str,
-    default: u32,
-) -> u32 {
-    object
-        .get(key)
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-        .unwrap_or(default)
 }
 
 pub(in crate::types::dict) fn read_array<'a>(

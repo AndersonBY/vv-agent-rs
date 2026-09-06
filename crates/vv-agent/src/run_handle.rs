@@ -111,7 +111,11 @@ impl RunHandleState {
                 status: RunHandleStatus::Failed,
                 done: true,
                 cancelled: false,
-                error: result.result().error.clone(),
+                error: result
+                    .result()
+                    .error
+                    .as_ref()
+                    .map(|error| error.message.clone()),
             },
             status => Self::from_agent_status(status),
         }

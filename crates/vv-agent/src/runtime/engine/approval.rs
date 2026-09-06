@@ -7,6 +7,7 @@ use crate::approval::{
     block_on_approval_future, new_approval_request_id, ApprovalError, ApprovalFuture,
     ApprovalRequest,
 };
+use crate::checkpoint::ToolIdempotency;
 use crate::llm::LlmClient;
 use crate::runtime::CancellationToken;
 use crate::tools::{
@@ -73,7 +74,14 @@ pub(super) struct PendingToolApprovalCapture<'a> {
     pub(super) task: &'a AgentTask,
     pub(super) hook_manager: &'a crate::runtime::RuntimeHookManager,
     pub(super) cycle_index: u32,
+    pub(super) source_call: &'a ToolCall,
     pub(super) call: &'a ToolCall,
+    pub(super) source_checkpoint_key: Option<String>,
+    pub(super) source_operation_id: Option<String>,
+    pub(super) source_attempt: Option<u64>,
+    pub(super) source_request_digest: Option<String>,
+    pub(super) source_idempotency_key: Option<String>,
+    pub(super) source_idempotency_support: ToolIdempotency,
     pub(super) context: &'a ToolContext,
     pub(super) options: &'a ToolRunOptions,
     pub(super) orchestrator: &'a ToolOrchestrator,
@@ -86,7 +94,14 @@ impl<C: LlmClient> AgentRuntime<C> {
             task,
             hook_manager,
             cycle_index,
+            source_call,
             call,
+            source_checkpoint_key,
+            source_operation_id,
+            source_attempt,
+            source_request_digest,
+            source_idempotency_key,
+            source_idempotency_support,
             context,
             options,
             orchestrator,
@@ -109,8 +124,15 @@ impl<C: LlmClient> AgentRuntime<C> {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         *slot = Some(crate::result::PendingToolApproval {
             interruption_id: interruption_id.to_string(),
+            source_call: source_call.clone(),
             call: call.clone(),
             cycle_index,
+            source_checkpoint_key,
+            source_operation_id,
+            source_attempt,
+            source_request_digest,
+            source_idempotency_key,
+            source_idempotency_support,
             context: context.clone(),
             options: options.clone(),
             orchestrator: orchestrator.clone(),

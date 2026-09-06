@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
 use crate::budget::RunBudgetLimits;
-use crate::checkpoint::{CheckpointStatus, ClaimMode};
+use crate::checkpoint::{
+    CheckpointStatus, ClaimMode, ControllerCommandVariant, HostInteractionRecoveryEnvelope,
+    HostInteractionRequest, HOST_INTERACTION_RECOVERY_SCHEMA, HOST_INTERACTION_REQUEST_SCHEMA,
+};
+use crate::events::{RunEvent, RunEventPayload};
 use crate::runtime::token_usage::summarize_task_token_usage;
 use crate::runtime::CheckpointStore;
 use crate::types::{last_assistant_output, AgentResult, AgentStatus, AgentTask, CompletionReason};
@@ -247,6 +251,8 @@ impl DistributedBackend {
         let checkpoint =
             load_checkpoint_once(store.as_ref(), &previous_envelope.checkpoint_config.key)?;
         validate_checkpoint_identity(previous_envelope, &checkpoint)?;
+        let (checkpoint, recovered_host_response) =
+            consume_controller_wakes(store.as_ref(), checkpoint, self.lease_duration_ms)?;
         let handle = DistributedRunHandle::from_checkpoint(&checkpoint);
         let response = match &outcome {
             DistributedDeliveryOutcome::Worker(response) => Some(response.as_ref()),
@@ -396,10 +402,11 @@ impl DistributedBackend {
         }
 
         let previous_cycle = u64::from(previous_envelope.cycle_index);
-        if checkpoint.cycle_index > previous_cycle
-            || checkpoint
-                .claimed_cycle
-                .is_some_and(|claimed_cycle| claimed_cycle > previous_cycle)
+        if !recovered_host_response
+            && (checkpoint.cycle_index > previous_cycle
+                || checkpoint
+                    .claimed_cycle
+                    .is_some_and(|claimed_cycle| claimed_cycle > previous_cycle))
         {
             return Ok(DistributedAdvanceDecision::Wait {
                 handle,
@@ -420,7 +427,12 @@ impl DistributedBackend {
         }
 
         let now_ms = now_unix_ms()?;
-        let (cycle_index, claim_mode, not_before_unix_ms) = if checkpoint.claim_token.is_some() {
+        let (cycle_index, claim_mode, not_before_unix_ms) = if recovered_host_response {
+            let cycle_index = checkpoint.claimed_cycle.ok_or_else(|| {
+                "host response recovery did not retain a claimed cycle".to_string()
+            })?;
+            (cycle_index, ClaimMode::Recovery, None)
+        } else if checkpoint.claim_token.is_some() {
             let cycle_index = checkpoint
                 .claimed_cycle
                 .ok_or_else(|| "distributed checkpoint has a partial claim".to_string())?;
@@ -582,6 +594,275 @@ fn load_checkpoint_once(
         .load_checkpoint(checkpoint_key)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "checkpoint disappeared before distributed driver invocation".to_string())
+}
+
+fn consume_controller_wakes(
+    store: &dyn CheckpointStore,
+    checkpoint: crate::runtime::Checkpoint,
+    lease_duration_ms: u64,
+) -> Result<(crate::runtime::Checkpoint, bool), String> {
+    let retained_recovery_claim = checkpoint
+        .claim_token
+        .as_deref()
+        .is_some_and(|token| token.starts_with("host-recovery:"));
+    if checkpoint.status != CheckpointStatus::Running
+        || (checkpoint.claim_token.is_some() && !retained_recovery_claim)
+    {
+        return Ok((checkpoint, false));
+    }
+
+    let now_ms = now_unix_ms()?;
+    let wakes = store
+        .reap_controller_command_wakes(&checkpoint.checkpoint_key, now_ms)
+        .map_err(|error| error.to_string())?;
+    let mut current = checkpoint;
+    let mut consumed_host_response = false;
+    for wake in wakes {
+        if wake.outbox_state != "pending" {
+            return Err("controller wake reaper returned a non-pending wake".to_string());
+        }
+        if wake.checkpoint_key != current.checkpoint_key
+            || wake.handle.checkpoint_key != current.checkpoint_key
+            || wake.outbox_action != "recovery_dispatch"
+        {
+            return Err("controller wake escaped its checkpoint scope".to_string());
+        }
+        let command = store
+            .get_controller_command(&wake.command_id)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "controller wake command payload is missing".to_string())?;
+        if command.handle.checkpoint_key != current.checkpoint_key
+            || command.command_id != wake.command_id
+            || command.command_digest != wake.command_digest
+        {
+            return Err("controller wake command identity is inconsistent".to_string());
+        }
+
+        let host_recovery = match &command.command {
+            ControllerCommandVariant::HostInteractionResponse {
+                interaction_id,
+                request_digest,
+                ..
+            } => Some((
+                host_request_from_event(&current, interaction_id, request_digest)?,
+                command.command_id.clone(),
+            )),
+            ControllerCommandVariant::Resume => {
+                match store
+                    .find_resolved_pending_host_interaction(&current.checkpoint_key)
+                    .map_err(|error| error.to_string())?
+                {
+                    Some(record) => {
+                        if record.checkpoint_key != current.checkpoint_key
+                            || record.state != "resolved_pending"
+                        {
+                            return Err("resume wake resolved host record is stale".to_string());
+                        }
+                        let response_command_id = record.command_id.clone().ok_or_else(|| {
+                            "resume wake resolved host record has no response command".to_string()
+                        })?;
+                        let response_command = store
+                            .get_controller_command(&response_command_id)
+                            .map_err(|error| error.to_string())?
+                            .ok_or_else(|| "resume wake response command is missing".to_string())?;
+                        if !matches!(
+                            response_command.command,
+                            ControllerCommandVariant::HostInteractionResponse { .. }
+                        ) || response_command.handle.checkpoint_key != current.checkpoint_key
+                        {
+                            return Err("resume wake response command is stale".to_string());
+                        }
+                        Some((record.request, response_command_id))
+                    }
+                    None => {
+                        if checkpoint_has_unconsumed_host_interaction(&current)? {
+                            return Err(
+                                "host interaction recovery record is missing for a resume wake"
+                                    .to_string(),
+                            );
+                        }
+                        None
+                    }
+                }
+            }
+            _ => {
+                return Err("non-waking controller command has a recovery wake".to_string());
+            }
+        };
+
+        let claim_token = format!("distributed-host-response:{}", wake.command_id);
+        let lease_expires_at_ms = now_ms
+            .checked_add(lease_duration_ms.max(1_000))
+            .ok_or_else(|| "controller wake claim lease overflow".to_string())?;
+
+        if let Some((request, response_command_id)) = host_recovery {
+            let record_id = crate::checkpoint::record_id_for(&current.checkpoint_key, &request);
+            store
+                .reap_host_interaction_record(&record_id, &current.checkpoint_key, now_ms)
+                .map_err(|error| error.to_string())?;
+            current = load_checkpoint_once(store, &current.checkpoint_key)?;
+            let Some(claimed_wake) = store
+                .claim_controller_command_wake(
+                    &wake.command_id,
+                    &wake.command_digest,
+                    &claim_token,
+                    lease_expires_at_ms,
+                    now_ms,
+                )
+                .map_err(|error| error.to_string())?
+            else {
+                return Err("controller wake claim was lost before recovery".to_string());
+            };
+            if claimed_wake.outbox_state != "claimed" || claimed_wake.outbox_attempt == 0 {
+                return Err("controller wake claim did not retain ownership".to_string());
+            }
+            let recovery = HostInteractionRecoveryEnvelope {
+                schema_version: HOST_INTERACTION_RECOVERY_SCHEMA.to_string(),
+                record_id: record_id.clone(),
+                checkpoint_key: current.checkpoint_key.clone(),
+                run_id: current.root_run_id.clone(),
+                trace_id: current.trace_id.clone(),
+                claim_mode: "recovery".to_string(),
+                resume_attempt: current.resume_attempt,
+                expected_revision: current.revision,
+                logical_cycle: request.logical_cycle,
+                interaction_id: request.interaction_id.clone(),
+                operation_id: request.operation_id.clone(),
+                tool_call_id: request.tool_call_id.clone(),
+                request_digest: request.request_digest.clone(),
+                command_id: response_command_id,
+            };
+            let result = store
+                .claim_and_consume_host_interaction_response(recovery)
+                .map_err(|error| error.to_string())?;
+            result.validate().map_err(|error| error.to_string())?;
+            if !matches!(result.kind.as_str(), "applied" | "replayed")
+                || result.record_id != record_id
+            {
+                return Err("host interaction recovery did not consume the response".to_string());
+            }
+            let completed = store
+                .complete_controller_command_wake(
+                    &wake.command_id,
+                    &wake.command_digest,
+                    &claim_token,
+                    claimed_wake.outbox_attempt,
+                    "delivered",
+                    now_unix_ms()?,
+                    None,
+                )
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "controller wake disappeared during completion".to_string())?;
+            if completed.outbox_state != "delivered" {
+                return Err("controller wake completion was not durable".to_string());
+            }
+            current = load_checkpoint_once(store, &current.checkpoint_key)?;
+            consumed_host_response = true;
+        } else {
+            let Some(claimed_wake) = store
+                .claim_controller_command_wake(
+                    &wake.command_id,
+                    &wake.command_digest,
+                    &claim_token,
+                    lease_expires_at_ms,
+                    now_ms,
+                )
+                .map_err(|error| error.to_string())?
+            else {
+                return Err("controller wake claim was lost before completion".to_string());
+            };
+            if claimed_wake.outbox_state != "claimed" || claimed_wake.outbox_attempt == 0 {
+                return Err("controller wake claim did not retain ownership".to_string());
+            }
+            let completed = store
+                .complete_controller_command_wake(
+                    &wake.command_id,
+                    &wake.command_digest,
+                    &claim_token,
+                    claimed_wake.outbox_attempt,
+                    "delivered",
+                    now_unix_ms()?,
+                    None,
+                )
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "controller wake disappeared during completion".to_string())?;
+            if completed.outbox_state != "delivered" {
+                return Err("controller wake completion was not durable".to_string());
+            }
+            current = load_checkpoint_once(store, &current.checkpoint_key)?;
+        }
+    }
+    Ok((current, consumed_host_response))
+}
+
+fn host_request_from_event(
+    checkpoint: &crate::runtime::Checkpoint,
+    interaction_id: &str,
+    request_digest: &str,
+) -> Result<HostInteractionRequest, String> {
+    for entry in &checkpoint.event_outbox {
+        let event = serde_json::from_value::<RunEvent>(entry.event.clone())
+            .map_err(|error| format!("host interaction recovery event is invalid: {error}"))?;
+        let RunEventPayload::HostInteractionRequested {
+            checkpoint_key,
+            interaction_id: event_interaction_id,
+            logical_cycle,
+            operation_id,
+            tool_call_id,
+            request_digest: event_request_digest,
+            prompt,
+            ..
+        } = event.payload
+        else {
+            continue;
+        };
+        if checkpoint_key == checkpoint.checkpoint_key
+            && event_interaction_id == interaction_id
+            && event_request_digest == request_digest
+        {
+            let request = HostInteractionRequest {
+                schema_version: HOST_INTERACTION_REQUEST_SCHEMA.to_string(),
+                interaction_id: event_interaction_id,
+                logical_cycle,
+                operation_id,
+                tool_call_id,
+                request_digest: event_request_digest,
+                prompt,
+            };
+            request.validate().map_err(|error| error.to_string())?;
+            return Ok(request);
+        }
+    }
+    Err("host interaction recovery request is missing".to_string())
+}
+
+fn checkpoint_has_unconsumed_host_interaction(
+    checkpoint: &crate::runtime::Checkpoint,
+) -> Result<bool, String> {
+    let mut requested = std::collections::BTreeSet::new();
+    let mut consumed = std::collections::BTreeSet::new();
+    for entry in &checkpoint.event_outbox {
+        let event = serde_json::from_value::<RunEvent>(entry.event.clone())
+            .map_err(|error| format!("host interaction recovery event is invalid: {error}"))?;
+        match event.payload {
+            RunEventPayload::HostInteractionRequested {
+                interaction_id,
+                request_digest,
+                ..
+            } => {
+                requested.insert((interaction_id, request_digest));
+            }
+            RunEventPayload::HostInteractionResponseConsumed {
+                interaction_id,
+                request_digest,
+                ..
+            } => {
+                consumed.insert((interaction_id, request_digest));
+            }
+            _ => {}
+        }
+    }
+    Ok(requested.into_iter().any(|key| !consumed.contains(&key)))
 }
 
 fn validate_checkpoint_identity(

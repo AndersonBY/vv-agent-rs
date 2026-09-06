@@ -1,4 +1,4 @@
-//! Strict codec for the current checkpoint v8 wire format.
+//! Strict codec for the current checkpoint v10 wire format.
 
 use std::collections::BTreeMap;
 
@@ -8,7 +8,7 @@ use serde_json::{Map, Number, Value};
 
 use crate::budget::BudgetUsageSnapshot;
 use crate::checkpoint::{
-    canonical_json_bytes, CheckpointError, CheckpointResult, CheckpointStatus,
+    canonical_json_bytes, CheckpointError, CheckpointResult, CheckpointStatus, EventCursor,
     HostInteractionRequest, SuspendedOrigin, CHECKPOINT_SCHEMA, RUN_DEFINITION_SCHEMA,
 };
 use crate::runtime::state::{
@@ -29,6 +29,7 @@ const KNOWN_FIELDS: &[&str] = &[
     "resume_attempt",
     "cycle_index",
     "status",
+    "cancel_requested",
     "active_host_interaction",
     "suspended_origin",
     "messages",
@@ -102,6 +103,10 @@ pub fn checkpoint_to_value(
     object.insert(
         "status".to_string(),
         Value::String(checkpoint.status.as_str().to_string()),
+    );
+    object.insert(
+        "cancel_requested".to_string(),
+        Value::Bool(checkpoint.cancel_requested),
     );
     object.insert(
         "active_host_interaction".to_string(),
@@ -233,7 +238,7 @@ pub fn checkpoint_from_value(
     let object = payload.as_object().ok_or_else(|| {
         CheckpointError::new(
             "checkpoint_payload_invalid",
-            "checkpoint v8 payload must be an object",
+            "checkpoint v10 payload must be an object",
         )
     })?;
     if let Some(field) = object
@@ -248,7 +253,7 @@ pub fn checkpoint_from_value(
     if object.get("schema_version").and_then(Value::as_str) != Some(CHECKPOINT_SCHEMA) {
         return Err(CheckpointError::new(
             "checkpoint_schema_unsupported",
-            "checkpoint schema_version is not vv-agent.checkpoint.v8",
+            "checkpoint schema_version is not vv-agent.checkpoint.v10",
         ));
     }
     let run_definition_schema = required_string(
@@ -300,6 +305,15 @@ pub fn checkpoint_from_value(
         )?,
         cycle_index: required_u64(object, "cycle_index", "checkpoint_cycle_invalid")?,
         status: parse_status(object, "status")?,
+        cancel_requested: object
+            .get("cancel_requested")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| {
+                CheckpointError::new(
+                    "checkpoint_status_invalid",
+                    "cancel_requested must be a boolean",
+                )
+            })?,
         active_host_interaction: parse_optional_host_interaction(
             object.get("active_host_interaction"),
         )?,
@@ -309,7 +323,7 @@ pub fn checkpoint_from_value(
         model_calls: parse_model_calls(object.get("model_calls"))?,
         shared_state: parse_object_map(object, "shared_state", "checkpoint_shared_state_invalid")?,
         budget_usage: parse_optional_budget(object.get("budget_usage"))?,
-        event_cursor: parse_optional(object.get("event_cursor"), "event_cursor")?,
+        event_cursor: parse_optional_event_cursor(object.get("event_cursor"))?,
         event_outbox: parse_array(object, "event_outbox")?
             .iter()
             .map(EventOutboxEntry::from_value)
@@ -351,7 +365,7 @@ pub fn checkpoint_to_json(
     max_extension_state_bytes: u64,
 ) -> CheckpointResult<String> {
     let value = checkpoint_to_value(checkpoint, max_extension_state_bytes)?;
-    let bytes = canonical_json_bytes(&value, "checkpoint v8")?;
+    let bytes = canonical_json_bytes(&value, "checkpoint v10")?;
     String::from_utf8(bytes).map_err(|error| {
         CheckpointError::new(
             "checkpoint_canonicalization_invalid",
@@ -464,17 +478,10 @@ fn parse_optional_budget(value: Option<&Value>) -> CheckpointResult<Option<Budge
     }
 }
 
-fn parse_optional<T>(value: Option<&Value>, field: &str) -> CheckpointResult<Option<T>>
-where
-    T: serde::de::DeserializeOwned,
-{
+fn parse_optional_event_cursor(value: Option<&Value>) -> CheckpointResult<Option<EventCursor>> {
     match value {
         None | Some(Value::Null) => Ok(None),
-        Some(value) => serde_json::from_value(value.clone())
-            .map(Some)
-            .map_err(|error| {
-                CheckpointError::new("checkpoint_field_invalid", format!("{field}: {error}"))
-            }),
+        Some(value) => EventCursor::from_value(value).map(Some),
     }
 }
 

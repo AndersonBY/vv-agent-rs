@@ -15,15 +15,26 @@ use vv_agent::types::AgentTask;
 use vv_agent::{
     AfterCycleDecision, AfterCycleHook, AfterCycleSnapshot, AgentResult, AmbiguousModelPolicy,
     AmbiguousToolPolicy, CheckpointExtension, CheckpointStatus, CheckpointStore, ClaimMode,
-    CycleDispatchResult, EventOutboxEntry, ExtensionStateEntry, InMemoryCheckpointStore,
-    InMemoryRunEventStore, LLMResponse, Message, ModelCallRecord, ModelCallStatus, ModelSettings,
-    OperationJournalEntry, OperationState, PromptBundle, ResumePolicy, RunBudgetLimits, RunEvent,
-    RuntimeRecipe, ScriptedLlmClient, TokenUsage, ToolArtifactRef, ToolIdempotency,
+    ControllerCommand, ControllerCommandVariant, ControllerHandle, CycleDispatchResult,
+    EventOutboxEntry, ExtensionStateEntry, HostInteractionAdmissionContext, HostInteractionMessage,
+    HostInteractionRequest, InMemoryCheckpointStore, InMemoryRunEventStore, LLMResponse, Message,
+    ModelCallRecord, ModelCallStatus, ModelSettings, OperationJournalEntry, OperationState,
+    PromptBundle, ReconciliationDecision, ReconciliationError, ReconciliationProvider,
+    ResumePolicy, RunBudgetLimits, RunEvent, RunEventPayload, RunEventReplayQuery, RunEventStore,
+    RuntimeRecipe, ScriptedLlmClient, TokenUsage, ToolArtifactRef, ToolExecutionResult,
+    ToolIdempotency,
 };
 
 const ENVELOPE_FIXTURE: &str = include_str!("fixtures/parity/distributed_run_envelope.json");
 const CODEC_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec.json");
 const JOURNAL_FIXTURE: &str = include_str!("fixtures/parity/operation_journal.json");
+
+#[path = "distributed_checkpoint/abort.rs"]
+mod distributed_checkpoint_abort;
+#[path = "distributed_checkpoint/receipt_retry.rs"]
+mod distributed_checkpoint_receipt_retry;
+#[path = "distributed_checkpoint/reconciliation.rs"]
+mod distributed_checkpoint_reconciliation;
 
 type ExecutorFn = dyn FnMut(
         &DistributedRunEnvelope,
@@ -145,6 +156,66 @@ fn minimal_checkpoint(
     payload["root_run_id"] = json!(root_run_id);
     payload["trace_id"] = json!(trace_id);
     checkpoint_from_value(&payload, 262_144).expect("valid minimal checkpoint")
+}
+
+fn initial_checkpoint(mut checkpoint: vv_agent::Checkpoint) -> vv_agent::Checkpoint {
+    checkpoint.resume_attempt = 1;
+    checkpoint.cycle_index = 0;
+    checkpoint.status = CheckpointStatus::Running;
+    checkpoint.cancel_requested = false;
+    checkpoint.active_host_interaction = None;
+    checkpoint.suspended_origin = None;
+    checkpoint.cycles.clear();
+    checkpoint.model_calls.clear();
+    checkpoint.event_cursor = None;
+    checkpoint.event_outbox.clear();
+    checkpoint.model_call_journal.clear();
+    checkpoint.tool_journal.clear();
+    checkpoint.revision = 0;
+    checkpoint.claim_token = None;
+    checkpoint.claimed_cycle = None;
+    checkpoint.lease_expires_at_ms = None;
+    checkpoint.terminal_result = None;
+    checkpoint.terminal_acknowledged = false;
+    checkpoint
+}
+
+fn create_claimed_snapshot(
+    store: &InMemoryCheckpointStore,
+    mut snapshot: vv_agent::Checkpoint,
+    claim_token: &str,
+    lease_expires_at_ms: u64,
+    now_ms: u64,
+) -> vv_agent::Checkpoint {
+    let key = snapshot.checkpoint_key.clone();
+    assert!(store
+        .create_checkpoint(initial_checkpoint(snapshot.clone()))
+        .expect("create initial checkpoint"));
+    let claimed = store
+        .claim_checkpoint(
+            &key,
+            1,
+            claim_token,
+            lease_expires_at_ms,
+            now_ms,
+            ClaimMode::Continue,
+        )
+        .expect("claim checkpoint")
+        .expect("claimed checkpoint");
+    snapshot.status = CheckpointStatus::Running;
+    snapshot.resume_attempt = claimed.resume_attempt;
+    snapshot.cycle_index = claimed.cycle_index;
+    snapshot.revision = claimed.revision;
+    snapshot.claim_token = claimed.claim_token.clone();
+    snapshot.claimed_cycle = claimed.claimed_cycle;
+    snapshot.lease_expires_at_ms = claimed.lease_expires_at_ms;
+    assert!(store
+        .progress_checkpoint(snapshot, claim_token, claimed.revision)
+        .expect("progress claimed checkpoint"));
+    store
+        .load_checkpoint(&key)
+        .expect("load progressed checkpoint")
+        .expect("progressed checkpoint")
 }
 
 fn journal_entry(name: &str) -> OperationJournalEntry {
@@ -453,6 +524,83 @@ fn missing_after_cycle_hook_fails_before_claim() {
 }
 
 #[test]
+fn worker_claim_is_blocked_until_host_response_recovery() {
+    let store = Arc::new(InMemoryCheckpointStore::new());
+    let checkpoint = minimal_checkpoint(
+        "worker-host-recovery-barrier",
+        "task-host-recovery-barrier",
+        "run-host-recovery-barrier",
+        "trace-host-recovery-barrier",
+    );
+    let key = checkpoint.checkpoint_key.clone();
+    store
+        .create_checkpoint(initial_checkpoint(checkpoint))
+        .expect("create initial checkpoint");
+    let claimed = store
+        .claim_checkpoint(&key, 1, "worker-owner", 10_000, 0, ClaimMode::Continue)
+        .expect("claim checkpoint")
+        .expect("claimed checkpoint");
+    let request = HostInteractionRequest::new(
+        "interaction-worker-host-recovery",
+        1,
+        "operation-worker-host-recovery",
+        "tool-worker-host-recovery",
+        "Choose an option.",
+    )
+    .expect("host interaction request");
+    let admission =
+        HostInteractionAdmissionContext::new(&key, claimed.revision, "worker-owner", 1, 0, 10_000)
+            .expect("host interaction admission");
+    let admitted = store
+        .produce_host_interaction(request.clone(), &admission)
+        .expect("produce host interaction");
+    let command = ControllerCommand::new(
+        "command-worker-host-recovery",
+        ControllerHandle::new(&key, &claimed.root_run_id, &claimed.trace_id)
+            .expect("controller handle"),
+        claimed.resume_attempt,
+        admitted.checkpoint_revision,
+        ControllerCommandVariant::HostInteractionResponse {
+            interaction_id: request.interaction_id.clone(),
+            logical_cycle: request.logical_cycle,
+            operation_id: request.operation_id.clone(),
+            tool_call_id: request.tool_call_id.clone(),
+            request_digest: request.request_digest.clone(),
+            response: HostInteractionMessage::user("approved").expect("host response"),
+        },
+    )
+    .expect("host response command");
+    store
+        .resolve_controller_command(command)
+        .expect("resolve host response");
+    let before = store
+        .load_checkpoint(&key)
+        .expect("load barrier checkpoint")
+        .expect("barrier checkpoint");
+    let executor = TestExecutor::new(|envelope, _, progress| {
+        let mut committed = progress.checkpoint().clone();
+        committed.cycle_index = u64::from(envelope.cycle_index);
+        Ok(DistributedCycleOutcome::Continue(committed))
+    });
+    let registry = registry_with_store(store.clone(), None);
+    let worker = DistributedCycleWorker::new(registry).with_checkpoint_executor(Arc::new(executor));
+    for claim_mode in [ClaimMode::Continue, ClaimMode::Recovery] {
+        let error = worker
+            .run_cycle(envelope(&before, 1, claim_mode, 1_000, false))
+            .expect_err("ordinary worker claim must stop at host recovery barrier");
+        assert!(
+            error.contains("host_interaction_recovery_required"),
+            "unexpected worker barrier error: {error}"
+        );
+        let after = store
+            .load_checkpoint(&key)
+            .expect("load after worker barrier")
+            .expect("checkpoint after worker barrier");
+        assert_eq!(after, before);
+    }
+}
+
+#[test]
 fn worker_restores_stateful_after_cycle_hook_before_next_cycle() {
     let store = Arc::new(InMemoryCheckpointStore::new());
     let mut checkpoint = minimal_checkpoint(
@@ -564,13 +712,23 @@ fn worker_resolves_every_capability_before_claim() {
 #[test]
 fn live_claim_redelivery_does_not_steal_or_increment_attempt() {
     let store = Arc::new(InMemoryCheckpointStore::new());
-    let mut checkpoint = minimal_checkpoint("live-claim", "task-live", "run-live", "trace-live");
-    checkpoint.revision = 1;
-    checkpoint.claim_token = Some("owner-live".to_string());
-    checkpoint.claimed_cycle = Some(1);
-    checkpoint.lease_expires_at_ms =
-        Some(u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap() + 60_000);
-    store.create_checkpoint(checkpoint.clone()).unwrap();
+    let checkpoint = minimal_checkpoint("live-claim", "task-live", "run-live", "trace-live");
+    let now_ms = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();
+    let lease_expires_at_ms = now_ms + 60_000;
+    store
+        .create_checkpoint(initial_checkpoint(checkpoint))
+        .unwrap();
+    let checkpoint = store
+        .claim_checkpoint(
+            "live-claim",
+            1,
+            "owner-live",
+            lease_expires_at_ms,
+            now_ms,
+            ClaimMode::Continue,
+        )
+        .unwrap()
+        .unwrap();
     let registry = registry_with_store(store.clone(), None);
 
     let dispatch = DistributedCycleWorker::new(registry)
@@ -599,11 +757,7 @@ fn expired_started_unknown_tool_suspends_for_reconciliation() {
     let mut started = journal_entry("tool_started");
     started.idempotency_support = Some(ToolIdempotency::Unknown);
     checkpoint.tool_journal.push(started);
-    checkpoint.revision = 1;
-    checkpoint.claim_token = Some("expired-owner".to_string());
-    checkpoint.claimed_cycle = Some(1);
-    checkpoint.lease_expires_at_ms = Some(1);
-    store.create_checkpoint(checkpoint.clone()).unwrap();
+    let checkpoint = create_claimed_snapshot(store.as_ref(), checkpoint, "expired-owner", 1, 0);
     let calls = Arc::new(AtomicUsize::new(0));
     let calls_for_executor = calls.clone();
     let executor = TestExecutor::new(move |_, _, _| {
@@ -644,7 +798,12 @@ fn redelivery_replays_committed_receipt_without_external_call() {
     let succeeded = journal_entry("model_succeeded");
     attach_succeeded_model_accounting(&mut checkpoint, &succeeded);
     checkpoint.model_call_journal.push(succeeded);
-    store.create_checkpoint(checkpoint.clone()).unwrap();
+    let mut checkpoint =
+        create_claimed_snapshot(store.as_ref(), checkpoint, "replay-owner", 10_000, 1);
+    checkpoint.claim_token = None;
+    checkpoint.claimed_cycle = None;
+    checkpoint.lease_expires_at_ms = None;
+    store.save_checkpoint(checkpoint.clone()).unwrap();
     let external_calls = Arc::new(AtomicUsize::new(0));
     let executor = TestExecutor::new(move |envelope, _, progress| {
         assert_eq!(
@@ -674,82 +833,6 @@ fn redelivery_replays_committed_receipt_without_external_call() {
 }
 
 #[test]
-fn idempotent_retry_reuses_key_and_committed_cycle_absorbs_stale_redelivery() {
-    let store = Arc::new(InMemoryCheckpointStore::new());
-    let mut checkpoint = minimal_checkpoint(
-        "idempotent-retry",
-        "task-idempotent",
-        "run-idempotent",
-        "trace-idempotent",
-    );
-    let started = journal_entry("tool_started");
-    let original_key = started.idempotency_key.clone();
-    checkpoint.tool_journal.push(started);
-    checkpoint.run_definition["checkpoint_policy"]["ambiguous_tool_policy"] =
-        json!("retry_idempotent_only");
-    checkpoint.run_definition_digest =
-        vv_agent::run_definition_digest(&checkpoint.run_definition).unwrap();
-    checkpoint.revision = 1;
-    checkpoint.claim_token = Some("expired-idempotent-owner".to_string());
-    checkpoint.claimed_cycle = Some(1);
-    checkpoint.lease_expires_at_ms = Some(1);
-    store.create_checkpoint(checkpoint.clone()).unwrap();
-    let external_calls = Arc::new(AtomicUsize::new(0));
-    let external_calls_for_executor = external_calls.clone();
-    let executor = TestExecutor::new(move |envelope, _, progress| {
-        let durable = &progress.checkpoint().tool_journal[0];
-        assert_eq!(durable.state, OperationState::Planned);
-        assert_eq!(durable.attempt, 2);
-        assert_eq!(durable.idempotency_key, original_key);
-
-        let mut started = progress.checkpoint().clone();
-        started.tool_journal[0]
-            .transition_to(OperationState::Started)
-            .map_err(|error| error.to_string())?;
-        progress.persist(started)?;
-        external_calls_for_executor.fetch_add(1, Ordering::SeqCst);
-
-        let mut succeeded = progress.checkpoint().clone();
-        succeeded.tool_journal[0].result = Some(json!({"receipt_id": "receipt-1"}));
-        succeeded.tool_journal[0]
-            .transition_to(OperationState::Succeeded)
-            .map_err(|error| error.to_string())?;
-        progress.persist(succeeded)?;
-
-        let mut committed = progress.checkpoint().clone();
-        committed.cycle_index = u64::from(envelope.cycle_index);
-        Ok(DistributedCycleOutcome::Continue(committed))
-    });
-    let registry = registry_with_store(store.clone(), None);
-    let worker = DistributedCycleWorker::new(registry).with_checkpoint_executor(Arc::new(executor));
-    let mut stale_envelope = envelope(&checkpoint, 1, ClaimMode::Continue, 1_000, false);
-    stale_envelope.checkpoint_config.ambiguous_tool_policy =
-        AmbiguousToolPolicy::RetryIdempotentOnly;
-
-    let first = worker
-        .run_cycle_with_delivery(
-            stale_envelope.clone(),
-            DistributedDeliveryMetadata::redelivery(2),
-        )
-        .unwrap();
-    assert!(matches!(first, CycleDispatchResult::Committed { .. }));
-    assert_eq!(external_calls.load(Ordering::SeqCst), 1);
-
-    let stale_redelivery = worker
-        .run_cycle_with_delivery(stale_envelope, DistributedDeliveryMetadata::redelivery(3))
-        .unwrap();
-    assert!(matches!(
-        stale_redelivery,
-        CycleDispatchResult::Committed { .. }
-    ));
-    assert_eq!(external_calls.load(Ordering::SeqCst), 1);
-    let persisted = store.load_checkpoint("idempotent-retry").unwrap().unwrap();
-    assert_eq!(persisted.cycle_index, 1);
-    assert_eq!(persisted.resume_attempt, 2);
-    assert!(persisted.tool_journal.is_empty());
-}
-
-#[test]
 fn heartbeat_does_not_overwrite_progress_revision_or_journal() {
     let store = Arc::new(InMemoryCheckpointStore::new());
     let checkpoint = minimal_checkpoint(
@@ -762,9 +845,9 @@ fn heartbeat_does_not_overwrite_progress_revision_or_journal() {
     let store_for_executor = store.clone();
     let executor = TestExecutor::new(move |envelope, _, progress| {
         let mut planned = progress.checkpoint().clone();
-        planned
-            .model_call_journal
-            .push(journal_entry("model_planned"));
+        let completed = journal_entry("model_succeeded");
+        attach_succeeded_model_accounting(&mut planned, &completed);
+        planned.model_call_journal.push(completed);
         let progressed = progress.persist(planned)?;
         let first_expiry = progressed.lease_expires_at_ms.unwrap();
         std::thread::sleep(Duration::from_millis(180));
@@ -820,7 +903,7 @@ fn terminal_candidate_retains_claim_without_finalizing_or_acknowledging() {
             EventOutboxEntry::pending(
                 "evt-terminal-two-phase",
                 json!({
-                    "version": "v4",
+                    "version": "v5",
                     "type": "run_completed",
                     "event_id": "evt-terminal-two-phase",
                     "run_id": "run-terminal",
@@ -874,127 +957,4 @@ fn terminal_candidate_retains_claim_without_finalizing_or_acknowledging() {
         .load_checkpoint("terminal-two-phase")
         .unwrap()
         .is_some());
-}
-
-#[test]
-fn definition_and_resume_attempt_mismatch_fail_before_claim() {
-    let store = Arc::new(InMemoryCheckpointStore::new());
-    let checkpoint = minimal_checkpoint(
-        "identity-mismatch",
-        "task-identity",
-        "run-identity",
-        "trace-identity",
-    );
-    store.create_checkpoint(checkpoint.clone()).unwrap();
-    let registry = registry_with_store(store.clone(), None);
-    let worker = DistributedCycleWorker::new(registry);
-
-    let mut wrong_definition = envelope(&checkpoint, 1, ClaimMode::Continue, 1_000, false);
-    wrong_definition.run_definition_digest = "d".repeat(64);
-    assert_eq!(
-        worker.run_cycle(wrong_definition).unwrap_err(),
-        "checkpoint_definition_mismatch"
-    );
-
-    let mut wrong_task = envelope(&checkpoint, 1, ClaimMode::Continue, 1_000, false);
-    wrong_task.task.prompt_bundle = PromptBundle::from_instruction_text("tampered prompt")
-        .expect("valid tampered prompt bundle");
-    assert!(worker
-        .run_cycle(wrong_task)
-        .unwrap_err()
-        .contains("checkpoint_definition_mismatch"));
-
-    let mut wrong_budget = envelope(&checkpoint, 1, ClaimMode::Continue, 1_000, false);
-    wrong_budget.budget_limits = Some(
-        RunBudgetLimits::builder()
-            .max_total_tokens(10)
-            .build()
-            .unwrap(),
-    );
-    assert!(worker
-        .run_cycle(wrong_budget)
-        .unwrap_err()
-        .contains("checkpoint_definition_mismatch"));
-
-    let mut wrong_policy = envelope(&checkpoint, 1, ClaimMode::Continue, 1_000, false);
-    wrong_policy.recipe.capabilities.tool_policy.allowed_tools = Some(Vec::new());
-    assert!(worker
-        .run_cycle(wrong_policy)
-        .unwrap_err()
-        .contains("checkpoint_definition_mismatch"));
-
-    let mut wrong_attempt = envelope(&checkpoint, 1, ClaimMode::Continue, 1_000, false);
-    wrong_attempt.resume_attempt = 2;
-    assert_eq!(
-        worker.run_cycle(wrong_attempt).unwrap_err(),
-        "checkpoint_resume_attempt_mismatch"
-    );
-    let persisted = store.load_checkpoint("identity-mismatch").unwrap().unwrap();
-    assert_eq!(persisted.revision, 0);
-    assert!(persisted.claim_token.is_none());
-}
-
-#[test]
-fn definition_validation_redacts_credentials_and_normalizes_tool_policy_sets() {
-    let store = Arc::new(InMemoryCheckpointStore::new());
-    let mut checkpoint = minimal_checkpoint(
-        "normalized-definition",
-        "task-normalized",
-        "run-normalized",
-        "trace-normalized",
-    );
-    checkpoint.run_definition["credential_slots"] =
-        json!(["/model/settings/extra_headers/authorization"]);
-    checkpoint.run_definition["model"]["settings"] = json!({
-        "extra_headers": {
-            "authorization": vv_agent::checkpoint::CREDENTIAL_REDACTED,
-        },
-    });
-    checkpoint.run_definition["tool_policy"]["allowed_tools"] = json!(["alpha", "beta"]);
-    checkpoint.run_definition["tool_policy"]["disallowed_tools"] =
-        json!(["blocked-a", "blocked-b"]);
-    checkpoint.run_definition_digest =
-        vv_agent::run_definition_digest(&checkpoint.run_definition).unwrap();
-    store.create_checkpoint(checkpoint.clone()).unwrap();
-
-    let executor = TestExecutor::new(move |envelope, _, progress| {
-        let mut committed = progress.checkpoint().clone();
-        committed.cycle_index = u64::from(envelope.cycle_index);
-        Ok(DistributedCycleOutcome::Continue(committed))
-    });
-    let registry = registry_with_store(store.clone(), None);
-    let worker = DistributedCycleWorker::new(registry).with_checkpoint_executor(Arc::new(executor));
-    let mut envelope = envelope(&checkpoint, 1, ClaimMode::Continue, 1_000, false);
-    envelope.checkpoint_config.credential_slots =
-        vec!["/model/settings/extra_headers/authorization".to_string()];
-    envelope.task.model_settings = Some(
-        ModelSettings::builder()
-            .extra_header("Authorization", "live-secret")
-            .build(),
-    );
-    envelope.recipe.capabilities.tool_policy.allowed_tools = Some(vec![
-        "beta".to_string(),
-        "alpha".to_string(),
-        "alpha".to_string(),
-    ]);
-    envelope.recipe.capabilities.tool_policy.disallowed_tools = vec![
-        "blocked-b".to_string(),
-        "blocked-a".to_string(),
-        "blocked-b".to_string(),
-    ];
-
-    let dispatch = worker.run_cycle(envelope).unwrap();
-
-    assert!(matches!(
-        dispatch,
-        CycleDispatchResult::Committed {
-            committed_cycle: 1,
-            ..
-        }
-    ));
-    let persisted = store
-        .load_checkpoint("normalized-definition")
-        .unwrap()
-        .unwrap();
-    assert_eq!(persisted.cycle_index, 1);
 }

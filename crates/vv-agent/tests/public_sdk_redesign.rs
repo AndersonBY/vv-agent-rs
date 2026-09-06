@@ -172,7 +172,11 @@ async fn guardrails_rewrite_input_and_block_forbidden_output() {
         .expect("blocked result");
     assert_eq!(blocked.status(), AgentStatus::Failed);
     assert_eq!(
-        blocked.result().error.as_deref(),
+        blocked
+            .result()
+            .error
+            .as_ref()
+            .map(|error| error.message.as_str()),
         Some("blocked final output")
     );
 }

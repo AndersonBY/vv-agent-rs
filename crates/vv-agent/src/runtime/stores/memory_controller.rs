@@ -56,109 +56,25 @@ fn recovery_identity_matches(
 }
 
 fn recovery_lease_deadline() -> u64 {
-    let now = std::time::SystemTime::now()
+    current_time_ms().saturating_add(5 * 60 * 1_000)
+}
+
+fn current_time_ms() -> u64 {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0);
-    now.saturating_add(5 * 60 * 1_000)
+        .unwrap_or(0)
 }
 
 fn sanitize_public_prompt(prompt: &str) -> String {
     crate::checkpoint::sanitize_public_text(prompt)
 }
 
-fn append_control_event(
-    checkpoint: &mut Checkpoint,
-    command_id: &str,
-    payload: RunEventPayload,
-) -> CheckpointResult<()> {
-    append_control_event_with_completion(checkpoint, command_id, payload, None)
-}
-
-fn append_control_event_with_result(
-    checkpoint: &mut Checkpoint,
-    command_id: &str,
-    payload: RunEventPayload,
-    result: &AgentResult,
-) -> CheckpointResult<()> {
-    append_control_event_with_completion(checkpoint, command_id, payload, Some(result))
-}
-
-fn append_control_event_with_completion(
-    checkpoint: &mut Checkpoint,
-    command_id: &str,
-    payload: RunEventPayload,
-    result: Option<&AgentResult>,
-) -> CheckpointResult<()> {
-    // Controller events describe the checkpoint that was just committed.  A
-    // control transition must never invent the next execution cycle; the
-    // distributed worker owns that cycle claim and will emit its own events.
-    let cycle_index = u32::try_from(checkpoint.cycle_index)
-        .ok()
-        .filter(|cycle| *cycle > 0);
-    let event_kind = match &payload {
-        RunEventPayload::RunStateChanged { .. } => "run_state_changed",
-        RunEventPayload::RunCancelled { .. } => "run_cancelled",
-        RunEventPayload::RunFailed { .. } => "run_failed",
-        _ => "control",
-    };
-    let mut event = RunEvent::new(
-        checkpoint.root_run_id.clone(),
-        checkpoint.trace_id.clone(),
-        "vv-agent",
-        cycle_index,
-        payload,
-    );
-    if let Some(result) = result {
-        event = event
-            .with_completion_details(
-                result.completion_reason,
-                result.completion_tool_name.as_deref(),
-                result.partial_output.as_deref(),
-            )
-            .with_budget_details(result.budget_usage.as_ref(), result.budget_exhaustion.as_ref());
-        if let Some(error_code) = result.error_code.as_deref() {
-            event
-                .metadata
-                .insert("error_code".to_string(), serde_json::Value::String(error_code.to_string()));
-        }
-    }
-    event.event_id = EventId::stable(format!("controller-{command_id}-{event_kind}"))
-        .map_err(|error| CheckpointError::new("event_identity_conflict", error))?;
-    let event_value = serde_json::to_value(&event)
-        .map_err(|error| CheckpointError::new("checkpoint_event_invalid", error.to_string()))?;
-    checkpoint
-        .event_outbox
-        .push(crate::runtime::state::EventOutboxEntry::pending(
-            event.event_id.as_str(),
-            event_value,
-        )?);
-    Ok(())
-}
-
-fn control_result(
-    checkpoint: &Checkpoint,
-    reason: CompletionReason,
-    error: &str,
-    code: Option<&str>,
-) -> AgentResult {
-    let mut result = AgentResult::failed(error);
-    result.messages = checkpoint.messages.clone();
-    result.cycles = checkpoint.cycles.clone();
-    result.shared_state = checkpoint.shared_state.clone();
-    result.budget_usage = checkpoint.budget_usage.clone();
-    result.checkpoint_key = Some(checkpoint.checkpoint_key.clone());
-    result.completion_reason = Some(reason);
-    result.error_code = code.map(str::to_string);
-    result.token_usage =
-        crate::runtime::token_usage::summarize_task_token_usage(&checkpoint.model_calls);
-    result
-}
-
 fn apply_controller_command(
     checkpoints: &mut BTreeMap<String, Checkpoint>,
     ledger: &mut ControllerLedger,
     command: &ControllerCommand,
+    now_ms: u64,
 ) -> CheckpointResult<(ControllerCommandReceipt, ControllerCommandResolution)> {
     let handle = &command.handle;
     let current = checkpoints
@@ -187,7 +103,14 @@ fn apply_controller_command(
             "controller commands cannot mutate a terminal checkpoint",
         ));
     }
-    if current.claim_token.is_some() {
+    let claim_expired = current.claim_token.is_some()
+        && current
+            .lease_expires_at_ms
+            .is_some_and(|lease| lease <= now_ms);
+    if current.claim_token.is_some()
+        && !claim_expired
+        && !matches!(&command.command, ControllerCommandVariant::Cancel)
+    {
         return Err(CheckpointError::new(
             "controller_command_claim_active",
             "controller commands require a released execution claim",
@@ -195,6 +118,8 @@ fn apply_controller_command(
     }
     if current.has_ambiguous_operation()
         && !matches!(&command.command, ControllerCommandVariant::Abort)
+        && !(matches!(&command.command, ControllerCommandVariant::Cancel)
+            && current.claim_token.is_some())
     {
         return Err(CheckpointError::new(
             "controller_command_ambiguity_requires_reconciliation",
@@ -209,6 +134,25 @@ fn apply_controller_command(
     }
 
     let mut updated = current.clone();
+    if claim_expired
+        && matches!(
+            &command.command,
+            ControllerCommandVariant::Cancel | ControllerCommandVariant::Suspend
+        )
+    {
+        if matches!(&command.command, ControllerCommandVariant::Cancel) {
+            updated.resume_attempt = updated.resume_attempt.checked_add(1).ok_or_else(|| {
+                CheckpointError::new(
+                    "checkpoint_resume_attempt_invalid",
+                    "resume_attempt overflow",
+                )
+            })?;
+            updated.cancel_requested = true;
+        }
+        updated.claim_token = None;
+        updated.claimed_cycle = None;
+        updated.lease_expires_at_ms = None;
+    }
     let mut wake = ControllerCommandWake::none();
     match &command.command {
         ControllerCommandVariant::HostInteractionResponse {
@@ -389,36 +333,46 @@ fn apply_controller_command(
             updated.validate()?;
         }
         ControllerCommandVariant::Cancel => {
-            let result = control_result(
-                &current,
-                CompletionReason::Cancelled,
-                "Operation was cancelled",
-                Some("cancelled"),
-            );
-            updated.status = crate::checkpoint::CheckpointStatus::Failed;
-            updated.active_host_interaction = None;
-            updated.suspended_origin = None;
-            updated.claim_token = None;
-            updated.claimed_cycle = None;
-            updated.lease_expires_at_ms = None;
-            updated.terminal_result = Some(result.to_dict());
-            updated.revision = current.revision + 1;
-            append_control_event(
-                &mut updated,
-                &command.command_id,
-                RunEventPayload::RunStateChanged {
-                    state: "failed".to_string(),
-                },
-            )?;
-            append_control_event_with_result(
-                &mut updated,
-                &command.command_id,
-                RunEventPayload::RunCancelled {
-                    reason: "Operation was cancelled".to_string(),
-                },
-                &result,
-            )?;
-            updated.validate()?;
+            if current.claim_token.is_some() && !claim_expired {
+                if !current.cancel_requested {
+                    updated.cancel_requested = true;
+                    append_cancel_requested_event(&mut updated, &command.command_id)?;
+                }
+                updated.validate()?;
+            } else {
+                let result = control_result(
+                    &current,
+                    CompletionReason::Cancelled,
+                    "Operation was cancelled",
+                    Some("cancelled_with_unknown_outcome"),
+                );
+                updated.status = crate::checkpoint::CheckpointStatus::Failed;
+                updated.active_host_interaction = None;
+                updated.suspended_origin = None;
+                updated.claim_token = None;
+                updated.claimed_cycle = None;
+                updated.lease_expires_at_ms = None;
+                updated.terminal_result = Some(result.to_dict());
+                close_unresolved_tools(&mut updated, "cancelled")?;
+                updated.model_call_journal.clear();
+                updated.revision = current.revision + 1;
+                append_control_event(
+                    &mut updated,
+                    &command.command_id,
+                    RunEventPayload::RunStateChanged {
+                        state: "failed".to_string(),
+                    },
+                )?;
+                append_control_event_with_result(
+                    &mut updated,
+                    &command.command_id,
+                    RunEventPayload::RunCancelled {
+                        reason: "Operation was cancelled".to_string(),
+                    },
+                    &result,
+                )?;
+                updated.validate()?;
+            }
         }
         ControllerCommandVariant::Abort => {
             if current.status != crate::checkpoint::CheckpointStatus::ReconciliationRequired {
@@ -444,10 +398,10 @@ fn apply_controller_command(
             let mut result = control_result(
                 &current,
                 CompletionReason::Failed,
-                "failed",
+                "Operator accepted that the external outcome is unknown.",
                 Some("operator_abort_with_unknown_outcome"),
             );
-            result.resume_observation = observation;
+            result.resume_observations = observation.into_iter().collect();
             updated.status = crate::checkpoint::CheckpointStatus::Failed;
             updated.active_host_interaction = None;
             updated.suspended_origin = None;
@@ -455,6 +409,8 @@ fn apply_controller_command(
             updated.claimed_cycle = None;
             updated.lease_expires_at_ms = None;
             updated.terminal_result = Some(result.to_dict());
+            close_unresolved_tools(&mut updated, "operator_abort")?;
+            updated.model_call_journal.clear();
             updated.revision = current.revision + 1;
             append_control_event(
                 &mut updated,
@@ -509,6 +465,7 @@ pub(crate) fn apply_controller_command_single(
     checkpoint: Checkpoint,
     host_record: Option<HostInteractionRecord>,
     command: &ControllerCommand,
+    now_ms: u64,
 ) -> CheckpointResult<(
     Checkpoint,
     Option<HostInteractionRecord>,
@@ -524,7 +481,8 @@ pub(crate) fn apply_controller_command_single(
             .host_interactions
             .insert(record.record_id.clone(), record);
     }
-    let (receipt, resolution) = apply_controller_command(&mut checkpoints, &mut ledger, command)?;
+    let (receipt, resolution) =
+        apply_controller_command(&mut checkpoints, &mut ledger, command, now_ms)?;
     let updated = checkpoints.remove(&checkpoint_key).ok_or_else(|| {
         CheckpointError::new(
             "controller_command_internal",

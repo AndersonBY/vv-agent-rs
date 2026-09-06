@@ -701,7 +701,7 @@ fn run_event_from_fixture(mut event: Value) -> RunEvent {
     let object = event.as_object_mut().expect("tool lifecycle event object");
     object
         .entry("version".to_string())
-        .or_insert_with(|| json!("v4"));
+        .or_insert_with(|| json!("v5"));
     object
         .entry("run_id".to_string())
         .or_insert_with(|| json!("run_tool"));

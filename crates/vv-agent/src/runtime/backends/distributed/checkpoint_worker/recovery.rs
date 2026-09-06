@@ -249,6 +249,21 @@ pub(super) fn reconcile_recovery(
         }
 
         let mut snapshot = progress.checkpoint.clone();
+        let unknown_tool_outcome = kind == OperationKind::Tool
+            && decision.kind == ReconciliationDecisionKind::RecordFailure
+            && decision
+                .error
+                .as_ref()
+                .is_some_and(|error| error.code == "tool_outcome_unknown");
+        let checkpoint_key = snapshot.checkpoint_key.clone();
+        let receipt_result = crate::runtime::checkpoint_resume::reconciliation_tool_result(
+            match kind {
+                OperationKind::Model => &snapshot.model_call_journal[index],
+                OperationKind::Tool => &snapshot.tool_journal[index],
+            },
+            &decision,
+        )
+        .map_err(|error| error.to_string())?;
         let entry = match kind {
             OperationKind::Model => &mut snapshot.model_call_journal[index],
             OperationKind::Tool => &mut snapshot.tool_journal[index],
@@ -257,31 +272,36 @@ pub(super) fn reconcile_recovery(
             ReconciliationDecisionKind::Retry => {
                 entry.retry().map_err(|error| error.to_string())?;
             }
-            ReconciliationDecisionKind::ReplaySuccess => {
-                match kind {
-                    OperationKind::Model => entry.response = decision.response,
-                    OperationKind::Tool => entry.result = decision.result,
-                }
-                entry
-                    .transition_to(OperationState::Succeeded)
-                    .map_err(|error| error.to_string())?;
-            }
-            ReconciliationDecisionKind::RecordFailure => {
-                let error = decision
-                    .error
-                    .expect("validated record_failure carries an error");
-                entry.error = Some(OperationError::new(
-                    error.code,
-                    error.message,
-                    error.retryable,
-                ));
-                entry
-                    .transition_to(OperationState::Failed)
-                    .map_err(|error| error.to_string())?;
+            ReconciliationDecisionKind::ReplaySuccess
+            | ReconciliationDecisionKind::RecordFailure => {
+                crate::runtime::checkpoint_resume::apply_reconciliation_decision(
+                    entry,
+                    &decision,
+                    &checkpoint_key,
+                    unknown_tool_outcome.then_some(&observation),
+                )
+                .map_err(|error| error.to_string())?;
             }
             ReconciliationDecisionKind::Abort => {
-                let error = decision.error.expect("validated abort carries an error");
-                let result = AgentResult::failed(format!("{}: {}", error.code, error.message));
+                decision
+                    .error
+                    .as_ref()
+                    .expect("validated abort carries an error");
+                let observation = resume_observation(entry)?;
+                let mut result = AgentResult::failed_with_code(
+                    "operator_abort_with_unknown_outcome",
+                    "Operator accepted that the external outcome is unknown.",
+                    false,
+                );
+                result.messages = snapshot.messages.clone();
+                result.cycles = snapshot.cycles.clone();
+                result.partial_output = crate::types::last_assistant_output(&snapshot.cycles);
+                result.budget_usage = snapshot.budget_usage.clone();
+                result.checkpoint_key = Some(snapshot.checkpoint_key.clone());
+                result.resume_observations = vec![observation];
+                result.shared_state = snapshot.shared_state.clone();
+                result.token_usage =
+                    crate::runtime::summarize_task_token_usage(&snapshot.model_calls);
                 let cycle_index = entry.cycle_index;
                 snapshot.status = CheckpointStatus::Failed;
                 snapshot.terminal_result = Some(result.to_dict());
@@ -294,6 +314,13 @@ pub(super) fn reconcile_recovery(
             ReconciliationDecisionKind::Defer => {
                 unreachable!("defer returned before mutating the journal")
             }
+        }
+        if let Some(result) = receipt_result {
+            let entry = snapshot.tool_journal[index].clone();
+            let receipt = crate::runtime::state::receipt_event(&snapshot, &entry, &result)
+                .map_err(|error| error.to_string())?;
+            crate::runtime::state::append_event_outbox_once(&mut snapshot.event_outbox, receipt)
+                .map_err(|error| error.to_string())?;
         }
         progress.persist(snapshot)?;
     }
@@ -342,8 +369,9 @@ pub(super) fn default_reconciliation_decision(
 ) -> ReconciliationDecision {
     match entry.kind {
         OperationKind::Model
-            if config.ambiguous_model_policy
-                == crate::checkpoint::AmbiguousModelPolicy::RetryWithDuplicateRisk =>
+            if entry.attempt < 2
+                && config.ambiguous_model_policy
+                    == crate::checkpoint::AmbiguousModelPolicy::RetryWithDuplicateRisk =>
         {
             ReconciliationDecision::retry()
         }
@@ -353,6 +381,16 @@ pub(super) fn default_reconciliation_decision(
                 && entry.idempotency_support == Some(ToolIdempotency::Supported) =>
         {
             ReconciliationDecision::retry()
+        }
+        OperationKind::Tool
+            if config.ambiguous_tool_policy
+                == crate::checkpoint::AmbiguousToolPolicy::SurfaceToModel =>
+        {
+            ReconciliationDecision::record_failure(crate::checkpoint::ReconciliationError::new(
+                "tool_outcome_unknown",
+                "The tool outcome is unknown.",
+                false,
+            ))
         }
         _ => ReconciliationDecision::defer(),
     }
@@ -383,9 +421,21 @@ pub(super) fn commit_cycle(
     mut checkpoint: Checkpoint,
     progress: &mut DistributedCheckpointProgress,
     heartbeat_status: &LeaseHeartbeatStatus,
+    event_store: Option<&dyn RunEventStore>,
+    event_sink: &CheckpointEventSink,
     cycle_index: u64,
 ) -> Result<(), String> {
     align_active_claim(&mut checkpoint, &progress.checkpoint);
+    if checkpoint.event_outbox.iter().any(|entry| {
+        entry.state == "pending"
+            && entry.event.get("type").and_then(serde_json::Value::as_str)
+                == Some("tool_call_completed")
+    }) {
+        checkpoint.cycle_index = progress.checkpoint.cycle_index;
+        progress.persist(checkpoint)?;
+        progress.deliver_pending_outbox(event_store, event_sink)?;
+        checkpoint = progress.checkpoint.clone();
+    }
     checkpoint.cycle_index = cycle_index;
     checkpoint.status = CheckpointStatus::Running;
     checkpoint.terminal_result = None;
@@ -418,12 +468,14 @@ pub(super) fn prepare_terminal_candidate(
     if !terminal_status.is_terminal() {
         return Err("distributed terminal outcome requires a terminal status".to_string());
     }
-    let result = AgentResult::from_dict(&terminal_result)?;
-
     let mut pending = progress.checkpoint.clone();
     pending.extension_state = terminal.extension_state;
     let persisted = progress.persist(pending)?;
-    Ok((result, persisted.revision))
+    let authoritative = persisted
+        .terminal_result
+        .as_ref()
+        .unwrap_or(&terminal_result);
+    Ok((AgentResult::from_dict(authoritative)?, persisted.revision))
 }
 
 pub(super) fn align_active_claim(snapshot: &mut Checkpoint, current: &Checkpoint) {
@@ -463,7 +515,7 @@ pub(super) fn reconciliation_candidate(checkpoint: &Checkpoint) -> Result<AgentR
         budget_usage: checkpoint.budget_usage.clone(),
         budget_exhaustion: None,
         checkpoint_key: Some(checkpoint.checkpoint_key.clone()),
-        resume_observation: Some(observation),
+        resume_observations: vec![observation],
         final_answer: None,
         wait_reason: None,
         error: None,

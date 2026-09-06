@@ -29,8 +29,8 @@ use wire::{
 pub struct RunEventVersion(String);
 
 impl RunEventVersion {
-    pub fn v4() -> Self {
-        Self("v4".to_string())
+    pub fn v5() -> Self {
+        Self("v5".to_string())
     }
 
     pub fn as_str(&self) -> &str {
@@ -39,7 +39,7 @@ impl RunEventVersion {
 }
 impl Default for RunEventVersion {
     fn default() -> Self {
-        Self::v4()
+        Self::v5()
     }
 }
 
@@ -188,7 +188,7 @@ impl<'de> Deserialize<'de> for RunEvent {
         let value = Value::deserialize(deserializer)?;
         validate_event_wire_shape(&value).map_err(D::Error::custom)?;
         let wire: RunEventWire = serde_json::from_value(value.clone()).map_err(D::Error::custom)?;
-        if wire.version.as_str() != "v4" {
+        if wire.version.as_str() != "v5" {
             return Err(D::Error::custom(format!(
                 "unsupported run event version `{}`",
                 wire.version.as_str()
@@ -273,7 +273,7 @@ impl RunEvent {
         let mut extra_fields = Metadata::new();
         add_constructed_supplemental_fields(&payload, &mut extra_fields);
         Self {
-            version: RunEventVersion::v4(),
+            version: RunEventVersion::v5(),
             event_id: EventId::new(),
             run_id: run_id.into(),
             trace_id: trace_id.into(),
@@ -830,6 +830,14 @@ impl RunEvent {
 
     pub fn with_metadata(mut self, key: impl Into<String>, value: Value) -> Self {
         self.metadata.insert(key.into(), value);
+        self
+    }
+
+    pub(crate) fn with_cancel_requested_transition(mut self) -> Self {
+        self.extra_fields.insert(
+            "cancel_requested".to_string(),
+            serde_json::json!({"from": false, "to": true}),
+        );
         self
     }
 

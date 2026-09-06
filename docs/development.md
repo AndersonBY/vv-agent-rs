@@ -6,7 +6,7 @@ The repository vendors an immutable snapshot of the shared Python/Rust
 contract. Verify it before changing or releasing shared behavior:
 
 ```bash
-python3 scripts/contract_snapshot.py check
+python3 scripts/contract_snapshot.py check --source ../vv-agent-contract
 ```
 
 Canonical fixtures live in `../vv-agent-contract/`; never edit
@@ -59,7 +59,7 @@ cargo test -p vv-agent --test examples_coverage
 Run broad checks before reporting a shared behavior change:
 
 ```bash
-cargo fmt --check
+cargo fmt --all -- --check
 cargo check --examples
 cargo test -p vv-agent -- --test-threads=1
 ```

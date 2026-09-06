@@ -452,7 +452,10 @@ fn thread_backend_execute_honors_cancellation_before_cycle() {
     );
 
     assert_eq!(result.status, AgentStatus::Failed);
-    assert_eq!(result.error.as_deref(), Some("Operation was cancelled"));
+    assert_eq!(
+        result.error.as_ref().map(|error| error.message.as_str()),
+        Some("Operation was cancelled")
+    );
     assert_eq!(result.messages.len(), 1);
 }
 

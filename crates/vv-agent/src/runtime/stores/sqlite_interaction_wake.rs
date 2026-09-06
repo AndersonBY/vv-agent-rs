@@ -14,6 +14,18 @@ fn load_controller_wake_row(
     command_id: &str,
     command_digest: &str,
 ) -> CheckpointResult<Option<SqliteControllerWakeRow>> {
+    let Some((bound_receipt, bound_command)) = load_controller_receipt(transaction, command_id)?
+    else {
+        return Ok(None);
+    };
+    if bound_receipt.command_digest != command_digest
+        || bound_command.command_digest != command_digest
+    {
+        return Err(CheckpointError::new(
+            "controller_command_conflict",
+            "controller wake command digest is not bound to its receipt",
+        ));
+    }
     let raw = transaction
         .query_row(
             "SELECT receipt, command_digest, outbox_state, attempt, claim_token, lease_expires_at_ms, delivered_at_ms, last_error FROM controller_command_receipts WHERE command_id = ?1 AND command_digest = ?2",
@@ -174,12 +186,26 @@ fn sqlite_claim_controller_command_wake(
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(sqlite_error)?;
-    let Some((mut receipt, _, _, _, _, lease, _, _)) =
+    let Some((mut receipt, _, _, _, owner, lease, _, _)) =
         load_controller_wake_row(&transaction, command_id, command_digest)?
     else {
         transaction.commit().map_err(sqlite_error)?;
         return Ok(None);
     };
+    if receipt.outbox_state == "claimed"
+        && owner.as_deref() == Some(claim_token)
+        && lease.is_some_and(|value| value > now_ms)
+    {
+        transaction.commit().map_err(sqlite_error)?;
+        return Ok(Some(receipt));
+    }
+    if receipt.outbox_state == "claimed" && lease.is_some_and(|value| value > now_ms) {
+        transaction.commit().map_err(sqlite_error)?;
+        return Err(CheckpointError::new(
+            "controller_command_outbox_stale",
+            "wake is claimed by another owner",
+        ));
+    }
     let claimable = receipt.outbox_state == "pending"
         || (receipt.outbox_state == "claimed" && lease.is_some_and(|value| value <= now_ms));
     if !claimable || receipt.outbox_action != "recovery_dispatch" {
@@ -304,67 +330,133 @@ fn sqlite_reconcile_controller_command_wake(
     Ok(Some(receipt))
 }
 
-fn sqlite_reap_controller_command_wake(
+fn sqlite_reap_controller_command_wakes(
     store: &SqliteCheckpointStore,
-    command_id: &str,
-    command_digest: &str,
+    checkpoint_key: &str,
     now_ms: u64,
-) -> CheckpointResult<bool> {
+) -> CheckpointResult<Vec<crate::checkpoint::ControllerCommandWakeRecord>> {
     let mut connection = store.lock()?;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(sqlite_error)?;
-    let Some((mut receipt, _, _, _, _, lease, _, _)) =
-        load_controller_wake_row(&transaction, command_id, command_digest)?
-    else {
-        transaction.commit().map_err(sqlite_error)?;
-        return Ok(false);
+    let now_ms_i64 = to_i64(now_ms, "now_ms")?;
+    let candidates = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT command_id, command_digest FROM controller_command_receipts \
+                 WHERE checkpoint_key = ?1 AND outbox_action = 'recovery_dispatch' \
+                   AND (outbox_state = 'pending' OR \
+                        (outbox_state = 'claimed' AND lease_expires_at_ms IS NOT NULL \
+                         AND lease_expires_at_ms <= ?2)) \
+                 ORDER BY expected_revision ASC, command_id ASC",
+            )
+            .map_err(sqlite_error)?;
+        let rows = statement
+            .query_map(params![checkpoint_key, now_ms_i64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(sqlite_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error)?;
+        rows
     };
-    if receipt.outbox_state != "claimed" || lease.is_none_or(|value| value > now_ms) {
-        transaction.commit().map_err(sqlite_error)?;
-        return Ok(false);
+    let mut reaped = Vec::with_capacity(candidates.len());
+    for (command_id, command_digest) in candidates {
+        let Some((mut receipt, _, _, attempt, claim_token, lease, delivered_at, last_error)) =
+            load_controller_wake_row(&transaction, &command_id, &command_digest)?
+        else {
+            continue;
+        };
+        if receipt.handle.checkpoint_key != checkpoint_key
+            || receipt.outbox_action != "recovery_dispatch"
+        {
+            continue;
+        }
+        if receipt.outbox_state == "pending" {
+            reaped.push(crate::checkpoint::ControllerCommandWakeRecord::from_receipt_lifecycle(
+                &receipt,
+                crate::checkpoint::controller_receipt_outbox_id(
+                    &receipt.command_id,
+                    &receipt.command_digest,
+                )?,
+                attempt,
+                claim_token,
+                lease,
+                delivered_at,
+                last_error,
+            )?);
+            continue;
+        }
+        if receipt.outbox_state != "claimed"
+            || lease.is_none_or(|value| value > now_ms)
+        {
+            continue;
+        }
+        receipt.outbox_state = "pending".to_string();
+        update_controller_wake_row(
+            &transaction,
+            &receipt,
+            None,
+            None,
+            None,
+            Some("controller_wake_claim_expired"),
+        )?;
+        reaped.push(crate::checkpoint::ControllerCommandWakeRecord::from_receipt_lifecycle(
+            &receipt,
+            crate::checkpoint::controller_receipt_outbox_id(
+                &receipt.command_id,
+                &receipt.command_digest,
+            )?,
+            attempt,
+            None,
+            None,
+            None,
+            Some("controller_wake_claim_expired".to_string()),
+        )?);
     }
-    receipt.outbox_state = "pending".to_string();
-    update_controller_wake_row(
-        &transaction,
-        &receipt,
-        None,
-        None,
-        None,
-        Some("controller_wake_claim_expired"),
-    )?;
     transaction.commit().map_err(sqlite_error)?;
-    Ok(true)
+    Ok(reaped)
 }
 
-fn load_controller_receipt(
-    transaction: &Transaction<'_>,
-    command_id: &str,
-) -> CheckpointResult<Option<(ControllerCommandReceipt, ControllerCommand)>> {
-    let raw = transaction
-        .query_row(
-            "SELECT receipt, command FROM controller_command_receipts WHERE command_id = ?1",
-            params![command_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()
+fn sqlite_find_resolved_pending_host_interaction(
+    store: &SqliteCheckpointStore,
+    checkpoint_key: &str,
+) -> CheckpointResult<Option<HostInteractionRecord>> {
+    let mut connection = store.lock()?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Deferred)
         .map_err(sqlite_error)?;
-    raw.map(|(receipt, command)| {
-        let receipt = ControllerCommandReceipt::from_value(&serde_json::from_str(&receipt)?)?;
-        let command = ControllerCommand::from_value(&serde_json::from_str(&command)?)?;
-        if receipt.command_id != command_id
-            || receipt.command_id != command.command_id
-            || receipt.command_digest != command.command_digest
-        {
-            return Err(CheckpointError::new(
-                "controller_command_conflict",
-                "controller receipt and command payload identity conflicts",
-            ));
-        }
-        Ok((receipt, command))
-    })
-    .transpose()
+    let interaction_ids = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT interaction_id FROM host_interaction_records \
+                 WHERE checkpoint_key = ?1 AND state = 'resolved_pending' \
+                 ORDER BY record_id ASC LIMIT 2",
+            )
+            .map_err(sqlite_error)?;
+        let rows = statement
+            .query_map(params![checkpoint_key], |row| row.get::<_, String>(0))
+            .map_err(sqlite_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error)?;
+        rows
+    };
+    if interaction_ids.len() > 1 {
+        return Err(CheckpointError::new(
+            "host_interaction_recovery_stale",
+            "checkpoint has multiple resolved host interaction records",
+        ));
+    }
+    let record = interaction_ids
+        .first()
+        .map(|interaction_id| load_host_record_by_interaction(&transaction, checkpoint_key, interaction_id))
+        .transpose()?
+        .flatten();
+    transaction.commit().map_err(sqlite_error)?;
+    Ok(record)
 }
+
+include!("sqlite_interaction_receipt.rs");
 
 fn insert_controller_receipt(
     transaction: &Transaction<'_>,
@@ -434,7 +526,11 @@ fn sqlite_resolve_controller_command(
         transaction.commit().map_err(sqlite_error)?;
         return Ok(ControllerCommandResolution::Replayed { receipt, wake });
     }
-    let (receipt, wake) = match sqlite_apply_controller_command(&transaction, &command) {
+    let (receipt, wake) = match sqlite_apply_controller_command(
+        &transaction,
+        &command,
+        sqlite_current_time_ms(),
+    ) {
         Ok(result) => result,
         Err(error)
             if matches!(
@@ -511,6 +607,7 @@ fn sqlite_command_wake(
 fn sqlite_apply_controller_command(
     transaction: &Transaction<'_>,
     command: &ControllerCommand,
+    now_ms: u64,
 ) -> CheckpointResult<(ControllerCommandReceipt, ControllerCommandWake)> {
     let current =
         load_row_transaction(transaction, &command.handle.checkpoint_key)?.ok_or_else(|| {
@@ -536,8 +633,14 @@ fn sqlite_apply_controller_command(
             "controller commands cannot mutate a terminal checkpoint",
         ));
     }
+    let claim_expired = current.claim_token.is_some()
+        && current
+            .lease_expires_at_ms
+            .is_some_and(|lease| lease <= now_ms);
     if current.has_ambiguous_operation()
         && !matches!(&command.command, ControllerCommandVariant::Abort)
+        && !(matches!(&command.command, ControllerCommandVariant::Cancel)
+            && current.claim_token.is_some())
     {
         return Err(CheckpointError::new(
             "controller_command_ambiguity_requires_reconciliation",
@@ -550,13 +653,35 @@ fn sqlite_apply_controller_command(
             "deferred resolution is an authoritative barrier",
         ));
     }
-    if current.claim_token.is_some() {
+    if current.claim_token.is_some()
+        && !claim_expired
+        && !matches!(&command.command, ControllerCommandVariant::Cancel)
+    {
         return Err(CheckpointError::new(
             "controller_command_claim_active",
             "controller command requires a released execution claim",
         ));
     }
     let mut updated = current.clone();
+    if claim_expired
+        && matches!(
+            &command.command,
+            ControllerCommandVariant::Cancel | ControllerCommandVariant::Suspend
+        )
+    {
+        if matches!(&command.command, ControllerCommandVariant::Cancel) {
+            updated.resume_attempt = updated.resume_attempt.checked_add(1).ok_or_else(|| {
+                CheckpointError::new(
+                    "checkpoint_resume_attempt_invalid",
+                    "resume_attempt overflow",
+                )
+            })?;
+            updated.cancel_requested = true;
+        }
+        updated.claim_token = None;
+        updated.claimed_cycle = None;
+        updated.lease_expires_at_ms = None;
+    }
     let mut wake = ControllerCommandWake::none();
     match &command.command {
         ControllerCommandVariant::HostInteractionResponse {
@@ -668,7 +793,7 @@ fn sqlite_apply_controller_command(
             updated.active_host_interaction = None;
             updated.suspended_origin = Some(origin);
             updated.revision = current.revision + 1;
-            sqlite_append_control_event(
+            append_control_event(
                 &mut updated,
                 &command.command_id,
                 RunEventPayload::RunStateChanged {
@@ -730,7 +855,7 @@ fn sqlite_apply_controller_command(
             }
             updated.revision = current.revision + 1;
             let resulting_state = updated.status.as_str().to_string();
-            sqlite_append_control_event(
+            append_control_event(
                 &mut updated,
                 &command.command_id,
                 RunEventPayload::RunStateChanged {
@@ -740,37 +865,47 @@ fn sqlite_apply_controller_command(
             updated.validate()?;
         }
         ControllerCommandVariant::Cancel => {
-            let mut result = sqlite_control_result(
-                &current,
-                CompletionReason::Cancelled,
-                "Operation was cancelled",
-                Some("cancelled"),
-            );
-            result.completion_reason = Some(CompletionReason::Cancelled);
-            updated.status = crate::checkpoint::CheckpointStatus::Failed;
-            updated.active_host_interaction = None;
-            updated.suspended_origin = None;
-            updated.claim_token = None;
-            updated.claimed_cycle = None;
-            updated.lease_expires_at_ms = None;
-            updated.terminal_result = Some(result.to_dict());
-            updated.revision = current.revision + 1;
-            sqlite_append_control_event(
-                &mut updated,
-                &command.command_id,
-                RunEventPayload::RunStateChanged {
-                    state: "failed".to_string(),
-                },
-            )?;
-            sqlite_append_control_event_with_result(
-                &mut updated,
-                &command.command_id,
-                RunEventPayload::RunCancelled {
-                    reason: "Operation was cancelled".to_string(),
-                },
-                &result,
-            )?;
-            updated.validate()?;
+            if current.claim_token.is_some() && !claim_expired {
+                if !current.cancel_requested {
+                    updated.cancel_requested = true;
+                    append_cancel_requested_event(&mut updated, &command.command_id)?;
+                }
+                updated.validate()?;
+            } else {
+                let mut result = control_result(
+                    &current,
+                    CompletionReason::Cancelled,
+                    "Operation was cancelled",
+                    Some("cancelled_with_unknown_outcome"),
+                );
+                result.completion_reason = Some(CompletionReason::Cancelled);
+                updated.status = crate::checkpoint::CheckpointStatus::Failed;
+                updated.active_host_interaction = None;
+                updated.suspended_origin = None;
+                updated.claim_token = None;
+                updated.claimed_cycle = None;
+                updated.lease_expires_at_ms = None;
+                updated.terminal_result = Some(result.to_dict());
+                close_unresolved_tools(&mut updated, "cancelled")?;
+                updated.model_call_journal.clear();
+                updated.revision = current.revision + 1;
+                append_control_event(
+                    &mut updated,
+                    &command.command_id,
+                    RunEventPayload::RunStateChanged {
+                        state: "failed".to_string(),
+                    },
+                )?;
+                append_control_event_with_result(
+                    &mut updated,
+                    &command.command_id,
+                    RunEventPayload::RunCancelled {
+                        reason: "Operation was cancelled".to_string(),
+                    },
+                    &result,
+                )?;
+                updated.validate()?;
+            }
         }
         ControllerCommandVariant::Abort => {
             if current.status != crate::checkpoint::CheckpointStatus::ReconciliationRequired {
@@ -793,13 +928,13 @@ fn sqlite_apply_controller_command(
                         .to_string(),
                     idempotency_support: entry.idempotency_support,
                 });
-            let mut result = sqlite_control_result(
+            let mut result = control_result(
                 &current,
                 CompletionReason::Failed,
-                "failed",
+                "Operator accepted that the external outcome is unknown.",
                 Some("operator_abort_with_unknown_outcome"),
             );
-            result.resume_observation = observation;
+            result.resume_observations = observation.into_iter().collect();
             updated.status = crate::checkpoint::CheckpointStatus::Failed;
             updated.active_host_interaction = None;
             updated.suspended_origin = None;
@@ -807,15 +942,17 @@ fn sqlite_apply_controller_command(
             updated.claimed_cycle = None;
             updated.lease_expires_at_ms = None;
             updated.terminal_result = Some(result.to_dict());
+            close_unresolved_tools(&mut updated, "operator_abort")?;
+            updated.model_call_journal.clear();
             updated.revision = current.revision + 1;
-            sqlite_append_control_event(
+            append_control_event(
                 &mut updated,
                 &command.command_id,
                 RunEventPayload::RunStateChanged {
                     state: "failed".to_string(),
                 },
             )?;
-            sqlite_append_control_event_with_result(
+            append_control_event_with_result(
                 &mut updated,
                 &command.command_id,
                 RunEventPayload::RunFailed {
@@ -827,7 +964,8 @@ fn sqlite_apply_controller_command(
         }
     }
     let values = SqlValues::from_checkpoint(&updated)?;
-    if !update_row(transaction, &values, Some(current.revision), None)? {
+    let claim_fence = current.claim_token.as_deref();
+    if !update_row(transaction, &values, Some(current.revision), claim_fence)? {
         return Err(CheckpointError::new(
             "checkpoint_revision_conflict",
             "controller command lost the checkpoint CAS",

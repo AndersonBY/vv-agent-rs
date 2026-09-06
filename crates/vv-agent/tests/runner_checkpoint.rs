@@ -12,11 +12,12 @@ use vv_agent::{
     CycleDispatcher, DistributedBackend, DistributedCapabilities, DistributedCapabilityRegistry,
     DistributedCycleWorker, EventCursor, FunctionTool, InMemoryCheckpointStore, LLMResponse,
     MemorySession, MicrocompactionPolicy, ModelCallOperation, ModelRef, NoToolPolicy,
-    OperationJournalEntry, OperationState, PromptBundle, PromptSection, ResumePolicy,
-    RunBudgetLimits, RunConfig, RunEventPayload, Runner, RuntimeExecutionBackend, RuntimeRecipe,
-    ScriptStep, ScriptedLlmClient, ScriptedModelProvider, Session, StaticTool, ThreadBackend,
-    TokenUsage, ToolCall, ToolExecutionResult, ToolIdempotency, ToolMetadata, ToolOutput,
-    ToolResultStatus, UsageSource,
+    OperationJournalEntry, OperationKind, OperationState, PromptBundle, PromptSection,
+    ReconciliationDecision, ReconciliationProvider, ResumePolicy, RunBudgetLimits, RunConfig,
+    RunEvent, RunEventPayload, RunEventReplayQuery, RunEventStore, Runner, RuntimeExecutionBackend,
+    RuntimeRecipe, ScriptStep, ScriptedLlmClient, ScriptedModelProvider, Session, StaticTool,
+    ThreadBackend, TokenUsage, ToolCall, ToolExecutionResult, ToolIdempotency, ToolMetadata,
+    ToolOutput, ToolResultStatus, UsageSource,
 };
 
 #[derive(Clone)]
@@ -863,7 +864,11 @@ async fn distributed_dispatch_failure_preserves_root_error_and_external_claim() 
 
     assert_eq!(result.status(), AgentStatus::Failed);
     assert_eq!(
-        result.result().error.as_deref(),
+        result
+            .result()
+            .error
+            .as_ref()
+            .map(|error| error.message.as_str()),
         Some("checkpoint_dispatch_failed: permanent transport failure after external claim")
     );
     let persisted = store
@@ -966,6 +971,8 @@ async fn distributed_execution_commits_nonterminal_cycle_before_max_cycles_candi
     assert!(terminal.terminal_acknowledged);
 }
 
+#[path = "runner_checkpoint/cancel.rs"]
+mod cancel;
 #[path = "runner_checkpoint/deferred.rs"]
 mod deferred;
 #[path = "runner_checkpoint/resume.rs"]

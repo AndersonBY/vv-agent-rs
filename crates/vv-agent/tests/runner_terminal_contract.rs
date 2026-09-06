@@ -281,7 +281,14 @@ async fn budget_exhaustion_emits_observation_before_the_only_terminal() {
     );
     assert_eq!(result.completion_tool_name(), None);
     assert_eq!(result.partial_output(), expected["partial_output"].as_str());
-    assert_eq!(result.result().error.as_deref(), expected["error"].as_str());
+    assert_eq!(
+        result
+            .result()
+            .error
+            .as_ref()
+            .map(|error| error.message.as_str()),
+        expected["error"].as_str()
+    );
     assert!(result.budget_usage().is_some());
     assert!(result.budget_exhaustion().is_some());
 }

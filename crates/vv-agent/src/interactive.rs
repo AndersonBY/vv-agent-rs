@@ -543,7 +543,8 @@ impl InteractiveSession {
             reason: result
                 .result()
                 .error
-                .clone()
+                .as_ref()
+                .map(|error| error.message.clone())
                 .or_else(|| result.result().wait_reason.clone())
                 .or_else(|| result.final_output().map(str::to_string))
                 .unwrap_or_else(|| "session query did not complete".to_string()),

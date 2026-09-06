@@ -49,12 +49,21 @@ pub(super) fn emit_runtime_event(
             | "run_max_cycles"
             | "run_wait_user"
     );
-    let mut event = if terminal_observation {
+    let mapped = if terminal_observation {
         None
     } else {
         crate::runner::map_runtime_event(code, &payload, &context)
-    }
-    .unwrap_or_else(|| diagnostic_event(&run_id, &trace_id, &agent_name, code, payload));
+    };
+    let Some(mut event) = mapped.or_else(|| {
+        (code != "tool_result"
+            || !payload
+                .get("lifecycle_suppressed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false))
+        .then(|| diagnostic_event(&run_id, &trace_id, &agent_name, code, payload))
+    }) else {
+        return;
+    };
     if event.session_id().is_none() {
         if let Some(session_id) = session_id {
             event = event.with_session_id(session_id);
@@ -243,7 +252,15 @@ impl<C: LlmClient> AgentRuntime<C> {
                 ),
                 (
                     "error".to_string(),
-                    Value::String(self.preview_text(&result.error.clone().unwrap_or_default())),
+                    Value::String(
+                        self.preview_text(
+                            result
+                                .error
+                                .as_ref()
+                                .map(|error| error.message.as_str())
+                                .unwrap_or_default(),
+                        ),
+                    ),
                 ),
                 (
                     "completion_reason".to_string(),
@@ -267,6 +284,31 @@ impl<C: LlmClient> AgentRuntime<C> {
         result: &ToolExecutionResult,
     ) {
         self.emit_tool_result_with_lifecycle(controls, cycle_index, call, result, false);
+    }
+
+    pub(super) fn emit_checkpointed_tool_result(
+        &self,
+        controls: &RuntimeRunControls,
+        cycle_index: u32,
+        call: &ToolCall,
+        result: &ToolExecutionResult,
+    ) {
+        self.emit_tool_result_with_lifecycle(controls, cycle_index, call, result, true);
+    }
+
+    pub(super) fn emit_tool_result_owned(
+        &self,
+        controls: &RuntimeRunControls,
+        cycle_index: u32,
+        call: &ToolCall,
+        result: &ToolExecutionResult,
+        checkpoint_owned: bool,
+    ) {
+        if checkpoint_owned {
+            self.emit_checkpointed_tool_result(controls, cycle_index, call, result);
+        } else {
+            self.emit_tool_result(controls, cycle_index, call, result);
+        }
     }
 
     pub(super) fn emit_skipped_tool_result(

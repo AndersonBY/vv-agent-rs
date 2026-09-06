@@ -60,7 +60,11 @@ impl BackgroundAgentTask {
                     ) {
                         Ok(result) => {
                             let status = result.status();
-                            let error = result.result().error.clone();
+                            let error = result
+                                .result()
+                                .error
+                                .as_ref()
+                                .map(|error| error.message.clone());
                             (status, Some(result), error)
                         }
                         Err(error) => (AgentStatus::Failed, None, Some(error)),

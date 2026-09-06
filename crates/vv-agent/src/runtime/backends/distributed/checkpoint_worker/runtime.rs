@@ -12,6 +12,10 @@ pub(super) fn run_agent_runtime_cycle(
     let config = &envelope.checkpoint_config;
     let now_ms = now_unix_ms()?;
     let claim_mode = effective_claim_mode(&envelope, &checkpoint, delivery, now_ms);
+    let retained_claim_token = checkpoint
+        .claim_token
+        .clone()
+        .filter(|token| token.starts_with("host-recovery:"));
     let event_store = checkpoint_event_store_adapter(&envelope, &resolved)?;
     let event_sink = checkpoint_event_sink(&resolved);
     let extensions = resolved
@@ -66,6 +70,11 @@ pub(super) fn run_agent_runtime_cycle(
         .set_lease_duration_ms(envelope.lease_duration_ms)
         .map_err(|error| error.to_string())?;
     controller.set_next_claim_mode(claim_mode);
+    if let Some(claim_token) = retained_claim_token {
+        controller
+            .adopt_existing_claim(&claim_token, u64::from(envelope.cycle_index))
+            .map_err(|error| error.to_string())?;
+    }
     let checkpoint_controller = Arc::new(Mutex::new(controller));
     let runtime = build_runtime(&envelope, &resolved)?;
     let mut task = envelope.task.clone();

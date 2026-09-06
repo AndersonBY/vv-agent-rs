@@ -68,6 +68,7 @@ use helpers::{
     effective_model_ref, effective_trace_id, effective_workflow_name, status_string, terminal_event,
 };
 pub(crate) use producer::CheckpointStartOutcome;
+use resume::ApprovalResumeInvocation;
 use session_blocking::block_on_session;
 use support::{
     apply_cancellation_precedence, apply_input_guardrails, apply_optional_output_validation,

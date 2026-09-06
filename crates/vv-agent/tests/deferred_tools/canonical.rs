@@ -31,6 +31,96 @@ fn context_defer_requires_checkpoint_and_preserves_opaque_identity() {
 }
 
 #[test]
+fn deferred_error_projects_the_canonical_operation_error() {
+    let key = "memory-deferred-error";
+    let digest = "e".repeat(64);
+    let checkpoint =
+        super::checkpoint_with_started_tools(key, &[("op_error", "call_error", &digest)]);
+    let store = InMemoryCheckpointStore::new();
+    let claimed = super::create_claimed_running_checkpoint(&store, checkpoint, "claim-error", 1);
+    let handle = DeferredToolHandle::new(key, "op_error", 1, digest.clone()).expect("handle");
+    store
+        .admit_deferred_batch(
+            key,
+            claimed.revision,
+            "claim-error",
+            1,
+            &[super::batch_entry(
+                "op_error",
+                "call_error",
+                &digest,
+                ToolCallOutcome::deferred(handle.clone()),
+            )],
+        )
+        .expect("admission");
+
+    let mut result = ToolExecutionResult::error("call_error", "");
+    result.error_code = None;
+    result.metadata.insert("retryable".to_string(), json!(true));
+    assert!(matches!(
+        store.resolve_deferred(handle, result).expect("resolution"),
+        DeferredResolveDecision::AppliedReady { .. }
+    ));
+    let checkpoint = store
+        .load_checkpoint(key)
+        .expect("load")
+        .expect("checkpoint");
+    let error = checkpoint.tool_journal[0]
+        .error
+        .as_ref()
+        .expect("operation error");
+    assert_eq!(error.code, "tool_operation_failed");
+    assert_eq!(error.message, "tool operation failed");
+    assert!(error.retryable);
+}
+
+#[test]
+fn deferred_admission_selects_the_complete_operation_identity() {
+    let key = "memory-deferred-duplicate-operation";
+    let first_digest = "a".repeat(64);
+    let second_digest = "b".repeat(64);
+    let mut first = started_tool("op_duplicate", "call_first", &first_digest);
+    first.state = OperationState::Planned;
+    let mut second = started_tool("op_duplicate", "call_second", &second_digest);
+    second.attempt = 2;
+    let mut checkpoint = minimal_checkpoint(key);
+    checkpoint.tool_journal = vec![first, second];
+    checkpoint
+        .validate()
+        .expect("duplicate operation identities are valid");
+
+    let store = InMemoryCheckpointStore::new();
+    let claimed =
+        super::create_claimed_running_checkpoint(&store, checkpoint, "claim-duplicate", 1);
+    let handle =
+        DeferredToolHandle::new(key, "op_duplicate", 2, second_digest.clone()).expect("handle");
+    let mut batch = batch_entry(
+        "op_duplicate",
+        "call_second",
+        &second_digest,
+        ToolCallOutcome::deferred(handle.clone()),
+    );
+    batch.attempt = 2;
+
+    let admitted = store
+        .admit_deferred_batch(key, claimed.revision, "claim-duplicate", 1, &[batch])
+        .expect("admit complete identity");
+    assert_eq!(
+        admitted.checkpoint.status,
+        vv_agent::CheckpointStatus::Deferred
+    );
+    assert_eq!(
+        admitted.checkpoint.tool_journal[0].state,
+        OperationState::Planned
+    );
+    assert_eq!(
+        admitted.checkpoint.tool_journal[1].state,
+        OperationState::Deferred
+    );
+    assert_eq!(admitted.handles, vec![handle]);
+}
+
+#[test]
 fn deferred_wires_include_current_schema_and_reject_closed_shape_drift() {
     let handle =
         DeferredToolHandle::new("wire/checkpoint", "op_wire", 1, "a".repeat(64)).expect("handle");
@@ -122,20 +212,7 @@ fn canonical_receipt_and_event_jcs_vectors_are_produced_from_fixture_values() {
     source.tool_journal[0].deferred_handle = None;
     source.validate().expect("started producer checkpoint");
     let store = InMemoryCheckpointStore::new();
-    store
-        .create_checkpoint(source)
-        .expect("create producer checkpoint");
-    let claimed = store
-        .claim_checkpoint(
-            &handle.checkpoint_key,
-            2,
-            "claim-canonical",
-            10_000,
-            1,
-            ClaimMode::Continue,
-        )
-        .expect("claim producer checkpoint")
-        .expect("claimed producer checkpoint");
+    let claimed = super::create_cycle_two_running_checkpoint(&store, source, "claim-canonical");
     let mut canonical_entry = batch_entry(
         &handle.operation_id,
         &result.tool_call_id,
@@ -177,4 +254,173 @@ fn canonical_receipt_and_event_jcs_vectors_are_produced_from_fixture_values() {
         vv_agent::event_payload_digest(&completed_event.event).expect("resolved event digest"),
         receipt.event_payload_digest
     );
+}
+
+#[test]
+fn receipt_and_checkpoint_readers_recompute_closed_identities() {
+    let fixture: Value = serde_json::from_str(DEFERRED_FIXTURE).expect("deferred fixture");
+    let canonical = &fixture["resolution"]["receipt_index"]["canonical_entry"];
+    let mut malformed_receipt = canonical.clone();
+    malformed_receipt["event_id"] = json!(format!("evt_receipt_{}", "0".repeat(64)));
+    let receipt_error = serde_json::from_value::<vv_agent::DeferredReceipt>(malformed_receipt)
+        .expect_err("receipt reader must reject a mismatched canonical event identity");
+    assert!(receipt_error
+        .to_string()
+        .contains("deferred_receipt_identity_invalid"));
+
+    let codec: Value = serde_json::from_str(CHECKPOINT_FIXTURE).expect("checkpoint fixture");
+    let mut terminal = codec["valid_cases"]
+        .as_array()
+        .expect("valid cases")
+        .iter()
+        .find(|case| case["name"] == "operator_abort_terminal_retains_closed_tool_entries")
+        .expect("closed tool terminal case")["payload"]
+        .clone();
+    terminal["tool_journal"][0]["identity_key"] = json!("0".repeat(64));
+    let terminal_error = checkpoint_from_json(
+        &serde_json::to_string(&terminal).expect("terminal JSON"),
+        262_144,
+    )
+    .expect_err("checkpoint reader must recompute terminal tool identity");
+    assert_eq!(terminal_error.code(), "operation_receipt_identity_invalid");
+
+    let key = "deferred-reader-checkpoint";
+    let digest = "a".repeat(64);
+    let mut deferred = minimal_checkpoint(key);
+    let mut journal = started_tool("op_deferred", "call_deferred", &digest);
+    journal.state = OperationState::Deferred;
+    journal.deferred_handle = Some(
+        DeferredToolHandle::new("different-checkpoint", "op_deferred", 1, digest)
+            .expect("deferred handle"),
+    );
+    deferred.status = vv_agent::CheckpointStatus::Deferred;
+    deferred.tool_journal = vec![journal];
+    let deferred_error = deferred
+        .validate()
+        .expect_err("checkpoint reader must bind all deferred handle identity fields");
+    assert_eq!(deferred_error.code(), "checkpoint_status_invalid");
+}
+
+#[test]
+fn sqlite_receipt_row_checkpoint_key_must_match_embedded_handle() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("receipt-identity.sqlite");
+    let store = SqliteCheckpointStore::new(&path).expect("sqlite");
+    let key = "sqlite-receipt-identity";
+    let other_key = "sqlite-receipt-other";
+    let digest = "b".repeat(64);
+    let mut checkpoint = minimal_checkpoint(key);
+    checkpoint.tool_journal = vec![started_tool("op_sqlite", "call_sqlite", &digest)];
+    checkpoint.validate().expect("started checkpoint");
+    let claimed = create_claimed_running_checkpoint(&store, checkpoint, "claim-sqlite", 1);
+    let other = initial_checkpoint(minimal_checkpoint(other_key));
+    assert!(store.create_checkpoint(other).expect("other checkpoint"));
+    let handle = DeferredToolHandle::new(key, "op_sqlite", 1, digest.clone()).expect("handle");
+    store
+        .admit_deferred_batch(
+            key,
+            claimed.revision,
+            "claim-sqlite",
+            1,
+            &[batch_entry(
+                "op_sqlite",
+                "call_sqlite",
+                &digest,
+                ToolCallOutcome::deferred(handle.clone()),
+            )],
+        )
+        .expect("admission");
+    let result = ToolExecutionResult::success("call_sqlite", "accepted");
+    let receipt = match store
+        .resolve_deferred(handle.clone(), result.clone())
+        .expect("resolution")
+    {
+        DeferredResolveDecision::AppliedReady { receipt } => receipt,
+        other => panic!("unexpected resolution: {other:?}"),
+    };
+    let connection = rusqlite::Connection::open(&path).expect("open sqlite row");
+    connection
+        .execute(
+            "UPDATE deferred_resolution_receipts SET checkpoint_key = ?1 WHERE handle_key = ?2",
+            rusqlite::params![other_key, receipt.handle_key],
+        )
+        .expect("tamper checkpoint index column");
+    let error = store
+        .resolve_deferred(handle, result)
+        .expect_err("row checkpoint key mismatch must fail closed");
+    assert_eq!(error.code(), "deferred_receipt_identity_invalid");
+    store
+        .delete_checkpoint(key)
+        .expect("delete source checkpoint");
+    store
+        .delete_checkpoint(other_key)
+        .expect("delete other checkpoint");
+}
+
+#[test]
+#[ignore = "requires a local Redis instance"]
+fn redis_receipt_index_must_match_embedded_handle() {
+    let url = std::env::var("VV_AGENT_TEST_REDIS_URL")
+        .unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
+    let store = RedisCheckpointStore::new(&url).expect("redis");
+    let key = format!("redis-receipt-identity-{}", uuid::Uuid::new_v4().simple());
+    let other_key = format!("redis-receipt-other-{}", uuid::Uuid::new_v4().simple());
+    let digest = tool_request_digest("call_redis_identity", "remote_write", &json!({}), None)
+        .expect("request digest");
+    let checkpoint = checkpoint_with_started_tools(
+        &key,
+        &[("op_redis_identity", "call_redis_identity", &digest)],
+    );
+    let claimed = create_claimed_running_checkpoint(&store, checkpoint, "claim-redis", 1);
+    assert!(store
+        .create_checkpoint(initial_checkpoint(minimal_checkpoint(&other_key)))
+        .expect("other checkpoint"));
+    let handle =
+        DeferredToolHandle::new(&key, "op_redis_identity", 1, digest.clone()).expect("handle");
+    store
+        .admit_deferred_batch(
+            &key,
+            claimed.revision,
+            "claim-redis",
+            1,
+            &[batch_entry(
+                "op_redis_identity",
+                "call_redis_identity",
+                &digest,
+                ToolCallOutcome::deferred(handle.clone()),
+            )],
+        )
+        .expect("admission");
+    let result = ToolExecutionResult::success("call_redis_identity", "accepted");
+    let receipt = match store
+        .resolve_deferred(handle.clone(), result.clone())
+        .expect("resolution")
+    {
+        DeferredResolveDecision::AppliedReady { receipt } => receipt,
+        other => panic!("unexpected resolution: {other:?}"),
+    };
+    let client = redis::Client::open(url.as_str()).expect("redis client");
+    let mut connection = client.get_connection().expect("redis connection");
+    let receipt_key = RedisCheckpointStore::deferred_receipt_key(&receipt.handle_key);
+    let other_set = RedisCheckpointStore::deferred_receipts_checkpoint_set_key(&other_key);
+    redis::Commands::sadd::<_, _, ()>(&mut connection, &other_set, &receipt_key)
+        .expect("cross-index receipt");
+    let error = store
+        .delete_checkpoint(&other_key)
+        .expect_err("cross-checkpoint Redis index must fail closed");
+    assert_eq!(error.code(), "deferred_receipt_identity_invalid");
+    assert!(matches!(
+        store
+            .resolve_deferred(handle, result)
+            .expect("receipt replay after rejected cleanup"),
+        DeferredResolveDecision::Replayed { .. }
+    ));
+    redis::Commands::srem::<_, _, ()>(&mut connection, &other_set, &receipt_key)
+        .expect("remove cross-index receipt");
+    store
+        .delete_checkpoint(&key)
+        .expect("delete source checkpoint");
+    store
+        .delete_checkpoint(&other_key)
+        .expect("delete other checkpoint");
 }

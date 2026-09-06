@@ -223,8 +223,12 @@ fn produce_host_interaction(
                 "command_id is already bound to a different command digest",
             ));
         }
-        let (receipt, resolution) =
-            apply_controller_command(&mut checkpoints, &mut ledger, &command)?;
+        let (receipt, resolution) = apply_controller_command(
+            &mut checkpoints,
+            &mut ledger,
+            &command,
+            current_time_ms(),
+        )?;
         ledger
             .command_receipts
             .insert(command.command_id.clone(), (receipt.clone(), resolution));
@@ -252,6 +256,7 @@ fn produce_host_interaction(
             &mut checkpoints,
             &mut ledger,
             &command,
+            current_time_ms(),
         ) {
             Ok(result) => result,
             Err(error)
@@ -289,6 +294,28 @@ fn produce_host_interaction(
     ) -> CheckpointResult<Option<ControllerCommand>> {
         let ledger = self.controller_lock()?;
         Ok(ledger.commands.get(command_id).cloned())
+    }
+
+    fn find_resolved_pending_host_interaction(
+        &self,
+        checkpoint_key: &str,
+    ) -> CheckpointResult<Option<HostInteractionRecord>> {
+        let ledger = self.controller_lock()?;
+        let mut records = ledger
+            .host_interactions
+            .values()
+            .filter(|record| {
+                record.checkpoint_key == checkpoint_key && record.state == "resolved_pending"
+            })
+            .cloned();
+        let first = records.next();
+        if records.next().is_some() {
+            return Err(CheckpointError::new(
+                "host_interaction_recovery_stale",
+                "checkpoint has multiple resolved host interaction records",
+            ));
+        }
+        Ok(first)
     }
 
     fn claim_and_consume_host_interaction_response(
@@ -713,10 +740,10 @@ fn produce_host_interaction(
             return Ok(Some(receipt));
         }
         if let Some(lease) = ledger.wake_leases.get(command_id) {
-            if receipt.outbox_state == "claimed"
-                && lease.claim_token != claim_token
-                && lease.lease_expires_at_ms > now_ms
-            {
+            if receipt.outbox_state == "claimed" && lease.lease_expires_at_ms > now_ms {
+                if lease.claim_token == claim_token {
+                    return Ok(Some(receipt));
+                }
                 return Err(CheckpointError::new(
                     "controller_command_outbox_stale",
                     "wake is claimed by another owner",
@@ -843,40 +870,95 @@ fn produce_host_interaction(
         Ok(Some(updated))
     }
 
-    fn reap_controller_command_wake(
+    fn reap_controller_command_wakes(
         &self,
-        command_id: &str,
-        command_digest: &str,
+        checkpoint_key: &str,
         now_ms: u64,
-    ) -> CheckpointResult<bool> {
+    ) -> CheckpointResult<Vec<ControllerCommandWakeRecord>> {
         let mut ledger = self.controller_lock()?;
-        let Some((receipt, resolution)) = ledger.command_receipts.get(command_id).cloned() else {
-            return Ok(false);
-        };
-        if receipt.command_digest != command_digest {
-            return Err(CheckpointError::new(
-                "controller_command_conflict",
-                "wake command digest conflicts",
-            ));
+        let mut candidates = ledger
+            .command_receipts
+            .iter()
+            .filter_map(|(command_id, (receipt, _))| {
+                if receipt.handle.checkpoint_key != checkpoint_key
+                    || receipt.outbox_action != "recovery_dispatch"
+                {
+                    return None;
+                }
+                let expired_claim = receipt.outbox_state == "claimed"
+                    && ledger
+                        .wake_leases
+                        .get(command_id)
+                        .is_some_and(|lease| lease.lease_expires_at_ms <= now_ms);
+                if receipt.outbox_state == "pending" || expired_claim {
+                    Some((
+                        receipt.expected_revision,
+                        command_id.clone(),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by(|left, right| left.cmp(right));
+
+        let mut reaped = Vec::with_capacity(candidates.len());
+        for (_, command_id) in candidates {
+            let Some((receipt, resolution)) = ledger.command_receipts.get(&command_id).cloned()
+            else {
+                continue;
+            };
+            if receipt.handle.checkpoint_key != checkpoint_key
+                || receipt.outbox_action != "recovery_dispatch"
+            {
+                continue;
+            }
+            if receipt.outbox_state == "pending" {
+                reaped.push(ControllerCommandWakeRecord::from_receipt_lifecycle(
+                    &receipt,
+                    crate::checkpoint::controller_receipt_outbox_id(
+                        &receipt.command_id,
+                        &receipt.command_digest,
+                    )?,
+                    receipt.outbox_attempt,
+                    None,
+                    None,
+                    None,
+                    None,
+                )?);
+                continue;
+            }
+            let Some(lease) = ledger.wake_leases.get(&command_id) else {
+                continue;
+            };
+            if receipt.outbox_state != "claimed" || lease.lease_expires_at_ms > now_ms {
+                continue;
+            }
+            let mut updated = receipt;
+            updated.outbox_state = "pending".to_string();
+            updated.validate()?;
+            ledger.wake_leases.remove(&command_id);
+            ledger.command_receipts.insert(
+                command_id,
+                (
+                    updated.clone(),
+                    resolution_with_receipt(&resolution, updated.clone()),
+                ),
+            );
+            reaped.push(ControllerCommandWakeRecord::from_receipt_lifecycle(
+                &updated,
+                crate::checkpoint::controller_receipt_outbox_id(
+                    &updated.command_id,
+                    &updated.command_digest,
+                )?,
+                updated.outbox_attempt,
+                None,
+                None,
+                None,
+                None,
+            )?);
         }
-        let Some(lease) = ledger.wake_leases.get(command_id) else {
-            return Ok(false);
-        };
-        if receipt.outbox_state != "claimed" || lease.lease_expires_at_ms > now_ms {
-            return Ok(false);
-        }
-        let mut updated = receipt;
-        updated.outbox_state = "pending".to_string();
-        updated.validate()?;
-        ledger.wake_leases.remove(command_id);
-        ledger.command_receipts.insert(
-            command_id.to_string(),
-            (
-                updated.clone(),
-                resolution_with_receipt(&resolution, updated),
-            ),
-        );
-        Ok(true)
+        Ok(reaped)
     }
 
     fn delete_checkpoint(&self, checkpoint_key: &str) -> CheckpointResult<()> {

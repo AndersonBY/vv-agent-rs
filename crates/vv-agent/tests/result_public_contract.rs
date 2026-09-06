@@ -112,3 +112,27 @@ fn agent_result_reader_enforces_the_closed_current_wire() {
         .insert("legacy".to_string(), json!(true));
     assert!(AgentResult::from_dict(&unknown).is_err());
 }
+
+#[test]
+fn agent_result_error_is_a_strict_typed_object() {
+    let result = AgentResult::failed_with_code("provider_failed", "provider rejected", true);
+    let payload = result.to_dict();
+    assert_eq!(
+        payload["error"],
+        json!({
+            "code": "provider_failed",
+            "message": "provider rejected",
+            "retryable": true,
+        })
+    );
+    let restored = AgentResult::from_dict(&payload).expect("typed error result");
+    assert_eq!(restored.error, result.error);
+
+    let mut legacy = payload.clone();
+    legacy["error"] = json!("provider rejected");
+    assert!(AgentResult::from_dict(&legacy).is_err());
+
+    let mut unknown = payload;
+    unknown["error"]["legacy"] = json!(true);
+    assert!(AgentResult::from_dict(&unknown).is_err());
+}

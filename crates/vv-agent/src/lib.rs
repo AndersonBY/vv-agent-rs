@@ -57,9 +57,10 @@ pub use checkpoint::{
     normalize_run_definition, operation_request_digest, redact_run_definition,
     run_definition_digest, tool_request_digest, validate_extension_namespace,
     validate_run_definition, AcceptDeferredDecision, AmbiguousModelPolicy, AmbiguousToolPolicy,
-    AppendOnceResult, CheckpointConfig, CheckpointError, CheckpointExtension, CheckpointStatus,
-    ClaimMode, ControllerCommand, ControllerCommandKind, ControllerCommandReceipt,
-    ControllerCommandResolution, ControllerCommandVariant, ControllerCommandWake, ControllerHandle,
+    AppendOnceResult, CheckpointConfig, CheckpointError, CheckpointExtension,
+    CheckpointRenewalOutcome, CheckpointStatus, ClaimMode, ControllerCommand,
+    ControllerCommandKind, ControllerCommandReceipt, ControllerCommandResolution,
+    ControllerCommandVariant, ControllerCommandWake, ControllerCommandWakeRecord, ControllerHandle,
     DeferredBatchAdmission, DeferredBatchEntry, DeferredReceipt, DeferredReceiptStatus,
     DeferredResolveDecision, DeferredToolHandle, EventCursor, HostInteractionAdmissionContext,
     HostInteractionMessage, HostInteractionNotificationPayload, HostInteractionNotificationRecord,
@@ -173,13 +174,14 @@ pub use tools::{
 };
 pub use tracing::{JsonlTraceExporter, Span, TraceSink};
 pub use types::{
-    AgentResult, AgentStatus, AgentTask, CacheUsage, CacheUsageStatus, CompletionReason,
-    CycleRecord, CycleStatus, LLMResponse, Message, MessageRole, ModelCallOperation,
-    ModelCallRecord, ModelCallStatus, NoToolPolicy, SubAgentConfig, SubAgentConfigValidationError,
-    SubTaskOutcome, SubTaskRequest, TaskTokenUsage, TokenUsage, ToolArtifactRef, ToolCall,
-    ToolDirective, ToolExecutionResult, ToolResultCursor, ToolResultStatus, ToolTruncationReason,
-    UsageSource, INVALID_SUB_AGENT_MODEL_CODE, INVALID_SUB_AGENT_MODEL_MESSAGE,
-    INVALID_SUB_AGENT_SYSTEM_PROMPT_CODE, INVALID_SUB_AGENT_SYSTEM_PROMPT_MESSAGE,
+    AgentResult, AgentResultError, AgentStatus, AgentTask, CacheUsage, CacheUsageStatus,
+    CompletionReason, CycleRecord, CycleStatus, LLMResponse, Message, MessageRole,
+    ModelCallOperation, ModelCallRecord, ModelCallStatus, NoToolPolicy, SubAgentConfig,
+    SubAgentConfigValidationError, SubTaskOutcome, SubTaskRequest, TaskTokenUsage, TokenUsage,
+    ToolArtifactRef, ToolCall, ToolDirective, ToolExecutionResult, ToolResultCursor,
+    ToolResultStatus, ToolTruncationReason, UsageSource, INVALID_SUB_AGENT_MODEL_CODE,
+    INVALID_SUB_AGENT_MODEL_MESSAGE, INVALID_SUB_AGENT_SYSTEM_PROMPT_CODE,
+    INVALID_SUB_AGENT_SYSTEM_PROMPT_MESSAGE,
 };
 pub use workspace::{
     validate_portable_exclude_pattern, DiscoveryFilteredWorkspaceBackend, FileInfo,

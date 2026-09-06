@@ -29,7 +29,8 @@ pub(super) fn terminal_event(
             RunEventPayload::RunCancelled {
                 reason: result
                     .error
-                    .clone()
+                    .as_ref()
+                    .map(|error| error.message.clone())
                     .or_else(|| cancellation_token.and_then(|token| token.reason()))
                     .unwrap_or_else(|| "run cancelled".to_string()),
             },
@@ -42,7 +43,8 @@ pub(super) fn terminal_event(
             AgentErrorPayload {
                 message: result
                     .error
-                    .clone()
+                    .as_ref()
+                    .map(|error| error.message.clone())
                     .unwrap_or_else(|| status_string(result.status)),
                 code: result.error_code.clone(),
             },
@@ -62,7 +64,7 @@ pub(super) fn terminal_event(
                 .final_answer
                 .clone()
                 .or_else(|| result.wait_reason.clone())
-                .or_else(|| result.error.clone()),
+                .or_else(|| result.error.as_ref().map(|error| error.message.clone())),
         )
     };
     event = event.with_completion_details(

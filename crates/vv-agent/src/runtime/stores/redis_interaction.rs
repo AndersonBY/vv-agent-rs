@@ -36,6 +36,17 @@ fn redis_produce_host_interaction(
                         "interaction identity is already bound to a different request",
                     ));
                 }
+                if !redis_host_record_binding_matches(
+                    &existing,
+                    &checkpoint_key,
+                    &record_key,
+                    Some(&record_id),
+                ) {
+                    return Err(CheckpointError::new(
+                        "host_interaction_conflict",
+                        "host interaction replay record is bound to a different identity",
+                    ));
+                }
                 let raw_checkpoint = connection
                     .get::<_, Option<String>>(&data_key)
                     .map_err(redis_error)?
@@ -45,11 +56,12 @@ fn redis_produce_host_interaction(
                             "host interaction checkpoint is missing",
                         )
                     })?;
-                let checkpoint = decode_storage(
+                let checkpoint = decode_storage_for_key(
                     &raw_checkpoint,
                     connection
                         .get::<_, Option<u64>>(&lease_key)
                         .map_err(redis_error)?,
+                    &checkpoint_key,
                 )?;
                 let notification = connection
                     .get::<_, Option<String>>(&notification_key)
@@ -61,6 +73,24 @@ fn redis_produce_host_interaction(
                         )
                     })?;
                 let notification = redis_decode_notification(&notification)?;
+                if let Err(error) = redis_validate_notification_binding(
+                    &notification,
+                    &notification_id,
+                    &notification_key,
+                ) {
+                    return Err(CheckpointError::new(
+                        "host_interaction_conflict",
+                        error.message(),
+                    ));
+                }
+                if notification.checkpoint_key != checkpoint_key
+                    || notification.record_id != record_id
+                {
+                    return Err(CheckpointError::new(
+                        "host_interaction_conflict",
+                        "host interaction replay notification is bound to a different identity",
+                    ));
+                }
                 return Ok(Some(redis_host_interaction_outcome(
                     &request,
                     checkpoint.revision,
@@ -78,11 +108,12 @@ fn redis_produce_host_interaction(
                         "checkpoint does not exist",
                     )
                 })?;
-            let current = decode_storage(
+            let current = decode_storage_for_key(
                 &raw,
                 connection
                     .get::<_, Option<u64>>(&lease_key)
                     .map_err(redis_error)?,
+                &checkpoint_key,
             )?;
             if current.status != crate::checkpoint::CheckpointStatus::Running
                 || current.revision != context.expected_revision
@@ -290,14 +321,7 @@ fn redis_resolve_controller_command(
                     )
                 })?;
             let stored_command = redis_decode_controller_command(&raw_command)?;
-            if stored_command.command_id != command.command_id
-                || stored_command.command_digest != command.command_digest
-            {
-                return Err(CheckpointError::new(
-                    "controller_command_conflict",
-                    "controller command payload conflicts with receipt",
-                ));
-            }
+            redis_validate_controller_receipt_binding(&existing, &stored_command)?;
             let raw_outbox = connection
                 .get::<_, Option<String>>(&outbox_key)
                 .map_err(redis_error)?
@@ -321,11 +345,12 @@ fn redis_resolve_controller_command(
                     .to_string(),
                 }));
             };
-            let current = decode_storage(
+            let current = decode_storage_for_key(
                 &raw,
                 connection
                     .get::<_, Option<u64>>(&lease_key)
                     .map_err(redis_error)?,
+                &command.handle.checkpoint_key,
             )?;
             return Ok(Some(ControllerCommandResolution::Replayed {
                 receipt: existing.clone(),
@@ -344,19 +369,35 @@ fn redis_resolve_controller_command(
                 .to_string(),
             }));
         };
-        let current = decode_storage(
+        let current = decode_storage_for_key(
             &raw,
             connection
                 .get::<_, Option<u64>>(&lease_key)
                 .map_err(redis_error)?,
+            &command.handle.checkpoint_key,
         )?;
+        let now_ms = RedisCheckpointStore::redis_time_ms(connection)?;
         let host_record = if let Some(record_key) = record_key.as_deref() {
-            connection
+            let record = connection
                 .get::<_, Option<String>>(record_key)
                 .map_err(redis_error)?
                 .as_deref()
                 .map(redis_decode_host_record)
-                .transpose()?
+                .transpose()?;
+            if let Some(record) = &record {
+                if !redis_host_record_binding_matches(
+                    record,
+                    &current.checkpoint_key,
+                    record_key,
+                    None,
+                ) {
+                    return Err(CheckpointError::new(
+                        "host_interaction_conflict",
+                        "controller host interaction record is bound to a different identity",
+                    ));
+                }
+            }
+            record
         } else {
             None
         };
@@ -364,6 +405,7 @@ fn redis_resolve_controller_command(
             current,
             host_record,
             &command,
+            now_ms,
         ) {
             Ok(result) => result,
             Err(error)
@@ -432,6 +474,14 @@ fn redis_get_controller_command_receipt(
         return Ok(None);
     };
     let receipt = redis_decode_controller_receipt(&raw)?;
+    if receipt.command_id != command_id
+        || RedisCheckpointStore::controller_command_key(&receipt.command_id) != key
+    {
+        return Err(CheckpointError::new(
+            "controller_command_conflict",
+            "Redis controller receipt key does not match command identity",
+        ));
+    }
     let raw_command = connection
         .get::<_, Option<String>>(&RedisCheckpointStore::controller_command_payload_key(
             command_id,
@@ -444,14 +494,7 @@ fn redis_get_controller_command_receipt(
             )
         })?;
     let stored_command = redis_decode_controller_command(&raw_command)?;
-    if stored_command.command_id != command_id
-        || stored_command.command_digest != receipt.command_digest
-    {
-        return Err(CheckpointError::new(
-            "controller_command_conflict",
-            "controller command payload conflicts with receipt",
-        ));
-    }
+    redis_validate_controller_receipt_binding(&receipt, &stored_command)?;
     let raw_outbox = connection
         .get::<_, Option<String>>(&outbox_key)
         .map_err(redis_error)?
@@ -482,12 +525,7 @@ fn redis_get_controller_command(
         ));
     };
     let command = redis_decode_controller_command(&raw)?;
-    if command.command_id != receipt.command_id || command.command_digest != receipt.command_digest {
-        return Err(CheckpointError::new(
-            "controller_command_conflict",
-            "controller command and receipt conflict",
-        ));
-    }
+    redis_validate_controller_receipt_binding(&receipt, &command)?;
     Ok(Some(command))
 }
 
@@ -513,6 +551,24 @@ fn redis_decode_controller_command(raw: &str) -> CheckpointResult<ControllerComm
         CheckpointError::new("controller_command_invalid_state", error.to_string())
     })?;
     ControllerCommand::from_value(&value)
+}
+
+fn redis_validate_controller_receipt_binding(
+    receipt: &ControllerCommandReceipt,
+    command: &ControllerCommand,
+) -> CheckpointResult<()> {
+    if receipt.command_id != command.command_id
+        || receipt.command_digest != command.command_digest
+        || receipt.handle != command.handle
+        || receipt.resume_attempt != command.resume_attempt
+        || receipt.expected_revision != command.expected_revision
+    {
+        return Err(CheckpointError::new(
+            "controller_command_conflict",
+            "controller receipt and command payload are not bound to the same identity",
+        ));
+    }
+    Ok(())
 }
 
 fn redis_load_controller_command(

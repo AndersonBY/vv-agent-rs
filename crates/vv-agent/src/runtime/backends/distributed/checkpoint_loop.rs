@@ -461,7 +461,11 @@ fn cancellation_result(
             messages: checkpoint.messages,
             cycles: checkpoint.cycles,
             budget_usage: checkpoint.budget_usage,
-            error: Some(reason),
+            error: Some(crate::types::AgentResultError::new(
+                "checkpoint_dispatch_failed",
+                reason,
+                false,
+            )),
             shared_state: checkpoint.shared_state,
             ..AgentResult::default()
         },
@@ -479,7 +483,11 @@ fn controller_failure(checkpoint_controller: &CheckpointController, error: Strin
             messages: checkpoint.messages,
             cycles: checkpoint.cycles,
             budget_usage: checkpoint.budget_usage,
-            error: Some(error),
+            error: Some(crate::types::AgentResultError::new(
+                "checkpoint_dispatch_failed",
+                error,
+                false,
+            )),
             shared_state: checkpoint.shared_state,
             ..AgentResult::default()
         },

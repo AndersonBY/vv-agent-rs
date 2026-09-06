@@ -97,7 +97,11 @@ pub(super) fn apply_output_guardrails(
                 failed.completion_reason = Some(crate::types::CompletionReason::Failed);
                 failed.completion_tool_name = None;
                 failed.partial_output = candidate_output;
-                failed.error = Some(message);
+                failed.error = Some(crate::types::AgentResultError::new(
+                    "output_validation_failed",
+                    message,
+                    false,
+                ));
                 failed.error_code = None;
                 failed.final_answer = None;
                 failed.wait_reason = None;
@@ -194,7 +198,11 @@ pub(super) fn apply_optional_output_validation(
     };
     result.final_answer = None;
     result.wait_reason = None;
-    result.error = Some(error);
+    result.error = Some(crate::types::AgentResultError::new(
+        OUTPUT_VALIDATION_FAILED,
+        error,
+        false,
+    ));
     result.error_code = Some(OUTPUT_VALIDATION_FAILED.to_string());
     (result, None)
 }
@@ -347,7 +355,9 @@ pub(super) fn apply_cancellation_precedence(
         result.partial_output = result
             .partial_output
             .or_else(|| crate::types::last_assistant_output(&result.cycles));
-        result.error = cancellation_token.and_then(crate::runtime::CancellationToken::reason);
+        result.error = cancellation_token
+            .and_then(crate::runtime::CancellationToken::reason)
+            .map(|error| crate::types::AgentResultError::new("cancelled", error, false));
         result.error_code = None;
         result.budget_exhaustion = None;
         result.final_answer = None;

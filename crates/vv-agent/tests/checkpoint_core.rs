@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::SystemTime;
 
 use base64::Engine as _;
 use serde_json::{json, Value};
@@ -9,15 +10,21 @@ use vv_agent::{
     canonical_json_bytes, checkpoint_from_json, event_payload_digest, model_request_digest,
     operation_request_digest, run_definition_digest, tool_request_digest, AgentResult, AgentStatus,
     CapabilityRef, Checkpoint, CheckpointStatus, CheckpointStore, ClaimMode, CompletionReason,
-    EventCursor, EventOutboxEntry, ExtensionStateEntry, InMemoryCheckpointStore, Message,
-    OperationJournalEntry, OperationKind, OperationState, RedisCheckpointStore, ResumeObservation,
-    RunEvent, SqliteCheckpointStore, ToolArtifactRef, ToolIdempotency,
+    CycleRecord, EventCursor, EventOutboxEntry, ExtensionStateEntry, InMemoryCheckpointStore,
+    Message, OperationError, OperationJournalEntry, OperationKind, OperationState,
+    RedisCheckpointStore, ResumeObservation, RunEvent, SqliteCheckpointStore, ToolArtifactRef,
+    ToolIdempotency,
 };
 
 const CODEC_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec.json");
 const DEFINITION_FIXTURE: &str = include_str!("fixtures/parity/run_definition.json");
 const JOURNAL_FIXTURE: &str = include_str!("fixtures/parity/operation_journal.json");
 const STORE_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_store.json");
+
+#[path = "checkpoint_core/strict.rs"]
+mod checkpoint_core_strict;
+#[path = "checkpoint_core/store_contract.rs"]
+mod store_contract;
 
 fn fixture(raw: &str) -> Value {
     serde_json::from_str(raw).expect("valid parity fixture")
@@ -382,6 +389,44 @@ fn codec_round_trips_canonical_payload_and_rejects_invalid_input() {
 }
 
 #[test]
+fn checkpoint_codec_round_trips_every_canonical_valid_case() {
+    for case in fixture(CODEC_FIXTURE)["valid_cases"]
+        .as_array()
+        .expect("valid cases")
+    {
+        let name = case["name"].as_str().expect("valid case name");
+        let checkpoint = checkpoint_from_value(&case["payload"], 262_144)
+            .unwrap_or_else(|error| panic!("{name}: valid checkpoint rejected: {error:?}"));
+        assert_eq!(
+            checkpoint_to_value(&checkpoint, 262_144).unwrap(),
+            case["payload"],
+            "{name}: canonical checkpoint changed during round trip"
+        );
+    }
+}
+
+#[test]
+fn checkpoint_codec_maps_cancel_requested_shape_errors_to_status_invalid() {
+    let fixture = fixture(CODEC_FIXTURE);
+    let expected_error = fixture["invalid_cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == "cancel_requested_not_boolean")
+        .and_then(|case| case["error"].as_str())
+        .expect("cancel_requested fixture error");
+
+    let mut non_boolean = codec_case("minimal_running");
+    non_boolean["cancel_requested"] = json!("yes");
+    assert_eq!(
+        checkpoint_from_value(&non_boolean, 262_144)
+            .unwrap_err()
+            .code(),
+        expected_error
+    );
+}
+
+#[test]
 fn checkpoint_round_trips_message_artifact_ref() {
     let artifact_ref = ToolArtifactRef {
         path: ".vv-agent/artifacts/checkpoint/call.txt".to_string(),
@@ -432,8 +477,27 @@ fn journal_invalid_cases_return_fixture_codes() {
             if let Some(field) = mutation.get("remove").and_then(Value::as_str) {
                 entry.as_object_mut().unwrap().remove(field);
             }
+            if mutation.get("operation").and_then(Value::as_str) == Some("remove") {
+                if let Some(field) = mutation
+                    .get("path")
+                    .and_then(Value::as_array)
+                    .and_then(|path| path.last())
+                    .and_then(Value::as_str)
+                {
+                    entry.as_object_mut().unwrap().remove(field);
+                }
+            }
             if let Some(replacements) = mutation.get("replace").and_then(Value::as_object) {
-                entry.as_object_mut().unwrap().extend(replacements.clone());
+                for (field, value) in replacements {
+                    if let Some((parent, child)) = field.split_once('.') {
+                        entry[parent][child] = value.clone();
+                    } else {
+                        entry[field] = value.clone();
+                    }
+                }
+            }
+            if let Some(additions) = mutation.get("add").and_then(Value::as_object) {
+                entry.as_object_mut().unwrap().extend(additions.clone());
             }
             entry
         } else {
@@ -476,9 +540,12 @@ fn exercise_store(store: &dyn CheckpointStore, key: &str) {
     let mut progress = recovered;
     progress.tool_journal = vec![journal_case("tool_started")];
     assert!(store.progress_checkpoint(progress, "owner-b", 2).unwrap());
-    assert!(store
-        .renew_checkpoint_claim(key, "owner-b", 400, 250)
-        .unwrap());
+    assert!(matches!(
+        store
+            .renew_checkpoint_claim(key, "owner-b", 400, 250)
+            .unwrap(),
+        vv_agent::CheckpointRenewalOutcome::Renewed { .. }
+    ));
     let mut ambiguous = store.load_checkpoint(key).unwrap().unwrap();
     ambiguous.tool_journal[0].mark_ambiguous().unwrap();
     assert!(store.suspend_checkpoint(ambiguous, "owner-b", 3).unwrap());
@@ -513,6 +580,72 @@ fn exercise_store(store: &dyn CheckpointStore, key: &str) {
     assert!(retained.terminal_acknowledged);
     assert!(retained.terminal_result.is_some());
     assert!(!store.acknowledge_terminal(key, retained.revision).unwrap());
+}
+
+fn assert_initial_create_rejected_without_write(
+    store: &dyn CheckpointStore,
+    checkpoint: Checkpoint,
+) {
+    let key = checkpoint.checkpoint_key.clone();
+    let error = store
+        .create_checkpoint(checkpoint)
+        .expect_err("non-initial checkpoint must be rejected");
+    assert_eq!(error.code(), "checkpoint_initial_invalid");
+    assert!(store
+        .load_checkpoint(&key)
+        .expect("load after rejected create")
+        .is_none());
+
+    let valid = minimal_checkpoint(&key);
+    assert!(store
+        .create_checkpoint(valid)
+        .expect("rejected create must not reserve the key"));
+    assert!(store
+        .load_checkpoint(&key)
+        .expect("load valid checkpoint")
+        .is_some());
+}
+
+fn invalid_initial_checkpoints(prefix: &str) -> Vec<Checkpoint> {
+    let mut revision = minimal_checkpoint(&format!("{prefix}-revision"));
+    revision.revision = 1;
+
+    let mut claimed = minimal_checkpoint(&format!("{prefix}-claimed"));
+    claimed.claim_token = Some("create-claim".to_string());
+    claimed.claimed_cycle = Some(1);
+    claimed.lease_expires_at_ms = Some(100);
+
+    let mut terminal = minimal_checkpoint(&format!("{prefix}-terminal"));
+    terminal.status = CheckpointStatus::Completed;
+    terminal.terminal_result = Some(terminal_result(&terminal, AgentStatus::Completed).to_dict());
+
+    let mut journal = minimal_checkpoint(&format!("{prefix}-journal"));
+    journal.tool_journal = vec![journal_case("tool_started")];
+
+    let mut outbox = minimal_checkpoint(&format!("{prefix}-outbox"));
+    outbox.event_outbox.push(
+        EventOutboxEntry::pending("evt-invalid-create", current_event("evt-invalid-create"))
+            .unwrap(),
+    );
+
+    vec![revision, claimed, terminal, journal, outbox]
+}
+
+#[test]
+fn memory_store_rejects_non_initial_create_without_writes() {
+    let store = InMemoryCheckpointStore::new();
+    for checkpoint in invalid_initial_checkpoints("memory-create") {
+        assert_initial_create_rejected_without_write(&store, checkpoint);
+    }
+}
+
+#[test]
+fn sqlite_store_rejects_non_initial_create_without_writes() {
+    let directory = tempdir().unwrap();
+    let store = SqliteCheckpointStore::new(directory.path().join("checkpoint.sqlite3")).unwrap();
+    for checkpoint in invalid_initial_checkpoints("sqlite-create") {
+        assert_initial_create_rejected_without_write(&store, checkpoint);
+    }
 }
 
 #[test]
@@ -652,7 +785,11 @@ fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {
     failure.status = CheckpointStatus::Failed;
     let mut failure_result = terminal_result(&failure, AgentStatus::Failed);
     failure_result.completion_reason = Some(CompletionReason::Failed);
-    failure_result.error = Some("provider_rejected".to_string());
+    failure_result.error = Some(vv_agent::AgentResultError::new(
+        "provider_rejected",
+        "provider_rejected",
+        false,
+    ));
     failure_result.error_code = Some("provider_rejected".to_string());
     failure.terminal_result = Some(failure_result.to_dict());
     let failure_revision = failure.revision;
@@ -678,32 +815,31 @@ fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {
     assert!(finalized.terminal_result.is_some());
 
     let abort_key = format!("{prefix}-claimed-abort");
-    let mut abort = checkpoint_from_value(
-        &codec_case("reconciliation_required_retains_ambiguous_journal"),
-        262_144,
-    )
-    .unwrap();
-    abort.checkpoint_key = abort_key.clone();
-    abort.revision = 0;
-    abort.resume_attempt = 1;
-    assert!(store.create_checkpoint(abort).unwrap());
+    let mut abort_seed = minimal_checkpoint(&abort_key);
+    abort_seed.cycle_index = 0;
+    assert!(store.create_checkpoint(abort_seed).unwrap());
     let mut abort = store
-        .claim_checkpoint(&abort_key, 2, "abort-owner", 400, 300, ClaimMode::Recovery)
+        .claim_checkpoint(&abort_key, 1, "abort-owner", 400, 300, ClaimMode::Continue)
         .unwrap()
         .unwrap();
+    abort.tool_journal = vec![journal_case("tool_started")];
+    abort.tool_journal[0].mark_ambiguous().unwrap();
     abort.status = CheckpointStatus::Failed;
     let mut abort_result = terminal_result(&abort, AgentStatus::Failed);
     abort_result.completion_reason = Some(CompletionReason::Failed);
-    abort_result.error = Some("operator aborted with unknown external outcome".to_string());
-    abort_result.error_code = Some("operator_abort_with_unknown_outcome".to_string());
-    abort_result.resume_observation = Some(ResumeObservation {
+    abort_result.error = Some(vv_agent::AgentResultError::new(
+        "operator_abort_with_unknown_outcome",
+        "Operator accepted that the external outcome is unknown.",
+        false,
+    ));
+    abort_result.resume_observations = vec![ResumeObservation {
         operation_id: abort.tool_journal[0].operation_id.clone(),
         operation_kind: OperationKind::Tool,
-        cycle_index: 2,
+        cycle_index: abort.tool_journal[0].cycle_index,
         state: OperationState::Ambiguous,
         risk: "unknown external tool outcome".to_string(),
         idempotency_support: Some(ToolIdempotency::Unknown),
-    });
+    }];
     abort.terminal_result = Some(abort_result.to_dict());
     let abort_revision = abort.revision;
     assert!(store
@@ -713,17 +849,27 @@ fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {
     assert_eq!(abort.revision, abort_revision + 1);
     assert!(abort.claim_token.is_none());
     assert_eq!(abort.tool_journal.len(), 1);
-    assert_eq!(abort.tool_journal[0].state, OperationState::Ambiguous);
-    assert!(abort.terminal_result.as_ref().unwrap()["resume_observation"].is_object());
+    assert_eq!(abort.tool_journal[0].state, OperationState::Failed);
+    assert_eq!(
+        abort.tool_journal[0]
+            .error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("tool_cancelled")
+    );
+    assert!(
+        abort.terminal_result.as_ref().unwrap()["resume_observations"]
+            .as_array()
+            .is_some_and(|values| values.len() == 1)
+    );
 
     let running_event_key = format!("{prefix}-running-event");
     let event = current_event("evt-running");
     let pending = EventOutboxEntry::pending("evt-running", event).unwrap();
     let digest = pending.payload_digest.clone();
     let mut running = minimal_checkpoint(&running_event_key);
-    running.event_outbox.push(pending);
-    assert!(store.create_checkpoint(running).unwrap());
-    let running = store
+    assert!(store.create_checkpoint(running.clone()).unwrap());
+    running = store
         .claim_checkpoint(
             &running_event_key,
             1,
@@ -734,6 +880,12 @@ fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {
         )
         .unwrap()
         .unwrap();
+    running.event_outbox.push(pending);
+    let running_revision = running.revision;
+    assert!(store
+        .progress_checkpoint(running, "event-owner", running_revision)
+        .unwrap());
+    let running = store.load_checkpoint(&running_event_key).unwrap().unwrap();
     let cursor = delivery_cursor("evt-running", 1);
     assert!(!store
         .record_event_delivery(
@@ -790,6 +942,7 @@ fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {
     let pending = EventOutboxEntry::pending("evt-terminal", current_event("evt-terminal")).unwrap();
     let digest = pending.payload_digest.clone();
     let mut terminal = minimal_checkpoint(&terminal_event_key);
+    assert!(store.create_checkpoint(terminal.clone()).unwrap());
     terminal.status = CheckpointStatus::Completed;
     let mut result = terminal_result(&terminal, AgentStatus::Completed);
     result.completion_reason = Some(CompletionReason::NoToolFinish);
@@ -797,13 +950,14 @@ fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {
     terminal.terminal_result = Some(result.to_dict());
     terminal.event_outbox.push(pending);
     let terminal_receipt = terminal.terminal_result.clone();
-    assert!(store.create_checkpoint(terminal).unwrap());
+    assert!(store.finalize_checkpoint(terminal, 0).unwrap());
+    let terminal = store.load_checkpoint(&terminal_event_key).unwrap().unwrap();
     let cursor = delivery_cursor("evt-terminal", 2);
     assert!(!store
         .record_event_delivery(
             &terminal_event_key,
             None,
-            1,
+            terminal.revision + 1,
             "evt-terminal",
             &digest,
             cursor.clone(),
@@ -813,7 +967,7 @@ fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {
         .record_event_delivery(
             &terminal_event_key,
             Some("unexpected-owner"),
-            0,
+            terminal.revision,
             "evt-terminal",
             &digest,
             cursor.clone(),
@@ -823,14 +977,14 @@ fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {
         .record_event_delivery(
             &terminal_event_key,
             None,
-            0,
+            terminal.revision,
             "evt-terminal",
             &digest,
             cursor,
         )
         .unwrap());
     let terminal = store.load_checkpoint(&terminal_event_key).unwrap().unwrap();
-    assert_eq!(terminal.revision, 1);
+    assert_eq!(terminal.revision, 2);
     assert_eq!(terminal.status, CheckpointStatus::Completed);
     assert_eq!(terminal.terminal_result, terminal_receipt);
     assert_eq!(terminal.event_outbox[0].state, "delivered");
@@ -843,73 +997,4 @@ fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {
             .as_deref(),
         Some("evt-terminal")
     );
-}
-
-#[test]
-fn in_memory_store_supports_claimed_finalize_and_event_delivery() {
-    exercise_current_store_contract(&InMemoryCheckpointStore::new(), "memory-current");
-}
-
-#[test]
-fn sqlite_store_supports_claimed_finalize_and_event_delivery() {
-    let directory = tempdir().unwrap();
-    let store = SqliteCheckpointStore::new(directory.path().join("checkpoint.sqlite3")).unwrap();
-    exercise_current_store_contract(&store, "sqlite-current");
-}
-
-#[test]
-fn store_rejects_run_definition_replacement() {
-    let store = InMemoryCheckpointStore::new();
-    let checkpoint = checkpoint_from_value(&codec_case("minimal_running"), 262_144).unwrap();
-    let key = checkpoint.checkpoint_key.clone();
-    assert!(store.create_checkpoint(checkpoint).unwrap());
-    let mut claimed = store
-        .claim_checkpoint(&key, 1, "owner", 200, 100, ClaimMode::Continue)
-        .unwrap()
-        .unwrap();
-    claimed.run_definition["root_input"] = json!("replacement");
-    claimed.run_definition_digest = run_definition_digest(&claimed.run_definition).unwrap();
-    let revision = claimed.revision;
-    assert!(!store
-        .progress_checkpoint(claimed, "owner", revision)
-        .unwrap());
-}
-
-#[test]
-fn canonical_outbox_round_trips_and_delivery_verifies_digest() {
-    let checkpoint =
-        checkpoint_from_value(&fixture(CODEC_FIXTURE)["canonical_checkpoint"], 262_144).unwrap();
-    let placeholder = &checkpoint.event_outbox[0];
-    placeholder.verify_payload().unwrap();
-
-    let entry =
-        EventOutboxEntry::pending(placeholder.event_id.clone(), placeholder.event.clone()).unwrap();
-    entry.verify_payload().unwrap();
-}
-
-#[test]
-fn redis_keys_match_contract_vectors() {
-    let fixture = fixture(STORE_FIXTURE);
-    let operations = fixture["operations"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|operation| operation["name"].as_str().unwrap())
-        .collect::<Vec<_>>();
-    assert!(operations.contains(&"finalize_claimed"));
-    assert!(operations.contains(&"record_event_delivery"));
-    for vector in fixture["redis_key_vectors"].as_array().unwrap() {
-        let key = vector["checkpoint_key"].as_str().unwrap();
-        assert_eq!(RedisCheckpointStore::data_key(key), vector["data_key"]);
-        assert_eq!(RedisCheckpointStore::lease_key(key), vector["lease_key"]);
-    }
-}
-
-#[test]
-#[ignore = "requires VV_AGENT_REDIS_URL and a live Redis instance"]
-fn redis_store_supports_claimed_finalize_and_event_delivery() {
-    let redis_url = std::env::var("VV_AGENT_REDIS_URL").expect("VV_AGENT_REDIS_URL");
-    let store = RedisCheckpointStore::new(redis_url).unwrap();
-    let prefix = format!("redis-current-{}", uuid::Uuid::new_v4());
-    exercise_current_store_contract(&store, &prefix);
 }

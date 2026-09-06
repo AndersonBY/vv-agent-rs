@@ -414,11 +414,24 @@ impl DeferredReceipt {
         self.handle.validate()?;
         if self.handle_key != self.handle.handle_key()? {
             return Err(CheckpointError::new(
-                "deferred_receipt_invalid",
+                "deferred_receipt_identity_invalid",
                 "receipt handle_key does not match the exact handle",
             ));
         }
         validate_definitive_result(&self.result)?;
+        let identity_key = super::tool_receipt_identity_key(
+            &self.handle.checkpoint_key,
+            &self.handle.operation_id,
+            self.handle.attempt,
+            &self.result.tool_call_id,
+            &self.handle.request_digest,
+        )?;
+        if self.event_id != format!("evt_receipt_{identity_key}") {
+            return Err(CheckpointError::new(
+                "deferred_receipt_identity_invalid",
+                "receipt event_id does not match the canonical tool receipt identity",
+            ));
+        }
         if self.result_digest != result_digest(&self.result)? {
             return Err(CheckpointError::new(
                 "deferred_receipt_invalid",

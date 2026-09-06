@@ -153,19 +153,23 @@ fn renew_checkpoint_lease(
     }
     let lease_expires_at_ms = lease_expiry_at(now_ms, lease_duration_ms, deadline_unix_ms)
         .map_err(LeaseRenewalFailure::coordination)?;
-    let renewed = store
+    let renewal = store
         .renew_checkpoint_claim(checkpoint_key, claim_token, lease_expires_at_ms, now_ms)
         .map_err(|error| LeaseRenewalAttemptFailure::Store(error.to_string()))?;
     let observed_at_ms = now_unix_ms().map_err(LeaseRenewalFailure::coordination)?;
-    if !renewed {
-        return Err(
-            (if observed_at_ms >= known_expiry || observed_at_ms >= lease_expires_at_ms {
-                LeaseRenewalFailure::claim_lease_expired()
-            } else {
-                LeaseRenewalFailure::active_claim_lost()
-            })
-            .into(),
-        );
+    match renewal {
+        crate::checkpoint::CheckpointRenewalOutcome::CancelRequested { .. }
+        | crate::checkpoint::CheckpointRenewalOutcome::Renewed { .. } => {}
+        crate::checkpoint::CheckpointRenewalOutcome::ClaimLost { .. } => {
+            return Err(
+                (if observed_at_ms >= known_expiry || observed_at_ms >= lease_expires_at_ms {
+                    LeaseRenewalFailure::claim_lease_expired()
+                } else {
+                    LeaseRenewalFailure::active_claim_lost()
+                })
+                .into(),
+            );
+        }
     }
     if observed_at_ms >= known_expiry || observed_at_ms >= lease_expires_at_ms {
         return Err(LeaseRenewalFailure::claim_lease_expired().into());

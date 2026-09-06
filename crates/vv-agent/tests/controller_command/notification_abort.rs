@@ -123,3 +123,59 @@ fn notification_reconciliation_uses_abort_wire_value() {
         "notification_conflict"
     );
 }
+
+#[test]
+fn sqlite_public_notification_redacts_all_credential_markers() {
+    let directory = tempdir().expect("tempdir");
+    let path = directory.path().join("redaction.sqlite");
+    let store = SqliteCheckpointStore::new(&path).expect("open sqlite");
+    let mut checkpoint = minimal_checkpoint();
+    checkpoint.checkpoint_key = "checkpoint-controller-redaction".to_string();
+    let key = checkpoint.checkpoint_key.clone();
+    store.create_checkpoint(checkpoint).expect("create");
+    store
+        .claim_checkpoint(
+            &key,
+            1,
+            "redaction-worker",
+            1_000_000,
+            0,
+            ClaimMode::Continue,
+        )
+        .expect("claim");
+    let request = HostInteractionRequest::new(
+        "interaction-redaction",
+        1,
+        "operation-redaction",
+        "tool-redaction",
+        "Choose normally api_key=secret-api password=hunter2 Authorization: Bearer bearer-secret sk-live-secret token=token-secret at https://example.invalid/run?secret=abc",
+    )
+    .expect("request");
+    store
+        .produce_host_interaction(
+            request,
+            &admission_context(&store, &key, "redaction-worker", 0),
+        )
+        .expect("produce");
+    let connection = rusqlite::Connection::open(&path).expect("read sqlite");
+    let payload: String = connection
+        .query_row(
+            "SELECT payload FROM host_interaction_notification_outbox",
+            [],
+            |row| row.get(0),
+        )
+        .expect("notification payload");
+    assert!(payload.contains("Choose normally"));
+    for secret in [
+        "secret-api",
+        "hunter2",
+        "bearer-secret",
+        "sk-live-secret",
+        "token-secret",
+    ] {
+        assert!(!payload.contains(secret), "secret leaked: {secret}");
+    }
+    assert!(payload.matches("[credential redacted]").count() >= 5);
+    assert!(payload.contains("[external locator redacted]"));
+    assert!(!payload.contains("example.invalid"));
+}

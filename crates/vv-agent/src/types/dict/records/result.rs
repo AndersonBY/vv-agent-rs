@@ -1,6 +1,7 @@
 use serde_json::Value;
 
-use crate::types::{AgentResult, CompletionReason, CycleRecord, Message};
+use crate::checkpoint::{OperationKind, ResumeObservation};
+use crate::types::{AgentResult, AgentResultError, CompletionReason, CycleRecord, Message};
 
 use super::super::common::*;
 use super::super::token_usage::{task_token_usage_from_dict, task_token_usage_to_dict};
@@ -18,7 +19,7 @@ const REQUIRED_FIELDS: [&str; 13] = [
     "shared_state",
     "token_usage",
     "checkpoint_key",
-    "resume_observation",
+    "resume_observations",
 ];
 const OPTIONAL_FIELDS: [&str; 3] = ["budget_usage", "budget_exhaustion", "error_code"];
 
@@ -59,14 +60,16 @@ impl AgentResult {
                     .unwrap_or(Value::Null),
             ),
             (
-                "resume_observation".to_string(),
-                self.resume_observation
-                    .as_ref()
-                    .map(|observation| {
-                        serde_json::to_value(observation)
-                            .expect("validated resume observation always serializes")
-                    })
-                    .unwrap_or(Value::Null),
+                "resume_observations".to_string(),
+                Value::Array(
+                    self.resume_observations
+                        .iter()
+                        .map(|observation| {
+                            serde_json::to_value(observation)
+                                .expect("validated resume observation always serializes")
+                        })
+                        .collect(),
+                ),
             ),
             (
                 "messages".to_string(),
@@ -92,7 +95,15 @@ impl AgentResult {
             ),
             (
                 "error".to_string(),
-                self.error.clone().map(Value::String).unwrap_or(Value::Null),
+                self.error
+                    .as_ref()
+                    .map(|error| {
+                        error
+                            .validate()
+                            .expect("AgentResult error must use the typed current shape");
+                        serde_json::to_value(error).expect("AgentResult error serializes")
+                    })
+                    .unwrap_or(Value::Null),
             ),
             (
                 "shared_state".to_string(),
@@ -178,20 +189,37 @@ impl AgentResult {
                 })
                 .transpose()?,
             checkpoint_key: strict_optional_string(object, "checkpoint_key")?,
-            resume_observation: object
-                .get("resume_observation")
-                .filter(|value| !value.is_null())
+            resume_observations: object
+                .get("resume_observations")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    "AgentResult field 'resume_observations' must be an array".to_string()
+                })?
+                .iter()
                 .map(|value| {
                     serde_json::from_value(value.clone()).map_err(|error| {
                         format!(
-                            "AgentResult field 'resume_observation' must be a valid object: {error}"
+                            "AgentResult field 'resume_observations' must contain valid objects: {error}"
                         )
                     })
                 })
-                .transpose()?,
+                .collect::<Result<Vec<_>, _>>()?,
             final_answer: strict_optional_string(object, "final_answer")?,
             wait_reason: strict_optional_string(object, "wait_reason")?,
-            error: strict_optional_string(object, "error")?,
+            error: object
+                .get("error")
+                .filter(|value| !value.is_null())
+                .map(|value| -> Result<AgentResultError, String> {
+                    let error: AgentResultError = serde_json::from_value(value.clone())
+                        .map_err(|error| {
+                            format!(
+                                "AgentResult field 'error' must be a typed error object: {error}"
+                            )
+                        })?;
+                    error.validate()?;
+                    Ok(error)
+                })
+                .transpose()?,
             error_code: strict_optional_string(object, "error_code")?,
             shared_state: read_metadata(object, "shared_state")?,
             token_usage: object
@@ -199,11 +227,37 @@ impl AgentResult {
                 .ok_or_else(|| "AgentResult field 'token_usage' is required".to_string())
                 .and_then(task_token_usage_from_dict)?,
         };
+        validate_resume_observations(&result.resume_observations)?;
         if result.to_dict() != *data {
             return Err("AgentResult must use the canonical current wire shape".to_string());
         }
         Ok(result)
     }
+}
+
+fn validate_resume_observations(observations: &[ResumeObservation]) -> Result<(), String> {
+    let mut previous: Option<(String, u8, u64)> = None;
+    for observation in observations {
+        observation
+            .validate()
+            .map_err(|error| format!("invalid resume observation: {error}"))?;
+        let key = (
+            observation.operation_id.clone(),
+            match observation.operation_kind {
+                OperationKind::Model => 0,
+                OperationKind::Tool => 1,
+            },
+            observation.cycle_index,
+        );
+        if previous.as_ref().is_some_and(|previous| *previous >= key) {
+            return Err(
+                "AgentResult resume_observations must be sorted and unique by operation identity"
+                    .to_string(),
+            );
+        }
+        previous = Some(key);
+    }
+    Ok(())
 }
 
 fn optional_completion_reason(

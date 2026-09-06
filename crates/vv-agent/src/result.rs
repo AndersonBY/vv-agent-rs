@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::agent::Agent;
 use crate::budget::{BudgetExhaustion, BudgetUsageSnapshot};
-use crate::checkpoint::ResumeObservation;
+use crate::checkpoint::{ResumeObservation, ToolIdempotency};
 use crate::config::ResolvedModelConfig;
 use crate::events::RunEvent;
 use crate::run_config::RunConfig;
@@ -160,8 +160,8 @@ impl RunResult {
         self.result.checkpoint_key.as_deref()
     }
 
-    pub fn resume_observation(&self) -> Option<&ResumeObservation> {
-        self.result.resume_observation.as_ref()
+    pub fn resume_observations(&self) -> &[ResumeObservation] {
+        &self.result.resume_observations
     }
 
     pub fn final_output(&self) -> Option<&str> {
@@ -172,7 +172,11 @@ impl RunResult {
             .final_answer
             .as_deref()
             .or(self.result.wait_reason.as_deref())
-            .or(self.result.error.as_deref())
+            .or(self
+                .result
+                .error
+                .as_ref()
+                .map(|error| error.message.as_str()))
     }
 
     pub fn error_code(&self) -> Option<&str> {
@@ -236,7 +240,7 @@ impl RunResult {
             "budget_usage": self.result.budget_usage,
             "budget_exhaustion": self.result.budget_exhaustion,
             "checkpoint_key": self.result.checkpoint_key,
-            "resume_observation": self.result.resume_observation,
+            "resume_observations": self.result.resume_observations,
             "resolved_model": self.resolved.as_ref().map(resolved_model_public_value),
         });
         if let Some(error_code) = self.error_code() {
@@ -307,11 +311,13 @@ impl Serialize for RunResult {
     }
 }
 
+pub(crate) type ApprovalConsumption = Arc<Mutex<BTreeMap<String, Option<String>>>>;
+
 #[derive(Clone)]
 pub struct RunState {
     result: RunResult,
     approved_interruption_ids: Vec<String>,
-    approval_consumption: Arc<Mutex<BTreeSet<String>>>,
+    approval_consumption: ApprovalConsumption,
 }
 
 impl RunState {
@@ -322,7 +328,7 @@ impl RunState {
         Ok(Self {
             result,
             approved_interruption_ids: Vec::new(),
-            approval_consumption: Arc::new(Mutex::new(BTreeSet::new())),
+            approval_consumption: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
 
@@ -374,7 +380,7 @@ impl RunState {
             .collect()
     }
 
-    pub(crate) fn into_inner(self) -> (RunResult, Vec<String>, Arc<Mutex<BTreeSet<String>>>) {
+    pub(crate) fn into_inner(self) -> (RunResult, Vec<String>, ApprovalConsumption) {
         (
             self.result,
             self.approved_interruption_ids,
@@ -469,8 +475,15 @@ pub(crate) struct RunResumeContext {
 #[derive(Clone)]
 pub(crate) struct PendingToolApproval {
     pub interruption_id: String,
+    pub source_call: crate::types::ToolCall,
     pub call: crate::types::ToolCall,
     pub cycle_index: u32,
+    pub source_checkpoint_key: Option<String>,
+    pub source_operation_id: Option<String>,
+    pub source_attempt: Option<u64>,
+    pub source_request_digest: Option<String>,
+    pub source_idempotency_key: Option<String>,
+    pub source_idempotency_support: ToolIdempotency,
     pub context: ToolContext,
     pub options: ToolRunOptions,
     pub orchestrator: ToolOrchestrator,

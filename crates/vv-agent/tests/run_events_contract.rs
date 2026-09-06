@@ -11,7 +11,7 @@ fn run_event_has_identity_trace_session_and_timing() {
         .with_session_id("session_1")
         .with_metadata("source", json!("test"));
 
-    assert_eq!(event.version().as_str(), "v4");
+    assert_eq!(event.version().as_str(), "v5");
     assert!(event.event_id().as_str().starts_with("evt_"));
     assert_eq!(event.run_id(), "run_1");
     assert_eq!(event.trace_id(), "trace_1");
@@ -21,7 +21,7 @@ fn run_event_has_identity_trace_session_and_timing() {
     assert!(matches!(event.payload(), RunEventPayload::RunStarted { input } if input == "hello"));
 
     let encoded = serde_json::to_value(&event).expect("serialize");
-    assert_eq!(encoded["version"], "v4");
+    assert_eq!(encoded["version"], "v5");
     assert_eq!(encoded["type"], "run_started");
     assert_eq!(encoded["run_id"], "run_1");
     assert_eq!(encoded["trace_id"], "trace_1");
@@ -33,7 +33,7 @@ fn run_event_has_identity_trace_session_and_timing() {
 }
 
 #[test]
-fn run_event_v4_rejects_stale_and_future_discriminators() {
+fn run_event_v5_rejects_stale_and_future_discriminators() {
     let current = serde_json::to_value(RunEvent::run_started(
         "run_version",
         "trace_version",
@@ -42,7 +42,7 @@ fn run_event_v4_rejects_stale_and_future_discriminators() {
     ))
     .expect("current event");
 
-    for version in ["v2", "v5"] {
+    for version in ["v4", "v6"] {
         let mut stale = current.clone();
         stale["version"] = json!(version);
         let error =
@@ -85,7 +85,7 @@ fn run_completed_payload_round_trips_status() {
 #[test]
 fn typed_stream_wire_requires_positive_cycle_index() {
     let error = serde_json::from_value::<RunEvent>(json!({
-        "version": "v4",
+        "version": "v5",
         "type": "assistant_delta",
         "event_id": "evt_stream",
         "run_id": "run_stream",
@@ -129,10 +129,20 @@ fn run_events_parity_fixture_has_stable_bytes_and_round_trips() {
         "handoff_completed",
         "session_persisted",
         "run_state_changed",
+        "run_state_changed",
         "diagnostic",
         "run_completed",
         "run_failed",
         "run_cancelled",
+        "cycle_aborted",
+        "operation_ambiguous",
+        "cycle_aborted",
+        "run_state_changed",
+        "run_failed",
+        "operation_ambiguous",
+        "cycle_aborted",
+        "run_state_changed",
+        "run_failed",
         "tool_call_deferred",
         "tool_call_completed",
         "budget_snapshot",
@@ -174,7 +184,7 @@ fn run_events_parity_fixture_has_stable_bytes_and_round_trips() {
 fn memory_lifecycle_events_reject_missing_current_fields() {
     for incomplete in [
         json!({
-            "version": "v4",
+            "version": "v5",
             "type": "memory_compact_started",
             "event_id": "evt_incomplete_started",
             "run_id": "run_incomplete",
@@ -186,7 +196,7 @@ fn memory_lifecycle_events_reject_missing_current_fields() {
             "estimated_tokens": 120
         }),
         json!({
-            "version": "v4",
+            "version": "v5",
             "type": "memory_compact_completed",
             "event_id": "evt_incomplete_completed",
             "run_id": "run_incomplete",
@@ -238,7 +248,7 @@ fn approval_resolved_action_is_the_only_wire_decision() {
 
     for (wire_action, expected_action) in cases {
         let event: RunEvent = serde_json::from_value(json!({
-            "version": "v4",
+            "version": "v5",
             "type": "approval_resolved",
             "event_id": "evt_approval",
             "run_id": "run_approval",
@@ -267,7 +277,7 @@ fn approval_resolved_action_is_the_only_wire_decision() {
 #[test]
 fn approval_resolved_rejects_superseded_approved_field() {
     let error = serde_json::from_value::<RunEvent>(json!({
-        "version": "v4",
+        "version": "v5",
         "type": "approval_resolved",
         "event_id": "evt_approval",
         "run_id": "run_approval",
@@ -287,7 +297,7 @@ fn approval_resolved_rejects_superseded_approved_field() {
 #[test]
 fn created_at_keeps_microseconds_and_rejects_superseded_milliseconds() {
     let event: RunEvent = serde_json::from_value(json!({
-        "version": "v4",
+        "version": "v5",
         "type": "run_started",
         "event_id": "evt_current",
         "run_id": "run_current",
@@ -302,7 +312,7 @@ fn created_at_keeps_microseconds_and_rejects_superseded_milliseconds() {
     assert_eq!(encoded["created_at"], json!(123.456789));
 
     let error = serde_json::from_value::<RunEvent>(json!({
-        "version": "v4",
+        "version": "v5",
         "type": "run_started",
         "event_id": "evt_old_time",
         "run_id": "run_old_time",
@@ -334,7 +344,7 @@ fn empty_metadata_and_none_common_fields_are_omitted() {
 #[test]
 fn approval_preview_field_is_rejected() {
     let error = serde_json::from_value::<RunEvent>(json!({
-        "version": "v4",
+        "version": "v5",
         "type": "approval_requested",
         "event_id": "evt_approval",
         "run_id": "run_approval",
@@ -365,4 +375,67 @@ fn run_failed_uses_string_wire_error_and_retains_typed_code_in_metadata() {
     let encoded = serde_json::to_value(event).expect("serialize failure");
     assert_eq!(encoded["error"], "provider unavailable");
     assert_eq!(encoded["metadata"]["error_code"], "provider_error");
+}
+
+#[test]
+fn failed_and_cancelled_producers_emit_nullable_partial_output() {
+    let failed = serde_json::to_value(RunEvent::run_failed(
+        "run_failed_null_partial",
+        "trace_failed_null_partial",
+        "assistant",
+        AgentErrorPayload::new("provider unavailable"),
+    ))
+    .expect("serialize failed event");
+    assert!(failed
+        .get("partial_output")
+        .is_some_and(serde_json::Value::is_null));
+
+    let cancelled = serde_json::to_value(RunEvent::new(
+        "run_cancelled_null_partial",
+        "trace_cancelled_null_partial",
+        "assistant",
+        None,
+        RunEventPayload::RunCancelled {
+            reason: "cancelled".to_string(),
+        },
+    ))
+    .expect("serialize cancelled event");
+    assert!(cancelled
+        .get("partial_output")
+        .is_some_and(serde_json::Value::is_null));
+}
+
+#[test]
+fn live_cancel_requires_top_level_typed_transition() {
+    let mut event = json!({
+        "version": "v5",
+        "type": "run_state_changed",
+        "event_id": "evt_cancel",
+        "run_id": "run_cancel",
+        "trace_id": "trace_cancel",
+        "created_at": 1,
+        "state": "running",
+        "cancel_requested": {"from": false, "to": true}
+    });
+    serde_json::from_value::<RunEvent>(event.clone()).expect("typed live cancel event");
+
+    event["metadata"] = json!({"cancel_requested": {"from": false, "to": true}});
+    event
+        .as_object_mut()
+        .expect("event object")
+        .remove("cancel_requested");
+    let error = serde_json::from_value::<RunEvent>(event).expect_err("metadata carrier rejected");
+    assert!(error.to_string().contains("top-level typed field"));
+
+    let mut malformed = json!({
+        "version": "v5",
+        "type": "run_state_changed",
+        "event_id": "evt_cancel_malformed",
+        "run_id": "run_cancel",
+        "trace_id": "trace_cancel",
+        "created_at": 1,
+        "state": "running",
+        "cancel_requested": {"from": false}
+    });
+    assert!(serde_json::from_value::<RunEvent>(malformed.take()).is_err());
 }

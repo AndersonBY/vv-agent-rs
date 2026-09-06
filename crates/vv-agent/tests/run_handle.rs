@@ -204,13 +204,13 @@ async fn run_handle_failed_state_preserves_real_runner_error() {
 
     assert_eq!(result.status(), AgentStatus::Failed);
     assert_eq!(
-        result_error.as_deref(),
+        result_error.as_ref().map(|error| error.message.as_str()),
         Some("input rejected by regression guardrail")
     );
     assert_eq!(state.status, RunHandleStatus::Failed);
     assert!(state.done);
     assert!(!state.cancelled);
-    assert_eq!(state.error, result_error);
+    assert_eq!(state.error, result_error.map(|error| error.message.clone()));
 }
 
 #[tokio::test]

@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 
 use crate::runtime::backends::CapabilityRef;
 use crate::runtime::state::CheckpointStore;
+use crate::types::ToolExecutionResult;
 
 mod canonical;
 mod controller;
@@ -34,11 +35,38 @@ pub const MAX_CHECKPOINT_KEY_BYTES: usize = 512;
 pub const MAX_EXTENSION_NAMESPACE_BYTES: usize = 128;
 pub const MAX_EXTENSION_ENTRY_BYTES: usize = 65_536;
 pub const DEFAULT_MAX_EXTENSION_STATE_BYTES: u64 = 262_144;
-pub const CHECKPOINT_SCHEMA: &str = "vv-agent.checkpoint.v8";
+pub const CHECKPOINT_SCHEMA: &str = "vv-agent.checkpoint.v10";
 pub const RUN_DEFINITION_SCHEMA: &str = "vv-agent.run-definition.v5";
 pub const OPERATION_REQUEST_SCHEMA: &str = "vv-agent.operation-request.v1";
+pub const CHECKPOINT_RENEWAL_SCHEMA: &str = "vv-agent.checkpoint-renewal.v1";
 pub const EVENT_CURSOR_SCHEMA: &str = "vv-agent.event-cursor.v1";
 pub const CREDENTIAL_REDACTED: &str = "<credential-redacted>";
+
+pub fn tool_receipt_identity_key(
+    checkpoint_key: &str,
+    operation_id: &str,
+    attempt: u64,
+    tool_call_id: &str,
+    request_digest: &str,
+) -> CheckpointResult<String> {
+    let identity = serde_json::json!({
+        "attempt": attempt,
+        "checkpoint_key": checkpoint_key,
+        "operation_id": operation_id,
+        "request_digest": request_digest,
+        "tool_call_id": tool_call_id,
+    });
+    let bytes = canonical_json_bytes(&identity, "tool receipt identity")?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+pub fn tool_result_digest(result: &ToolExecutionResult) -> CheckpointResult<String> {
+    result
+        .validate()
+        .map_err(|error| CheckpointError::new("tool_result_invalid", error))?;
+    let bytes = canonical_json_bytes(&result.to_dict(), "tool execution result")?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
 
 /// A stable, observable checkpoint error.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,17 +130,18 @@ pub enum ResumePolicy {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AmbiguousModelPolicy {
-    #[default]
     RequireReconciliation,
+    #[default]
     RetryWithDuplicateRisk,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AmbiguousToolPolicy {
-    #[default]
     RequireReconciliation,
     RetryIdempotentOnly,
+    #[default]
+    SurfaceToModel,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,6 +176,121 @@ pub enum OperationState {
 pub enum ClaimMode {
     Continue,
     Recovery,
+}
+
+/// The result of a lease renewal. Cancellation is an in-band control signal:
+/// the worker keeps its claim and closes the current logical cycle at a safe
+/// boundary. A lost claim never writes a new lease.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckpointRenewalOutcome {
+    Renewed { lease_expires_at_ms: u64 },
+    CancelRequested { lease_expires_at_ms: u64 },
+    ClaimLost { revision: u64 },
+}
+
+impl CheckpointRenewalOutcome {
+    pub fn to_value(self) -> Value {
+        match self {
+            Self::Renewed {
+                lease_expires_at_ms,
+            } => serde_json::json!({
+                "schema_version": CHECKPOINT_RENEWAL_SCHEMA,
+                "outcome": "renewed",
+                "lease_expires_at_ms": lease_expires_at_ms,
+            }),
+            Self::CancelRequested {
+                lease_expires_at_ms,
+            } => serde_json::json!({
+                "schema_version": CHECKPOINT_RENEWAL_SCHEMA,
+                "outcome": "cancel_requested",
+                "lease_expires_at_ms": lease_expires_at_ms,
+            }),
+            Self::ClaimLost { revision } => serde_json::json!({
+                "schema_version": CHECKPOINT_RENEWAL_SCHEMA,
+                "outcome": "claim_lost",
+                "revision": revision,
+            }),
+        }
+    }
+
+    pub fn from_value(value: &Value) -> CheckpointResult<Self> {
+        let object = value.as_object().ok_or_else(|| {
+            CheckpointError::new(
+                "checkpoint_renewal_invalid",
+                "renewal outcome must be an object",
+            )
+        })?;
+        let outcome = object
+            .get("outcome")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                CheckpointError::new("checkpoint_renewal_invalid", "renewal outcome is required")
+            })?;
+        let schema = object
+            .get("schema_version")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                CheckpointError::new(
+                    "checkpoint_renewal_invalid",
+                    "renewal schema_version is required",
+                )
+            })?;
+        if schema != CHECKPOINT_RENEWAL_SCHEMA {
+            return Err(CheckpointError::new(
+                "checkpoint_renewal_schema_unsupported",
+                "renewal schema_version is unsupported",
+            ));
+        }
+        let integer = |field: &str| -> CheckpointResult<u64> {
+            let value = object.get(field).and_then(Value::as_u64).ok_or_else(|| {
+                CheckpointError::new(
+                    "checkpoint_renewal_invalid",
+                    format!("renewal {field} must be a non-negative integer"),
+                )
+            })?;
+            if value > MAX_WIRE_INTEGER {
+                return Err(CheckpointError::new(
+                    "checkpoint_renewal_invalid",
+                    format!("renewal {field} is outside the JSON-safe range"),
+                ));
+            }
+            Ok(value)
+        };
+        let expected_fields = match outcome {
+            "renewed" | "cancel_requested" => {
+                ["schema_version", "outcome", "lease_expires_at_ms"].as_slice()
+            }
+            "claim_lost" => ["schema_version", "outcome", "revision"].as_slice(),
+            _ => {
+                return Err(CheckpointError::new(
+                    "checkpoint_renewal_invalid",
+                    "renewal outcome is unsupported",
+                ))
+            }
+        };
+        if object.len() != expected_fields.len()
+            || expected_fields
+                .iter()
+                .any(|field| !object.contains_key(*field))
+        {
+            return Err(CheckpointError::new(
+                "checkpoint_renewal_invalid",
+                "renewal outcome has missing or unknown fields",
+            ));
+        }
+        match outcome {
+            "renewed" => Ok(Self::Renewed {
+                lease_expires_at_ms: integer("lease_expires_at_ms")?,
+            }),
+            "cancel_requested" => Ok(Self::CancelRequested {
+                lease_expires_at_ms: integer("lease_expires_at_ms")?,
+            }),
+            "claim_lost" => Ok(Self::ClaimLost {
+                revision: integer("revision")?,
+            }),
+            _ => unreachable!("renewal outcome validated above"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,18 +346,14 @@ pub enum ReconciliationDecisionKind {
 /// A typed observation retained when a started external operation has no
 /// durable receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ResumeObservation {
     pub operation_id: String,
     pub operation_kind: OperationKind,
     pub cycle_index: u64,
-    #[serde(default = "ambiguous_state")]
     pub state: OperationState,
     pub risk: String,
     pub idempotency_support: Option<ToolIdempotency>,
-}
-
-fn ambiguous_state() -> OperationState {
-    OperationState::Ambiguous
 }
 
 impl ResumeObservation {
@@ -423,8 +563,8 @@ impl Default for CheckpointConfig {
             store_ref: None,
             key: None,
             resume_policy: ResumePolicy::New,
-            ambiguous_model_policy: AmbiguousModelPolicy::RequireReconciliation,
-            ambiguous_tool_policy: AmbiguousToolPolicy::RequireReconciliation,
+            ambiguous_model_policy: AmbiguousModelPolicy::RetryWithDuplicateRisk,
+            ambiguous_tool_policy: AmbiguousToolPolicy::SurfaceToModel,
             required_extension_namespaces: Vec::new(),
             max_extension_state_bytes: DEFAULT_MAX_EXTENSION_STATE_BYTES,
             credential_slots: Vec::new(),
@@ -556,6 +696,77 @@ impl EventCursor {
             value,
             last_event_id,
         }
+    }
+
+    pub(crate) fn from_value(value: &Value) -> CheckpointResult<Self> {
+        let object = value.as_object().ok_or_else(|| {
+            CheckpointError::new(
+                "checkpoint_event_cursor_invalid",
+                "event cursor must be an object",
+            )
+        })?;
+        const FIELDS: [&str; 4] = ["schema_version", "store_ref", "value", "last_event_id"];
+        if object.len() != FIELDS.len() || FIELDS.iter().any(|field| !object.contains_key(*field)) {
+            return Err(CheckpointError::new(
+                "checkpoint_event_cursor_invalid",
+                "event cursor has missing or unknown fields",
+            ));
+        }
+        let schema_version = object
+            .get("schema_version")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                CheckpointError::new(
+                    "checkpoint_event_cursor_invalid",
+                    "event cursor schema_version must be a string",
+                )
+            })?;
+        let store_ref_value = object
+            .get("store_ref")
+            .expect("checked event cursor fields");
+        let store_ref_object = store_ref_value.as_object().ok_or_else(|| {
+            CheckpointError::new(
+                "checkpoint_event_cursor_invalid",
+                "event cursor store_ref must be an object",
+            )
+        })?;
+        const STORE_REF_FIELDS: [&str; 2] = ["id", "version"];
+        if store_ref_object.len() != STORE_REF_FIELDS.len()
+            || STORE_REF_FIELDS
+                .iter()
+                .any(|field| !store_ref_object.contains_key(*field))
+        {
+            return Err(CheckpointError::new(
+                "checkpoint_event_cursor_invalid",
+                "event cursor store_ref has missing or unknown fields",
+            ));
+        }
+        let store_ref = CapabilityRef::from_dict(store_ref_value, "event cursor store_ref")
+            .map_err(|error| CheckpointError::new("checkpoint_event_cursor_invalid", error))?;
+        let last_event_id = match object
+            .get("last_event_id")
+            .expect("checked event cursor fields")
+        {
+            Value::Null => None,
+            Value::String(value) => Some(value.clone()),
+            _ => {
+                return Err(CheckpointError::new(
+                    "checkpoint_event_cursor_invalid",
+                    "event cursor last_event_id must be a string or null",
+                ));
+            }
+        };
+        let cursor = Self {
+            schema_version: schema_version.to_string(),
+            store_ref,
+            value: object
+                .get("value")
+                .cloned()
+                .expect("checked event cursor fields"),
+            last_event_id,
+        };
+        cursor.validate()?;
+        Ok(cursor)
     }
 
     pub fn validate(&self) -> CheckpointResult<()> {

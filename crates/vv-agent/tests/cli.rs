@@ -151,7 +151,7 @@ fn cli_result_payload_matches_shape() {
         budget_usage: None,
         budget_exhaustion: None,
         checkpoint_key: None,
-        resume_observation: None,
+        resume_observations: Vec::new(),
     };
     let resolved = ResolvedModelConfig::new(
         "deepseek",

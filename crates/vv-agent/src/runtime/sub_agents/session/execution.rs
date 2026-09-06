@@ -377,7 +377,7 @@ impl RuntimeSubAgentSession {
             session_id: Some(self.session_id.clone()),
             final_answer: result.final_answer,
             wait_reason: result.wait_reason,
-            error: result.error,
+            error: result.error.map(|error| error.message),
             error_code,
             completion_reason: result.completion_reason,
             completion_tool_name: result.completion_tool_name,

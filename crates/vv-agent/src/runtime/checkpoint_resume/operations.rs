@@ -3,104 +3,18 @@
 use super::*;
 
 mod authoritative;
+mod controller_state;
 mod deferred_dispatch;
 mod host_interaction;
 mod model_terminal;
+mod terminal;
+mod tool_receipt;
 
 pub(super) use model_terminal::model_identity_from_entry;
 use model_terminal::require_effective_model_identity;
+use terminal::{cancellation_event, cancellation_result};
 
 impl CheckpointResumeController {
-    pub(crate) fn new(request: CheckpointControllerRequest) -> CheckpointResult<Self> {
-        request.config.validate()?;
-        let store = request.config.store.clone().ok_or_else(|| {
-            CheckpointError::new(
-                "checkpoint_store_unavailable",
-                "process-local checkpoint execution requires CheckpointConfig.store",
-            )
-        })?;
-        let mut extensions = BTreeMap::new();
-        for extension in request.extensions {
-            if extensions
-                .insert(extension.namespace().to_string(), extension)
-                .is_some()
-            {
-                return Err(CheckpointError::new(
-                    "checkpoint_extension_namespace_duplicate",
-                    "checkpoint extension namespaces must be unique",
-                ));
-            }
-        }
-        Ok(Self {
-            config: request.config,
-            store,
-            task_id: request.task_id,
-            run_id: request.run_id,
-            trace_id: request.trace_id,
-            agent_name: request.agent_name,
-            run_definition: request.run_definition,
-            run_definition_digest: request.run_definition_digest,
-            initial_messages: request.initial_messages,
-            initial_shared_state: request.initial_shared_state,
-            initial_budget_usage: request.initial_budget_usage,
-            extensions,
-            reconciliation_provider: request.reconciliation_provider,
-            event_sink: request.event_sink,
-            event_store: request.event_store,
-            preloaded_checkpoint: request.preloaded_checkpoint,
-            checkpoint: None,
-            created: false,
-            first_claim_is_recovery: false,
-            owned_claim_token: None,
-            lease_duration_ms: DEFAULT_CHECKPOINT_LEASE_MS,
-            heartbeat: None,
-            model_accounting: None,
-        })
-    }
-
-    pub(crate) fn bind_model_accounting(&mut self, accounting: ModelCallCoordinator) {
-        self.model_accounting = Some(accounting);
-    }
-
-    pub(crate) fn checkpoint_key(&self) -> CheckpointResult<&str> {
-        Ok(&self.require_checkpoint()?.checkpoint_key)
-    }
-
-    pub(crate) fn checkpoint(&self) -> CheckpointResult<&Checkpoint> {
-        self.require_checkpoint()
-    }
-
-    pub(crate) fn checkpoint_config(&self) -> &CheckpointConfig {
-        &self.config
-    }
-
-    pub(crate) fn checkpoint_store(&self) -> Arc<dyn CheckpointStore> {
-        self.store.clone()
-    }
-
-    pub(crate) fn next_claim_mode(&self) -> ClaimMode {
-        if self.first_claim_is_recovery {
-            ClaimMode::Recovery
-        } else {
-            ClaimMode::Continue
-        }
-    }
-
-    pub(crate) fn set_next_claim_mode(&mut self, claim_mode: ClaimMode) {
-        self.first_claim_is_recovery = claim_mode == ClaimMode::Recovery;
-    }
-
-    pub(crate) fn set_lease_duration_ms(&mut self, lease_duration_ms: u64) -> CheckpointResult<()> {
-        if lease_duration_ms == 0 {
-            return Err(CheckpointError::new(
-                "checkpoint_config_invalid",
-                "checkpoint lease duration must be positive",
-            ));
-        }
-        self.lease_duration_ms = lease_duration_ms;
-        Ok(())
-    }
-
     pub(crate) fn adopt_claim_for_terminal_finalize(
         &mut self,
         claim_token: &str,
@@ -126,6 +40,35 @@ impl CheckpointResumeController {
         }
         self.owned_claim_token = Some(claim_token.to_string());
         self.renew_claim_before_dispatch()?;
+        self.start_heartbeat()
+    }
+
+    pub(crate) fn adopt_existing_claim(
+        &mut self,
+        claim_token: &str,
+        claimed_cycle: u64,
+    ) -> CheckpointResult<()> {
+        if claim_token.trim().is_empty() {
+            return Err(CheckpointError::new(
+                "checkpoint_claim_invalid",
+                "retained distributed claim token must be non-empty",
+            ));
+        }
+        let checkpoint = self.require_checkpoint()?;
+        let now_ms = now_ms()?;
+        if checkpoint.claim_token.as_deref() != Some(claim_token)
+            || checkpoint.claimed_cycle != Some(claimed_cycle)
+            || checkpoint
+                .lease_expires_at_ms
+                .is_none_or(|lease| lease <= now_ms)
+        {
+            return Err(CheckpointError::new(
+                "checkpoint_claim_active",
+                "retained distributed claim no longer matches the durable checkpoint",
+            ));
+        }
+        self.owned_claim_token = Some(claim_token.to_string());
+        self.first_claim_is_recovery = false;
         self.start_heartbeat()
     }
 
@@ -217,10 +160,16 @@ impl CheckpointResumeController {
         }
 
         let now_ms = now_ms()?;
+        let retained_host_recovery_claim = self
+            .require_checkpoint()?
+            .claim_token
+            .as_deref()
+            .is_some_and(|token| token.starts_with("host-recovery:"));
         if self
             .require_checkpoint()?
             .lease_expires_at_ms
             .is_some_and(|expiry| expiry > now_ms)
+            && !retained_host_recovery_claim
         {
             return Err(CheckpointError::new(
                 "checkpoint_claim_active",
@@ -229,6 +178,44 @@ impl CheckpointResumeController {
         }
         self.restore_extensions()?;
         self.first_claim_is_recovery = true;
+        let checkpoint = self.require_checkpoint()?;
+        let completed_cycle = checkpoint
+            .cycles
+            .last()
+            .map(|cycle| u64::from(cycle.index))
+            .filter(|cycle| *cycle == checkpoint.cycle_index.saturating_add(1));
+        let has_pending_tool_receipt = checkpoint.event_outbox.iter().any(|entry| {
+            entry.state == "pending"
+                && entry.event.get("type").and_then(Value::as_str) == Some("tool_call_completed")
+        });
+        let journals_are_closed = checkpoint
+            .model_call_journal
+            .iter()
+            .chain(checkpoint.tool_journal.iter())
+            .all(|entry| {
+                matches!(
+                    entry.state,
+                    OperationState::Succeeded | OperationState::Failed
+                )
+            });
+        if let Some(cycle_index) =
+            completed_cycle.filter(|_| has_pending_tool_receipt && journals_are_closed)
+        {
+            self.ensure_claim(cycle_index)?;
+            let checkpoint = self.require_checkpoint()?.clone();
+            self.commit_cycle(
+                u32::try_from(cycle_index).map_err(|_| {
+                    CheckpointError::new(
+                        "checkpoint_cycle_invalid",
+                        "recovery cycle index exceeds the runtime range",
+                    )
+                })?,
+                &checkpoint.messages,
+                &checkpoint.cycles,
+                &checkpoint.shared_state,
+                checkpoint.budget_usage,
+            )?;
+        }
         Ok(None)
     }
 
@@ -491,10 +478,17 @@ impl CheckpointResumeController {
         call: &ToolCall,
         idempotency_support: ToolIdempotency,
         budget_usage: Option<BudgetUsageSnapshot>,
+        source_request_digest: Option<&str>,
+        source_idempotency_key: Option<&str>,
     ) -> CheckpointResult<(ToolOperationPlan, Option<AgentResult>)> {
         if let Some(interruption) = self.ensure_claim(u64::from(cycle_index))? {
             return Ok((
                 ToolOperationPlan {
+                    checkpoint_key: None,
+                    operation_id: None,
+                    attempt: None,
+                    request_digest: None,
+                    idempotency_support,
                     idempotency_key: None,
                     replay_result: None,
                 },
@@ -504,6 +498,8 @@ impl CheckpointResumeController {
         self.set_budget_snapshot(budget_usage);
         let idempotency_key = if idempotency_support == ToolIdempotency::Unsupported {
             None
+        } else if source_idempotency_key.is_some() {
+            source_idempotency_key.map(str::to_string)
         } else {
             Some(tool_idempotency_key(
                 self.checkpoint_key()?,
@@ -522,9 +518,22 @@ impl CheckpointResumeController {
             },
         });
         let digest = operation_request_digest(OperationKind::Tool, &projection)?;
+        if source_request_digest.is_some_and(|source| source != digest) {
+            return Err(CheckpointError::new(
+                "checkpoint_journal_integrity_mismatch",
+                "approved tool request digest does not match the captured source operation",
+            ));
+        }
+        let checkpoint_key = self.checkpoint_key()?.to_string();
 
         if let Some(entry) = self.find_tool_call(cycle_index, &call.id) {
             entry.verify_request(&projection)?;
+            if source_request_digest.is_some_and(|source| source != entry.request_digest) {
+                return Err(CheckpointError::new(
+                    "checkpoint_journal_integrity_mismatch",
+                    "durable approved tool operation does not match the captured source digest",
+                ));
+            }
             if entry.idempotency_support != Some(idempotency_support) {
                 return Err(CheckpointError::new(
                     "checkpoint_journal_integrity_mismatch",
@@ -546,6 +555,11 @@ impl CheckpointResumeController {
                     self.emit_operation_replayed(&entry)?;
                     return Ok((
                         ToolOperationPlan {
+                            checkpoint_key: Some(checkpoint_key),
+                            operation_id: Some(entry.operation_id.clone()),
+                            attempt: Some(entry.attempt),
+                            request_digest: Some(entry.request_digest.clone()),
+                            idempotency_support,
                             idempotency_key,
                             replay_result: Some(result),
                         },
@@ -553,33 +567,36 @@ impl CheckpointResumeController {
                     ));
                 }
                 OperationState::Failed => {
-                    let error = entry.error.clone().unwrap_or_else(|| {
-                        OperationError::new(
-                            "tool_operation_failed",
-                            "durable tool operation failed",
-                            false,
+                    let result_value = entry.result.as_ref().ok_or_else(|| {
+                        CheckpointError::new(
+                            "checkpoint_journal_integrity_mismatch",
+                            "durable failed tool result is missing",
                         )
-                    });
+                    })?;
+                    let result = ToolExecutionResult::from_dict(result_value).map_err(|error| {
+                        CheckpointError::new("checkpoint_journal_integrity_mismatch", error)
+                    })?;
+                    if result.to_dict() != *result_value
+                        || result.status != ToolResultStatus::Error
+                        || result.tool_call_id != call.id
+                        || entry.result_digest.as_deref()
+                            != Some(crate::checkpoint::tool_result_digest(&result)?.as_str())
+                    {
+                        return Err(CheckpointError::new(
+                            "checkpoint_journal_integrity_mismatch",
+                            "durable failed tool result is not canonical or does not match its digest or call",
+                        ));
+                    }
                     self.emit_operation_replayed(&entry)?;
                     return Ok((
                         ToolOperationPlan {
+                            checkpoint_key: Some(checkpoint_key),
+                            operation_id: Some(entry.operation_id.clone()),
+                            attempt: Some(entry.attempt),
+                            request_digest: Some(entry.request_digest.clone()),
+                            idempotency_support,
                             idempotency_key,
-                            replay_result: Some(ToolExecutionResult {
-                                tool_call_id: call.id.clone(),
-                                content: error.message,
-                                status: ToolResultStatus::Error,
-                                directive: crate::types::ToolDirective::Continue,
-                                error_code: Some(error.code),
-                                metadata: Metadata::new(),
-                                image_url: None,
-                                image_path: None,
-                                truncated: false,
-                                truncation_reason: None,
-                                original_bytes: None,
-                                visible_bytes: None,
-                                artifact: None,
-                                cursor: None,
-                            }),
+                            replay_result: Some(result),
                         },
                         None,
                     ));
@@ -587,6 +604,11 @@ impl CheckpointResumeController {
                 OperationState::Planned => {
                     return Ok((
                         ToolOperationPlan {
+                            checkpoint_key: Some(checkpoint_key),
+                            operation_id: Some(entry.operation_id.clone()),
+                            attempt: Some(entry.attempt),
+                            request_digest: Some(entry.request_digest.clone()),
+                            idempotency_support,
                             idempotency_key,
                             replay_result: None,
                         },
@@ -610,10 +632,10 @@ impl CheckpointResumeController {
         self.require_checkpoint_mut()?
             .tool_journal
             .push(OperationJournalEntry::tool(
-                operation_id,
+                operation_id.clone(),
                 u64::from(cycle_index),
                 1,
-                digest,
+                digest.clone(),
                 call.id.clone(),
                 call.name.clone(),
                 call.arguments.clone().into_iter().collect(),
@@ -623,6 +645,11 @@ impl CheckpointResumeController {
         self.progress()?;
         Ok((
             ToolOperationPlan {
+                checkpoint_key: Some(checkpoint_key),
+                operation_id: Some(operation_id),
+                attempt: Some(1),
+                request_digest: Some(digest),
+                idempotency_support,
                 idempotency_key,
                 replay_result: None,
             },
@@ -643,96 +670,6 @@ impl CheckpointResumeController {
             self.renew_claim_before_dispatch()?;
         }
         Ok(())
-    }
-
-    pub(crate) fn finish_tool(
-        &mut self,
-        cycle_index: u32,
-        call: &ToolCall,
-        result: &ToolExecutionResult,
-        budget_usage: Option<BudgetUsageSnapshot>,
-    ) -> CheckpointResult<Option<AgentResult>> {
-        self.set_budget_snapshot(budget_usage);
-        let state = self
-            .find_tool_call(cycle_index, &call.id)
-            .ok_or_else(|| {
-                CheckpointError::new(
-                    "checkpoint_journal_integrity_mismatch",
-                    format!("tool call {:?} is missing from the journal", call.id),
-                )
-            })?
-            .state;
-        if state == OperationState::Planned {
-            if result.error_code.as_deref() == Some("tool_approval_required") {
-                return Ok(None);
-            }
-            let entry = self.find_tool_call_mut(cycle_index, &call.id)?;
-            entry.state = OperationState::Failed;
-            entry.error = Some(OperationError::new(
-                result
-                    .error_code
-                    .clone()
-                    .unwrap_or_else(|| "tool_short_circuited".to_string()),
-                if result.content.is_empty() {
-                    "tool invocation was short-circuited".to_string()
-                } else {
-                    result.content.clone()
-                },
-                false,
-            ));
-            entry.validate()?;
-            self.progress()?;
-            return Ok(None);
-        }
-        if state != OperationState::Started {
-            return Ok(None);
-        }
-
-        if crate::checkpoint::is_ambiguous_tool_result(result) {
-            let entry = self.find_tool_call_mut(cycle_index, &call.id)?;
-            entry.state = OperationState::Ambiguous;
-            entry.validate()?;
-            self.progress()?;
-            let entry = self.find_tool_call(cycle_index, &call.id).ok_or_else(|| {
-                CheckpointError::new(
-                    "checkpoint_journal_integrity_mismatch",
-                    format!("tool call {:?} is missing from the journal", call.id),
-                )
-            })?;
-            return Ok(Some(self.suspend_for(&entry)?));
-        }
-
-        let entry = self.find_tool_call_mut(cycle_index, &call.id)?;
-        if matches!(
-            result.status,
-            ToolResultStatus::Success | ToolResultStatus::WaitResponse
-        ) {
-            entry.state = OperationState::Succeeded;
-            entry.result = Some(result.to_dict());
-            entry.error = None;
-        } else {
-            entry.state = OperationState::Failed;
-            entry.result = None;
-            entry.error = Some(OperationError::new(
-                result
-                    .error_code
-                    .clone()
-                    .unwrap_or_else(|| "tool_operation_failed".to_string()),
-                if result.content.is_empty() {
-                    "tool operation failed".to_string()
-                } else {
-                    result.content.clone()
-                },
-                result
-                    .metadata
-                    .get("retryable")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            ));
-        }
-        entry.validate()?;
-        self.progress()?;
-        Ok(None)
     }
 
     pub(crate) fn update_budget_usage(
@@ -764,6 +701,8 @@ impl CheckpointResumeController {
             ));
         }
         self.refresh_snapshot(messages, cycles, shared_state, budget_usage)?;
+        self.progress()?;
+        self.deliver_pending_outbox()?;
         let checkpoint = self.require_checkpoint_mut()?;
         checkpoint.cycle_index = u64::from(cycle_index);
         checkpoint.status = CheckpointStatus::Running;
@@ -803,10 +742,27 @@ impl CheckpointResumeController {
                 CheckpointError::new("checkpoint_terminal_result_invalid", error)
             });
         }
+        if result.completion_reason == Some(crate::types::CompletionReason::Cancelled)
+            && self
+                .unresolved_operation()
+                .is_some_and(|entry| entry.kind == OperationKind::Tool)
+        {
+            return Ok(result);
+        }
         let unresolved = self.unresolved_operation();
         let Some(mut unresolved) = unresolved else {
             return Ok(result);
         };
+        if matches!(
+            result.status,
+            AgentStatus::WaitUser | AgentStatus::Completed | AgentStatus::MaxCycles
+        ) && unresolved.state == OperationState::Planned
+        {
+            return Ok(result);
+        }
+        if result.status == AgentStatus::WaitUser {
+            return Ok(result);
+        }
         if unresolved.state == OperationState::Started {
             let entry = self.find_operation_mut(unresolved.kind, &unresolved.operation_id)?;
             entry.state = OperationState::Ambiguous;
@@ -839,7 +795,7 @@ impl CheckpointResumeController {
     pub(crate) fn finalize(
         &mut self,
         mut result: AgentResult,
-        terminal_event: Option<RunEvent>,
+        mut terminal_event: Option<RunEvent>,
     ) -> CheckpointResult<AgentResult> {
         if result.status == AgentStatus::ReconciliationRequired {
             result.checkpoint_key = Some(self.checkpoint_key()?.to_string());
@@ -863,17 +819,29 @@ impl CheckpointResumeController {
             )
             .map_err(|error| CheckpointError::new("checkpoint_terminal_result_invalid", error));
         }
-        for entry in staged_unclaimed_outbox {
-            if !self
-                .require_checkpoint()?
-                .event_outbox
-                .iter()
-                .any(|existing| existing.event_id == entry.event_id)
-            {
-                self.require_checkpoint_mut()?.event_outbox.push(entry);
+        if result.completion_reason == Some(crate::types::CompletionReason::Cancelled)
+            && !is_operator_abort(&result)
+        {
+            self.require_checkpoint_mut()?.cancel_requested = true;
+        }
+        if self.require_checkpoint()?.cancel_requested && !is_operator_abort(&result) {
+            result = cancellation_result(&result, self.require_checkpoint()?);
+            if let Some(event) = terminal_event.take() {
+                terminal_event = Some(cancellation_event(event, &result));
             }
         }
-        if self.unresolved_operation().is_some() && !is_operator_abort(&result) {
+        for entry in staged_unclaimed_outbox {
+            crate::runtime::state::append_event_outbox_once(
+                &mut self.require_checkpoint_mut()?.event_outbox,
+                entry,
+            )?;
+        }
+        if self
+            .unresolved_operation()
+            .is_some_and(|entry| entry.state != OperationState::Planned)
+            && result.status != AgentStatus::WaitUser
+            && !is_operator_abort(&result)
+        {
             return Err(CheckpointError::new(
                 "checkpoint_terminal_unresolved_operation",
                 "checkpoint terminal finalization has an unresolved operation",
@@ -971,8 +939,13 @@ impl CheckpointResumeController {
         self.stop_heartbeat();
         self.deliver_pending_outbox()?;
         self.acknowledge_terminal()?;
-        result.checkpoint_key = Some(self.checkpoint_key()?.to_string());
-        Ok(result)
+        AgentResult::from_dict(
+            self.require_checkpoint()?
+                .terminal_result
+                .as_ref()
+                .expect("terminal finalization persisted a terminal result"),
+        )
+        .map_err(|error| CheckpointError::new("checkpoint_terminal_result_invalid", error))
     }
 
     pub(crate) fn close(&mut self) {

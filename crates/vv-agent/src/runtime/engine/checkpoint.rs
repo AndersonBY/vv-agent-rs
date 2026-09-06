@@ -16,7 +16,8 @@ use crate::tools::{
     ToolRunOptions,
 };
 use crate::types::{
-    AgentResult, CycleRecord, LLMResponse, Message, ToolCall, ToolExecutionResult, ToolResultStatus,
+    AgentResult, CompletionReason, CycleRecord, LLMResponse, Message, ToolCall,
+    ToolExecutionResult, ToolResultStatus,
 };
 
 use super::helpers::failed_agent_result;
@@ -134,6 +135,39 @@ impl<'a> DeferredBatchCollector<'a> {
         result
     }
 
+    pub(super) fn resolve_execution(
+        &mut self,
+        call: &ToolCall,
+        plan: Option<&ToolOperationPlan>,
+        execution: DeferredToolExecution,
+    ) -> ToolExecutionResult {
+        let completed = matches!(
+            execution.result().status,
+            ToolResultStatus::Success | ToolResultStatus::Error
+        );
+        let ambiguous = self.checkpoint.is_ambiguous(&execution);
+        let wait_user = self.checkpoint.is_wait_user(&execution);
+        let durable_receipt = self
+            .checkpoint
+            .owns_tool_receipt(self.cycle_index, &call.id);
+        if ambiguous {
+            return execution.result().clone();
+        }
+        if durable_receipt {
+            // Recovery already delivered the canonical receipt event.  Keep
+            // the replay result for the next model request, but do not replay
+            // the executor lifecycle callback as a second public completion.
+            return execution.result().clone();
+        }
+        if execution.execution_started() && completed {
+            return self.capture_completed_execution(call, plan, execution);
+        }
+        if wait_user {
+            return execution.result().clone();
+        }
+        execution.complete()
+    }
+
     pub(super) fn complete_lifecycle(&mut self) {
         for execution in self.lifecycle.drain(..) {
             let _ = execution.complete();
@@ -162,11 +196,10 @@ impl<'a> DeferredBatchCollector<'a> {
             // once a batch contains a deferred outcome; clear callbacks on
             // both success and admission failure.
             self.lifecycle.clear();
-        } else if result
-            .as_ref()
-            .is_none_or(|result| matches!(result.status, crate::types::AgentStatus::Deferred))
-        {
+        } else if self.entries.is_empty() {
             self.complete_lifecycle();
+        } else {
+            self.lifecycle.clear();
         }
         result
     }
@@ -192,6 +225,25 @@ impl CheckpointCoordinator {
                 ToolResultStatus::Success | ToolResultStatus::Error
             )
             && crate::checkpoint::is_ambiguous_tool_result(execution.result())
+    }
+
+    pub(super) fn enabled(&self) -> bool {
+        self.controller.is_some()
+    }
+
+    pub(super) fn owns_tool_receipt(&self, cycle_index: u32, tool_call_id: &str) -> bool {
+        self.controller.as_ref().is_some_and(|controller| {
+            lock_controller(controller).ok().is_some_and(|controller| {
+                controller.has_durable_tool_receipt(cycle_index, tool_call_id)
+            })
+        })
+    }
+
+    pub(super) fn is_wait_user(&self, execution: &DeferredToolExecution) -> bool {
+        self.enabled()
+            && execution.execution_started()
+            && execution.result().status == ToolResultStatus::WaitResponse
+            && execution.result().directive == crate::types::ToolDirective::WaitUser
     }
 
     pub(super) fn begin_run_cycle(
@@ -341,11 +393,14 @@ impl CheckpointCoordinator {
         self.failure(error, messages, cycles, shared_state)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn plan_tool<F>(
         &self,
         cycle_index: u32,
         call: &ToolCall,
         operation_inputs: F,
+        source_request_digest: Option<&str>,
+        source_idempotency_key: Option<&str>,
         messages: &[Message],
         cycles: &[CycleRecord],
         shared_state: &BTreeMap<String, Value>,
@@ -358,7 +413,14 @@ impl CheckpointCoordinator {
         };
         let (idempotency, budget_usage) = operation_inputs();
         let outcome = lock_controller(controller).and_then(|mut controller| {
-            controller.plan_tool(cycle_index, call, idempotency, budget_usage)
+            controller.plan_tool(
+                cycle_index,
+                call,
+                idempotency,
+                budget_usage,
+                source_request_digest,
+                source_idempotency_key,
+            )
         });
         match outcome {
             Ok((_plan, Some(result))) => CheckpointToolPlan::Stop(Box::new(result)),
@@ -450,32 +512,21 @@ impl CheckpointCoordinator {
         if entries.is_empty() {
             return None;
         }
-        let has_deferred = entries.iter().any(|entry| entry.outcome.handle().is_some());
-        if has_deferred {
-            let controller = self.controller.as_ref()?;
-            let result = lock_controller(controller).and_then(|mut controller| {
-                controller.admit_deferred_batch(entries)?;
-                controller.deferred_result(messages, cycles, shared_state)
-            });
-            return match result {
-                Ok(result) => Some(result),
-                Err(error) => Some(self.failure(error, messages, cycles, shared_state)),
-            };
-        }
-        // Ordinary batches retain their existing per-tool journal path. This
-        // keeps approval/short-circuit semantics unchanged when no deferred
-        // outcome is present.
+        let mut deferred_entries = Vec::new();
         if self.controller.is_some() {
             for entry in entries {
-                let Some(result) = entry.outcome.result() else {
-                    continue;
-                };
-                if let Err(error) = crate::checkpoint::validate_definitive_result(result) {
-                    return Some(self.failure(error, messages, cycles, shared_state));
+                if let Some(result) = entry.outcome.result() {
+                    if let Err(error) = crate::checkpoint::validate_definitive_result(result) {
+                        return Some(self.failure(error, messages, cycles, shared_state));
+                    }
                 }
             }
         }
         for entry in entries {
+            if entry.outcome.handle().is_some() {
+                deferred_entries.push(entry.clone());
+                continue;
+            }
             let Some(controller) = self.controller.as_ref() else {
                 break;
             };
@@ -497,6 +548,17 @@ impl CheckpointCoordinator {
             if let Err(error) = outcome {
                 return Some(self.failure(error, messages, cycles, shared_state));
             }
+        }
+        if !deferred_entries.is_empty() {
+            let controller = self.controller.as_ref()?;
+            let result = lock_controller(controller).and_then(|mut controller| {
+                controller.admit_deferred_batch(&deferred_entries)?;
+                controller.deferred_result(messages, cycles, shared_state)
+            });
+            return match result {
+                Ok(result) => Some(result),
+                Err(error) => Some(self.failure(error, messages, cycles, shared_state)),
+            };
         }
         None
     }
@@ -539,13 +601,18 @@ impl CheckpointCoordinator {
         cycles: &[CycleRecord],
         shared_state: &BTreeMap<String, Value>,
     ) -> Option<AgentResult> {
-        self.pending_error
+        let error = self
+            .pending_error
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some()
-            .then(|| {
-                checkpoint_failed_result(messages, cycles, shared_state, &self.model_call_ledger)
-            })
+            .clone()?;
+        Some(checkpoint_failed_result(
+            messages,
+            cycles,
+            shared_state,
+            &self.model_call_ledger,
+            Some(&error),
+        ))
     }
 
     pub(super) fn finish_tool<F>(
@@ -599,11 +666,29 @@ impl CheckpointCoordinator {
     }
 
     pub(super) fn take_llm_error(&self) -> Option<LlmError> {
-        self.pending_error
+        let error = self
+            .pending_error
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-            .map(checkpoint_llm_error)
+            .take()?;
+        if is_terminal_checkpoint_control(&error) {
+            None
+        } else {
+            Some(checkpoint_llm_error(error))
+        }
+    }
+
+    pub(super) fn take_run_error(
+        &self,
+        pending_error: &mut Option<LlmError>,
+    ) -> Result<(), LlmError> {
+        if let Some(error) = self.take_llm_error() {
+            return Err(error);
+        }
+        if let Some(error) = pending_error.take() {
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn operation<T>(
@@ -627,7 +712,19 @@ impl CheckpointCoordinator {
             .pending_error
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error);
-        checkpoint_failed_result(messages, cycles, shared_state, &self.model_call_ledger)
+        let error = self
+            .pending_error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .expect("checkpoint failure was just recorded");
+        checkpoint_failed_result(
+            messages,
+            cycles,
+            shared_state,
+            &self.model_call_ledger,
+            Some(&error),
+        )
     }
 }
 
@@ -636,13 +733,45 @@ fn checkpoint_failed_result(
     cycles: &[CycleRecord],
     shared_state: &BTreeMap<String, Value>,
     model_call_ledger: &ModelCallLedger,
+    error: Option<&CheckpointError>,
 ) -> AgentResult {
-    failed_agent_result(
+    let mut result = failed_agent_result(
         messages.to_vec(),
         cycles.to_vec(),
         shared_state.clone(),
         "checkpoint runtime failed".to_string(),
         model_call_ledger.usage(),
+    );
+    match error.map(CheckpointError::code) {
+        Some("checkpoint_cancel_requested") | Some("checkpoint_cycle_cancel_requested") => {
+            result.completion_reason = Some(CompletionReason::Cancelled);
+            result.error = Some(crate::types::AgentResultError::new(
+                "cancelled_with_unknown_outcome",
+                "Operation was cancelled",
+                false,
+            ));
+            result.error_code = Some("cancelled_with_unknown_outcome".to_string());
+        }
+        Some("checkpoint_lease_lost") => {
+            result.completion_reason = Some(CompletionReason::Failed);
+            result.error = Some(crate::types::AgentResultError::new(
+                "lease_lost_with_unknown_outcome",
+                "checkpoint lease was lost",
+                false,
+            ));
+            result.error_code = Some("lease_lost_with_unknown_outcome".to_string());
+        }
+        _ => {}
+    }
+    result
+}
+
+fn is_terminal_checkpoint_control(error: &CheckpointError) -> bool {
+    matches!(
+        error.code(),
+        "checkpoint_cancel_requested"
+            | "checkpoint_cycle_cancel_requested"
+            | "checkpoint_lease_lost"
     )
 }
 
