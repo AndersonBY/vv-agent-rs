@@ -426,11 +426,11 @@ pub(super) fn commit_cycle(
     cycle_index: u64,
 ) -> Result<(), String> {
     align_active_claim(&mut checkpoint, &progress.checkpoint);
-    if checkpoint.event_outbox.iter().any(|entry| {
-        entry.state == "pending"
-            && entry.event.get("type").and_then(serde_json::Value::as_str)
-                == Some("tool_call_completed")
-    }) {
+    if checkpoint
+        .event_outbox
+        .iter()
+        .any(|entry| entry.state == "pending")
+    {
         checkpoint.cycle_index = progress.checkpoint.cycle_index;
         progress.persist(checkpoint)?;
         progress.deliver_pending_outbox(event_store, event_sink)?;
