@@ -8,23 +8,23 @@ for model-driven automation.
 
 ## Install
 
-The current crate version is `0.14.0`. This release uses Contract `12.0.0` and
+The current crate version is `0.14.1`. This release uses Contract `12.0.0` and
 exposes a Rust-idiomatic API.
 
 ```bash
-cargo add vv-agent@0.14.0
+cargo add vv-agent@0.14.1
 ```
 
 Enable the Apalis adapter with:
 
 ```bash
-cargo add vv-agent@0.14.0 --features apalis
+cargo add vv-agent@0.14.1 --features apalis
 ```
 
 Repository `HEAD` is forward-only: current readers accept only the current
 strict public and wire shapes.
 
-### 0.14.0 Highlights
+### 0.14.1 Highlights
 
 - Checkpoint v10 carries cancellation as durable state and returns typed lease
   renewal outcomes. Ordinary tool receipts are identity-first, atomic, and
@@ -37,6 +37,8 @@ strict public and wire shapes.
 - Ordinary failed and unknown tool receipts retain the complete canonical
   `ToolExecutionResult` plus digest; `OperationError` is only its normalized
   diagnostic projection, and recovery replays the retained result directly.
+- Rust distributed checkpoint recovery now redelivers every pending durable
+  `RunEvent` in outbox order.
 
 ### 0.12.2 Highlights
 

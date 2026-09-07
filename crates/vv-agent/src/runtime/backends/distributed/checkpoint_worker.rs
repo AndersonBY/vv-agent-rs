@@ -161,11 +161,7 @@ impl DistributedCheckpointProgress {
                 .checkpoint
                 .event_outbox
                 .iter()
-                .find(|entry| {
-                    entry.state == "pending"
-                        && entry.event.get("type").and_then(serde_json::Value::as_str)
-                            == Some("tool_call_completed")
-                })
+                .find(|entry| entry.state == "pending")
                 .cloned();
             let Some(pending) = pending else {
                 return Ok(());

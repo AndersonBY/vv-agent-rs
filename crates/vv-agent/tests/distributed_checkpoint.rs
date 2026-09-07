@@ -31,6 +31,8 @@ const JOURNAL_FIXTURE: &str = include_str!("fixtures/parity/operation_journal.js
 
 #[path = "distributed_checkpoint/abort.rs"]
 mod distributed_checkpoint_abort;
+#[path = "distributed_checkpoint/outbox.rs"]
+mod distributed_checkpoint_outbox;
 #[path = "distributed_checkpoint/receipt_retry.rs"]
 mod distributed_checkpoint_receipt_retry;
 #[path = "distributed_checkpoint/reconciliation.rs"]
@@ -873,7 +875,7 @@ fn heartbeat_does_not_overwrite_progress_revision_or_journal() {
         .load_checkpoint("heartbeat-progress")
         .unwrap()
         .unwrap();
-    assert_eq!(persisted.revision, 3);
+    assert_eq!(persisted.revision, 6);
     assert_eq!(persisted.cycle_index, 1);
     assert!(persisted.model_call_journal.is_empty());
 }

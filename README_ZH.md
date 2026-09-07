@@ -7,23 +7,23 @@
 
 ## 安装
 
-当前 crate 版本为 `0.14.0`。本版本采用 Contract `12.0.0`，提供符合 Rust 语言习惯的
+当前 crate 版本为 `0.14.1`。本版本采用 Contract `12.0.0`，提供符合 Rust 语言习惯的
 API 写法。
 
 ```bash
-cargo add vv-agent@0.14.0
+cargo add vv-agent@0.14.1
 ```
 
 需要 Apalis adapter 时使用：
 
 ```bash
-cargo add vv-agent@0.14.0 --features apalis
+cargo add vv-agent@0.14.1 --features apalis
 ```
 
 Contract 12 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
 公共 API 与传输数据结构。需要旧协议的应用应固定旧 crate 版本。
 
-### 0.14.0 重点能力
+### 0.14.1 重点能力
 
 - checkpoint v10 将取消请求作为持久化状态，并通过 typed renewal outcome 区分
   `renewed`、`cancel_requested` 和 `claim_lost`。普通工具 receipt 采用 identity-first、原子且
@@ -35,6 +35,8 @@ Contract 12 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取�
   checkpoint 隔离的 controller wake recovery。
 - 普通失败和未知结果会保留完整 canonical `ToolExecutionResult` 及 digest；
   `OperationError` 仅作为规范化诊断投影，恢复时直接重放持久化 result。
+- Rust 分布式 checkpoint 恢复现在会按 outbox 顺序重新投递每个待处理的持久化
+  `RunEvent`。
 
 ### 0.12.2 重点能力
 
