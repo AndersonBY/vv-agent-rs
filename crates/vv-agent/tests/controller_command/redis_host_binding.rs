@@ -736,12 +736,32 @@ fn redis_store_admits_and_recovers_with_durable_replay() {
         request_digest: request.request_digest,
         command_id: command.command_id,
     };
-    assert_eq!(
-        store
-            .claim_and_consume_host_interaction_response(envelope.clone())
-            .expect("recover")
-            .kind,
-        "applied"
+    let redis_time_before_ms = {
+        let (seconds, micros): (u64, u64) = redis::cmd("TIME")
+            .query(&mut connection)
+            .expect("Redis TIME before recovery");
+        seconds.saturating_mul(1_000).saturating_add(micros / 1_000)
+    };
+    let applied = store
+        .claim_and_consume_host_interaction_response(envelope.clone())
+        .expect("recover");
+    assert_eq!(applied.kind, "applied");
+    let redis_time_after_ms = {
+        let (seconds, micros): (u64, u64) = redis::cmd("TIME")
+            .query(&mut connection)
+            .expect("Redis TIME after recovery");
+        seconds.saturating_mul(1_000).saturating_add(micros / 1_000)
+    };
+    let recovered = store
+        .load_checkpoint(&key)
+        .expect("load recovered checkpoint")
+        .expect("recovered checkpoint");
+    let recovery_deadline = recovered.lease_expires_at_ms.expect("recovery claim lease");
+    let recovery_lease_ms = 5 * 60 * 1_000;
+    assert!(
+        recovery_deadline >= redis_time_before_ms.saturating_add(recovery_lease_ms)
+            && recovery_deadline <= redis_time_after_ms.saturating_add(recovery_lease_ms),
+        "recovery deadline {recovery_deadline} was not anchored to Redis TIME range [{redis_time_before_ms}, {redis_time_after_ms}]"
     );
     assert_eq!(
         store
