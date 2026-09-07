@@ -101,6 +101,7 @@ fn redis_claim_and_consume_host_interaction_response(
                 "logical cycle does not match checkpoint",
             ));
         }
+        let now_ms = RedisCheckpointStore::redis_time_ms(connection)?;
         let mut updated = current.clone();
         updated.messages.push(crate::types::Message::user(
             response.response.content.clone(),
@@ -116,7 +117,7 @@ fn redis_claim_and_consume_host_interaction_response(
             record.record_id, updated.resume_attempt
         ));
         updated.claimed_cycle = Some(claimed_cycle);
-        updated.lease_expires_at_ms = Some(redis_recovery_lease_deadline());
+        updated.lease_expires_at_ms = Some(now_ms.saturating_add(5 * 60 * 1_000));
         updated.revision = envelope.expected_revision.checked_add(1).ok_or_else(|| {
             CheckpointError::new("checkpoint_revision_overflow", "revision overflow")
         })?;
@@ -220,14 +221,6 @@ fn redis_recovery_identity_matches(
         && record.request.tool_call_id == envelope.tool_call_id
         && record.request_digest == envelope.request_digest
         && record.command_id.as_deref() == Some(envelope.command_id.as_str())
-}
-
-fn redis_recovery_lease_deadline() -> u64 {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0);
-    now.saturating_add(5 * 60 * 1_000)
 }
 
 fn redis_host_interaction_outcome(

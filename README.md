@@ -8,21 +8,25 @@ for model-driven automation.
 
 ## Install
 
-The current crate version is `0.14.1`. This release uses Contract `12.0.0` and
+The current crate version is `0.14.2`. This release uses Contract `12.0.0` and
 exposes a Rust-idiomatic API.
 
 ```bash
-cargo add vv-agent@0.14.1
+cargo add vv-agent@0.14.2
 ```
 
 Enable the Apalis adapter with:
 
 ```bash
-cargo add vv-agent@0.14.1 --features apalis
+cargo add vv-agent@0.14.2 --features apalis
 ```
 
 Repository `HEAD` is forward-only: current readers accept only the current
 strict public and wire shapes.
+
+### 0.14.2 Highlights
+
+- Redis host-interaction recovery anchors initial claim deadlines to Redis authoritative time.
 
 ### 0.14.1 Highlights
 
