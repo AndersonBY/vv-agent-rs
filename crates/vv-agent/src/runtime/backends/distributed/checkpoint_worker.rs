@@ -38,9 +38,8 @@ use lease::run_with_checkpoint_lease;
 use recovery::{
     align_active_claim, commit_cycle, effective_claim_mode, initialize_extensions, load_checkpoint,
     prepare_terminal_candidate, reconcile_recovery, reconciliation_candidate, snapshot_extensions,
-    suspend_reconciliation, terminal_replay, validate_claimed_resume_attempt,
-    validate_envelope_checkpoint_identity, validate_extension_capabilities,
-    validate_resume_attempt_observation,
+    suspend_reconciliation, validate_claimed_resume_attempt, validate_envelope_checkpoint_identity,
+    validate_extension_capabilities, validate_resume_attempt_observation,
 };
 use runtime::run_agent_runtime_cycle;
 
@@ -301,17 +300,18 @@ pub(super) fn run_distributed_cycle(
     validate_distributed_run_definition(&envelope, &checkpoint, None)
         .map_err(|error| error.to_string())?;
 
-    if checkpoint.terminal_result.is_some() {
-        return terminal_replay(&checkpoint);
-    }
     if checkpoint.status == CheckpointStatus::Deferred {
         return Ok(CycleDispatchResult::pending());
     }
-    if checkpoint.cycle_index >= u64::from(envelope.cycle_index) && checkpoint.claim_token.is_none()
+    if checkpoint.terminal_result.is_none()
+        && checkpoint.cycle_index >= u64::from(envelope.cycle_index)
+        && checkpoint.claim_token.is_none()
     {
         return CycleDispatchResult::committed(checkpoint.cycle_index, checkpoint.revision);
     }
-    validate_resume_attempt_observation(&envelope, &checkpoint, delivery)?;
+    if checkpoint.terminal_result.is_none() {
+        validate_resume_attempt_observation(&envelope, &checkpoint, delivery)?;
+    }
     let retained_host_recovery_claim = checkpoint
         .claim_token
         .as_deref()
@@ -332,6 +332,9 @@ pub(super) fn run_distributed_cycle(
         .map_err(|error| error.to_string())?;
 
     validate_extension_capabilities(config, &resolved)?;
+    if checkpoint.terminal_result.is_some() {
+        return run_agent_runtime_cycle(envelope, delivery, resolved, store, checkpoint);
+    }
     if worker.checkpoint_executor.is_none() {
         return run_agent_runtime_cycle(envelope, delivery, resolved, store, checkpoint);
     }
@@ -372,7 +375,7 @@ pub(super) fn run_distributed_cycle(
             let latest = load_checkpoint(store.as_ref(), checkpoint_key)?;
             validate_envelope_checkpoint_identity(&envelope, &latest)?;
             if latest.terminal_result.is_some() {
-                return terminal_replay(&latest);
+                return run_agent_runtime_cycle(envelope, delivery, resolved, store, latest);
             }
             return Ok(CycleDispatchResult::pending());
         };

@@ -37,6 +37,8 @@ mod distributed_checkpoint_outbox;
 mod distributed_checkpoint_receipt_retry;
 #[path = "distributed_checkpoint/reconciliation.rs"]
 mod distributed_checkpoint_reconciliation;
+#[path = "distributed_checkpoint/terminal_replay.rs"]
+mod distributed_checkpoint_terminal_replay;
 
 type ExecutorFn = dyn FnMut(
         &DistributedRunEnvelope,

@@ -7,21 +7,25 @@
 
 ## 安装
 
-当前 crate 版本为 `0.14.2`。本版本采用 Contract `12.0.0`，提供符合 Rust 语言习惯的
+当前 crate 版本为 `0.14.3`。本版本采用 Contract `12.0.0`，提供符合 Rust 语言习惯的
 API 写法。
 
 ```bash
-cargo add vv-agent@0.14.2
+cargo add vv-agent@0.14.3
 ```
 
 需要 Apalis adapter 时使用：
 
 ```bash
-cargo add vv-agent@0.14.2 --features apalis
+cargo add vv-agent@0.14.3 --features apalis
 ```
 
 Contract 12 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
 公共 API 与传输数据结构。需要旧协议的应用应固定旧 crate 版本。
+
+### 0.14.3 重点能力
+
+- terminal replay 会先以幂等方式投递 pending lifecycle events，再确认终态结果，不会重复 runtime 或终态副作用。
 
 ### 0.14.2 重点能力
 

@@ -487,16 +487,6 @@ pub(super) fn align_active_claim(snapshot: &mut Checkpoint, current: &Checkpoint
     snapshot.terminal_acknowledged = current.terminal_acknowledged;
 }
 
-pub(super) fn terminal_replay(checkpoint: &Checkpoint) -> Result<CycleDispatchResult, String> {
-    let result = AgentResult::from_dict(
-        checkpoint
-            .terminal_result
-            .as_ref()
-            .ok_or_else(|| "terminal checkpoint is missing terminal_result".to_string())?,
-    )?;
-    CycleDispatchResult::terminal_replay(result, checkpoint.revision)
-}
-
 pub(super) fn reconciliation_candidate(checkpoint: &Checkpoint) -> Result<AgentResult, String> {
     let entry = checkpoint
         .model_call_journal
