@@ -29,7 +29,7 @@ strict public and wire shapes.
 - Host prompts and responses preserve original application content across
   checkpoints, notifications, and model recovery.
 - Distributed terminal decisions, unknown tool receipts, and unsupported
-  idempotency requests follow the same Python/Rust contract.
+  idempotency requests follow the canonical execution contract.
 - Frozen finalization uses persisted definitions; Redis checkpoint reads use
   one atomic snapshot.
 
