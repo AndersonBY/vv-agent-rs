@@ -179,7 +179,10 @@ pub fn prepare_tool_receipt(
             && entry.tool_call_id.as_deref() == Some(tool_call_id)
             && entry.request_digest == request_digest
             && entry.cycle_index == claimed_cycle
-            && entry.state == OperationState::Started
+            && matches!(
+                entry.state,
+                OperationState::Started | OperationState::Ambiguous
+            )
     }) else {
         return Ok(None);
     };
@@ -192,12 +195,34 @@ pub fn prepare_tool_receipt(
         request_digest,
     )?;
     let result_digest = crate::checkpoint::tool_result_digest(result)?;
+    let observation = if result.error_code.as_deref() == Some("tool_outcome_unknown") {
+        let entry = &current.tool_journal[index];
+        let expected = unknown_tool_observation(entry);
+        let source = checkpoint.tool_journal.iter().find(|source| {
+            source.kind == entry.kind
+                && source.operation_id == operation_id
+                && source.attempt == attempt
+                && source.tool_call_id.as_deref() == Some(tool_call_id)
+                && source.request_digest == request_digest
+                && source.cycle_index == claimed_cycle
+                && source.state == OperationState::Ambiguous
+        });
+        if source.and_then(|source| source.resume_observation.as_ref()) != Some(&expected) {
+            return Err(CheckpointError::new(
+                "checkpoint_journal_integrity_mismatch",
+                "tool outcome observation does not match the authoritative operation",
+            ));
+        }
+        Some(expected)
+    } else {
+        None
+    };
     let mut updated = current.clone();
     let entry = &mut updated.tool_journal[index];
     entry.identity_key = Some(identity_key);
     entry.result_digest = Some(result_digest);
     entry.deferred_handle = None;
-    entry.resume_observation = None;
+    entry.resume_observation = observation;
     match result.status {
         ToolResultStatus::Success => {
             entry.state = OperationState::Succeeded;
@@ -208,9 +233,6 @@ pub fn prepare_tool_receipt(
             entry.state = OperationState::Failed;
             entry.result = Some(result.to_dict());
             entry.error = Some(operation_error_from_tool_result(result));
-            if result.error_code.as_deref() == Some("tool_outcome_unknown") {
-                entry.resume_observation = Some(unknown_tool_observation(entry));
-            }
         }
         _ => unreachable!("definitive result validated"),
     }

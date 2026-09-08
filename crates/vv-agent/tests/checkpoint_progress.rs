@@ -6,8 +6,8 @@ use vv_agent::runtime::checkpoint_codec::checkpoint_from_value;
 use vv_agent::{
     run_definition_digest, tool_request_digest, CapabilityRef, Checkpoint, CheckpointStore,
     ClaimMode, EventCursor, EventOutboxEntry, InMemoryCheckpointStore, OperationError,
-    OperationJournalEntry, OperationState, RedisCheckpointStore, RunEvent, RunEventPayload,
-    SqliteCheckpointStore, ToolExecutionResult, ToolIdempotency,
+    OperationJournalEntry, OperationKind, OperationState, RedisCheckpointStore, ResumeObservation,
+    RunEvent, RunEventPayload, SqliteCheckpointStore, ToolExecutionResult, ToolIdempotency,
 };
 
 const CODEC_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_codec.json");
@@ -284,6 +284,80 @@ fn exercise_unknown_receipt_replay_preserves_digest_and_zero_writes(
     let result = ToolExecutionResult::error("call-unknown", "The tool outcome is unknown.")
         .with_error_code("tool_outcome_unknown");
     let result_digest = vv_agent::checkpoint::tool_result_digest(&result).expect("result digest");
+    let error = store
+        .record_tool_receipt(
+            claimed.clone(),
+            "tool_cycle_1_call_unknown",
+            1,
+            "call-unknown",
+            &request_digest,
+            result.clone(),
+            "unknown-receipt-owner",
+            claimed.revision,
+            1,
+        )
+        .expect_err("started operation without observation is not definitive");
+    assert_eq!(error.code(), "checkpoint_journal_integrity_mismatch");
+    assert_eq!(
+        store.load_checkpoint(&key).unwrap().unwrap().revision,
+        claimed.revision
+    );
+
+    let mut ambiguous = claimed;
+    ambiguous.tool_journal[0]
+        .transition_to(OperationState::Ambiguous)
+        .unwrap();
+    assert!(store
+        .progress_checkpoint(
+            ambiguous.clone(),
+            "unknown-receipt-owner",
+            ambiguous.revision
+        )
+        .unwrap());
+    let mut claimed = store.load_checkpoint(&key).unwrap().unwrap();
+    let observation = ResumeObservation {
+        operation_id: "tool_cycle_1_call_unknown".to_string(),
+        operation_kind: OperationKind::Tool,
+        cycle_index: 1,
+        state: OperationState::Ambiguous,
+        risk: "unknown_tool_side_effect".to_string(),
+        idempotency_support: Some(ToolIdempotency::Unknown),
+    };
+    claimed.tool_journal[0].resume_observation = Some(observation.clone());
+    for source_case in ["missing_observation", "wrong_cycle", "wrong_observation"] {
+        let mut invalid = claimed.clone();
+        let source = &mut invalid.tool_journal[0];
+        match source_case {
+            "missing_observation" => source.resume_observation = None,
+            "wrong_cycle" => source.cycle_index += 1,
+            _ => {
+                source.resume_observation.as_mut().unwrap().operation_id =
+                    "wrong-operation".to_string()
+            }
+        }
+        let error = store
+            .record_tool_receipt(
+                invalid,
+                "tool_cycle_1_call_unknown",
+                1,
+                "call-unknown",
+                &request_digest,
+                result.clone(),
+                "unknown-receipt-owner",
+                claimed.revision,
+                1,
+            )
+            .expect_err("incomplete observation");
+        assert_eq!(
+            error.code(),
+            "checkpoint_journal_integrity_mismatch",
+            "{source_case}"
+        );
+        assert_eq!(
+            store.load_checkpoint(&key).unwrap().unwrap().revision,
+            claimed.revision
+        );
+    }
     assert!(store
         .record_tool_receipt(
             claimed.clone(),
@@ -304,6 +378,7 @@ fn exercise_unknown_receipt_replay_preserves_digest_and_zero_writes(
     let entry = persisted.tool_journal.first().expect("failed tool entry");
     assert_eq!(entry.state, OperationState::Failed);
     assert_eq!(entry.result_digest.as_deref(), Some(result_digest.as_str()));
+    assert_eq!(entry.resume_observation, Some(observation));
     assert_eq!(
         entry.error.as_ref().map(|error| error.code.as_str()),
         Some("tool_outcome_unknown")

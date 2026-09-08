@@ -51,13 +51,13 @@ fn strict_current_readers_reject_old_versions_and_unknown_members() {
 }
 
 #[test]
-fn host_request_and_public_outbox_redact_credentials_and_external_locators() {
+fn host_request_and_public_outbox_preserve_content() {
     let original = "Authorization: Bearer sk-live-123 secret=abc Bearer bare-secret https://example.test/callback?token=xyz";
     let request = HostInteractionRequest::new(
-        "interaction-redaction",
+        "interaction-content",
         1,
-        "operation-redaction",
-        "tool-redaction",
+        "operation-content",
+        "tool-content",
         original,
     )
     .expect("request");
@@ -66,35 +66,29 @@ fn host_request_and_public_outbox_redact_credentials_and_external_locators() {
     raw_wire["request_digest"] = json!(request.request_digest.clone());
     assert_eq!(
         HostInteractionRequest::from_value(&raw_wire)
-            .expect_err("wire prompt must already be sanitized")
+            .expect_err("changed prompt must not match the original digest")
             .code(),
         "host_interaction_fields_invalid"
     );
-    let text = &request.prompt;
-    assert!(!text.contains("sk-live-123"));
-    assert!(!text.contains("abc"));
-    assert!(!text.contains("bare-secret"));
-    assert!(!text.contains("https://example.test"));
-    assert!(!text.contains("token=xyz"));
+    assert_eq!(request.prompt, original);
+    assert_eq!(
+        HostInteractionRequest::from_value(&request.to_value()).expect("request wire"),
+        request
+    );
     let response = HostInteractionMessage::user(original).expect("response");
-    assert!(!response.content.contains("sk-live-123"));
-    assert!(!response.content.contains("bare-secret"));
-    assert!(!response.content.contains("https://example.test"));
+    assert_eq!(response.content, original);
 
-    // A wire producer may have serialized the unsanitized text while using
-    // the canonical (sanitized) digest.  The strict reader must normalize at
-    // the CAS boundary and retain only the redacted response.
     let command = ControllerCommand::new(
-        "command-response-redaction",
-        ControllerHandle::new("checkpoint-redaction", "run-redaction", "trace-redaction")
+        "command-response-content",
+        ControllerHandle::new("checkpoint-content", "run-content", "trace-content")
             .expect("handle"),
         1,
         0,
         ControllerCommandVariant::HostInteractionResponse {
-            interaction_id: "interaction-redaction".to_string(),
+            interaction_id: "interaction-content".to_string(),
             logical_cycle: 1,
-            operation_id: "operation-redaction".to_string(),
-            tool_call_id: "tool-redaction".to_string(),
+            operation_id: "operation-content".to_string(),
+            tool_call_id: "tool-content".to_string(),
             request_digest: request.request_digest.clone(),
             response,
         },
@@ -102,11 +96,9 @@ fn host_request_and_public_outbox_redact_credentials_and_external_locators() {
     .expect("command");
     let mut command_wire = command.to_value();
     command_wire["command"]["response"]["content"] = json!(original);
-    let parsed = ControllerCommand::from_value(&command_wire).expect("sanitized command wire");
+    let parsed = ControllerCommand::from_value(&command_wire).expect("command wire");
     if let ControllerCommandVariant::HostInteractionResponse { response, .. } = parsed.command {
-        assert!(!response.content.contains("sk-live-123"));
-        assert!(!response.content.contains("bare-secret"));
-        assert!(!response.content.contains("https://example.test"));
+        assert_eq!(response.content, original);
     } else {
         panic!("expected host interaction response command");
     }
@@ -116,19 +108,12 @@ fn host_request_and_public_outbox_redact_credentials_and_external_locators() {
     let key = checkpoint.checkpoint_key.clone();
     store.create_checkpoint(checkpoint).expect("create");
     store
-        .claim_checkpoint(
-            &key,
-            1,
-            "redaction-worker",
-            1_000_000,
-            0,
-            ClaimMode::Continue,
-        )
+        .claim_checkpoint(&key, 1, "content-worker", 1_000_000, 0, ClaimMode::Continue)
         .expect("claim");
     let admitted = store
         .produce_host_interaction(
             request.clone(),
-            &admission_context(&store, &key, "redaction-worker", 0),
+            &admission_context(&store, &key, "content-worker", 0),
         )
         .expect("produce");
     let persisted = store
@@ -144,14 +129,12 @@ fn host_request_and_public_outbox_redact_credentials_and_external_locators() {
         .expect("notification")
         .expect("notification row");
     for text in [&checkpoint_prompt, &notification.payload.prompt] {
-        assert!(!text.contains("sk-live-123"));
-        assert!(!text.contains("https://example.test"));
-        assert!(!text.contains("token=xyz"));
+        assert_eq!(text, original);
     }
 }
 
 #[test]
-fn host_response_decoder_rejects_unsanitized_content_before_digest_use() {
+fn host_response_decoder_rejects_changed_content_digest() {
     let request = HostInteractionRequest::new(
         "interaction-response-wire",
         1,
@@ -174,9 +157,9 @@ fn host_response_decoder_rejects_unsanitized_content_before_digest_use() {
     wire["response"]["content"] = json!("Authorization: Bearer sk-secret");
     assert_eq!(
         HostInteractionResponse::from_value(&wire)
-            .expect_err("decoder must reject raw response content")
+            .expect_err("decoder must reject a different response digest")
             .code(),
-        "host_interaction_response_missing"
+        "host_interaction_fields_invalid"
     );
 
     let invalid_role = HostInteractionMessage {

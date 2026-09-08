@@ -27,22 +27,6 @@ pub const CONTROLLER_COMMAND_MAX_UTF8_BYTES: usize = 512;
 pub const HOST_INTERACTION_MAX_UTF8_BYTES: usize = 512;
 pub const HOST_INTERACTION_CONTENT_MAX_UTF8_BYTES: usize = 65_536;
 
-/// Apply the canonical public host-text policy before a value is hashed or
-/// persisted. Locators are removed first so query parameters cannot leak
-/// around credential masking, then credential-shaped values are replaced.
-pub(crate) fn sanitize_host_text(text: &str) -> String {
-    let locator =
-        regex::Regex::new(r"(?i)https?://[^\s]+").expect("host locator sanitizer regex is valid");
-    let credential = regex::Regex::new(
-        r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+|\b(?:sk|pk)[-_][A-Za-z0-9._~-]+|\b(?:token|secret|password|api[_-]?key|authorization)\s*(?:[:=]|\s+)\s*(?:bearer\s+)?[A-Za-z0-9._~+/=-]+",
-    )
-    .expect("host credential sanitizer regex is valid");
-    let sanitized = locator.replace_all(text, "[external locator redacted]");
-    credential
-        .replace_all(&sanitized, "[credential redacted]")
-        .into_owned()
-}
-
 /// Derive the App Server command identity without trusting a client-supplied
 /// command id.  The framing is part of the v10 contract and intentionally
 /// differs from a plain JSON digest to keep domain separation explicit.

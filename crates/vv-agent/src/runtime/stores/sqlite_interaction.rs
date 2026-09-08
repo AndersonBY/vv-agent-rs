@@ -76,7 +76,7 @@ fn sqlite_produce_host_interaction(
         logical_cycle: request.logical_cycle,
         status: "host_interaction".to_string(),
         wait_reason: "host_interaction".to_string(),
-        prompt: sqlite_sanitize_public_prompt(&request.prompt),
+        prompt: request.prompt.clone(),
     };
     notification_payload.validate()?;
     let notification = HostInteractionNotificationRecord {
@@ -207,9 +207,6 @@ fn sqlite_host_interaction_outcome(
     Ok(outcome)
 }
 
-fn sqlite_sanitize_public_prompt(prompt: &str) -> String {
-    crate::checkpoint::sanitize_public_text(prompt)
-}
 
 fn insert_host_record(
     transaction: &Transaction<'_>,

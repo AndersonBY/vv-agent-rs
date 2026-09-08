@@ -361,14 +361,9 @@ impl ControllerCommandVariant {
                     ],
                     "controller_command_invalid_state",
                 )?;
-                let raw_response = HostInteractionMessage::from_value(
+                let response = HostInteractionMessage::from_value(
                     object.get("response").expect("exact fields checked"),
                 )?;
-                // Python's canonical command reader normalizes the response
-                // before deriving the command digest.  Do the same at the
-                // Rust wire boundary so a transport-supplied credential or
-                // external locator can never cross the controller CAS.
-                let response = HostInteractionMessage::user(raw_response.content)?;
                 Ok(Self::HostInteractionResponse {
                     interaction_id: required_non_empty_string(
                         &object,

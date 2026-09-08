@@ -158,32 +158,13 @@ impl RedisCheckpointStore {
         lease_key: &str,
         checkpoint_key: &str,
     ) -> CheckpointResult<Option<Checkpoint>> {
-        for _ in 0..TRANSACTION_MAX_ATTEMPTS {
-            let Some(raw) = connection
-                .get::<_, Option<String>>(data_key)
-                .map_err(redis_error)?
-            else {
-                return Ok(None);
-            };
-            let lease = connection
-                .get::<_, Option<u64>>(lease_key)
-                .map_err(redis_error)?;
-            let raw_again = connection
-                .get::<_, Option<String>>(data_key)
-                .map_err(redis_error)?;
-            let lease_again = connection
-                .get::<_, Option<u64>>(lease_key)
-                .map_err(redis_error)?;
-            if raw_again.as_deref() != Some(raw.as_str()) || lease_again != lease {
-                continue;
-            }
-            let checkpoint = decode_storage_for_key(&raw, lease, checkpoint_key)?;
-            return Ok(Some(checkpoint));
-        }
-        Err(CheckpointError::new(
-            "checkpoint_store_read_conflict",
-            "Redis checkpoint load could not obtain a stable snapshot",
-        ))
+        let (raw, lease): (Option<String>, Option<u64>) = redis::cmd("MGET")
+            .arg(data_key)
+            .arg(lease_key)
+            .query(connection)
+            .map_err(redis_error)?;
+        raw.map(|raw| decode_storage_for_key(&raw, lease, checkpoint_key))
+            .transpose()
     }
 
     fn redis_time_ms(connection: &mut Connection) -> CheckpointResult<u64> {

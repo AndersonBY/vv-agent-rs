@@ -36,9 +36,6 @@ pub(super) fn validate_checkpoint_wire_fields(
             if prompt.trim().is_empty() || prompt.len() > 65_536 {
                 return Err("host interaction event prompt is empty or too large".to_string());
             }
-            if crate::checkpoint::sanitize_public_text(prompt) != *prompt {
-                return Err("host interaction event prompt is not sanitized".to_string());
-            }
             crate::checkpoint::validate_sha256(request_digest, "request_digest")
                 .map_err(|error| error.to_string())?;
             let expected = crate::checkpoint::HostInteractionRequest::new(

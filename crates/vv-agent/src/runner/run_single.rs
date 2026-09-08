@@ -454,7 +454,7 @@ impl Runner {
             .map(|factory| factory())
             .unwrap_or_else(|| self.tool_registry.clone());
         for tool_name in registry.list_planner_extra_tool_names() {
-            if !task.extra_tool_names.contains(&tool_name) {
+            if !checkpoint_resume && !task.extra_tool_names.contains(&tool_name) {
                 task.extra_tool_names.push(tool_name);
             }
         }

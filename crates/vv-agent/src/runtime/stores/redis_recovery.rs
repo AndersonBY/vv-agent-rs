@@ -448,9 +448,6 @@ fn redis_get_host_interaction_notification(
     Ok(Some(notification))
 }
 
-fn redis_sanitize_public_prompt(prompt: &str) -> String {
-    crate::checkpoint::sanitize_public_text(prompt)
-}
 
 fn redis_claim_host_interaction_notification(
     store: &RedisCheckpointStore,

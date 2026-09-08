@@ -174,7 +174,7 @@ state as a non-terminal interrupted turn with `waitReason=deferred_pending`.
 
 ## Host Interaction And Controller Commands
 
-`HostInteractionRequest` is a closed, credential-redacted current wire value. The
+`HostInteractionRequest` is a closed wire value preserving its original prompt. The
 producer binds it to the one active logical-cycle claim and atomically writes
 the `host_interaction` checkpoint projection, an active interaction record, a
 `host_interaction_requested` event, and the independent UI notification

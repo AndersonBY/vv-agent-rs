@@ -349,7 +349,7 @@ impl HostInteractionRecoveryResult {
     }
 }
 
-/// A small sanitized payload used by the independent UI notification outbox.
+/// A small payload used by the independent UI notification outbox.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostInteractionNotificationPayload {
     pub schema_version: String,
@@ -394,12 +394,6 @@ impl HostInteractionNotificationPayload {
             return Err(error(
                 "host_interaction_fields_invalid",
                 "notification payload content is invalid",
-            ));
-        }
-        if sanitize_host_text(&self.prompt) != self.prompt {
-            return Err(error(
-                "host_interaction_fields_invalid",
-                "notification prompt is not sanitized",
             ));
         }
         if self.notification_id != notification_id_for(&self.record_id) {
@@ -501,7 +495,7 @@ impl NotificationOutboxState {
 }
 
 /// An internal representation retained by stores; its payload is always the
-/// sanitized closed object above, never a raw credential-bearing request.
+/// closed object above, without provider configuration or execution fences.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostInteractionNotificationRecord {
     pub notification_id: String,
@@ -654,10 +648,4 @@ pub(crate) fn notification_id_for(record_id: &str) -> String {
     let bytes = canonical_json_bytes(&value, "host interaction notification identity")
         .expect("notification identity is canonical JSON");
     format!("{:x}", Sha256::digest(bytes))
-}
-
-/// Redact credential-bearing text before it enters a public notification,
-/// event projection, or UI-facing outbox.
-pub(crate) fn sanitize_public_text(prompt: &str) -> String {
-    sanitize_host_text(prompt)
 }

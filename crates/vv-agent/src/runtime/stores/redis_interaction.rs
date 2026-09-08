@@ -136,7 +136,7 @@ fn redis_produce_host_interaction(
                 logical_cycle: request.logical_cycle,
                 status: "host_interaction".to_string(),
                 wait_reason: "host_interaction".to_string(),
-                prompt: redis_sanitize_public_prompt(&request.prompt),
+                prompt: request.prompt.clone(),
             };
             notification_payload.validate()?;
             let notification = HostInteractionNotificationRecord {
@@ -720,10 +720,6 @@ impl RedisControllerWakeOutbox {
             .last_error
             .as_ref()
             .is_some_and(|value| value.len() > crate::checkpoint::HOST_INTERACTION_CONTENT_MAX_UTF8_BYTES)
-            || self
-                .last_error
-                .as_ref()
-                .is_some_and(|value| crate::checkpoint::sanitize_host_text(value) != *value)
         {
             return Err(CheckpointError::new(
                 "controller_command_outbox_invalid",

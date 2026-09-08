@@ -682,6 +682,16 @@ fn run_config(
 
 #[tokio::test]
 async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free() {
+    for idempotency in [
+        ToolIdempotency::Supported,
+        ToolIdempotency::Unsupported,
+        ToolIdempotency::Unknown,
+    ] {
+        assert_committed_resume_and_terminal_replay(idempotency).await;
+    }
+}
+
+async fn assert_committed_resume_and_terminal_replay(idempotency: ToolIdempotency) {
     let model_calls = Arc::new(AtomicUsize::new(0));
     let model_metadata = Arc::new(Mutex::new(Vec::<Value>::new()));
     let model_prompt_bundles = Arc::new(Mutex::new(Vec::<PromptBundle>::new()));
@@ -724,7 +734,7 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
             }),
         ],
     );
-    let observed_keys = Arc::new(Mutex::new(Vec::<String>::new()));
+    let observed_keys = Arc::new(Mutex::new(Vec::<Option<String>>::new()));
     let keys_for_tool = observed_keys.clone();
     let tool = FunctionTool::builder("write_record")
         .description("Record one idempotent side effect.")
@@ -734,7 +744,7 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
             "required": []
         }))
         .tool_metadata(ToolMetadata {
-            idempotency: ToolIdempotency::Supported,
+            idempotency,
             ..ToolMetadata::default()
         })
         .handler(move |context, _arguments: Value| {
@@ -742,7 +752,7 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
             async move {
                 keys.lock()
                     .expect("idempotency keys")
-                    .push(context.idempotency_key.expect("stable idempotency key"));
+                    .push(context.idempotency_key);
                 Ok(ToolOutput::text("written"))
             }
         })
@@ -814,7 +824,14 @@ async fn runner_resumes_committed_state_and_terminal_replay_is_side_effect_free(
     assert_eq!(clock_calls.load(Ordering::SeqCst), 1);
     let keys = observed_keys.lock().expect("idempotency keys").clone();
     assert_eq!(keys.len(), 1);
-    assert!(keys[0].starts_with("idem_"));
+    if idempotency == ToolIdempotency::Unsupported {
+        assert!(keys[0].is_none());
+    } else {
+        assert!(keys[0]
+            .as_ref()
+            .expect("stable idempotency key")
+            .starts_with("idem_"));
+    }
 
     let mut crashed = store
         .load_checkpoint("runner-checkpoint")

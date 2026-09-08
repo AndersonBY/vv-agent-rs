@@ -250,17 +250,7 @@ fn same_public_action(action: &TurnAction, command: &ControllerCommandVariant) -
         (
             TurnAction::Respond { message },
             ControllerCommandVariant::HostInteractionResponse { response, .. },
-        ) => {
-            // The durable command stores the canonical, redacted host message.
-            // Normalize the replay input before comparing it; comparing the
-            // raw client payload would reject a retry whose secret/locator was
-            // removed during the first admission and could turn a safe replay
-            // into an accidental second write.
-            let Ok(incoming) = HostInteractionMessage::user(message.content.clone()) else {
-                return false;
-            };
-            incoming.role == response.role && incoming.content == response.content
-        }
+        ) => message.role == response.role && message.content == response.content,
         (TurnAction::Suspend, ControllerCommandVariant::Suspend)
         | (TurnAction::Resume, ControllerCommandVariant::Resume)
         | (TurnAction::Cancel, ControllerCommandVariant::Cancel)
@@ -331,9 +321,9 @@ mod tests {
     use crate::app_server::protocol::TurnActionMessage;
 
     #[test]
-    fn same_public_action_normalizes_replayed_host_message_before_compare() {
+    fn same_public_action_compares_original_host_message() {
         let raw = "Use api_key=sk-test at https://example.test/path?q=secret.";
-        let stored = HostInteractionMessage::user(raw).expect("sanitized message");
+        let stored = HostInteractionMessage::user(raw).expect("host message");
         let command = ControllerCommandVariant::HostInteractionResponse {
             interaction_id: "interaction-1".to_string(),
             logical_cycle: 1,

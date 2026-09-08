@@ -726,43 +726,7 @@ fn sqlite_store_ignores_unrelated_checkpoint_prefixed_tables() {
 
 #[test]
 fn cross_runtime_sqlite_probe_from_environment() {
-    let Ok(path) = std::env::var("VV_AGENT_CROSS_RUNTIME_DB") else {
-        return;
-    };
-    let mode =
-        std::env::var("VV_AGENT_CROSS_RUNTIME_MODE").unwrap_or_else(|_| "read_python".to_string());
-    let store = SqliteCheckpointStore::new(path).expect("cross-runtime SQLite store");
-
-    match mode.as_str() {
-        "read_python" => {
-            let checkpoint = store
-                .load_checkpoint("python-wrote")
-                .expect("load Python checkpoint")
-                .expect("Python checkpoint exists");
-            assert_eq!(checkpoint.messages, vec![Message::user("from Python")]);
-            assert_eq!(
-                checkpoint.shared_state,
-                BTreeMap::from([
-                    ("format".to_string(), json!("checkpoint")),
-                    ("writer".to_string(), json!("python")),
-                ])
-            );
-            assert_eq!(
-                checkpoint.run_definition_digest,
-                run_definition_digest(&checkpoint.run_definition).unwrap()
-            );
-        }
-        "write_rust" => {
-            let mut checkpoint = minimal_checkpoint("rust-wrote");
-            checkpoint.messages = vec![Message::user("from Rust")];
-            checkpoint.shared_state = BTreeMap::from([
-                ("format".to_string(), json!("checkpoint")),
-                ("writer".to_string(), json!("rust")),
-            ]);
-            assert!(store.create_checkpoint(checkpoint).unwrap());
-        }
-        other => panic!("unknown cross-runtime mode: {other}"),
-    }
+    store_contract::assert_cross_runtime_sqlite_probe_from_environment();
 }
 
 fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {

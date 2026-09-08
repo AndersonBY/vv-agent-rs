@@ -167,7 +167,7 @@ impl HostInteractionAdmissionContext {
     }
 }
 
-/// A complete credential-redacted request produced by framework code.
+/// A complete request produced by framework code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostInteractionRequest {
     pub schema_version: String,
@@ -194,7 +194,7 @@ impl HostInteractionRequest {
             operation_id: operation_id.into(),
             tool_call_id: tool_call_id.into(),
             request_digest: String::new(),
-            prompt: sanitize_host_text(&prompt.into()),
+            prompt: prompt.into(),
         };
         request.request_digest = request.computed_digest()?;
         request.validate()?;
@@ -236,12 +236,6 @@ impl HostInteractionRequest {
             return Err(error(
                 "host_interaction_content_too_large",
                 "prompt exceeds 65536 UTF-8 bytes",
-            ));
-        }
-        if sanitize_host_text(&self.prompt) != self.prompt {
-            return Err(error(
-                "host_interaction_fields_invalid",
-                "prompt must be credential-redacted and contain no external locator",
             ));
         }
         validate_sha256(&self.request_digest, "request_digest").map_err(|_| {
@@ -306,12 +300,6 @@ impl HostInteractionRequest {
             "prompt",
             "host_interaction_fields_invalid",
         )?;
-        if sanitize_host_text(prompt) != prompt {
-            return Err(error(
-                "host_interaction_fields_invalid",
-                "prompt must be credential-redacted and contain no external locator",
-            ));
-        }
         let request = Self {
             schema_version: required_string(
                 &object,
@@ -358,7 +346,7 @@ pub struct HostInteractionMessage {
 
 impl HostInteractionMessage {
     pub fn user(content: impl Into<String>) -> CheckpointResult<Self> {
-        let content = sanitize_host_text(&content.into());
+        let content = content.into();
         let message = Self {
             role: "user".to_string(),
             content,
@@ -521,12 +509,6 @@ impl HostInteractionResponse {
             )
         })?;
         self.response.validate()?;
-        if sanitize_host_text(&self.response.content) != self.response.content {
-            return Err(error(
-                "host_interaction_response_missing",
-                "response.content must be credential-redacted and contain no external locator",
-            ));
-        }
         if self.computed_digest()? != self.response_digest {
             return Err(error(
                 "host_interaction_fields_invalid",
@@ -556,12 +538,6 @@ impl HostInteractionResponse {
         let raw_message = HostInteractionMessage::from_value(
             object.get("response").expect("exact fields checked"),
         )?;
-        if sanitize_host_text(&raw_message.content) != raw_message.content {
-            return Err(error(
-                "host_interaction_response_missing",
-                "response.content must be sanitized before decoding",
-            ));
-        }
         let response = Self {
             schema_version: required_string(
                 &object,

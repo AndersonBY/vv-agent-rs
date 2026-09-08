@@ -18,9 +18,9 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock adopts contract `12.0.0` at revision
-`3e082ce2a850192e8b6f4dec6a14f1f06ccddef2`, release artifact SHA-256
-`45d39c17c9bc1a883eaae2073f04afd7fb55d6d9e3076459aad8f37450618b7b`.
+The current lock adopts contract `13.0.0` at revision
+`d3a6fcf07222080baab3107f909cce6e9314c059`, canonical artifact SHA-256
+`0d41f707bdc195449d5d9f01dadf880c92fa0f45205679192a4a6c0874a942e8`.
 The current adoption state is not duplicated in this document. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
 as the machine-readable source for the current verified Python and Rust
@@ -100,7 +100,7 @@ A fixture parser or private helper test cannot replace a real public producer
 test. A field that is declared but ignored by a planner, executor, provider, or
 store remains a contract failure.
 
-## Contract 12.0.0 Boundaries
+## Contract 13.0.0 Boundaries
 
 Definitive ordinary and deferred tool receipts use the closed RFC 8785 receipt
 identity object `{attempt, checkpoint_key, operation_id, request_digest,
@@ -181,6 +181,11 @@ an older decoder.
 
 ### Durable Accounting
 
+The tool planner emits `None` for `Unsupported` and a stable idempotency key
+for `Supported` or `Unknown`; the journal reader enforces the same pairing.
+The key participates in the request digest but does not confer retry permission.
+Runner recovery and replay coverage lives in `tests/runner_checkpoint/resume.rs`.
+
 Checkpoints require `vv-agent.checkpoint.v10`, and run definitions require
 `vv-agent.run-definition.v5`. The run definition stores `prompt_bundle` and
 never stores an independent flattened prompt. The checkpoint owns the complete
@@ -196,7 +201,7 @@ case-folded, whitespace-normalized content, so replay does not duplicate an
 existing fact. Producer coverage for the crash boundary and terminal replay is
 in `crates/vv-agent/tests/runner_checkpoint.rs`.
 
-Contract `12.0.0` persists every ordinary definitive `ERROR` tool receipt as
+Contract `13.0.0` persists every ordinary definitive `ERROR` tool receipt as
 the complete strict `ToolExecutionResult` plus its digest. `OperationError` is
 only the normalized projection of that result; resume verifies the digest and
 reconstructs the tool `Message` from the result, preserving metadata, directive,
@@ -264,7 +269,11 @@ the durable checkpoint and returns the passive handle;
 `Runner::finalize_distributed` consumes only `FinalizeRequired` and reuses the
 normal guardrail, validation, append-once session, outbox, claim-bound or
 revision-bound CAS, delivery, and acknowledgement path. Duplicate finalizer
-delivery returns the retained terminal. Approval continuation from a
+delivery returns the retained terminal. Finalization selects `RequireExisting`
+even when the host supplies `New`; frozen checkpoint compilation keeps admitted
+tool names without merging current registry planner extras. The real producer
+and duplicate-delivery checks live in `tests/distributed_runner.rs`.
+Approval continuation from a
 checkpointed `WAIT_USER` result uses a distinct explicit `ResumeIfPresent`
 target key. The approval claim is bound to that key, the target checkpoint is
 seeded with the captured tool operation before any side effect, and the

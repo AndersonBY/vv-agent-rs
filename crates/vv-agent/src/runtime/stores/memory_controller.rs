@@ -66,9 +66,6 @@ fn current_time_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn sanitize_public_prompt(prompt: &str) -> String {
-    crate::checkpoint::sanitize_public_text(prompt)
-}
 
 fn apply_controller_command(
     checkpoints: &mut BTreeMap<String, Checkpoint>,

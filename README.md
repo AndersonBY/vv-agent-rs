@@ -8,21 +8,30 @@ for model-driven automation.
 
 ## Install
 
-The current crate version is `0.14.3`. This release uses Contract `12.0.0` and
+The current crate version is `0.15.0`. This release uses Contract `13.0.0` and
 exposes a Rust-idiomatic API.
 
 ```bash
-cargo add vv-agent@0.14.3
+cargo add vv-agent@0.15.0
 ```
 
 Enable the Apalis adapter with:
 
 ```bash
-cargo add vv-agent@0.14.3 --features apalis
+cargo add vv-agent@0.15.0 --features apalis
 ```
 
 Repository `HEAD` is forward-only: current readers accept only the current
 strict public and wire shapes.
+
+### 0.15.0 Highlights
+
+- Host prompts and responses preserve original application content across
+  checkpoints, notifications, and model recovery.
+- Distributed terminal decisions, unknown tool receipts, and unsupported
+  idempotency requests follow the same Python/Rust contract.
+- Frozen finalization uses persisted definitions; Redis checkpoint reads use
+  one atomic snapshot.
 
 ### 0.14.3 Highlights
 
@@ -74,7 +83,7 @@ strict public and wire shapes.
   and checkpoint approval resume fails closed before approval consumption or
   tool/session writes. Cross-process durable approval continuation is not
   implemented.
-- Contract `12.0.0` defines strict checkpoint CAS, state-transition, and
+- Contract `13.0.0` defines strict checkpoint CAS, state-transition, and
   fail-closed persistence boundaries.
 
 ### 0.12.0 Highlights

@@ -90,9 +90,6 @@ fn load_controller_wake_row(
                 || last_error
                     .as_ref()
                     .is_some_and(|value| value.len() > crate::checkpoint::HOST_INTERACTION_CONTENT_MAX_UTF8_BYTES)
-                || last_error
-                    .as_ref()
-                    .is_some_and(|value| crate::checkpoint::sanitize_host_text(value) != *value)
             {
                 return Err(CheckpointError::new(
                     "controller_command_conflict",
@@ -134,8 +131,7 @@ fn update_controller_wake_row(
             "wake claim or lifecycle timestamp is invalid",
         ));
     }
-    let sanitized_error = last_error.map(crate::checkpoint::sanitize_host_text);
-    if sanitized_error
+    if last_error
         .as_ref()
         .is_some_and(|value| value.len() > crate::checkpoint::HOST_INTERACTION_CONTENT_MAX_UTF8_BYTES)
     {
@@ -159,7 +155,7 @@ fn update_controller_wake_row(
                 delivered_at_ms
                     .map(|value| to_i64(value, "delivered_at_ms"))
                     .transpose()?,
-                sanitized_error,
+                last_error,
                 receipt.command_id,
                 receipt.command_digest,
             ],

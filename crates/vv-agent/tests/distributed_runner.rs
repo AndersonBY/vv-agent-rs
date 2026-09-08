@@ -9,7 +9,7 @@ use vv_agent::{
     DistributedCycleWorker, DistributedDeliveryOutcome, DistributedRunEnvelope, ExecutionMode,
     InMemoryCheckpointStore, LLMResponse, MemorySession, ModelRef, NoToolPolicy, PromptBundle,
     ResumePolicy, RunConfig, Runner, RuntimeRecipe, ScriptedLlmClient, ScriptedModelProvider,
-    Session,
+    Session, ToolExecutionResult,
 };
 
 #[derive(Default)]
@@ -201,6 +201,94 @@ async fn runner_starts_passively_and_finalizes_claimed_candidate_once() {
         fixture.session.get_items(None).await.unwrap().len(),
         session_count
     );
+}
+
+#[tokio::test]
+async fn finalizer_preserves_frozen_tools_with_new_resume_policy() {
+    let mut fixture = distributed_fixture("runner-finalizer-frozen-tools", 1);
+    let tools = Arc::new(Mutex::new(vv_agent::build_default_registry()));
+    let factory_tools = tools.clone();
+    fixture.config.tool_registry_factory =
+        Some(Arc::new(move || factory_tools.lock().unwrap().clone()));
+    let checkpoint = fixture.config.checkpoint_config.as_mut().unwrap();
+    checkpoint.resume_policy = ResumePolicy::New;
+    checkpoint.capability_refs.insert(
+        "tool_registry_factory".to_string(),
+        CapabilityRef::new("tools.runner-finalizer", "1").unwrap(),
+    );
+    let mut task = AgentTask::new(
+        "runner-finalizer-frozen-tools",
+        "driver-model",
+        PromptBundle::from_instruction_text("Return the answer.").unwrap(),
+        "answer",
+    );
+    task.max_cycles = 1;
+    task.no_tool_policy = NoToolPolicy::Finish;
+    task.extra_tool_names = vec!["sub_task_status".to_string()];
+    task.metadata.insert(
+        "session_memory_enabled".to_string(),
+        serde_json::Value::Bool(false),
+    );
+    fixture
+        .runner
+        .start_distributed_compiled(&fixture.agent, task, fixture.config.clone())
+        .await
+        .unwrap();
+    let envelope = fixture.enqueuer.take_one();
+    let response = fixture.worker.run_cycle(envelope.clone()).unwrap();
+    let decision = fixture
+        .backend
+        .advance(&envelope, DistributedDeliveryOutcome::worker(response))
+        .unwrap();
+    tools
+        .lock()
+        .unwrap()
+        .register_tool(
+            "finalizer_local_tool",
+            "Read local host state.",
+            Arc::new(|context, _arguments| {
+                ToolExecutionResult::success(&context.tool_call_id, "unused")
+            }),
+        )
+        .unwrap();
+    let finalized = fixture
+        .runner
+        .finalize_distributed(
+            &fixture.agent,
+            "answer",
+            decision.clone(),
+            fixture.config.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(finalized.status(), AgentStatus::Completed);
+    assert_eq!(finalized.final_output(), Some("done"));
+    let persisted = fixture
+        .store
+        .load_checkpoint("runner-finalizer-frozen-tools")
+        .unwrap()
+        .unwrap();
+    let session_items = fixture.session.get_items(None).await.unwrap();
+    let replayed = fixture
+        .runner
+        .finalize_distributed(&fixture.agent, "answer", decision, fixture.config)
+        .await
+        .unwrap();
+    assert_eq!(replayed.result(), finalized.result());
+    assert_eq!(
+        fixture.session.get_items(None).await.unwrap(),
+        session_items
+    );
+    assert_eq!(
+        fixture
+            .store
+            .load_checkpoint("runner-finalizer-frozen-tools")
+            .unwrap()
+            .unwrap()
+            .revision,
+        persisted.revision
+    );
+    assert_eq!(fixture.enqueuer.len(), 0);
 }
 
 #[tokio::test]

@@ -211,7 +211,7 @@ fn redis_complete_controller_command_wake(
         updated.validate()?;
         let mut updated_wake = RedisControllerWakeOutbox::from_receipt_unchecked(&updated)?;
         updated_wake.delivered_at_ms = (outcome == "delivered").then_some(now_ms);
-        updated_wake.last_error = error.map(crate::checkpoint::sanitize_host_text);
+        updated_wake.last_error = error.map(str::to_owned);
         updated_wake.validate()?;
         pipeline
             .set(

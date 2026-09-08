@@ -109,7 +109,7 @@ fn produce_host_interaction(
             logical_cycle: request.logical_cycle,
             status: "host_interaction".to_string(),
             wait_reason: "host_interaction".to_string(),
-            prompt: sanitize_public_prompt(&request.prompt),
+            prompt: request.prompt.clone(),
         };
         notification_payload.validate()?;
         let notification = HostInteractionNotificationRecord {

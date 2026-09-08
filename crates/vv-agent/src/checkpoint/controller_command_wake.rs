@@ -178,7 +178,6 @@ impl ControllerCommandWakeRecord {
         }
         if self.last_error.as_ref().is_some_and(|value| {
             value.len() > HOST_INTERACTION_CONTENT_MAX_UTF8_BYTES
-                || sanitize_host_text(value) != *value
         }) {
             return Err(error(
                 "controller_command_outbox_invalid",

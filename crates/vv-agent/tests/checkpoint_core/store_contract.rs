@@ -1,5 +1,82 @@
 use super::*;
 
+pub(super) fn assert_cross_runtime_sqlite_probe_from_environment() {
+    let Ok(path) = std::env::var("VV_AGENT_CROSS_RUNTIME_DB") else {
+        return;
+    };
+    let mode =
+        std::env::var("VV_AGENT_CROSS_RUNTIME_MODE").unwrap_or_else(|_| "read_python".to_string());
+    let store = SqliteCheckpointStore::new(path).expect("cross-runtime SQLite store");
+
+    match mode.as_str() {
+        "read_python" => {
+            let checkpoint = store
+                .load_checkpoint("python-wrote")
+                .expect("load Python checkpoint")
+                .expect("Python checkpoint exists");
+            assert_eq!(checkpoint.messages, vec![Message::user("from Python")]);
+            assert_eq!(
+                checkpoint.shared_state,
+                BTreeMap::from([
+                    ("format".to_string(), json!("checkpoint")),
+                    ("writer".to_string(), json!("python")),
+                ])
+            );
+            assert_eq!(
+                checkpoint.run_definition_digest,
+                run_definition_digest(&checkpoint.run_definition).unwrap()
+            );
+            let entry = &checkpoint.tool_journal[0];
+            assert_eq!(
+                entry.idempotency_support,
+                Some(ToolIdempotency::Unsupported)
+            );
+            assert!(entry.idempotency_key.is_none());
+            entry.verify_request(&json!({
+                "schema_version": "vv-agent.operation-request.v1",
+                "kind": "tool",
+                "request": {"tool_call_id": "cross-tool", "tool_name": "unsafe_write", "arguments": {}, "idempotency_key": null},
+            })).expect("Python request matches Rust recovery identity");
+        }
+        "write_rust" => {
+            let mut checkpoint = minimal_checkpoint("rust-wrote");
+            checkpoint.messages = vec![Message::user("from Rust")];
+            checkpoint.shared_state = BTreeMap::from([
+                ("format".to_string(), json!("checkpoint")),
+                ("writer".to_string(), json!("rust")),
+            ]);
+            assert!(store.create_checkpoint(checkpoint).unwrap());
+            let mut checkpoint = store
+                .claim_checkpoint(
+                    "rust-wrote",
+                    1,
+                    "cross-owner",
+                    200,
+                    100,
+                    ClaimMode::Continue,
+                )
+                .unwrap()
+                .expect("cross-runtime claim");
+            checkpoint.tool_journal.push(OperationJournalEntry::tool(
+                "cross-operation",
+                1,
+                1,
+                tool_request_digest("cross-tool", "unsafe_write", &json!({}), None).unwrap(),
+                "cross-tool",
+                "unsafe_write",
+                serde_json::Map::new(),
+                None,
+                ToolIdempotency::Unsupported,
+            ));
+            let revision = checkpoint.revision;
+            assert!(store
+                .progress_checkpoint(checkpoint, "cross-owner", revision)
+                .unwrap());
+        }
+        other => panic!("unknown cross-runtime mode: {other}"),
+    }
+}
+
 #[test]
 fn store_rejects_run_definition_replacement() {
     let store = InMemoryCheckpointStore::new();

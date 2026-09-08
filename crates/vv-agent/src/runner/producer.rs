@@ -99,7 +99,7 @@ impl Runner {
         agent: &Agent,
         input: impl Into<NormalizedInput>,
         decision: DistributedAdvanceDecision,
-        config: RunConfig,
+        mut config: RunConfig,
     ) -> Result<RunResult, String> {
         self.validate_nonblocking_distributed_config(&config)?;
         let handle = match &decision {
@@ -123,6 +123,9 @@ impl Runner {
                 "distributed finalization checkpoint does not match the run handle".to_string(),
             );
         }
+        let mut checkpoint_config = checkpoint_config.clone();
+        checkpoint_config.resume_policy = crate::checkpoint::ResumePolicy::RequireExisting;
+        config.checkpoint_config = Some(checkpoint_config);
         let runner = self.clone();
         let agent = agent.clone();
         let input = input.into();

@@ -341,6 +341,7 @@ fn advance_consumes_host_response_before_dispatch_and_retains_execution_claim() 
             .expect("admission context"),
         )
         .expect("host interaction admission");
+    assert_unmatched_terminal_replay_rejected(&store, key);
     let command = ControllerCommand::new(
         "command-driver-response",
         ControllerHandle::new(key, &checkpoint.root_run_id, &checkpoint.trace_id).expect("handle"),
@@ -472,6 +473,7 @@ fn advance_resolves_suspended_host_resume_wake_from_the_durable_record() {
         }
         other => panic!("unexpected suspend resolution: {other:?}"),
     };
+    assert_unmatched_terminal_replay_rejected(&store, key);
     let response = ControllerCommand::new(
         "command-suspended-response-driver",
         handle.clone(),
@@ -695,6 +697,30 @@ fn terminal_candidate_is_revalidated_before_checkpoint_observation() {
         .expect_err("invalid candidate");
 
     assert!(error.contains("complete current AgentResult"));
+    assert!(enqueuer.deliveries().is_empty());
+}
+
+fn assert_unmatched_terminal_replay_rejected(store: &Arc<InMemoryCheckpointStore>, key: &str) {
+    let checkpoint = store.load_checkpoint(key).unwrap().unwrap();
+    let previous = envelope(&checkpoint, task(&checkpoint, 10), recipe(), 1);
+    let registry = DistributedCapabilityRegistry::new();
+    registry.register_checkpoint_store(checkpoint_ref(), store.clone());
+    let enqueuer = Arc::new(RecordingEnqueuer::default());
+    let backend = DistributedBackend::nonblocking(recipe(), registry, enqueuer.clone());
+    let result = AgentResult::completed(Vec::new(), Vec::new(), "Uncommitted");
+    let error = backend
+        .advance(
+            &previous,
+            DistributedDeliveryOutcome::worker(
+                CycleDispatchResult::terminal_replay(result, checkpoint.revision).unwrap(),
+            ),
+        )
+        .expect_err("unmatched terminal replay");
+    assert!(error.contains("no matching durable terminal"), "{error}");
+    assert_eq!(
+        store.load_checkpoint(key).unwrap().unwrap().revision,
+        checkpoint.revision
+    );
     assert!(enqueuer.deliveries().is_empty());
 }
 
