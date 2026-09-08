@@ -88,7 +88,7 @@ fn distributed_fixture_with_stores(
         llm_ref.clone(),
         Arc::new(ScriptedLlmClient::new(vec![LLMResponse::new("done")])),
     );
-    let mut recipe = RuntimeRecipe::new("settings.json", "scripted", "driver-model", ".");
+    let mut recipe = RuntimeRecipe::new("", "scripted", "driver-model", ".");
     recipe.capabilities = DistributedCapabilities {
         checkpoint_store_ref: Some(checkpoint_ref.clone()),
         llm_client_ref: Some(llm_ref),

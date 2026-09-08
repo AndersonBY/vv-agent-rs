@@ -497,6 +497,28 @@ fn distributed_envelope_accepts_only_the_current_wire_shape() {
 }
 
 #[test]
+fn distributed_recipe_settings_file_depends_on_client_reference() {
+    let contract = fixture(ENVELOPE_FIXTURE);
+    for case in contract["runtime_recipe_cases"].as_array().unwrap() {
+        let mut payload = contract["canonical_envelope"].clone();
+        payload["recipe"]["settings_file"] = case["settings_file"].clone();
+        payload["recipe"]["capabilities"]["llm_client_ref"] = case["llm_client_ref"].clone();
+        let decoded = DistributedRunEnvelope::from_dict(&payload);
+        if case["valid"].as_bool().unwrap() {
+            assert_eq!(decoded.unwrap().to_dict(), payload, "{}", case["name"]);
+        } else {
+            assert!(decoded.is_err(), "{}", case["name"]);
+        }
+    }
+    let mut missing = contract["canonical_envelope"].clone();
+    missing["recipe"]
+        .as_object_mut()
+        .unwrap()
+        .remove("settings_file");
+    assert!(DistributedRunEnvelope::from_dict(&missing).is_err());
+}
+
+#[test]
 fn missing_after_cycle_hook_fails_before_claim() {
     let store = Arc::new(InMemoryCheckpointStore::new());
     let checkpoint = minimal_checkpoint(
@@ -650,6 +672,7 @@ fn worker_restores_stateful_after_cycle_hook_before_next_cycle() {
 
     let mut envelope = envelope(&checkpoint, 2, ClaimMode::Continue, 60_000, false);
     envelope.recipe.capabilities.llm_client_ref = Some(llm_ref);
+    envelope.recipe.settings_file.clear();
     envelope.recipe.capabilities.after_cycle_hook_refs = vec![hook_ref];
     envelope.recipe.capabilities.checkpoint_extension_refs.push(
         DistributedCheckpointExtensionRef {

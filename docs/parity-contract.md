@@ -18,9 +18,9 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock adopts contract `13.0.0` at revision
-`d3a6fcf07222080baab3107f909cce6e9314c059`, canonical artifact SHA-256
-`0d41f707bdc195449d5d9f01dadf880c92fa0f45205679192a4a6c0874a942e8`.
+The current lock adopts contract `14.0.0` at revision
+`b873f57607cc99a2d3b95f58e61a1f74d9316001`, canonical artifact SHA-256
+`0109fb57c04d9a0a058e2bc8df28bc777464e70687c52d2af36e5dba60e9dd4c`.
 The current adoption state is not duplicated in this document. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
 as the machine-readable source for the current verified Python and Rust
@@ -100,7 +100,7 @@ A fixture parser or private helper test cannot replace a real public producer
 test. A field that is declared but ignored by a planner, executor, provider, or
 store remains a contract failure.
 
-## Contract 13.0.0 Boundaries
+## Contract 14.0.0 Boundaries
 
 Definitive ordinary and deferred tool receipts use the closed RFC 8785 receipt
 identity object `{attempt, checkpoint_key, operation_id, request_digest,
@@ -122,6 +122,12 @@ checkpoint/interaction CAS before model or tool work and hands the retained
 resume-attempt increment.
 
 ## Current Runtime Boundaries
+
+Distributed recipes accept `settings_file=""` when `llm_client_ref` provides
+the client. File-backed recipes still require a non-blank path; unresolved
+client references fail before execution without file fallback.
+`tests/distributed_checkpoint.rs` and `tests/distributed_runner.rs` cover the
+canonical input matrix and real worker/finalizer execution without a file.
 
 ### Prompt Bundle And Provider Projection
 
@@ -201,7 +207,7 @@ case-folded, whitespace-normalized content, so replay does not duplicate an
 existing fact. Producer coverage for the crash boundary and terminal replay is
 in `crates/vv-agent/tests/runner_checkpoint.rs`.
 
-Contract `13.0.0` persists every ordinary definitive `ERROR` tool receipt as
+Contract `14.0.0` persists every ordinary definitive `ERROR` tool receipt as
 the complete strict `ToolExecutionResult` plus its digest. `OperationError` is
 only the normalized projection of that result; resume verifies the digest and
 reconstructs the tool `Message` from the result, preserving metadata, directive,

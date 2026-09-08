@@ -71,8 +71,12 @@ impl RuntimeRecipe {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if self.capabilities.llm_client_ref.is_none() && self.settings_file.trim().is_empty() {
+            return Err(
+                "runtime_recipe.settings_file must be non-blank without llm_client_ref".to_string(),
+            );
+        }
         for (field_name, value) in [
-            ("settings_file", self.settings_file.as_str()),
             ("backend", self.backend.as_str()),
             ("model", self.model.as_str()),
             ("workspace", self.workspace.as_str()),

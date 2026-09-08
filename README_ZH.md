@@ -7,24 +7,25 @@
 
 ## 安装
 
-当前 crate 版本为 `0.15.0`。本版本采用 Contract `13.0.0`，提供符合 Rust 语言习惯的
+当前 crate 版本为 `0.16.0`。本版本采用 Contract `14.0.0`，提供符合 Rust 语言习惯的
 API 写法。
 
 ```bash
-cargo add vv-agent@0.15.0
+cargo add vv-agent@0.16.0
 ```
 
 需要 Apalis adapter 时使用：
 
 ```bash
-cargo add vv-agent@0.15.0 --features apalis
+cargo add vv-agent@0.16.0 --features apalis
 ```
 
 Contract 13 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
 公共 API 与传输数据结构。需要旧协议的应用应固定旧 crate 版本。
 
-### 0.15.0 重点能力
+### 0.16.0 重点能力
 
+- 注入 LLM client 的分布式 worker 无需配置文件即可运行。
 - Host prompt 与用户回复在 checkpoint、通知及模型恢复中保留原始业务内容。
 - 分布式终态决策、未知工具回执和不支持幂等的工具请求遵循统一执行契约。
 - Frozen finalization 使用持久化定义，Redis checkpoint 通过一次原子读取取得快照。
@@ -72,7 +73,7 @@ Contract 13 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取�
 - 分布式 worker 在 claim 前校验 task 和 envelope capability。直接携带 broker/provider approval
   引用的 envelope 会在副作用前被拒绝；checkpoint approval resume 也会在 approval consumption
   或工具 / session 写入前 fail closed。跨进程 durable approval continuation 尚未实现。
-- Contract `13.0.0` 定义严格的 checkpoint CAS、状态转换和 fail-closed 持久化边界。
+- Contract `14.0.0` 定义严格的 checkpoint CAS、状态转换和 fail-closed 持久化边界。
 
 ### 0.12.0 重点能力
 

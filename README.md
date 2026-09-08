@@ -8,24 +8,25 @@ for model-driven automation.
 
 ## Install
 
-The current crate version is `0.15.0`. This release uses Contract `13.0.0` and
+The current crate version is `0.16.0`. This release uses Contract `14.0.0` and
 exposes a Rust-idiomatic API.
 
 ```bash
-cargo add vv-agent@0.15.0
+cargo add vv-agent@0.16.0
 ```
 
 Enable the Apalis adapter with:
 
 ```bash
-cargo add vv-agent@0.15.0 --features apalis
+cargo add vv-agent@0.16.0 --features apalis
 ```
 
 Repository `HEAD` is forward-only: current readers accept only the current
 strict public and wire shapes.
 
-### 0.15.0 Highlights
+### 0.16.0 Highlights
 
+- Distributed workers with an injected LLM client run without a settings file.
 - Host prompts and responses preserve original application content across
   checkpoints, notifications, and model recovery.
 - Distributed terminal decisions, unknown tool receipts, and unsupported
@@ -83,7 +84,7 @@ strict public and wire shapes.
   and checkpoint approval resume fails closed before approval consumption or
   tool/session writes. Cross-process durable approval continuation is not
   implemented.
-- Contract `13.0.0` defines strict checkpoint CAS, state-transition, and
+- Contract `14.0.0` defines strict checkpoint CAS, state-transition, and
   fail-closed persistence boundaries.
 
 ### 0.12.0 Highlights
