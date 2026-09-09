@@ -66,6 +66,21 @@ python3 scripts/contract_snapshot.py sync \
 Never repair a contract failure by editing a file under
 `crates/vv-agent/tests/fixtures/parity/` or changing only a digest.
 
+## Verification Scope
+
+Public producer tests establish the canonical API, runtime decisions, events,
+strict wire readers, and recovery semantics under the locked contract. Passing
+fixture or snapshot checks alone does not establish those behaviors.
+
+The SQLite and Redis exchange probes separately exercise the current physical
+storage representations with real writers, readers, and recovery controllers.
+Their evidence covers the named operations and failure windows, not arbitrary
+mixed-language takeover of a running deployment. A full mixed-runtime failure
+campaign requires a deployment that actually switches language within one run;
+it is not a prerequisite for a single-language host integration. Both existing
+exchange probes and the complete public conformance gates remain required by
+the central cross-repository workflow.
+
 ## Rust Producer Map
 
 | Contract surface | Rust producer or evidence |
