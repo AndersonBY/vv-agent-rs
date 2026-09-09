@@ -191,6 +191,12 @@ The tool planner emits `None` for `Unsupported` and a stable idempotency key
 for `Supported` or `Unknown`; the journal reader enforces the same pairing.
 The key participates in the request digest but does not confer retry permission.
 Runner recovery and replay coverage lives in `tests/runner_checkpoint/resume.rs`.
+The ignored SQLite probe in `runtime/checkpoint_resume/persistence/tests.rs` exchanges
+real planner output with Python and resumes the same operation through each
+recovery controller. Central CI supplies both databases and runs it explicitly.
+`canonical_unknown_journal_recovers_once_through_controller` consumes the central
+unknown-outcome recovery case through two expired-lease admissions, checking the
+complete receipt, digest, observation, stable event identity, and single delivery.
 
 Checkpoints require `vv-agent.checkpoint.v10`, and run definitions require
 `vv-agent.run-definition.v5`. The run definition stores `prompt_bundle` and

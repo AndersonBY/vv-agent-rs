@@ -724,11 +724,6 @@ fn sqlite_store_ignores_unrelated_checkpoint_prefixed_tables() {
     assert_eq!(table_count, 2);
 }
 
-#[test]
-fn cross_runtime_sqlite_probe_from_environment() {
-    store_contract::assert_cross_runtime_sqlite_probe_from_environment();
-}
-
 fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {
     let failure_key = format!("{prefix}-claimed-failure");
     assert!(store
