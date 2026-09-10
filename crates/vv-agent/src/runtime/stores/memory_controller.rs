@@ -330,12 +330,12 @@ fn apply_controller_command(
                 }
             }
             updated.revision = current.revision + 1;
-            let resulting_state = updated.status.as_str().to_string();
             append_control_event(
                 &mut updated,
                 &command.command_id,
-                RunEventPayload::RunStateChanged {
-                    state: resulting_state,
+                RunEventPayload::CheckpointResumed {
+                    checkpoint_key: current.checkpoint_key.clone(),
+                    resume_attempt: current.resume_attempt,
                 },
             )?;
             updated.validate()?;

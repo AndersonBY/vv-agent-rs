@@ -122,6 +122,13 @@ async fn deferred_controller_preserves_suspension_receipts_and_cancel_evidence()
                     _ => store,
                 };
                 let saved = store.load_checkpoint(&key).unwrap().unwrap();
+                if kind == "resume" {
+                    let event = &saved.event_outbox.last().unwrap().event;
+                    assert_eq!(event["type"], "checkpoint_resumed");
+                    assert_eq!(event["checkpoint_key"], key);
+                    assert_eq!(event["resume_attempt"], current.resume_attempt);
+                    assert_eq!(event["cycle_index"], current.cycle_index);
+                }
                 assert!(matches!(
                     store.resolve_controller_command(command).unwrap(),
                     ControllerCommandResolution::Replayed { .. }

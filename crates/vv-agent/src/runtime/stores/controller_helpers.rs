@@ -205,11 +205,12 @@ fn append_control_event_with_completion(
     // Controller events describe the checkpoint that was just committed.  A
     // control transition must never invent the next execution cycle; the
     // distributed worker owns that cycle claim and will emit its own events.
-    let cycle_index = u32::try_from(checkpoint.cycle_index)
-        .ok()
-        .filter(|cycle| *cycle > 0);
+    let cycle_index = u32::try_from(checkpoint.cycle_index).ok().filter(|cycle| {
+        *cycle > 0 || matches!(&payload, RunEventPayload::CheckpointResumed { .. })
+    });
     let event_kind = match &payload {
         RunEventPayload::RunStateChanged { .. } => "run_state_changed",
+        RunEventPayload::CheckpointResumed { .. } => "checkpoint_resumed",
         RunEventPayload::RunCancelled { .. } => "run_cancelled",
         RunEventPayload::RunFailed { .. } => "run_failed",
         _ => "control",
