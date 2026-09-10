@@ -18,9 +18,9 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock adopts contract `17.0.0` at revision
-`d41ba2746bd817364e21f8c1f77dff7385788944`, canonical artifact SHA-256
-`3df442a8119ce58f480b5153ab56ee379bae7b1ce97bed1d1e2471a1c2dd4bc9`.
+The current lock adopts contract `18.0.0` at revision
+`8a25b5529fb6226bf23070e958b4233af9bfdcc3`, canonical artifact SHA-256
+`b6bc9096b677a9325eac954b24b5875aa16a705e1848bdd945495e9d54bc304c`.
 The current adoption state is not duplicated in this document. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
 as the machine-readable source for the current verified Python and Rust
