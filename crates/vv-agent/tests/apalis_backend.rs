@@ -238,8 +238,12 @@ async fn apalis_worker_task_recovers_retry_without_blocking_async_runtime() {
         "Summarize the status.",
     );
     retry_task.max_cycles = 10;
+    retry_task.no_tool_policy = serde_json::from_value(
+        checkpoint.run_definition["runtime_controls"]["no_tool_policy"].clone(),
+    )
+    .expect("durable no-tool policy");
     retry_task.use_workspace = false;
-    retry_task.exclude_tools = vec!["task_finish".to_string(), "ask_user".to_string()];
+    retry_task.exclude_tools = vec!["ask_user".to_string()];
     retry_task.memory_compact_threshold = checkpoint.run_definition["runtime_controls"]
         ["memory_compact_threshold"]
         .as_u64()

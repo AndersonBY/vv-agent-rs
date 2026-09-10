@@ -62,6 +62,7 @@ Run broad checks before reporting a shared behavior change:
 cargo fmt --all -- --check
 cargo check --examples
 cargo test -p vv-agent -- --test-threads=1
+cargo test -p vv-agent --features apalis --test apalis_backend
 ```
 
 Run clippy before release-style cleanup or when touching shared abstractions:
