@@ -164,7 +164,7 @@ impl DeferredToolExecution {
                         tool_metadata: lifecycle.tool_metadata,
                     },
                 ),
-                ToolCallOutcome::HostInteraction { .. } => {},
+                ToolCallOutcome::HostInteraction { .. } => {}
             }
         }
         self.result

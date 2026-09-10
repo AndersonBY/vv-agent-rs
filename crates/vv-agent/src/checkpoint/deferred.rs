@@ -168,8 +168,12 @@ impl DeferredToolHandle {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolCallOutcome {
-    Completed { result: ToolExecutionResult },
-    Deferred { handle: DeferredToolHandle },
+    Completed {
+        result: ToolExecutionResult,
+    },
+    Deferred {
+        handle: DeferredToolHandle,
+    },
     HostInteraction {
         result: ToolExecutionResult,
         request: HostInteractionRequest,

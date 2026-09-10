@@ -156,15 +156,18 @@ fn deferred_wires_include_current_schema_and_reject_closed_shape_drift() {
 
 #[test]
 fn host_interaction_outcome_round_trips_and_rejects_mismatches() {
-    let request = vv_agent::HostInteractionRequest::new(
-        "interaction", 1, "operation", "call-host", "Choose",
-    ).expect("request");
+    let request =
+        vv_agent::HostInteractionRequest::new("interaction", 1, "operation", "call-host", "Choose")
+            .expect("request");
     let outcome = ToolCallOutcome::HostInteraction {
         result: ToolExecutionResult::success("call-host", "accepted"),
         request,
     };
     let wire = serde_json::to_value(&outcome).expect("wire");
-    assert_eq!(serde_json::from_value::<ToolCallOutcome>(wire.clone()).expect("round trip"), outcome);
+    assert_eq!(
+        serde_json::from_value::<ToolCallOutcome>(wire.clone()).expect("round trip"),
+        outcome
+    );
     for (pointer, replacement) in [
         ("/result/tool_call_id", json!("other")),
         ("/result/directive", json!("wait_user")),
