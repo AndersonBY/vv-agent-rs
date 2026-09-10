@@ -206,6 +206,50 @@ impl<'a> DeferredBatchCollector<'a> {
 }
 
 impl CheckpointCoordinator {
+    pub(super) fn finish_host_interaction(
+        &self,
+        interaction: ToolCallOutcome,
+        messages: &mut Vec<Message>,
+        cycles: &mut [CycleRecord],
+        shared_state: &BTreeMap<String, Value>,
+        budget_usage: Option<BudgetUsageSnapshot>,
+    ) -> AgentResult {
+        let ToolCallOutcome::HostInteraction { result, request } = interaction else {
+            unreachable!("host interaction outcome required");
+        };
+        let cycle = cycles.last_mut().expect("active tool cycle");
+        messages.push(result.to_message());
+        cycle.tool_results.push(result);
+        for skipped_call in cycle.tool_calls.iter().skip(cycle.tool_results.len()) {
+            let skipped = crate::runtime::tool_call_runner::skipped_tool_result(
+                skipped_call,
+                "skipped_due_to_host_interaction",
+                "Tool not executed while awaiting the host response.",
+            );
+            messages.push(skipped.to_message());
+            cycle.tool_results.push(skipped);
+        }
+        let outcome = self
+            .controller
+            .as_ref()
+            .ok_or_else(|| {
+                CheckpointError::new(
+                    "host_interaction_claim_required",
+                    "host interaction requires a checkpoint claim",
+                )
+            })
+            .and_then(|controller| {
+                lock_controller(controller)?.finish_host_interaction(
+                    request,
+                    messages,
+                    cycles,
+                    shared_state,
+                    budget_usage,
+                )
+            });
+        outcome.unwrap_or_else(|error| self.failure(error, messages, cycles, shared_state))
+    }
+
     pub(super) fn new(
         controller: Option<CheckpointController>,
         model_call_ledger: ModelCallLedger,

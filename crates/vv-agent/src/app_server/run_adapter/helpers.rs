@@ -93,7 +93,7 @@ pub(super) fn input_text(input: &[UserInput]) -> String {
 pub(super) fn turn_status(status: AgentStatus) -> TurnStatus {
     match status {
         AgentStatus::WaitUser | AgentStatus::ReconciliationRequired => TurnStatus::Interrupted,
-        AgentStatus::Deferred => TurnStatus::Interrupted,
+        AgentStatus::Deferred | AgentStatus::HostInteraction => TurnStatus::Interrupted,
         AgentStatus::Completed => TurnStatus::Completed,
         AgentStatus::Pending | AgentStatus::Running => TurnStatus::Running,
         AgentStatus::Failed | AgentStatus::MaxCycles => TurnStatus::Failed,

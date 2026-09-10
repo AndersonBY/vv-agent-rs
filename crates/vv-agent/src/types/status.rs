@@ -6,6 +6,7 @@ pub enum AgentStatus {
     Pending,
     Running,
     Deferred,
+    HostInteraction,
     WaitUser,
     Completed,
     Failed,

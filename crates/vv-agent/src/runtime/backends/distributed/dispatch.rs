@@ -282,7 +282,10 @@ fn parse_complete_agent_result(value: &Value) -> Result<AgentResult, String> {
 fn validate_terminal_candidate_result(result: &AgentResult) -> Result<(), String> {
     if matches!(
         result.status,
-        AgentStatus::Pending | AgentStatus::Running | AgentStatus::Deferred
+        AgentStatus::Pending
+            | AgentStatus::Running
+            | AgentStatus::Deferred
+            | AgentStatus::HostInteraction
     ) {
         return Err(invalid_agent_result());
     }
@@ -295,6 +298,7 @@ fn validate_terminal_replay_result(result: &AgentResult) -> Result<(), String> {
         AgentStatus::Pending
             | AgentStatus::Running
             | AgentStatus::Deferred
+            | AgentStatus::HostInteraction
             | AgentStatus::ReconciliationRequired
     ) {
         return Err(invalid_agent_result());

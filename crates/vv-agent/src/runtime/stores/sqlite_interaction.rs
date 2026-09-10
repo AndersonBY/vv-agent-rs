@@ -28,6 +28,7 @@ fn sqlite_produce_host_interaction(
                     "host interaction checkpoint is missing",
                 )
             })?;
+        crate::runtime::stores::controller_helpers::validate_host_tool_receipt_replay(&checkpoint, &request, context)?;
         let notification_id = notification_id_for(&existing.record_id);
         let notification = load_notification(&transaction, &notification_id)?.ok_or_else(|| {
             CheckpointError::new(
@@ -139,7 +140,7 @@ fn sqlite_produce_host_interaction(
     );
     event.event_id = EventId::stable(format!("host-interaction-requested-{record_id}"))
         .map_err(|error| CheckpointError::new("event_identity_conflict", error))?;
-    let mut updated = current.clone();
+    let mut updated = crate::runtime::stores::controller_helpers::prepare_host_interaction_cycle(&current, &request, context)?;
     updated.status = crate::checkpoint::CheckpointStatus::HostInteraction;
     updated.active_host_interaction = Some(request.clone());
     updated.claim_token = None;

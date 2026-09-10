@@ -95,12 +95,7 @@ fn redis_claim_and_consume_host_interaction_response(
         let claimed_cycle = current.cycle_index.checked_add(1).ok_or_else(|| {
             CheckpointError::new("checkpoint_cycle_invalid", "cycle index overflow")
         })?;
-        if claimed_cycle != envelope.logical_cycle {
-            return Err(CheckpointError::new(
-                "host_interaction_recovery_stale",
-                "logical cycle does not match checkpoint",
-            ));
-        }
+        crate::runtime::stores::controller_helpers::validate_host_recovery_cycle(&current, &record.request)?;
         let now_ms = RedisCheckpointStore::redis_time_ms(connection)?;
         let mut updated = current.clone();
         updated.messages.push(crate::types::Message::user(
@@ -121,7 +116,7 @@ fn redis_claim_and_consume_host_interaction_response(
         updated.revision = envelope.expected_revision.checked_add(1).ok_or_else(|| {
             CheckpointError::new("checkpoint_revision_overflow", "revision overflow")
         })?;
-        let cycle_index = u32::try_from(envelope.logical_cycle).map_err(|_| {
+        let cycle_index = u32::try_from(current.cycle_index).map_err(|_| {
             CheckpointError::new(
                 "host_interaction_recovery_stale",
                 "logical cycle does not fit RunEvent",
@@ -131,7 +126,7 @@ fn redis_claim_and_consume_host_interaction_response(
             current.root_run_id.clone(),
             current.trace_id.clone(),
             "vv-agent",
-            Some(cycle_index.saturating_sub(1)),
+            Some(cycle_index),
             RunEventPayload::HostInteractionResponseConsumed {
                 checkpoint_key: current.checkpoint_key.clone(),
                 resume_attempt: updated.resume_attempt,

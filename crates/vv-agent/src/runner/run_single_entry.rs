@@ -44,7 +44,10 @@ pub(super) fn result_terminal_flags(result: &AgentResult) -> (bool, bool, bool) 
             )
         )
         && !result.resume_observations.is_empty();
-    let deferred = matches!(result.status, AgentStatus::Deferred);
+    let deferred = matches!(
+        result.status,
+        AgentStatus::Deferred | AgentStatus::HostInteraction
+    );
     (reconciliation_required, operator_abort, deferred)
 }
 

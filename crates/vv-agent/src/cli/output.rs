@@ -25,6 +25,7 @@ fn status_value(status: AgentStatus) -> &'static str {
         AgentStatus::Pending => "pending",
         AgentStatus::Running => "running",
         AgentStatus::Deferred => "deferred",
+        AgentStatus::HostInteraction => "host_interaction",
         AgentStatus::WaitUser => "wait_user",
         AgentStatus::Completed => "completed",
         AgentStatus::Failed => "failed",

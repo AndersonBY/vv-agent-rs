@@ -18,9 +18,9 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock adopts contract `15.0.0` at revision
-`86fb47c934ef8ef4b0671d895cd3c228c82b1395`, canonical artifact SHA-256
-`8f21696c853ada95883f92a45bfc7f32b220a2a5fce75118a29d558c3f9fa57d`.
+The current lock adopts contract `17.0.0` at revision
+`d41ba2746bd817364e21f8c1f77dff7385788944`, canonical artifact SHA-256
+`3df442a8119ce58f480b5153ab56ee379bae7b1ce97bed1d1e2471a1c2dd4bc9`.
 The current adoption state is not duplicated in this document. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
 as the machine-readable source for the current verified Python and Rust
@@ -137,6 +137,11 @@ checkpoint/interaction CAS owns the retained execution claim. A consumed replay
 does not transfer ownership, and an unexpired claim excludes duplicate workers
 without changing the checkpoint revision. The scheduler observes one checkpoint
 snapshot and dispatches recovery without consuming the response or acquiring a claim.
+Workers also reload the checkpoint when a competing delivery has completed
+the recovery wake. Memory, SQLite, and Redis completion replays return the
+retained receipt without transferring execution ownership. Native SQLite
+process tests synchronize two unclaimed workers before wake CAS and cover
+both response-consumption and completed-wake races.
 
 ## Current Runtime Boundaries
 
@@ -346,14 +351,22 @@ construct checkpoint journals, claims, provider/job identifiers, or callback
 metadata. Without an active durable checkpoint the factory returns a completed
 `ERROR` result with `deferred_requires_checkpoint` before an external effect.
 
-`ToolCallOutcome` is the closed `vv-agent.tool-call-outcome.v2` wire: a
-completed `ToolExecutionResult` or a deferred handle. Deferred is not a
+`ToolCallOutcome` is the closed `vv-agent.tool-call-outcome.v3` wire: a
+completed `ToolExecutionResult`, a deferred handle, or a host-interaction
+request with its definitive tool result. Deferred is not a
 `ToolExecutionResult` status. Ordinary completed outcomes are first persisted
 through `record_tool_receipt`; the model-tool batch is then admitted once
 through the checkpoint store (`admit_deferred_batch`) with deferred entries
 only, atomically writing their lifecycle outbox events, the deferred barrier,
 and one claim release. `CheckpointStatus::Deferred` blocks new model cycles
 until every handle resolves.
+
+`runtime/engine/run_loop.rs` assembles host-interaction cycles before
+`CheckpointResumeController::finish_host_interaction` admits them with its
+owned, renewed claim. Store admission requires that snapshot once model or
+tool journals exist. The direct distributed producer is the pre-model seam.
+`tests/distributed_runner/host_interaction.rs` exercises real workers and
+bidirectional SQLite/Redis interaction exchanges with the Python producer.
 
 `CheckpointStore::resolve_deferred(handle, result)` accepts only definitive
 `SUCCESS` or `ERROR` results. Memory, SQLite, and Redis stores use an

@@ -25,6 +25,21 @@ tool calls as a completion candidate, `Continue` requests another cycle, and
 steer a candidate within the remaining cycle budget. These controls never
 inspect the text or change which tools are available.
 
+## Host Interaction
+
+A registered `ToolExecutor` returns `ToolCallOutcome::HostInteraction` from
+`run_outcome` to request a durable, non-terminal host interaction.
+`ToolRegistry::register_executor` retains the executor for runtime dispatch.
+After-tool hooks run before the completed cycle, exact tool result, request,
+notification outbox, and claim release are committed together. Remaining calls
+in that model response have `skipped_due_to_host_interaction` results and are
+not executed.
+
+`AgentStatus::HostInteraction` has no final output or terminal session commit.
+The controller response resumes the next model cycle with the original user
+content. Distributed workers return `pending` while waiting; terminal
+`ask_user` approval/continuation remains a distinct operation.
+
 ## Per-Run Controls
 
 `RunConfig` can replace or extend these controls for one run:

@@ -18,6 +18,7 @@ pub struct ToolRegistry {
     argument_validators: BTreeMap<String, jsonschema::Validator>,
     tool_order: Vec<String>,
     planner_extra_tool_names: Vec<String>,
+    registered_executors: BTreeMap<String, std::sync::Arc<dyn ToolExecutor>>,
 }
 
 impl ToolRegistry {
@@ -57,6 +58,27 @@ impl ToolRegistry {
         for spec in specs {
             self.register(spec)?;
         }
+        Ok(())
+    }
+
+    pub fn register_executor(
+        &mut self,
+        executor: std::sync::Arc<dyn ToolExecutor>,
+    ) -> Result<(), String> {
+        let mut spec = executor
+            .spec(&super::ToolSpecContext)
+            .map_err(|error| error.to_string())?;
+        if spec.name != executor.name() {
+            return Err("executor name does not match its specification".to_string());
+        }
+        spec.exposure = executor.exposure();
+        spec.timeout = executor.timeout();
+        spec.metadata = executor.metadata().clone();
+        spec.tool_metadata = executor.tool_metadata().cloned();
+        let name = spec.name.clone();
+        self.register(spec)?;
+        self.planner_extra_tool_names.push(name.clone());
+        self.registered_executors.insert(name, executor);
         Ok(())
     }
 
@@ -226,8 +248,14 @@ impl ToolRegistry {
     pub fn executors(&self) -> Vec<std::sync::Arc<dyn ToolExecutor>> {
         self.tool_order
             .iter()
-            .filter_map(|name| self.tools.get(name).cloned())
-            .map(|spec| ToolSpecExecutor::new(spec).into_arc())
+            .filter_map(|name| {
+                self.registered_executors.get(name).cloned().or_else(|| {
+                    self.tools
+                        .get(name)
+                        .cloned()
+                        .map(|spec| ToolSpecExecutor::new(spec).into_arc())
+                })
+            })
             .collect()
     }
 }

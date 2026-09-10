@@ -1,6 +1,277 @@
 use super::*;
 
 #[test]
+fn pre_model_host_interaction_rejects_model_journal() {
+    let store = InMemoryCheckpointStore::new();
+    let mut checkpoint = minimal_checkpoint("host-model-journal");
+    checkpoint
+        .model_call_journal
+        .push(OperationJournalEntry::model(
+            "model-operation",
+            1,
+            1,
+            "a".repeat(64),
+            ModelCallOperation::AgentCycle,
+            "test",
+            "test-model",
+            "model-operation:attempt:1",
+        ));
+    let claimed = create_claimed_running_checkpoint(&store, checkpoint, "owner", 1);
+    let request =
+        vv_agent::HostInteractionRequest::new("interaction", 1, "operation", "call-host", "Choose")
+            .unwrap();
+    let admission = vv_agent::HostInteractionAdmissionContext::new(
+        &claimed.checkpoint_key,
+        claimed.revision,
+        "owner",
+        1,
+        1,
+        10_000,
+    )
+    .unwrap();
+    assert_eq!(
+        store
+            .produce_host_interaction(request, &admission)
+            .err()
+            .expect("model journal requires a completed cycle")
+            .code(),
+        "host_interaction_conflict"
+    );
+    assert_eq!(
+        store
+            .load_checkpoint(&claimed.checkpoint_key)
+            .unwrap()
+            .unwrap(),
+        claimed
+    );
+}
+
+#[test]
+fn host_interaction_commits_cycle_receipt_and_replays_after_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("interaction.sqlite");
+    for store_kind in ["memory", "sqlite", "redis"] {
+        let persistent = store_kind == "sqlite";
+        let redis_url = std::env::var("VV_AGENT_TEST_REDIS_URL").ok();
+        let mut store: Box<dyn CheckpointStore> = match store_kind {
+            "sqlite" => Box::new(SqliteCheckpointStore::new(&path).unwrap()),
+            "redis" => {
+                let Some(url) = redis_url.as_deref() else {
+                    continue;
+                };
+                Box::new(RedisCheckpointStore::new(url).unwrap())
+            }
+            _ => Box::new(InMemoryCheckpointStore::new()),
+        };
+        let key = format!("host-cycle-{}", uuid::Uuid::new_v4());
+        let key = key.as_str();
+        let digest = "a".repeat(64);
+        let claimed = create_claimed_running_checkpoint(
+            store.as_ref(),
+            checkpoint_with_started_tools(key, &[("operation", "call-host", &digest)]),
+            "owner",
+            1,
+        );
+        let request = vv_agent::HostInteractionRequest::new(
+            "interaction",
+            1,
+            "operation",
+            "call-host",
+            "Choose",
+        )
+        .unwrap();
+        let result = ToolExecutionResult::success("call-host", "requested");
+        let mut completed = claimed.clone();
+        completed.cycles.push(vv_agent::CycleRecord {
+            index: 1,
+            assistant_message: String::new(),
+            tool_calls: vec![ToolCall::new(
+                "call-host",
+                "remote_write",
+                Default::default(),
+            )],
+            tool_results: vec![result.clone()],
+            memory_compacted: false,
+        });
+        let mut admission = vv_agent::HostInteractionAdmissionContext::new(
+            key,
+            claimed.revision,
+            "owner",
+            1,
+            1,
+            10_000,
+        )
+        .unwrap();
+        assert_eq!(
+            store
+                .produce_host_interaction(request.clone(), &admission)
+                .err()
+                .expect("tool journal requires a completed cycle")
+                .code(),
+            "host_interaction_conflict"
+        );
+        assert_eq!(store.load_checkpoint(key).unwrap().unwrap(), claimed);
+        admission.cycle_snapshot = Some(Box::new(completed));
+        if persistent {
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            connection.execute_batch("CREATE TRIGGER fail_notification BEFORE INSERT ON host_interaction_notification_outbox BEGIN SELECT RAISE(ABORT, 'notification interrupted'); END;").unwrap();
+            assert!(store
+                .produce_host_interaction(request.clone(), &admission)
+                .is_err());
+            drop(store);
+            store = Box::new(SqliteCheckpointStore::new(&path).unwrap());
+            assert_eq!(store.load_checkpoint(key).unwrap().unwrap(), claimed);
+            let records: i64 = connection
+                .query_row("SELECT COUNT(*) FROM host_interaction_records", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(records, 0);
+            connection
+                .execute_batch("DROP TRIGGER fail_notification;")
+                .unwrap();
+        }
+        let outcome = store
+            .produce_host_interaction(request.clone(), &admission)
+            .unwrap();
+        assert_eq!(outcome.status, "admitted");
+        if persistent {
+            drop(store);
+            store = Box::new(SqliteCheckpointStore::new(&path).unwrap());
+        }
+        if store_kind == "redis" {
+            drop(store);
+            store = Box::new(RedisCheckpointStore::new(redis_url.as_deref().unwrap()).unwrap());
+        }
+        let before = store.load_checkpoint(key).unwrap().unwrap();
+        assert_eq!(before.revision, claimed.revision + 1);
+        assert_eq!(before.cycle_index, 1);
+        assert!(before.claim_token.is_none());
+        assert!(before.tool_journal.is_empty());
+        assert_eq!(before.cycles[0].tool_results[0], result);
+        for suspended in [false, true] {
+            let mut malformed = before.clone();
+            malformed.cycles.clear();
+            if suspended {
+                malformed.status = vv_agent::CheckpointStatus::Suspended;
+                malformed.suspended_origin = Some(vv_agent::SuspendedOrigin::host_interaction(
+                    malformed.active_host_interaction.take().unwrap(),
+                ));
+            }
+            assert_eq!(
+                malformed.validate().unwrap_err().code(),
+                "checkpoint_status_invalid"
+            );
+        }
+        assert_eq!(before.status, vv_agent::CheckpointStatus::HostInteraction);
+        assert_eq!(
+            store
+                .produce_host_interaction(request.clone(), &admission)
+                .unwrap()
+                .status,
+            "replayed"
+        );
+        admission.cycle_snapshot.as_mut().unwrap().cycles[0].tool_results[0].content =
+            "different".to_string();
+        assert_eq!(
+            store
+                .produce_host_interaction(request, &admission)
+                .err()
+                .expect("conflicting tool result")
+                .code(),
+            "host_interaction_conflict"
+        );
+        assert_eq!(store.load_checkpoint(key).unwrap().unwrap(), before);
+        assert_eq!(
+            store
+                .record_tool_receipt(
+                    claimed.clone(),
+                    "operation",
+                    1,
+                    "call-host",
+                    &digest,
+                    ToolExecutionResult::success("call-host", "late"),
+                    "owner",
+                    claimed.revision,
+                    1
+                )
+                .unwrap_err()
+                .code(),
+            "checkpoint_claim_required"
+        );
+        assert_eq!(store.load_checkpoint(key).unwrap().unwrap(), before);
+    }
+}
+
+#[tokio::test]
+async fn orchestrator_preserves_host_interaction_until_admission() {
+    struct InteractionTool;
+    impl vv_agent::ToolExecutor for InteractionTool {
+        fn name(&self) -> &str {
+            "request_choice"
+        }
+        fn description(&self) -> &str {
+            "Request a choice"
+        }
+        fn spec(&self, _: &vv_agent::ToolSpecContext) -> Result<ToolSpec, vv_agent::ToolError> {
+            Ok(ToolSpec::new(
+                self.name(),
+                self.description(),
+                Arc::new(|_, _| unreachable!()),
+            ))
+        }
+        fn run<'a>(
+            &'a self,
+            _: ToolCall,
+            _: vv_agent::ToolRunContext<'a>,
+        ) -> vv_agent::ToolFuture<'a, ToolExecutionResult> {
+            Box::pin(async { panic!("typed outcome must be used") })
+        }
+        fn run_outcome<'a>(
+            &'a self,
+            call: ToolCall,
+            _: vv_agent::ToolRunContext<'a>,
+        ) -> vv_agent::ToolFuture<'a, ToolCallOutcome> {
+            Box::pin(async move {
+                Ok(ToolCallOutcome::HostInteraction {
+                    request: vv_agent::HostInteractionRequest::new(
+                        "interaction",
+                        1,
+                        "operation",
+                        &call.id,
+                        "Choose",
+                    )
+                    .unwrap(),
+                    result: ToolExecutionResult::success(call.id, "requested"),
+                })
+            })
+        }
+    }
+    let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = events.clone();
+    let mut context = ToolContext::new(".");
+    let outcome = ToolOrchestrator::from_tools(vec![Arc::new(InteractionTool)])
+        .run_one_outcome(
+            ToolCall::new("call-host", "request_choice", Default::default()),
+            &mut context,
+            ToolRunOptions::default()
+                .lifecycle_callback(Arc::new(move |event| observed.lock().unwrap().push(event))),
+        )
+        .await
+        .unwrap();
+    let ToolCallOutcome::HostInteraction { result, request } = outcome else {
+        panic!("interaction lost")
+    };
+    assert_eq!(result.content, "requested");
+    assert_eq!(request.tool_call_id, "call-host");
+    assert!(!events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|event| matches!(event, vv_agent::ToolLifecycleEvent::Completed { .. })));
+}
+
+#[test]
 fn context_defer_requires_checkpoint_and_preserves_opaque_identity() {
     let mut context = ToolContext::new(".");
     context.tool_call_id = "call_without_checkpoint".to_string();

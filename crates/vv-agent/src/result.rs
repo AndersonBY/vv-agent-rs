@@ -165,7 +165,10 @@ impl RunResult {
     }
 
     pub fn final_output(&self) -> Option<&str> {
-        if self.result.status == AgentStatus::Deferred {
+        if matches!(
+            self.result.status,
+            AgentStatus::Deferred | AgentStatus::HostInteraction
+        ) {
             return self.result.final_answer.as_deref();
         }
         self.result

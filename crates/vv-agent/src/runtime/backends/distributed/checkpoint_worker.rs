@@ -301,7 +301,10 @@ pub(super) fn run_distributed_cycle(
     validate_distributed_run_definition(&envelope, &checkpoint, None)
         .map_err(|error| error.to_string())?;
 
-    if checkpoint.status == CheckpointStatus::Deferred {
+    if matches!(
+        checkpoint.status,
+        CheckpointStatus::Deferred | CheckpointStatus::HostInteraction
+    ) {
         return Ok(CycleDispatchResult::pending());
     }
     if checkpoint.terminal_result.is_none()

@@ -457,6 +457,7 @@ fn compile_rust_member(surface: &str, target: &str, name: &str, kind: &str) {
                 [
                     register,
                     register_many,
+                    register_executor,
                     get,
                     has_tool,
                     register_schemas,

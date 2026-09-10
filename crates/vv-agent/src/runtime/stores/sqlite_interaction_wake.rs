@@ -205,6 +205,16 @@ fn sqlite_claim_controller_command_wake(
     let claimable = receipt.outbox_state == "pending"
         || (receipt.outbox_state == "claimed" && lease.is_some_and(|value| value <= now_ms));
     if !claimable || receipt.outbox_action != "recovery_dispatch" {
+        if receipt.outbox_action == "none" || receipt.outbox_state == "delivered" {
+            transaction.commit().map_err(sqlite_error)?;
+            return Ok(Some(receipt));
+        }
+        if receipt.outbox_state == "ambiguous" {
+            return Err(CheckpointError::new(
+                "controller_command_stale",
+                "controller wake requires reconciliation",
+            ));
+        }
         transaction.commit().map_err(sqlite_error)?;
         return Ok(None);
     }
@@ -233,6 +243,12 @@ fn sqlite_complete_controller_command_wake(
     now_ms: u64,
     error: Option<&str>,
 ) -> CheckpointResult<Option<ControllerCommandReceipt>> {
+    if !matches!(outcome, "delivered" | "ambiguous") {
+        return Err(CheckpointError::new(
+            "controller_command_outbox_invalid",
+            "wake completion outcome is invalid",
+        ));
+    }
     let mut connection = store.lock()?;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -243,6 +259,16 @@ fn sqlite_complete_controller_command_wake(
         transaction.commit().map_err(sqlite_error)?;
         return Ok(None);
     };
+    if matches!(receipt.outbox_state.as_str(), "delivered" | "ambiguous") {
+        if receipt.outbox_state != outcome {
+            return Err(CheckpointError::new(
+                "controller_command_stale",
+                "controller wake has already completed",
+            ));
+        }
+        transaction.commit().map_err(sqlite_error)?;
+        return Ok(Some(receipt));
+    }
     if receipt.outbox_state != "claimed"
         || owner.as_deref() != Some(claim_token)
         || receipt.outbox_attempt != attempt
@@ -251,36 +277,15 @@ fn sqlite_complete_controller_command_wake(
         transaction.commit().map_err(sqlite_error)?;
         return Ok(None);
     }
-    match outcome {
-        "delivered" => {
-            receipt.outbox_state = "delivered".to_string();
-            update_controller_wake_row(
-                &transaction,
-                &receipt,
-                None,
-                None,
-                Some(now_ms),
-                None,
-            )?;
-        }
-        "ambiguous" => {
-            receipt.outbox_state = "ambiguous".to_string();
-            update_controller_wake_row(
-                &transaction,
-                &receipt,
-                None,
-                None,
-                None,
-                error,
-            )?;
-        }
-        _ => {
-            return Err(CheckpointError::new(
-                "controller_command_outbox_invalid",
-                "wake completion outcome is invalid",
-            ))
-        }
-    }
+    receipt.outbox_state = outcome.to_string();
+    update_controller_wake_row(
+        &transaction,
+        &receipt,
+        None,
+        None,
+        (outcome == "delivered").then_some(now_ms),
+        if outcome == "ambiguous" { error } else { None },
+    )?;
     transaction.commit().map_err(sqlite_error)?;
     Ok(Some(receipt))
 }

@@ -561,7 +561,9 @@ impl AppServerRunAdapter {
                     );
                 let usage_visible = !matches!(
                     result.status(),
-                    AgentStatus::Deferred | AgentStatus::ReconciliationRequired
+                    AgentStatus::Deferred
+                        | AgentStatus::HostInteraction
+                        | AgentStatus::ReconciliationRequired
                 );
                 (
                     status,

@@ -39,6 +39,7 @@ pub enum RunHandleStatus {
     MaxCycles,
     ReconciliationRequired,
     Deferred,
+    HostInteraction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,8 +96,12 @@ impl RunHandleState {
                 cancelled: false,
                 error: None,
             },
-            AgentStatus::Deferred => Self {
-                status: RunHandleStatus::Deferred,
+            AgentStatus::Deferred | AgentStatus::HostInteraction => Self {
+                status: if status == AgentStatus::Deferred {
+                    RunHandleStatus::Deferred
+                } else {
+                    RunHandleStatus::HostInteraction
+                },
                 done: false,
                 cancelled: false,
                 error: None,

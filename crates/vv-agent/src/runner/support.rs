@@ -324,7 +324,7 @@ fn normalize_completion_observation(result: &mut AgentResult) {
             result.wait_reason = None;
             result.error = None;
         }
-        crate::types::AgentStatus::Deferred => {
+        crate::types::AgentStatus::Deferred | crate::types::AgentStatus::HostInteraction => {
             result.completion_reason = None;
             result.completion_tool_name = None;
             result.partial_output = result
@@ -332,7 +332,14 @@ fn normalize_completion_observation(result: &mut AgentResult) {
                 .clone()
                 .or_else(|| crate::types::last_assistant_output(&result.cycles));
             result.final_answer = None;
-            result.wait_reason = Some("deferred_pending".to_string());
+            result.wait_reason = Some(
+                if result.status == crate::types::AgentStatus::Deferred {
+                    "deferred_pending"
+                } else {
+                    "host_interaction"
+                }
+                .to_string(),
+            );
             result.error = None;
         }
         crate::types::AgentStatus::Pending | crate::types::AgentStatus::Running => {

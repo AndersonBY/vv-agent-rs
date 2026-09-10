@@ -34,6 +34,7 @@ fn produce_host_interaction(
                     "retained host interaction has no checkpoint",
                 )
             })?;
+            crate::runtime::stores::controller_helpers::validate_host_tool_receipt_replay(checkpoint, &request, context)?;
             let notification_id = notification_id_for(record_id);
             let notification = ledger.notifications.get(&notification_id).ok_or_else(|| {
                 CheckpointError::new(
@@ -175,7 +176,7 @@ fn produce_host_interaction(
             .map_err(|error| CheckpointError::new("event_identity_conflict", error))?;
         let event_value = serde_json::to_value(&event)
             .map_err(|error| CheckpointError::new("checkpoint_event_invalid", error.to_string()))?;
-        let mut updated = current.clone();
+        let mut updated = crate::runtime::stores::controller_helpers::prepare_host_interaction_cycle(&current, &request, context)?;
         updated.status = crate::checkpoint::CheckpointStatus::HostInteraction;
         updated.active_host_interaction = Some(request.clone());
         updated.claim_token = None;
@@ -399,12 +400,7 @@ fn produce_host_interaction(
         let claimed_cycle = current.cycle_index.checked_add(1).ok_or_else(|| {
             CheckpointError::new("checkpoint_cycle_invalid", "cycle index overflow")
         })?;
-        if claimed_cycle != envelope.logical_cycle {
-            return Err(CheckpointError::new(
-                "host_interaction_recovery_stale",
-                "logical cycle does not match checkpoint",
-            ));
-        }
+        crate::runtime::stores::controller_helpers::validate_host_recovery_cycle(&current, &record.request)?;
         let mut updated = current.clone();
         updated.messages.push(crate::types::Message::user(
             response.response.content.clone(),
@@ -421,7 +417,7 @@ fn produce_host_interaction(
         updated.revision = envelope.expected_revision.checked_add(1).ok_or_else(|| {
             CheckpointError::new("checkpoint_revision_overflow", "revision overflow")
         })?;
-        let cycle_index = u32::try_from(envelope.logical_cycle).map_err(|_| {
+        let cycle_index = u32::try_from(current.cycle_index).map_err(|_| {
             CheckpointError::new(
                 "host_interaction_recovery_stale",
                 "logical cycle does not fit event",
@@ -431,7 +427,7 @@ fn produce_host_interaction(
             current.root_run_id.clone(),
             current.trace_id.clone(),
             "vv-agent",
-            Some(cycle_index.saturating_sub(1)),
+            Some(cycle_index),
             RunEventPayload::HostInteractionResponseConsumed {
                 checkpoint_key: current.checkpoint_key.clone(),
                 resume_attempt: updated.resume_attempt,
@@ -799,15 +795,18 @@ fn produce_host_interaction(
                 "wake command digest conflicts",
             ));
         }
-        let Some(lease) = ledger.wake_leases.get(command_id) else {
+        if matches!(receipt.outbox_state.as_str(), "delivered" | "ambiguous") {
+            if receipt.outbox_state == outcome {
+                return Ok(Some(receipt));
+            }
             return Err(CheckpointError::new(
-                "controller_command_outbox_stale",
-                "wake claim is missing",
+                "controller_command_stale",
+                "controller wake has already completed",
             ));
-        };
+        }
         if receipt.outbox_state != "claimed"
             || receipt.outbox_attempt != attempt
-            || lease.claim_token != claim_token
+            || ledger.wake_leases.get(command_id).is_none_or(|lease| lease.claim_token != claim_token)
         {
             return Err(CheckpointError::new(
                 "controller_command_outbox_stale",

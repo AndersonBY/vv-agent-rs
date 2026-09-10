@@ -37,6 +37,7 @@ fn result(status: AgentStatus, error: Option<&str>) -> AgentResult {
             AgentStatus::Pending
             | AgentStatus::Running
             | AgentStatus::ReconciliationRequired
+            | AgentStatus::HostInteraction
             | AgentStatus::Deferred => None,
         },
         completion_tool_name: None,

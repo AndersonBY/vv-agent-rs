@@ -615,7 +615,7 @@ fn completion_from_agent_result(
     let response = resume_response_from_result(request, result, checkpoint);
     let usage_visible = !matches!(
         result.status,
-        AgentStatus::Deferred | AgentStatus::ReconciliationRequired
+        AgentStatus::Deferred | AgentStatus::HostInteraction | AgentStatus::ReconciliationRequired
     );
     TurnCompletedParams {
         thread_id: response.thread_id,

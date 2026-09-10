@@ -162,3 +162,75 @@ fn controller_wake_reaper_returns_full_record_memory_and_sqlite() {
         SqliteCheckpointStore::new(directory.path().join("wake-record.sqlite")).expect("sqlite");
     assert_full_reaper_record(&sqlite, "wake-record-sqlite", "wake-record-sqlite-command");
 }
+
+fn assert_completion_replay(store: &dyn CheckpointStore, prefix: &str) {
+    for outcome in ["delivered", "ambiguous"] {
+        let key = format!("{prefix}-{outcome}");
+        let command = create_recovery_wake(store, &key, &format!("{key}-command"));
+        let before = store.load_checkpoint(&key).unwrap();
+        let claimed = store
+            .claim_controller_command_wake(
+                &command.command_id,
+                &command.command_digest,
+                "owner",
+                10_000,
+                1,
+            )
+            .unwrap()
+            .unwrap();
+        let complete = |outcome, now| {
+            store.complete_controller_command_wake(
+                &command.command_id,
+                &command.command_digest,
+                "owner",
+                claimed.outbox_attempt,
+                outcome,
+                now,
+                None,
+            )
+        };
+        let receipt = complete(outcome, 2).unwrap().unwrap();
+        assert_eq!(complete(outcome, 3).unwrap().unwrap(), receipt);
+        let conflict = if outcome == "delivered" {
+            "ambiguous"
+        } else {
+            "delivered"
+        };
+        assert!(complete(conflict, 4).is_err());
+        assert_eq!(complete(outcome, 5).unwrap().unwrap(), receipt);
+        let claim_replay = store.claim_controller_command_wake(
+            &command.command_id,
+            &command.command_digest,
+            "replayed-owner",
+            10_000,
+            6,
+        );
+        if outcome == "delivered" {
+            assert_eq!(claim_replay.unwrap().unwrap(), receipt);
+        } else {
+            assert!(claim_replay.is_err());
+        }
+        assert_eq!(store.load_checkpoint(&key).unwrap(), before);
+        store.delete_checkpoint(&key).unwrap();
+    }
+}
+
+#[test]
+fn controller_wake_completion_replay_memory_and_sqlite() {
+    assert_completion_replay(&InMemoryCheckpointStore::new(), "memory-completion");
+    let directory = tempdir().unwrap();
+    let store = SqliteCheckpointStore::new(directory.path().join("completion.sqlite")).unwrap();
+    assert_completion_replay(&store, "sqlite-completion");
+}
+
+#[test]
+fn controller_wake_completion_replay_redis() {
+    let Ok(url) = std::env::var("VV_AGENT_TEST_REDIS_URL") else {
+        return;
+    };
+    let store = RedisCheckpointStore::new(&url).unwrap();
+    assert_completion_replay(
+        &store,
+        &format!("redis-completion-{}", uuid::Uuid::new_v4()),
+    );
+}

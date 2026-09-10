@@ -120,6 +120,9 @@ pub(super) fn consume_controller_wakes(
                 return Err("controller wake claim was lost before recovery".to_string());
             };
             if claimed_wake.outbox_state != "claimed" || claimed_wake.outbox_attempt == 0 {
+                if claimed_wake.outbox_state == "delivered" {
+                    return Ok((load_checkpoint(store, &current.checkpoint_key)?, false));
+                }
                 return Err("controller wake claim did not retain ownership".to_string());
             }
             let recovery = HostInteractionRecoveryEnvelope {
@@ -182,6 +185,9 @@ pub(super) fn consume_controller_wakes(
                 return Err("controller wake claim was lost before completion".to_string());
             };
             if claimed_wake.outbox_state != "claimed" || claimed_wake.outbox_attempt == 0 {
+                if claimed_wake.outbox_state == "delivered" {
+                    return Ok((load_checkpoint(store, &current.checkpoint_key)?, false));
+                }
                 return Err("controller wake claim did not retain ownership".to_string());
             }
             let completed = store
@@ -201,6 +207,9 @@ pub(super) fn consume_controller_wakes(
             }
             current = load_checkpoint(store, &current.checkpoint_key)?;
         }
+    }
+    if !consumed_host_response {
+        current = load_checkpoint(store, &current.checkpoint_key)?;
     }
     Ok((current, consumed_host_response))
 }

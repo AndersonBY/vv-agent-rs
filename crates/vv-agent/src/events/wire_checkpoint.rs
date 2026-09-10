@@ -78,7 +78,7 @@ pub(super) fn validate_checkpoint_wire_fields(
             if *resume_attempt == 0
                 || *consumed_revision > JSON_SAFE_INTEGER_MAX
                 || *logical_cycle == 0
-                || *logical_cycle != u64::from(cycle).saturating_add(1)
+                || (*logical_cycle != u64::from(cycle).saturating_add(1) && *logical_cycle != u64::from(cycle))
             {
                 return Err("host interaction consumed event integer is invalid".to_string());
             }

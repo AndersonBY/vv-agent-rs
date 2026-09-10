@@ -66,7 +66,11 @@ pub(super) fn run_agent_runtime_cycle(
         .set_lease_duration_ms(envelope.lease_duration_ms)
         .map_err(|error| error.to_string())?;
     controller.set_next_claim_mode(claim_mode);
-    let (recovered, owns_recovery) = if claim_mode == ClaimMode::Recovery {
+    let (recovered, owns_recovery) = if claim_mode == ClaimMode::Recovery
+        || checkpoint.event_outbox.iter().any(|entry| {
+            entry.event.get("type").and_then(serde_json::Value::as_str)
+                == Some("host_interaction_requested")
+        }) {
         consume_controller_wakes(
             store.as_ref(),
             checkpoint.clone(),
@@ -93,22 +97,12 @@ pub(super) fn run_agent_runtime_cycle(
         controller.close();
         return Ok(CycleDispatchResult::pending());
     }
+    let checkpoint = recovered;
     let checkpoint_controller = Arc::new(Mutex::new(controller));
     let runtime = build_runtime(&envelope, &resolved)?;
     let mut task = envelope.task.clone();
     project_tool_policy(&mut task, &resolved.tool_policy);
-    let producer_controller = checkpoint_controller.clone();
-    let host_interaction_producer: crate::runtime::context::HostInteractionProducer =
-        Arc::new(move |request| {
-            let mut controller = producer_controller
-                .lock()
-                .map_err(|_| "checkpoint controller lock poisoned".to_string())?;
-            controller
-                .produce_host_interaction(request)
-                .map_err(|error| error.to_string())
-        });
-    let execution_context = worker_execution_context(&envelope, &resolved)
-        .with_host_interaction_producer(host_interaction_producer);
+    let execution_context = worker_execution_context(&envelope, &resolved);
     let previous_cycle_count = checkpoint.cycles.len();
     let controls = RuntimeRunControls {
         event_handler: combined_event_handler(&resolved),
@@ -132,6 +126,7 @@ pub(super) fn run_agent_runtime_cycle(
         initial_messages: Some(checkpoint.messages.clone()),
         initial_shared_state: Some(checkpoint.shared_state.clone()),
         initial_cycles: Some(checkpoint.cycles.clone()),
+        initial_model_calls: Some(checkpoint.model_calls.clone()),
         cycle_index_start: Some(envelope.cycle_index),
         cycle_count: Some(1),
         initial_budget_usage: checkpoint.budget_usage.clone(),
@@ -160,8 +155,16 @@ pub(super) fn run_agent_runtime_cycle(
         controller.close();
         return CycleDispatchResult::committed(current.cycle_index, current.revision);
     }
-    if result.status == AgentStatus::Deferred {
-        if current.status != CheckpointStatus::Deferred || current.claim_token.is_some() {
+    if matches!(
+        result.status,
+        AgentStatus::Deferred | AgentStatus::HostInteraction
+    ) {
+        let expected_status = if result.status == AgentStatus::Deferred {
+            CheckpointStatus::Deferred
+        } else {
+            CheckpointStatus::HostInteraction
+        };
+        if current.status != expected_status || current.claim_token.is_some() {
             return Err("distributed deferred result does not match durable state".to_string());
         }
         controller.close();

@@ -84,7 +84,7 @@ impl ControllerHandle {
 /// checkpoint or lease metadata.  A worker obtains this context from the
 /// authoritative checkpoint claim and passes it to the store; the store then
 /// compares every field inside the same admission CAS.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HostInteractionAdmissionContext {
     pub checkpoint_key: String,
     pub expected_revision: u64,
@@ -92,6 +92,7 @@ pub struct HostInteractionAdmissionContext {
     pub claimed_cycle: u64,
     pub now_ms: u64,
     pub lease_expires_at_ms: u64,
+    pub cycle_snapshot: Option<Box<crate::runtime::state::Checkpoint>>,
 }
 
 impl HostInteractionAdmissionContext {
@@ -110,6 +111,7 @@ impl HostInteractionAdmissionContext {
             claimed_cycle,
             now_ms,
             lease_expires_at_ms,
+            cycle_snapshot: None,
         };
         context.validate()?;
         Ok(context)

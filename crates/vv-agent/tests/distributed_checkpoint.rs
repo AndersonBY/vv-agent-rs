@@ -806,11 +806,21 @@ fn heartbeat_does_not_overwrite_progress_revision_or_journal() {
         planned.model_call_journal.push(completed);
         let progressed = progress.persist(planned)?;
         let first_expiry = progressed.lease_expires_at_ms.unwrap();
-        std::thread::sleep(Duration::from_millis(180));
-        let after_heartbeat = store_for_executor
-            .load_checkpoint("heartbeat-progress")
-            .map_err(|error| error.to_string())?
-            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let after_heartbeat = loop {
+            let observed = store_for_executor
+                .load_checkpoint("heartbeat-progress")
+                .map_err(|error| error.to_string())?
+                .unwrap();
+            if observed.lease_expires_at_ms.unwrap() > first_expiry {
+                break observed;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "heartbeat did not renew its claim"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        };
         assert_eq!(after_heartbeat.revision, progressed.revision);
         assert_eq!(after_heartbeat.model_call_journal.len(), 1);
         assert!(after_heartbeat.lease_expires_at_ms.unwrap() > first_expiry);
@@ -822,7 +832,7 @@ fn heartbeat_does_not_overwrite_progress_revision_or_journal() {
 
     DistributedCycleWorker::new(registry)
         .with_checkpoint_executor(Arc::new(executor))
-        .run_cycle(envelope(&checkpoint, 1, ClaimMode::Continue, 300, false))
+        .run_cycle(envelope(&checkpoint, 1, ClaimMode::Continue, 3_000, false))
         .unwrap();
 
     let persisted = store

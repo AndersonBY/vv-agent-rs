@@ -74,7 +74,6 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             controller: budget_controller,
             early_result,
         } = self.prepare_run_budget(&controls, &messages, &cycles, &shared_state);
-        let configured_budget = effective_budget_limits.is_some();
         let child_budget_limits = effective_budget_limits.clone();
         let effective_cancellation_token = controls.effective_cancellation_token();
         let PreparedRuntimeAccounting {
@@ -104,7 +103,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             "agent_started",
             BTreeMap::from([("model".to_string(), Value::String(task.model.clone()))]),
         );
-        if !configured_budget && controls_cancelled(&controls) {
+        if effective_budget_limits.is_none() && controls_cancelled(&controls) {
             self.emit_log(
                 &controls,
                 "run_cancelled",
@@ -758,6 +757,12 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             task_token_usage(&controls),
                         ));
                     }
+                    if matches!(execution.outcome(), crate::checkpoint::ToolCallOutcome::HostInteraction { .. }) {
+                        messages.extend(image_notifications);
+                        *shared_state = context.shared_state.clone();
+                        cycles.push(cycle);
+                        return Some(checkpoint.finish_host_interaction(execution.outcome().clone(), messages, cycles, shared_state, budget_snapshot(&budget_controller)));
+                    }
                     let result = deferred_batch.resolve_execution(
                         &patched_call,
                         checkpoint_plan.as_deref(),
@@ -942,10 +947,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                     messages,
                     cycles,
                     shared_state,
-                ) {
-                    return Some(result);
-                }
-                if let Some(result) = tool_boundary_result {
+                ).or(tool_boundary_result) {
                     return Some(result);
                 }
                 finalize_tool_cycle(ToolCycleFinalization {

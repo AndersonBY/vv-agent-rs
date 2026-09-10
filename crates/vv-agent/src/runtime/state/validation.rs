@@ -125,7 +125,12 @@ pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
             "terminal_result requires a terminal checkpoint status",
         ));
     }
-    if let Some(request) = &checkpoint.active_host_interaction {
+    if let Some(request) = checkpoint.active_host_interaction.as_ref().or_else(|| {
+        checkpoint
+            .suspended_origin
+            .as_ref()
+            .and_then(|origin| origin.active_host_interaction.as_ref())
+    }) {
         request.validate()?;
         let expected_cycle = checkpoint.cycle_index.checked_add(1).ok_or_else(|| {
             CheckpointError::new(
@@ -133,10 +138,18 @@ pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
                 "host interaction logical cycle overflow",
             )
         })?;
-        if request.logical_cycle != expected_cycle {
+        let committed_origin = request.logical_cycle == checkpoint.cycle_index
+            && checkpoint.cycles.iter().any(|cycle| {
+                u64::from(cycle.index) == request.logical_cycle
+                    && cycle
+                        .tool_results
+                        .iter()
+                        .any(|result| result.tool_call_id == request.tool_call_id)
+            });
+        if request.logical_cycle != expected_cycle && !committed_origin {
             return Err(CheckpointError::new(
                 "checkpoint_status_invalid",
-                "host interaction logical_cycle must equal cycle_index + 1",
+                "host interaction must identify the active cycle or a retained completed tool cycle",
             ));
         }
     }
@@ -816,6 +829,10 @@ fn agent_status_matches_checkpoint(status: AgentStatus, checkpoint: CheckpointSt
                 CheckpointStatus::ReconciliationRequired
             )
             | (AgentStatus::Deferred, CheckpointStatus::Deferred)
+            | (
+                AgentStatus::HostInteraction,
+                CheckpointStatus::HostInteraction
+            )
     )
 }
 

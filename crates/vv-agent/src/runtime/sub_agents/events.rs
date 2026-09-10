@@ -93,6 +93,7 @@ pub(super) fn agent_status_value(status: AgentStatus) -> &'static str {
         AgentStatus::MaxCycles => "max_cycles",
         AgentStatus::ReconciliationRequired => "reconciliation_required",
         AgentStatus::Deferred => "deferred",
+        AgentStatus::HostInteraction => "host_interaction",
     }
 }
 

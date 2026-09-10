@@ -1,6 +1,9 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+#[path = "distributed_runner/host_interaction.rs"]
+mod host_interaction;
+
 use vv_agent::runtime::backends::distributed::CycleEnqueuer;
 use vv_agent::{
     Agent, AgentStatus, AgentTask, CapabilityRef, CheckpointConfig, CheckpointStore, ClaimMode,
