@@ -619,7 +619,10 @@ macro_rules! redis_impl_core {
                     .tool_journal
                     .iter()
                     .any(|entry| entry.state == OperationState::Deferred);
-                updated.status = if unresolved {
+                let suspended = updated.status == crate::checkpoint::CheckpointStatus::Suspended;
+                updated.status = if suspended {
+                    crate::checkpoint::CheckpointStatus::Suspended
+                } else if unresolved {
                     crate::checkpoint::CheckpointStatus::Deferred
                 } else {
                     crate::checkpoint::CheckpointStatus::Running
@@ -636,7 +639,7 @@ macro_rules! redis_impl_core {
                 pipeline.del(&lease_key).ignore();
                 pipeline.set(&receipt_key, receipt_payload).ignore();
                 pipeline.sadd(&receipt_set_key, &receipt_key).ignore();
-                Ok(Some(if unresolved {
+                Ok(Some(if unresolved || suspended {
                     DeferredResolveDecision::AppliedWaiting { receipt }
                 } else {
                     DeferredResolveDecision::AppliedReady { receipt }

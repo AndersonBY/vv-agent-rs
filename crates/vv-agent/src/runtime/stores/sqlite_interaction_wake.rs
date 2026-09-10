@@ -1,115 +1,3 @@
-type SqliteControllerWakeRow = (
-    ControllerCommandReceipt,
-    String,
-    String,
-    u64,
-    Option<String>,
-    Option<u64>,
-    Option<u64>,
-    Option<String>,
-);
-
-fn load_controller_wake_row(
-    transaction: &Transaction<'_>,
-    command_id: &str,
-    command_digest: &str,
-) -> CheckpointResult<Option<SqliteControllerWakeRow>> {
-    let Some((bound_receipt, bound_command)) = load_controller_receipt(transaction, command_id)?
-    else {
-        return Ok(None);
-    };
-    if bound_receipt.command_digest != command_digest
-        || bound_command.command_digest != command_digest
-    {
-        return Err(CheckpointError::new(
-            "controller_command_conflict",
-            "controller wake command digest is not bound to its receipt",
-        ));
-    }
-    let raw = transaction
-        .query_row(
-            "SELECT receipt, command_digest, outbox_state, attempt, claim_token, lease_expires_at_ms, delivered_at_ms, last_error FROM controller_command_receipts WHERE command_id = ?1 AND command_digest = ?2",
-            params![command_id, command_digest],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                    row.get::<_, Option<i64>>(5)?,
-                    row.get::<_, Option<i64>>(6)?,
-                    row.get::<_, Option<String>>(7)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(sqlite_error)?;
-    raw.map(
-        |(
-            receipt,
-            stored_digest,
-            state,
-            attempt,
-            claim_token,
-            lease,
-            delivered_at,
-            last_error,
-        )| {
-            if stored_digest != command_digest {
-                return Err(CheckpointError::new(
-                    "controller_command_conflict",
-                    "controller wake digest does not match receipt",
-                ));
-            }
-            let mut receipt = ControllerCommandReceipt::from_value(&serde_json::from_str(&receipt)?)?;
-            if receipt.command_id != command_id || receipt.command_digest != stored_digest {
-                return Err(CheckpointError::new(
-                    "controller_command_conflict",
-                    "controller wake receipt identity conflicts with its indexed row",
-                ));
-            }
-            receipt.outbox_state = state;
-            receipt.outbox_attempt = to_u64(attempt)?;
-            receipt.validate()?;
-            let lease = lease.map(to_u64).transpose()?;
-            let delivered_at = delivered_at.map(to_u64).transpose()?;
-            if (claim_token.is_some()) != lease.is_some()
-                || (receipt.outbox_state == "claimed") != claim_token.is_some()
-            {
-                return Err(CheckpointError::new(
-                    "controller_command_conflict",
-                    "controller wake claim and lease are inconsistent",
-                ));
-            }
-            if claim_token
-                .as_ref()
-                .is_some_and(|value| value.trim().is_empty() || value.len() > 512)
-                || lease.is_some_and(|value| value > crate::checkpoint::MAX_WIRE_INTEGER)
-                || delivered_at.is_some_and(|value| value > crate::checkpoint::MAX_WIRE_INTEGER)
-                || last_error
-                    .as_ref()
-                    .is_some_and(|value| value.len() > crate::checkpoint::HOST_INTERACTION_CONTENT_MAX_UTF8_BYTES)
-            {
-                return Err(CheckpointError::new(
-                    "controller_command_conflict",
-                    "controller wake lifecycle metadata is invalid",
-                ));
-            }
-            Ok((
-                receipt,
-                stored_digest,
-                command_id.to_string(),
-                to_u64(attempt)?,
-                claim_token,
-                lease,
-                delivered_at,
-                last_error,
-            ))
-        },
-    )
-    .transpose()
-}
 
 fn update_controller_wake_row(
     transaction: &Transaction<'_>,
@@ -648,7 +536,10 @@ fn sqlite_apply_controller_command(
             "controller command is blocked by an ambiguous operation",
         ));
     }
-    if current.status == crate::checkpoint::CheckpointStatus::Deferred {
+    if (current.status == crate::checkpoint::CheckpointStatus::Deferred
+        || current.tool_journal.iter().any(|entry| entry.state == crate::checkpoint::OperationState::Deferred))
+        && !matches!(&command.command, ControllerCommandVariant::Suspend | ControllerCommandVariant::Resume | ControllerCommandVariant::Cancel)
+    {
         return Err(CheckpointError::new(
             "controller_command_deferred_pending",
             "deferred resolution is an authoritative barrier",
@@ -773,6 +664,10 @@ fn sqlite_apply_controller_command(
         ControllerCommandVariant::Suspend => {
             let origin = match current.status {
                 crate::checkpoint::CheckpointStatus::Running => SuspendedOrigin::running(),
+                crate::checkpoint::CheckpointStatus::Deferred => SuspendedOrigin {
+                    status: "deferred".to_string(),
+                    active_host_interaction: None,
+                },
                 crate::checkpoint::CheckpointStatus::HostInteraction => {
                     SuspendedOrigin::host_interaction(
                         current.active_host_interaction.clone().ok_or_else(|| {
@@ -817,7 +712,11 @@ fn sqlite_apply_controller_command(
                 )
             })?;
             match origin.status.as_str() {
-                "running" => {
+                "deferred" if current.tool_journal.iter().any(|entry| entry.state == crate::checkpoint::OperationState::Deferred) => {
+                    updated.status = crate::checkpoint::CheckpointStatus::Deferred;
+                    updated.suspended_origin = None;
+                }
+                "running" | "deferred" => {
                     updated.status = crate::checkpoint::CheckpointStatus::Running;
                     updated.suspended_origin = None;
                     wake = ControllerCommandWake::recovery(current.cycle_index + 1);

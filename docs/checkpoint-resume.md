@@ -1,6 +1,6 @@
 # Durable Checkpoint And Resume
 
-Checkpoint v10 is an opt-in Runner capability. It preserves the last committed
+Checkpoint v11 is an opt-in Runner capability. It preserves the last committed
 cycle, operation receipts, budget usage, extension state, event cursor, claim,
 lease, and retained terminal result. The language-neutral behavior is defined
 by the locked `vv-agent-contract`; this document records the Rust producer and
@@ -14,7 +14,7 @@ used by the scheduler process. A distributed worker resolves the same logical
 store through `RuntimeRecipe.capabilities.checkpoint_store_ref` and its
 `DistributedCapabilityRegistry`.
 
-Enabled records require `schema_version=vv-agent.checkpoint.v10` and
+Enabled records require `schema_version=vv-agent.checkpoint.v11` and
 `run_definition_schema=vv-agent.run-definition.v5`. Distributed workers accept
 only `vv-agent.distributed-run.v5` and return only
 `vv-agent.distributed-worker-response.v4`; no other current record or envelope
@@ -42,7 +42,7 @@ synthesized and no stored definition or digest is rewritten.
 
 Execution telemetry is not a durable receipt. A `tool_call_started` event may
 exist without `tool_call_completed` after cancellation, process loss, or an
-exception. The checkpoint v10 operation journal remains authoritative for
+exception. The checkpoint v11 operation journal remains authoritative for
 whether an operation is planned, started, committed, replayable, or ambiguous;
 neither `duration_ms` nor a lifecycle observer provides exactly-once effects.
 
@@ -107,7 +107,7 @@ transition share the same checkpoint progress boundary.
 
 ## Worker Reconstruction
 
-`DistributedCycleWorker::new()` has a production checkpoint-v10 executor. It
+`DistributedCycleWorker::new()` has a production checkpoint-v11 executor. It
 resolves the declared model, workspace, toolset, policy, hooks, observers,
 budget meter, extensions, and reconciliation provider, then rebuilds an inline
 single-cycle `AgentRuntime`. `with_checkpoint_executor()` remains available for

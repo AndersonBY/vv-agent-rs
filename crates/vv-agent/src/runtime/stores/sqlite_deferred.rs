@@ -258,7 +258,10 @@ pub(super) fn resolve_deferred(
         .tool_journal
         .iter()
         .any(|entry| entry.state == OperationState::Deferred);
-    updated.status = if unresolved {
+    let suspended = updated.status == crate::checkpoint::CheckpointStatus::Suspended;
+    updated.status = if suspended {
+        crate::checkpoint::CheckpointStatus::Suspended
+    } else if unresolved {
         crate::checkpoint::CheckpointStatus::Deferred
     } else {
         crate::checkpoint::CheckpointStatus::Running
@@ -279,7 +282,7 @@ pub(super) fn resolve_deferred(
     }
     insert_receipt_transaction(&transaction, &receipt)?;
     transaction.commit().map_err(sqlite_error)?;
-    Ok(if unresolved {
+    Ok(if unresolved || suspended {
         DeferredResolveDecision::AppliedWaiting { receipt }
     } else {
         DeferredResolveDecision::AppliedReady { receipt }

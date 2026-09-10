@@ -1,4 +1,4 @@
-//! SQLite checkpoint v10 store.
+//! SQLite checkpoint v11 store.
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};

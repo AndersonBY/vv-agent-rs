@@ -777,7 +777,7 @@ impl SuspendedOrigin {
     }
     pub fn validate(&self) -> CheckpointResult<()> {
         match self.status.as_str() {
-            "running" if self.active_host_interaction.is_none() => Ok(()),
+            "running" | "deferred" if self.active_host_interaction.is_none() => Ok(()),
             "host_interaction" if self.active_host_interaction.is_some() => self
                 .active_host_interaction
                 .as_ref()

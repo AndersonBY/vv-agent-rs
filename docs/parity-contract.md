@@ -220,7 +220,14 @@ recovery controller. Central CI supplies both databases and runs it explicitly.
 unknown-outcome recovery case through two expired-lease admissions, checking the
 complete receipt, digest, observation, stable event identity, and single delivery.
 
-Checkpoints require `vv-agent.checkpoint.v10`, and run definitions require
+Deferred controller suspend/resume retains the existing journal barrier.
+Receipts received during suspension remain durable without a worker wake;
+resume wakes only after every deferred handle has resolved. Cancel closes
+unresolved tools with unknown-effect observations and rejects their late
+results. `runner_checkpoint/deferred_control.rs` exercises the real Runner producer
+and controller/receipt replay through memory, reopened SQLite and Redis stores.
+
+Checkpoints require `vv-agent.checkpoint.v11`, and run definitions require
 `vv-agent.run-definition.v5`. The run definition stores `prompt_bundle` and
 never stores an independent flattened prompt. The checkpoint owns the complete
 ordered run-level model-call ledger. A started model journal entry and started
@@ -324,7 +331,7 @@ shapes remain unchanged.
 
 ## Durable Cycle Ownership And Receipts
 
-The current producer carries `cancel_requested` in checkpoint v10. A live cancel
+The current producer carries `cancel_requested` in checkpoint v11. A live cancel
 sets the signal without advancing the revision or releasing the claim; renewal
 returns the typed `renewed`, `cancel_requested`, or `claim_lost` outcome. A
 successful cycle uses `commit_cycle`; cancellation, operator abort, and lease
@@ -560,6 +567,6 @@ the central support matrix at `pending-adoption` or `in-progress`.
 The current Rust gate may emit ts-rs warnings that it cannot parse the serde
 attributes `deny_unknown_fields` and `deserialize_with =
 "deserialize_input_items"`. These warnings are from TypeScript metadata
-generation; the runtime serde readers still enforce the strict v10 wire. The
+generation; the runtime serde readers still enforce the strict v11 wire. The
 attributes must remain on the Rust readers until ts-rs supports them rather
 than being removed to silence the warning.

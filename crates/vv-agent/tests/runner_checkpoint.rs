@@ -975,6 +975,8 @@ async fn distributed_execution_commits_nonterminal_cycle_before_max_cycles_candi
 mod cancel;
 #[path = "runner_checkpoint/deferred.rs"]
 mod deferred;
+#[path = "runner_checkpoint/deferred_control.rs"]
+mod deferred_control;
 #[path = "runner_checkpoint/resume.rs"]
 mod resume;
 #[path = "runner_checkpoint/session_memory.rs"]

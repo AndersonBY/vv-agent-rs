@@ -1,4 +1,4 @@
-//! v10 durable controller-command and host-interaction wires.
+//! v11 durable controller-command and host-interaction wires.
 //!
 //! The types in this module deliberately use hand-written codecs.  Controller
 //! messages cross process and language boundaries, so serde's permissive
@@ -28,7 +28,7 @@ pub const HOST_INTERACTION_MAX_UTF8_BYTES: usize = 512;
 pub const HOST_INTERACTION_CONTENT_MAX_UTF8_BYTES: usize = 65_536;
 
 /// Derive the App Server command identity without trusting a client-supplied
-/// command id.  The framing is part of the v10 contract and intentionally
+/// command id.  The framing is part of the v11 contract and intentionally
 /// differs from a plain JSON digest to keep domain separation explicit.
 pub fn derive_controller_command_id(
     thread_id: &str,

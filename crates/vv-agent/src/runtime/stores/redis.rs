@@ -113,7 +113,7 @@ impl RedisCheckpointStore {
     /// Canonical companion key for the closed command payload.
     ///
     /// The receipt, command payload, and wake outbox are intentionally
-    /// separate Redis values.  This is the cross-language v10 layout used by
+    /// separate Redis values.  This is the cross-language v11 layout used by
     /// The same closed layout is used by the other implementation; a receipt must never be decoded as an envelope that
     /// happens to contain the command again.
     pub fn controller_command_payload_key(command_id: &str) -> String {

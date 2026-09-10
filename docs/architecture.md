@@ -354,7 +354,7 @@ boundary with a monotonic clock and also report lower-case `status`,
 `finish`, or `wait_user`. Planned and started events contain normalized
 arguments and optional typed metadata. Completed events contain the outcome
 fields and optional typed metadata. Cancellation, process loss, or a panic
-after started may leave no completed observation; checkpoint v10's operation
+after started may leave no completed observation; checkpoint v11's operation
 journal, not telemetry, is authoritative for recovery ambiguity.
 
 `ToolLifecycleCallback` and `ToolLifecycleEvent` are exported Rust extension

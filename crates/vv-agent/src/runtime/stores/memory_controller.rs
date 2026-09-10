@@ -123,7 +123,10 @@ fn apply_controller_command(
             "controller command is blocked by an ambiguous external operation",
         ));
     }
-    if current.status == crate::checkpoint::CheckpointStatus::Deferred {
+    if (current.status == crate::checkpoint::CheckpointStatus::Deferred
+        || current.tool_journal.iter().any(|entry| entry.state == crate::checkpoint::OperationState::Deferred))
+        && !matches!(&command.command, ControllerCommandVariant::Suspend | ControllerCommandVariant::Resume | ControllerCommandVariant::Cancel)
+    {
         return Err(CheckpointError::new(
             "controller_command_deferred_pending",
             "deferred resolution is an authoritative barrier",
@@ -240,6 +243,10 @@ fn apply_controller_command(
         ControllerCommandVariant::Suspend => {
             let origin = match current.status {
                 crate::checkpoint::CheckpointStatus::Running => SuspendedOrigin::running(),
+                crate::checkpoint::CheckpointStatus::Deferred => SuspendedOrigin {
+                    status: "deferred".to_string(),
+                    active_host_interaction: None,
+                },
                 crate::checkpoint::CheckpointStatus::HostInteraction => {
                     SuspendedOrigin::host_interaction(
                         current.active_host_interaction.clone().ok_or_else(|| {
@@ -284,7 +291,11 @@ fn apply_controller_command(
                 )
             })?;
             match origin.status.as_str() {
-                "running" => {
+                "deferred" if current.tool_journal.iter().any(|entry| entry.state == crate::checkpoint::OperationState::Deferred) => {
+                    updated.status = crate::checkpoint::CheckpointStatus::Deferred;
+                    updated.suspended_origin = None;
+                }
+                "running" | "deferred" => {
                     updated.status = crate::checkpoint::CheckpointStatus::Running;
                     updated.suspended_origin = None;
                     wake = ControllerCommandWake::recovery(current.cycle_index.saturating_add(1));

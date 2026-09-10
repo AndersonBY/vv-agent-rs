@@ -431,7 +431,10 @@ fn store_identity(&self) -> String {
             .tool_journal
             .iter()
             .any(|entry| entry.state == crate::checkpoint::OperationState::Deferred);
-        updated.status = if unresolved {
+        let suspended = updated.status == crate::checkpoint::CheckpointStatus::Suspended;
+        updated.status = if suspended {
+            crate::checkpoint::CheckpointStatus::Suspended
+        } else if unresolved {
             crate::checkpoint::CheckpointStatus::Deferred
         } else {
             crate::checkpoint::CheckpointStatus::Running
@@ -443,7 +446,7 @@ fn store_identity(&self) -> String {
         let receipt = DeferredReceipt::new(handle, result, event_id, event_digest)?;
         receipts.insert(key, receipt.clone());
         checkpoints.insert(updated.checkpoint_key.clone(), updated);
-        Ok(if unresolved {
+        Ok(if unresolved || suspended {
             DeferredResolveDecision::AppliedWaiting { receipt }
         } else {
             DeferredResolveDecision::AppliedReady { receipt }
