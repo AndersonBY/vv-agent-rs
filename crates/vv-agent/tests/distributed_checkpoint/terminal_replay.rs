@@ -2,6 +2,15 @@ use super::*;
 
 #[test]
 fn worker_replays_terminal_checkpoint_and_delivers_pending_outbox_once() {
+    assert_terminal_replay(false);
+}
+
+#[test]
+fn worker_replays_terminal_checkpoint_from_an_older_resume_attempt() {
+    assert_terminal_replay(true);
+}
+
+fn assert_terminal_replay(stale_attempt: bool) {
     let store = Arc::new(InMemoryCheckpointStore::new());
     let event_store = Arc::new(InMemoryRunEventStore::default());
     let checkpoint = minimal_checkpoint(
@@ -12,7 +21,26 @@ fn worker_replays_terminal_checkpoint_and_delivers_pending_outbox_once() {
     );
     store.create_checkpoint(checkpoint.clone()).unwrap();
 
-    let mut terminal = checkpoint.clone();
+    let claimed = store
+        .claim_checkpoint(
+            &checkpoint.checkpoint_key,
+            1,
+            "terminal-owner",
+            1_000,
+            0,
+            if stale_attempt {
+                ClaimMode::Recovery
+            } else {
+                ClaimMode::Continue
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        claimed.resume_attempt,
+        checkpoint.resume_attempt + u64::from(stale_attempt)
+    );
+    let mut terminal = claimed.clone();
     terminal.status = CheckpointStatus::Completed;
     let mut result = AgentResult::completed(Vec::new(), Vec::new(), "done");
     result.checkpoint_key = Some(checkpoint.checkpoint_key.clone());
@@ -36,7 +64,7 @@ fn worker_replays_terminal_checkpoint_and_delivers_pending_outbox_once() {
         .unwrap(),
     );
     assert!(store
-        .finalize_checkpoint(terminal, checkpoint.revision)
+        .finalize_claimed_checkpoint(terminal, "terminal-owner", claimed.revision)
         .unwrap());
 
     let envelope = envelope(&checkpoint, 1, ClaimMode::Continue, 1_000, true);
@@ -64,7 +92,7 @@ fn worker_replays_terminal_checkpoint_and_delivers_pending_outbox_once() {
     assert!(persisted.terminal_acknowledged);
     assert!(persisted.claim_token.is_none());
     assert_eq!(persisted.event_outbox[0].state, "delivered");
-    assert_eq!(persisted.revision, 3);
+    assert_eq!(persisted.revision, claimed.revision + 3);
     assert_eq!(first_revision, persisted.revision);
 
     let second = worker.run_cycle(envelope).unwrap();

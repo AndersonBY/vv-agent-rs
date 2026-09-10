@@ -45,7 +45,6 @@ Review code.
     assert!(flat_prompt.contains("Ask the user only for a required decision"));
     assert!(flat_prompt.contains("agent_id=`reviewer`"));
     assert!(flat_prompt.contains("review-code"));
-    assert!(flat_prompt.contains("task_finish"));
     assert!(flat_prompt.contains("<Current Time>"));
     assert!(flat_prompt.contains("2026-05-26T00:00:00Z"));
     assert!(flat_prompt.contains("Prefer specialized workspace tools for direct file operations"));

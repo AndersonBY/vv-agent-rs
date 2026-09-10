@@ -51,14 +51,7 @@ async fn runner_start_yields_tool_started_before_result_is_ready() {
                     json!({}),
                 )],
             ),
-            LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "finish",
-                    "task_finish",
-                    json!({"message":"done"}),
-                )],
-            ),
+            LLMResponse::new("done"),
         ],
     );
     let runner = Runner::builder()
@@ -126,14 +119,7 @@ async fn ordinary_run_handle_rejects_interactive_control_facades() {
         .model_provider(ScriptedModelProvider::new(
             "scripted",
             "demo-model",
-            vec![LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "finish",
-                    "task_finish",
-                    json!({"message": "done"}),
-                )],
-            )],
+            vec![LLMResponse::new("done")],
         ))
         .workspace("./workspace")
         .build()
@@ -294,14 +280,7 @@ async fn run_handle_resume_uses_the_interrupted_runs_origin_context() {
                         json!({}),
                     )],
                 ),
-                LLMResponse::with_tool_calls(
-                    "finish",
-                    vec![ToolCall::from_raw_arguments(
-                        "finish_approved",
-                        "task_finish",
-                        json!({"message": "ran from origin"}),
-                    )],
-                ),
+                LLMResponse::new("ran from origin"),
             ],
         ))
         .workspace("./workspace")
@@ -359,14 +338,7 @@ async fn run_handle_resume_with_input_restores_state_and_appends_the_new_input()
                     .lock()
                     .expect("requests")
                     .push(request.clone());
-                Ok(LLMResponse::with_tool_calls(
-                    "",
-                    vec![ToolCall::from_raw_arguments(
-                        "finish_1",
-                        "task_finish",
-                        json!({"message": "selected blue"}),
-                    )],
-                ))
+                Ok(LLMResponse::new("selected blue"))
             }),
         ],
     );
@@ -441,14 +413,7 @@ impl LlmClient for BurstStreamingClient {
                 ("content_delta".to_string(), json!(index.to_string())),
             ]));
         }
-        Ok(LLMResponse::with_tool_calls(
-            "done",
-            vec![ToolCall::from_raw_arguments(
-                "finish",
-                "task_finish",
-                json!({"message": "done"}),
-            )],
-        ))
+        Ok(LLMResponse::new("done"))
     }
 }
 
@@ -566,14 +531,7 @@ impl LlmClient for BlockingCancellationClient {
         while !*released {
             released = release_wake.wait(released).expect("release wait");
         }
-        Ok(LLMResponse::with_tool_calls(
-            "should be cancelled",
-            vec![ToolCall::from_raw_arguments(
-                "cancel-finish",
-                "task_finish",
-                json!({"message": "should be cancelled"}),
-            )],
-        ))
+        Ok(LLMResponse::new("should be cancelled"))
     }
 }
 

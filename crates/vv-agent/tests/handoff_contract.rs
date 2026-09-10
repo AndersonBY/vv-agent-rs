@@ -112,14 +112,7 @@ async fn handoff_switches_runner_agent_and_completes_after_the_target_run() {
                     .lock()
                     .expect("models")
                     .push(request.model.clone());
-                Ok(LLMResponse::with_tool_calls(
-                    "",
-                    vec![ToolCall::from_raw_arguments(
-                        "writer-finish",
-                        "task_finish",
-                        json!({"message": "written by target"}),
-                    )],
-                ))
+                Ok(LLMResponse::new("written by target"))
             }),
         ],
     );
@@ -443,14 +436,7 @@ async fn run_handle_can_cancel_while_handoff_target_is_running() {
                 while !*released {
                     released = signal.wait(released).expect("gate wait");
                 }
-                Ok(LLMResponse::with_tool_calls(
-                    "",
-                    vec![ToolCall::from_raw_arguments(
-                        "finish",
-                        "task_finish",
-                        json!({"message": "done"}),
-                    )],
-                ))
+                Ok(LLMResponse::new("done"))
             }),
         ],
     );
@@ -512,14 +498,7 @@ async fn approved_handoff_resume_switches_to_target_agent() {
                     json!({"input": "write"}),
                 )],
             )),
-            ScriptStep::response(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "writer-finish",
-                    "task_finish",
-                    json!({"message": "written"}),
-                )],
-            )),
+            ScriptStep::response(LLMResponse::new("written")),
         ],
     );
     let runner = Runner::builder()
@@ -571,7 +550,8 @@ async fn approved_handoff_resume_switches_to_target_agent() {
     let resumed = runner.resume(state).await.expect("resume");
 
     assert_eq!(resumed.agent_name(), "writer");
-    assert_eq!(resumed.status(), AgentStatus::WaitUser);
+    assert_eq!(resumed.status(), AgentStatus::Completed);
+    assert_eq!(resumed.final_output(), Some("written"));
     let completed = resumed
         .events()
         .iter()

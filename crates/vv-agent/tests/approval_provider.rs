@@ -119,14 +119,7 @@ async fn approval_request_pauses_tool_until_handle_approves() {
                     json!({}),
                 )],
             ),
-            LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "finish",
-                    "task_finish",
-                    json!({"message":"done"}),
-                )],
-            ),
+            LLMResponse::new("done"),
         ],
     );
     let runner = Runner::builder()
@@ -537,14 +530,7 @@ fn session_approval_runner(executions: Arc<Mutex<Vec<String>>>) -> (Runner, Agen
                     ToolCall::from_raw_arguments("single_2", "single_call_tool", json!({})),
                 ],
             ),
-            LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "finish",
-                    "task_finish",
-                    json!({"message":"done"}),
-                )],
-            ),
+            LLMResponse::new("done"),
         ],
     );
     let runner = Runner::builder()
@@ -584,14 +570,7 @@ fn single_approval_runner(
                     json!({}),
                 )],
             ),
-            LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    format!("{call_id}_finish"),
-                    "task_finish",
-                    json!({"message": final_output}),
-                )],
-            ),
+            LLMResponse::new(final_output),
         ],
     );
     let runner = Runner::builder()

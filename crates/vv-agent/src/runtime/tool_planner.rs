@@ -5,7 +5,7 @@ use serde_json::Value;
 use crate::constants::{
     ACTIVATE_SKILL_TOOL_NAME, ASK_USER_TOOL_NAME, BASH_TOOL_NAME,
     CHECK_BACKGROUND_COMMAND_TOOL_NAME, CREATE_SUB_TASK_TOOL_NAME, READ_IMAGE_TOOL_NAME,
-    SUB_TASK_STATUS_TOOL_NAME, TASK_FINISH_TOOL_NAME, WORKSPACE_TOOLS,
+    SUB_TASK_STATUS_TOOL_NAME, WORKSPACE_TOOLS,
 };
 use crate::tools::{ToolPolicy, ToolRegistry};
 use crate::types::AgentTask;
@@ -176,7 +176,7 @@ fn projected_string_list(task: &AgentTask, key: &str) -> Result<Vec<String>, Str
 
 pub fn plan_tool_names(task: &AgentTask, memory_usage_percentage: Option<u32>) -> Vec<String> {
     let _ = memory_usage_percentage;
-    let mut names = vec![TASK_FINISH_TOOL_NAME.to_string()];
+    let mut names = Vec::new();
     if task.allow_interruption {
         names.push(ASK_USER_TOOL_NAME.to_string());
     }

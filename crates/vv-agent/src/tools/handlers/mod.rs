@@ -11,7 +11,7 @@ pub mod workspace;
 
 pub use background::check_background_command;
 pub use bash::run_bash_command;
-pub use control::{ask_user, task_finish};
+pub use control::ask_user;
 pub use image::read_image;
 pub use search::search_files;
 pub use skills::activate_skill;

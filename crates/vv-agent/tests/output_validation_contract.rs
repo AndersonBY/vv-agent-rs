@@ -6,7 +6,7 @@ use vv_agent::{
     Agent, AgentStatus, ApprovalPolicy, CapabilityRef, CheckpointConfig, InMemoryCheckpointStore,
     LLMResponse, ModelRef, ModelSettings, NoToolPolicy, OutputValidationResult, ResumePolicy,
     RunConfig, RunEventPayload, RunResult, Runner, ScriptStep, ScriptedModelProvider, ToolCall,
-    ToolPolicy, OUTPUT_VALIDATION_FAILED,
+    ToolDirective, ToolExecutionResult, ToolPolicy, OUTPUT_VALIDATION_FAILED,
 };
 
 const FIXTURE: &str = include_str!("fixtures/parity/output_validation.json");
@@ -387,7 +387,27 @@ async fn approved_finish_validates_repaired_output_before_terminal_commit() {
     let repair_calls = Arc::new(AtomicUsize::new(0));
     let validator_counter = validator_calls.clone();
     let repair_counter = repair_calls.clone();
+    let tool_calls = Arc::new(AtomicUsize::new(0));
+    let tool_counter = tool_calls.clone();
+    let mut registry = vv_agent::build_default_registry();
+    registry
+        .register_tool_with_parameters(
+            "handoff_result",
+            "Return the delegated result.",
+            json!({"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"], "additionalProperties": false}),
+            Arc::new(move |_context, arguments| {
+                tool_counter.fetch_add(1, Ordering::SeqCst);
+                let mut result = ToolExecutionResult::success(
+                    "",
+                    arguments["message"].as_str().expect("message"),
+                );
+                result.directive = ToolDirective::Finish;
+                result
+            }),
+        )
+        .expect("result tool");
     let runner = Runner::builder()
+        .tool_registry(registry)
         .model_provider(ScriptedModelProvider::new(
             "scripted",
             "validation-model",
@@ -395,7 +415,7 @@ async fn approved_finish_validates_repaired_output_before_terminal_commit() {
                 "draft",
                 vec![ToolCall::from_raw_arguments(
                     "finish",
-                    "task_finish",
+                    "handoff_result",
                     json!({"message": "invalid"}),
                 )],
             )],
@@ -431,12 +451,14 @@ async fn approved_finish_validates_repaired_output_before_terminal_commit() {
         .expect("wait");
     assert_eq!(interrupted.status(), AgentStatus::WaitUser);
     assert_eq!(validator_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(tool_calls.load(Ordering::SeqCst), 0);
     let interruption_id = interrupted.approvals()[0].interruption_id.clone();
     let mut state = interrupted.into_state().expect("state");
     state.approve(&interruption_id).expect("approve");
 
     let resumed = runner.resume(state).await.expect("resume");
 
+    assert_eq!(tool_calls.load(Ordering::SeqCst), 1);
     assert_eq!(validator_calls.load(Ordering::SeqCst), 2);
     assert_eq!(repair_calls.load(Ordering::SeqCst), 1);
     assert_eq!(resumed.status(), AgentStatus::Completed);

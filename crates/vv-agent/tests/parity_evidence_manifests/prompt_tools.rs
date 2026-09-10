@@ -74,11 +74,7 @@ fn compile_prompt_scenario(input: &Value) -> PromptBundle {
             .then_with(|| left.2.id.encode_utf16().cmp(right.2.id.encode_utf16()))
             .then_with(|| left.1.cmp(&right.1))
     });
-    sections.extend(
-        provider_sections
-            .into_iter()
-            .map(|(_, _, section)| section),
-    );
+    sections.extend(provider_sections.into_iter().map(|(_, _, section)| section));
     PromptBundle::new(sections).expect("compiled prompt bundle")
 }
 
@@ -153,10 +149,7 @@ fn render_prompt_scenario(scenario: &Value) -> Value {
         .as_array()
         .map(Vec::as_slice)
         .unwrap_or_default();
-    project_prompt_output(
-        bundle,
-        normalizations,
-    )
+    project_prompt_output(bundle, normalizations)
 }
 
 fn exposure_name(exposure: ToolExposure) -> &'static str {
@@ -217,8 +210,8 @@ fn build_builtin_tools_manifest() -> Value {
         })
         .collect::<Vec<_>>();
     json!({
-        "contract": "vv-agent-builtin-tools-v2",
-        "schema_version": 2,
+        "contract": "vv-agent-builtin-tools-v3",
+        "schema_version": 3,
         "exposure_contract": {
             "allowed_values": ["direct", "hidden"],
             "model_visible_values": ["direct"],
@@ -261,6 +254,6 @@ fn builtin_tools_manifest_uses_real_rust_default_registry() {
     let actual = build_builtin_tools_manifest();
     assert_eq!(fixture, actual);
     let tools = fixture["tools"].as_array().expect("builtin tools");
-    assert_eq!(tools.len(), 15);
+    assert_eq!(tools.len(), 14);
     assert!(tools.iter().all(|tool| tool["model_visible"] == true));
 }

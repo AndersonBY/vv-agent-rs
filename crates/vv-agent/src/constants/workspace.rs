@@ -4,8 +4,8 @@ use serde_json::Value;
 
 use super::tool_names::{
     ACTIVATE_SKILL_TOOL_NAME, ASK_USER_TOOL_NAME, EDIT_FILE_TOOL_NAME, FILE_INFO_TOOL_NAME,
-    FIND_FILES_TOOL_NAME, READ_FILE_TOOL_NAME, SEARCH_FILES_TOOL_NAME, TASK_FINISH_TOOL_NAME,
-    TODO_WRITE_TOOL_NAME, WRITE_FILE_TOOL_NAME,
+    FIND_FILES_TOOL_NAME, READ_FILE_TOOL_NAME, SEARCH_FILES_TOOL_NAME, TODO_WRITE_TOOL_NAME,
+    WRITE_FILE_TOOL_NAME,
 };
 
 pub const WORKSPACE_TOOLS: [&str; 7] = [
@@ -31,15 +31,6 @@ pub fn workspace_tools_schemas() -> BTreeMap<String, Value> {
 #[allow(non_snake_case)]
 pub fn WORKSPACE_TOOLS_SCHEMAS() -> BTreeMap<String, Value> {
     workspace_tools_schemas()
-}
-
-pub fn task_finish_tool_schema() -> Value {
-    schema_or_null(TASK_FINISH_TOOL_NAME)
-}
-
-#[allow(non_snake_case)]
-pub fn TASK_FINISH_TOOL_SCHEMA() -> Value {
-    task_finish_tool_schema()
 }
 
 pub fn ask_user_tool_schema() -> Value {

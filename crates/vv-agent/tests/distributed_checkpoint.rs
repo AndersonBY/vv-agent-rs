@@ -31,6 +31,8 @@ const JOURNAL_FIXTURE: &str = include_str!("fixtures/parity/operation_journal.js
 
 #[path = "distributed_checkpoint/abort.rs"]
 mod distributed_checkpoint_abort;
+#[path = "distributed_checkpoint/host_response.rs"]
+mod distributed_checkpoint_host_response;
 #[path = "distributed_checkpoint/outbox.rs"]
 mod distributed_checkpoint_outbox;
 #[path = "distributed_checkpoint/receipt_retry.rs"]
@@ -320,12 +322,16 @@ fn envelope(
         "Summarize the status.",
     );
     task.max_cycles = 10;
+    task.no_tool_policy = serde_json::from_value(
+        checkpoint.run_definition["runtime_controls"]["no_tool_policy"].clone(),
+    )
+    .expect("durable no-tool policy");
     task.memory_compact_threshold = checkpoint.run_definition["runtime_controls"]
         ["memory_compact_threshold"]
         .as_u64()
         .expect("durable memory compact threshold");
     task.use_workspace = false;
-    task.exclude_tools = vec!["task_finish".to_string(), "ask_user".to_string()];
+    task.exclude_tools = vec!["ask_user".to_string()];
     task.metadata.insert(
         "_vv_agent_run_id".to_string(),
         json!(checkpoint.root_run_id),
@@ -547,83 +553,6 @@ fn missing_after_cycle_hook_fails_before_claim() {
     let persisted = store.load_checkpoint("missing-lifecycle").unwrap().unwrap();
     assert_eq!(persisted.revision, 0);
     assert!(persisted.claim_token.is_none());
-}
-
-#[test]
-fn worker_claim_is_blocked_until_host_response_recovery() {
-    let store = Arc::new(InMemoryCheckpointStore::new());
-    let checkpoint = minimal_checkpoint(
-        "worker-host-recovery-barrier",
-        "task-host-recovery-barrier",
-        "run-host-recovery-barrier",
-        "trace-host-recovery-barrier",
-    );
-    let key = checkpoint.checkpoint_key.clone();
-    store
-        .create_checkpoint(initial_checkpoint(checkpoint))
-        .expect("create initial checkpoint");
-    let claimed = store
-        .claim_checkpoint(&key, 1, "worker-owner", 10_000, 0, ClaimMode::Continue)
-        .expect("claim checkpoint")
-        .expect("claimed checkpoint");
-    let request = HostInteractionRequest::new(
-        "interaction-worker-host-recovery",
-        1,
-        "operation-worker-host-recovery",
-        "tool-worker-host-recovery",
-        "Choose an option.",
-    )
-    .expect("host interaction request");
-    let admission =
-        HostInteractionAdmissionContext::new(&key, claimed.revision, "worker-owner", 1, 0, 10_000)
-            .expect("host interaction admission");
-    let admitted = store
-        .produce_host_interaction(request.clone(), &admission)
-        .expect("produce host interaction");
-    let command = ControllerCommand::new(
-        "command-worker-host-recovery",
-        ControllerHandle::new(&key, &claimed.root_run_id, &claimed.trace_id)
-            .expect("controller handle"),
-        claimed.resume_attempt,
-        admitted.checkpoint_revision,
-        ControllerCommandVariant::HostInteractionResponse {
-            interaction_id: request.interaction_id.clone(),
-            logical_cycle: request.logical_cycle,
-            operation_id: request.operation_id.clone(),
-            tool_call_id: request.tool_call_id.clone(),
-            request_digest: request.request_digest.clone(),
-            response: HostInteractionMessage::user("approved").expect("host response"),
-        },
-    )
-    .expect("host response command");
-    store
-        .resolve_controller_command(command)
-        .expect("resolve host response");
-    let before = store
-        .load_checkpoint(&key)
-        .expect("load barrier checkpoint")
-        .expect("barrier checkpoint");
-    let executor = TestExecutor::new(|envelope, _, progress| {
-        let mut committed = progress.checkpoint().clone();
-        committed.cycle_index = u64::from(envelope.cycle_index);
-        Ok(DistributedCycleOutcome::Continue(committed))
-    });
-    let registry = registry_with_store(store.clone(), None);
-    let worker = DistributedCycleWorker::new(registry).with_checkpoint_executor(Arc::new(executor));
-    for claim_mode in [ClaimMode::Continue, ClaimMode::Recovery] {
-        let error = worker
-            .run_cycle(envelope(&before, 1, claim_mode, 1_000, false))
-            .expect_err("ordinary worker claim must stop at host recovery barrier");
-        assert!(
-            error.contains("host_interaction_recovery_required"),
-            "unexpected worker barrier error: {error}"
-        );
-        let after = store
-            .load_checkpoint(&key)
-            .expect("load after worker barrier")
-            .expect("checkpoint after worker barrier");
-        assert_eq!(after, before);
-    }
 }
 
 #[test]

@@ -1,13 +1,12 @@
 use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
-use serde_json::json;
 use vv_agent::config::ResolvedModelConfig;
 use vv_agent::result::FinalOutputError;
 use vv_agent::{
     Agent, AgentResult, EventStoreError, LLMResponse, MemorySession, ModelRef, RunConfig, RunEvent,
     RunEventIter, RunEventPayload, RunEventReplayQuery, RunEventStore, RunResult, Runner,
-    ScriptedModelProvider, Session, Span, ToolCall, TraceSink,
+    ScriptedModelProvider, Session, Span, TraceSink,
 };
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -117,14 +116,7 @@ async fn runner_validates_typed_output_after_persistence_and_terminal_event() {
     let provider = ScriptedModelProvider::new(
         "scripted",
         "typed-model",
-        vec![LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "finish",
-                "task_finish",
-                json!({"message": r#"{"answer":42}"#}),
-            )],
-        )],
+        vec![LLMResponse::new(r#"{"answer":42}"#)],
     );
     let runner = Runner::builder()
         .model_provider(provider)

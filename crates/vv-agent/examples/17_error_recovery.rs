@@ -11,7 +11,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let agent = build_facade_agent(
         &config,
         "retrying-agent",
-        "你是可靠执行 Agent。遇到可恢复问题时重新组织步骤并调用 task_finish。",
+        "你是可靠执行 Agent。遇到可恢复问题时重新组织步骤，完成后返回结果。",
     )?;
     let prompt = config
         .prompt

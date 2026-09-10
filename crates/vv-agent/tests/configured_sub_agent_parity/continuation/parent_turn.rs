@@ -42,11 +42,11 @@ impl CurrentTurnContinuationClient {
     fn parent_response(&self, request: &LlmRequest, turn: &str) -> LLMResponse {
         let continuation_call_id = format!("continue-{turn}");
         if Self::has_tool_call(request, &continuation_call_id) {
-            return finish_response(&format!("parent-finish-{turn}"), "parent done");
+            return LLMResponse::new("parent done");
         }
         if turn == "A" {
             if Self::has_tool_call(request, "delegate-A") {
-                return finish_response("parent-finish-A", "parent done");
+                return LLMResponse::new("parent done");
             }
             return LLMResponse::with_tool_calls(
                 "",
@@ -118,7 +118,7 @@ impl LlmClient for CurrentTurnContinuationClient {
             .push(request.metadata.clone());
 
         match turn {
-            "A" => Ok(finish_response("child-finish-A", "initial child done")),
+            "A" => Ok(LLMResponse::new("initial child done")),
             "B" if !Self::has_tool_call(&request, "dangerous-B") => {
                 if let Some(callback) = stream_callback {
                     callback(&BTreeMap::from([
@@ -135,7 +135,7 @@ impl LlmClient for CurrentTurnContinuationClient {
                     )],
                 ))
             }
-            "B" => Ok(finish_response("child-finish-B", "turn B child done")),
+            "B" => Ok(LLMResponse::new("turn B child done")),
             "C" => {
                 if let Some(callback) = stream_callback {
                     callback(&BTreeMap::from([
@@ -153,12 +153,9 @@ impl LlmClient for CurrentTurnContinuationClient {
                 while !*released {
                     released = wake.wait(released).expect("turn C release wait");
                 }
-                Ok(finish_response(
-                    "child-finish-C",
-                    "turn C child should be cancelled",
-                ))
+                Ok(LLMResponse::new("turn C child should be cancelled"))
             }
-            "D" => Ok(finish_response("child-finish-D", "plain continuation done")),
+            "D" => Ok(LLMResponse::new("plain continuation done")),
             _ => Err(LlmError::Request(format!("unexpected child turn: {turn}"))),
         }
     }

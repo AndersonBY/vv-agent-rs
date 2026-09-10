@@ -112,7 +112,7 @@ pub(super) fn handle_no_tool_response<C: LlmClient>(
         NoToolPolicy::Continue => {
             if cycle_index < task.max_cycles {
                 messages.push(Message::user(
-                    "Continue. If the task is complete, call task_finish.",
+                    "No tool call was produced. Continue the task.",
                 ));
             }
             None

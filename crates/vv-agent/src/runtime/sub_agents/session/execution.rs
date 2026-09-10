@@ -604,24 +604,7 @@ mod capability_projection_tests {
             .expect("child prompt bundle")
         });
         let session = runtime_session_with_client_and_prompt_bundle_factory(
-            ScriptedLlmClient::new(vec![
-                LLMResponse::with_tool_calls(
-                    "first",
-                    vec![ToolCall::new(
-                        "finish-one",
-                        "task_finish",
-                        BTreeMap::from([("message".to_string(), json!("first"))]),
-                    )],
-                ),
-                LLMResponse::with_tool_calls(
-                    "second",
-                    vec![ToolCall::new(
-                        "finish-two",
-                        "task_finish",
-                        BTreeMap::from([("message".to_string(), json!("second"))]),
-                    )],
-                ),
-            ]),
+            ScriptedLlmClient::new(vec![LLMResponse::new("first"), LLMResponse::new("second")]),
             None,
             prompt_bundle_factory,
         );
@@ -677,7 +660,14 @@ mod capability_projection_tests {
             contract["lifecycle"]["omit_token_usage_when_unavailable"]
         );
 
-        let mut first_response = LLMResponse::new("continue");
+        let mut first_response = LLMResponse::with_tool_calls(
+            "continue",
+            vec![ToolCall::new(
+                "track_progress",
+                "todo_write",
+                BTreeMap::from([("todos".to_string(), json!([]))]),
+            )],
+        );
         first_response.token_usage = TokenUsage {
             input_tokens: Some(11),
             output_tokens: Some(7),

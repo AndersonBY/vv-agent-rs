@@ -190,12 +190,16 @@ fn task(checkpoint: &vv_agent::Checkpoint, max_cycles: u32) -> AgentTask {
         "Summarize the status.",
     );
     task.max_cycles = max_cycles;
+    task.no_tool_policy = serde_json::from_value(
+        checkpoint.run_definition["runtime_controls"]["no_tool_policy"].clone(),
+    )
+    .expect("durable no-tool policy");
     task.memory_compact_threshold = checkpoint.run_definition["runtime_controls"]
         ["memory_compact_threshold"]
         .as_u64()
         .expect("memory threshold");
     task.use_workspace = false;
-    task.exclude_tools = vec!["task_finish".to_string(), "ask_user".to_string()];
+    task.exclude_tools = vec!["ask_user".to_string()];
     task.metadata.insert(
         "session_memory_enabled".to_string(),
         checkpoint.run_definition["runtime_controls"]["session_memory_enabled"].clone(),
@@ -299,7 +303,7 @@ fn start_enqueues_only_cycle_one_and_returns_passive_handle() {
 }
 
 #[test]
-fn advance_consumes_host_response_before_dispatch_and_retains_execution_claim() {
+fn advance_dispatches_host_response_without_consuming_or_claiming_it() {
     let key = "driver-host-response";
     let store = Arc::new(InMemoryCheckpointStore::new());
     let checkpoint = minimal_checkpoint(key);
@@ -388,35 +392,26 @@ fn advance_consumes_host_response_before_dispatch_and_retains_execution_claim() 
         DistributedAdvanceDecision::Dispatch { ref envelope, .. }
             if envelope.cycle_index == 1
                 && envelope.claim_mode == ClaimMode::Recovery
-                && envelope.resume_attempt == 2
+                && envelope.resume_attempt == 1
     ));
     assert_eq!(enqueuer.deliveries().len(), 1);
     let recovered = store
         .load_checkpoint(key)
         .expect("load recovered checkpoint")
         .expect("recovered checkpoint");
-    assert_eq!(recovered.claimed_cycle, Some(1));
-    assert!(recovered
-        .claim_token
-        .as_deref()
-        .is_some_and(|token| token.starts_with("host-recovery:")));
-    assert_eq!(recovered.resume_attempt, 2);
-    assert!(recovered
-        .messages
-        .iter()
-        .any(|message| message.content == "Accepted."));
+    assert_eq!(recovered, current);
     assert_eq!(
         store
             .get_controller_command_receipt(&receipt.command_id)
             .expect("load delivered receipt")
             .expect("delivered receipt")
             .outbox_state,
-        "delivered"
+        "pending"
     );
 }
 
 #[test]
-fn advance_resolves_suspended_host_resume_wake_from_the_durable_record() {
+fn advance_dispatches_suspended_host_resume_without_consuming_it() {
     let key = "driver-suspended-host-resume";
     let store = Arc::new(InMemoryCheckpointStore::new());
     let checkpoint = minimal_checkpoint(key);
@@ -534,17 +529,14 @@ fn advance_resolves_suspended_host_resume_wake_from_the_durable_record() {
         DistributedAdvanceDecision::Dispatch { ref envelope, .. }
             if envelope.cycle_index == 1
                 && envelope.claim_mode == ClaimMode::Recovery
-                && envelope.resume_attempt == 2
+                && envelope.resume_attempt == 1
     ));
     assert_eq!(enqueuer.deliveries().len(), 1);
     let recovered = store
         .load_checkpoint(key)
         .expect("load recovered checkpoint")
         .expect("recovered checkpoint");
-    assert!(recovered
-        .messages
-        .iter()
-        .any(|message| message.content == "Accepted after resume."));
+    assert_eq!(recovered, current);
 }
 
 #[test]

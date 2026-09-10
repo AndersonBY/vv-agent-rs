@@ -126,7 +126,7 @@ fn deferred_wires_include_current_schema_and_reject_closed_shape_drift() {
         DeferredToolHandle::new("wire/checkpoint", "op_wire", 1, "a".repeat(64)).expect("handle");
     let outcome = ToolCallOutcome::deferred(handle.clone());
     let encoded = serde_json::to_value(&outcome).expect("outcome wire");
-    assert_eq!(encoded["schema_version"], "vv-agent.tool-call-outcome.v2");
+    assert_eq!(encoded["schema_version"], "vv-agent.tool-call-outcome.v3");
     assert_eq!(
         serde_json::from_value::<ToolCallOutcome>(encoded.clone()).expect("outcome round trip"),
         outcome
@@ -135,7 +135,7 @@ fn deferred_wires_include_current_schema_and_reject_closed_shape_drift() {
     unknown["extra"] = json!(true);
     assert!(serde_json::from_value::<ToolCallOutcome>(unknown).is_err());
     let mut stale = encoded;
-    stale["schema_version"] = json!("vv-agent.tool-call-outcome.v1");
+    stale["schema_version"] = json!("vv-agent.tool-call-outcome.v2");
     assert!(serde_json::from_value::<ToolCallOutcome>(stale).is_err());
 
     let decision = DeferredResolveDecision::not_admitted();
@@ -152,6 +152,31 @@ fn deferred_wires_include_current_schema_and_reject_closed_shape_drift() {
     let mut malformed_handle = serde_json::to_value(&handle).expect("handle wire");
     malformed_handle["schema_version"] = json!("stale");
     assert!(serde_json::from_value::<DeferredToolHandle>(malformed_handle).is_err());
+}
+
+#[test]
+fn host_interaction_outcome_round_trips_and_rejects_mismatches() {
+    let request = vv_agent::HostInteractionRequest::new(
+        "interaction", 1, "operation", "call-host", "Choose",
+    ).expect("request");
+    let outcome = ToolCallOutcome::HostInteraction {
+        result: ToolExecutionResult::success("call-host", "accepted"),
+        request,
+    };
+    let wire = serde_json::to_value(&outcome).expect("wire");
+    assert_eq!(serde_json::from_value::<ToolCallOutcome>(wire.clone()).expect("round trip"), outcome);
+    for (pointer, replacement) in [
+        ("/result/tool_call_id", json!("other")),
+        ("/result/directive", json!("wait_user")),
+        ("/schema_version", json!("vv-agent.tool-call-outcome.v2")),
+    ] {
+        let mut bad = wire.clone();
+        *bad.pointer_mut(pointer).expect("field") = replacement;
+        assert!(serde_json::from_value::<ToolCallOutcome>(bad).is_err());
+    }
+    let mut bad = wire;
+    bad["extra"] = json!(true);
+    assert!(serde_json::from_value::<ToolCallOutcome>(bad).is_err());
 }
 
 #[test]

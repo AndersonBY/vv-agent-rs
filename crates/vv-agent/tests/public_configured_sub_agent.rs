@@ -209,28 +209,8 @@ async fn public_runner_projects_and_executes_a_configured_child() {
                     )],
                 ),
             ),
-            captured_step(
-                captured.clone(),
-                LLMResponse::with_tool_calls(
-                    "",
-                    vec![ToolCall::from_raw_arguments(
-                        "child-finish",
-                        "task_finish",
-                        json!({"message": "child done"}),
-                    )],
-                ),
-            ),
-            captured_step(
-                captured.clone(),
-                LLMResponse::with_tool_calls(
-                    "",
-                    vec![ToolCall::from_raw_arguments(
-                        "parent-finish",
-                        "task_finish",
-                        json!({"message": "parent done"}),
-                    )],
-                ),
-            ),
+            captured_step(captured.clone(), LLMResponse::new("child done")),
+            captured_step(captured.clone(), LLMResponse::new("parent done")),
         ],
     );
     let task_capture = Arc::new(TaskProjectionCapture::default());

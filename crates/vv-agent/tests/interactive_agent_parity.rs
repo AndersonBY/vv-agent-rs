@@ -95,14 +95,7 @@ async fn interactive_session_preserves_the_complete_public_agent() {
                     .lock()
                     .expect("requests")
                     .push(request.clone());
-                Ok(LLMResponse::with_tool_calls(
-                    "finish",
-                    vec![ToolCall::from_raw_arguments(
-                        "finish-call",
-                        "task_finish",
-                        json!({"message": r#"{"status":"ok"}"#}),
-                    )],
-                ))
+                Ok(LLMResponse::new(r#"{"status":"ok"}"#))
             }),
         ],
     );
@@ -242,16 +235,7 @@ async fn interactive_session_preserves_public_agent_handoffs() {
                     )],
                 ))
             }),
-            ScriptStep::callback(|_| {
-                Ok(LLMResponse::with_tool_calls(
-                    "written",
-                    vec![ToolCall::from_raw_arguments(
-                        "writer-finish",
-                        "task_finish",
-                        json!({"message": "writer result"}),
-                    )],
-                ))
-            }),
+            ScriptStep::callback(|_| Ok(LLMResponse::new("writer result"))),
         ],
     );
     let runner = Runner::builder()

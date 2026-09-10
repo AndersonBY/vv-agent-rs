@@ -11,7 +11,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let agent = build_facade_agent(
         &config,
         "workspace-loader",
-        "你从 workspace 读取上下文文件、提取项目目标，并调用 task_finish 输出摘要。",
+        "你从 workspace 读取上下文文件、提取项目目标，并输出摘要。",
     )?;
     let prompt = config
         .prompt

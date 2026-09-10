@@ -240,11 +240,6 @@ fn control_tools_reject_schema_invalid_argument_types() {
             "/todos/0/id",
         ),
         (
-            "task_finish",
-            BTreeMap::from([("require_all_todos_completed".to_string(), json!("false"))]),
-            "/require_all_todos_completed",
-        ),
-        (
             "ask_user",
             BTreeMap::from([("question".to_string(), json!(123))]),
             "/question",
@@ -277,42 +272,6 @@ fn control_tools_reject_schema_invalid_argument_types() {
         assert_eq!(payload["issues"][0]["instance_path"], instance_path);
         assert_eq!(payload["issues"][0]["rule"], "type");
     }
-}
-
-#[test]
-fn task_finish_blocks_when_todos_are_incomplete() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let registry = build_default_registry();
-    let mut context = ToolContext::new(workspace.path());
-
-    registry
-        .execute(
-            &ToolCall::new(
-                "todo_1",
-                "todo_write",
-                BTreeMap::from([(
-                    "todos".to_string(),
-                    json!([{"title": "step1", "status": "pending", "priority": "medium"}]),
-                )]),
-            ),
-            &mut context,
-        )
-        .expect("todo_write");
-
-    let result = registry
-        .execute(
-            &ToolCall::new(
-                "finish_1",
-                "task_finish",
-                BTreeMap::from([("message".to_string(), json!("done"))]),
-            ),
-            &mut context,
-        )
-        .expect("task_finish");
-
-    assert_eq!(result.status, ToolResultStatus::Error);
-    assert_eq!(result.directive, ToolDirective::Continue);
-    assert!(result.content.contains("todo_incomplete"));
 }
 
 #[test]

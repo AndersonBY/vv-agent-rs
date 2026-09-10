@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -17,7 +16,7 @@ use vv_agent::app_server::thread_store::SqliteThreadStore;
 use vv_agent::app_server::transport::ConnectionId;
 use vv_agent::{
     Agent, CacheUsage, CacheUsageStatus, LLMResponse, ModelRef, NoToolPolicy, RunBudgetLimits,
-    RunConfig, RunEvent, Runner, ScriptedModelProvider, TokenUsage, ToolCall, UsageSource,
+    RunConfig, RunEvent, Runner, ScriptedModelProvider, TokenUsage, UsageSource,
 };
 
 const CONTRACT_SOURCE: &str = include_str!("fixtures/parity/app_server_observable.json");
@@ -831,10 +830,5 @@ fn decode_response<T: serde::de::DeserializeOwned>(response: JsonRpcResponse) ->
 }
 
 fn finish_response(message: &str) -> LLMResponse {
-    let mut arguments = BTreeMap::new();
-    arguments.insert("message".to_string(), json!(message));
-    LLMResponse::with_tool_calls(
-        message,
-        vec![ToolCall::new("finish", "task_finish", arguments)],
-    )
+    LLMResponse::new(message)
 }

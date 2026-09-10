@@ -256,7 +256,6 @@ fn fixture_drives_builtin_handler_envelopes_and_metadata() {
     for (tool_name, case) in [
         ("file_info", &tools["file_info"]["missing_path"]),
         ("find_files", &tools["find_files"]["missing_directory"]),
-        ("task_finish", &tools["control"]["blank_task_finish"]),
         ("ask_user", &tools["control"]["blank_ask_user"]),
     ] {
         let mut context = ToolContext::new(workspace.path());

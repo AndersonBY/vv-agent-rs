@@ -43,12 +43,12 @@ fn live_agent_waits_for_background_sub_task_completion() {
         "Sleeps briefly, then returns the requested token.".to_string(),
     );
     let parent_prompt = build_system_prompt_bundle_with_options(
-        "You are testing sub-agent orchestration. Follow these exact steps and do not answer directly. \
+        "You are testing sub-agent orchestration. Complete these steps before answering. \
 Step 1: call create_sub_task with agent_id='slow-researcher', task_description asking the child \
 to sleep briefly then return the token WAIT-SUBTASK-OK, and wait_for_completion=false. \
 Step 2: after you receive the task_id, call sub_task_status with that task_id, wait_for_completion=true, \
 check_interval_seconds=300, max_wait_seconds=120, and detail_level='snapshot'. \
-Step 3: after the status result is completed, call task_finish with a message containing WAIT-SUBTASK-OK.",
+Step 3: after the status result is completed, answer with a message containing WAIT-SUBTASK-OK.",
         BuildSystemPromptOptions {
             language: "en-US".to_string(),
             available_sub_agents,
@@ -57,7 +57,7 @@ Step 3: after the status result is completed, call task_finish with a message co
         },
     );
     let child_prompt = "You are the slow-researcher sub-agent. First call bash with command 'sleep 2' and timeout 10. \
-After bash succeeds, call task_finish with exactly: WAIT-SUBTASK-OK.";
+After bash succeeds, answer with exactly: WAIT-SUBTASK-OK.";
 
     let mut sub_agent =
         SubAgentConfig::new(model.clone(), "Sleeps briefly and returns WAIT-SUBTASK-OK.");

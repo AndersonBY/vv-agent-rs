@@ -219,10 +219,7 @@ fn batch_entry(
         tool_name: "remote_write".to_string(),
         idempotency_key: None,
         idempotency_support: ToolIdempotency::Unsupported,
-        outcome: match outcome {
-            ToolCallOutcome::Deferred { handle } => ToolCallOutcome::deferred(handle),
-            ToolCallOutcome::Completed { result } => ToolCallOutcome::completed(result),
-        },
+        outcome,
     }
 }
 

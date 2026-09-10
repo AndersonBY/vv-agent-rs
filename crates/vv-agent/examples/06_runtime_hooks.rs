@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = run_facade_prompt(
         &config,
         "hooked-agent",
-        "你是开发助手。按步骤完成任务并调用 task_finish。",
+        "你是开发助手。按步骤完成任务并返回结果。",
         "检查 workspace 并给出下一步建议。",
         RunConfig::builder()
             .hook(Arc::new(SystemReminderHook))

@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .build()?;
     let agent = Agent::builder("tool-demo")
-        .instructions("你必须调用 echo_uppercase，再用 task_finish 返回工具结果。")
+        .instructions("你必须调用 echo_uppercase，再返回工具结果。")
         .model(ModelRef::backend(
             config.backend.clone(),
             config.model.clone(),

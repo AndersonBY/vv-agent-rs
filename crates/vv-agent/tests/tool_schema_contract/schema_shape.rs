@@ -1,25 +1,31 @@
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use vv_agent::build_default_registry;
 
 use super::helpers::{
     description, enum_values, property_description, property_names, schema_type, sorted,
 };
 
-const CANONICAL_TOOL_SCHEMA_SHA256: &str =
-    "d266963bff5d4dc90f4fd4c9897381aa589375078f0c08c23af474e27f6b0269";
-
 #[test]
-fn runtime_schema_export_has_shared_canonical_hash() {
+fn runtime_schema_export_matches_canonical_fixture() {
     let schemas = build_default_registry()
         .list_openai_schemas(None)
         .expect("built-in tool schemas");
-    let canonical_json = serde_json::to_string(&schemas).expect("canonical tool schema JSON");
-
-    assert_eq!(
-        format!("{:x}", Sha256::digest(canonical_json.as_bytes())),
-        CANONICAL_TOOL_SCHEMA_SHA256
-    );
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../fixtures/parity/builtin_tools.json"))
+            .expect("builtin tools fixture");
+    let expected = fixture["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .map(|tool| {
+            json!({"type": "function", "function": {
+                "name": tool["name"],
+                "description": tool["description"],
+                "parameters": tool["parameters"],
+            }})
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(schemas, expected);
 }
 
 #[test]
@@ -38,7 +44,6 @@ fn builtin_tool_required_fields_match_agent_schema_contract() {
         ("read_file", json!(["path"])),
         ("read_image", json!(["path"])),
         ("sub_task_status", json!(["task_ids"])),
-        ("task_finish", json!([])),
         ("todo_write", json!(["todos"])),
         ("search_files", json!(["pattern"])),
         ("write_file", json!(["path", "content"])),
@@ -146,10 +151,6 @@ fn builtin_tool_properties_and_enums_match_agent_schema_contract() {
                 "check_interval_seconds",
                 "max_wait_seconds",
             ],
-        ),
-        (
-            "task_finish",
-            vec!["message", "require_all_todos_completed", "exposed_files"],
         ),
         ("todo_write", vec!["todos"]),
         (
@@ -308,9 +309,6 @@ fn builtin_tool_property_types_match_agent_schema_contract() {
         ("sub_task_status", "wait_for_response", "boolean"),
         ("sub_task_status", "wait_for_completion", "boolean"),
         ("sub_task_status", "check_interval_seconds", "integer"),
-        ("task_finish", "message", "string"),
-        ("task_finish", "require_all_todos_completed", "boolean"),
-        ("task_finish", "exposed_files", "array"),
         ("todo_write", "todos", "array"),
         ("search_files", "pattern", "string"),
         ("search_files", "path", "string"),
@@ -363,7 +361,6 @@ fn builtin_tool_property_types_match_agent_schema_contract() {
             "string",
         ),
         ("sub_task_status", vec!["task_ids", "items"], "string"),
-        ("task_finish", vec!["exposed_files", "items"], "string"),
         ("todo_write", vec!["todos", "items"], "object"),
         ("todo_write", vec!["todos", "items", "id"], "string"),
         ("todo_write", vec!["todos", "items", "title"], "string"),

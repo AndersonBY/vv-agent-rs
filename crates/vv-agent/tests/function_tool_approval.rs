@@ -7,11 +7,14 @@ use vv_agent::{
     ApprovalRequest, ApprovalRequirement, CapabilityRef, CheckpointConfig, CheckpointStore,
     CompletionReason, FunctionTool, InMemoryCheckpointStore, LLMResponse, MemorySession, ModelRef,
     ResumePolicy, RunConfig, Runner, ScriptStep, ScriptedModelProvider, Session, ToolCall,
-    ToolContext, ToolExposure, ToolOutput, ToolPolicy, ToolRunContext, ToolUseBehavior,
+    ToolContext, ToolDirective, ToolExecutionResult, ToolExposure, ToolOutput, ToolPolicy,
+    ToolRunContext, ToolUseBehavior,
 };
 
 #[path = "function_tool_approval/checkpoint.rs"]
 mod checkpoint;
+#[path = "function_tool_approval/directives.rs"]
+mod directives;
 #[test]
 fn function_tool_approval_defaults_false_and_predicate_uses_context_and_arguments() {
     let default_tool = test_tool("default_tool", None);
@@ -129,78 +132,11 @@ async fn on_request_static_approval_interrupts_before_handler_and_resume_execute
     assert_eq!(resumed.final_output(), Some("deleted"));
     assert_eq!(
         resumed.completion_reason(),
-        Some(CompletionReason::ToolFinish)
+        Some(CompletionReason::NoToolFinish)
     );
-    assert_eq!(resumed.completion_tool_name(), Some("task_finish"));
+    assert_eq!(resumed.completion_tool_name(), None);
     assert_eq!(resumed.result().cycles.len(), 1);
     assert_eq!(executions.load(Ordering::SeqCst), 1);
-}
-
-#[tokio::test]
-async fn approval_resume_preserves_explicit_wait_and_finish_actions() {
-    for (tool_name, arguments, expected_status, expected_reason, expected_output) in [
-        (
-            "ask_user",
-            json!({"question": "Choose after approval"}),
-            AgentStatus::WaitUser,
-            CompletionReason::WaitUser,
-            "Choose after approval",
-        ),
-        (
-            "task_finish",
-            json!({"message": "finished after approval"}),
-            AgentStatus::Completed,
-            CompletionReason::ToolFinish,
-            "finished after approval",
-        ),
-    ] {
-        let provider = ScriptedModelProvider::new(
-            "scripted",
-            "approval-model",
-            vec![LLMResponse::with_tool_calls(
-                "assistant text before approved action",
-                vec![ToolCall::from_raw_arguments(
-                    "approved_action",
-                    tool_name,
-                    arguments,
-                )],
-            )],
-        );
-        let runner = Runner::builder()
-            .model_provider(provider)
-            .workspace("./workspace")
-            .build()
-            .expect("runner");
-        let agent = Agent::builder("approval_agent")
-            .instructions("Use the control tool.")
-            .model(ModelRef::named("approval-model"))
-            .tool_policy(approval_policy(ApprovalPolicy::Always))
-            .build()
-            .expect("agent");
-        let interrupted = runner.run(&agent, "run").await.expect("interrupted");
-        let interruption_id = interrupted.approvals()[0].interruption_id.clone();
-        let mut state = interrupted.into_state().expect("state");
-        state.approve(&interruption_id).expect("approve");
-
-        let resumed = runner.resume(state).await.expect("resume");
-
-        assert_eq!(resumed.status(), expected_status, "{tool_name}");
-        assert_eq!(
-            resumed.completion_reason(),
-            Some(expected_reason),
-            "{tool_name}"
-        );
-        assert_eq!(resumed.completion_tool_name(), Some(tool_name));
-        assert_eq!(resumed.final_output(), Some(expected_output), "{tool_name}");
-        if expected_status == AgentStatus::WaitUser {
-            assert_eq!(
-                resumed.partial_output(),
-                Some("assistant text before approved action")
-            );
-        } else {
-            assert_eq!(resumed.partial_output(), None);
-        }
-    }
 }
 
 #[tokio::test]
@@ -633,7 +569,7 @@ async fn layered_argument_policies_are_anded_and_denial_precedes_approval() {
         .tool_policy(
             ToolPolicy::default()
                 .can_use_tool(|_name, arguments| arguments.get("scope") != Some(&json!("agent")))
-                .allow_only(["task_finish", "guarded_tool"]),
+                .allow_only(["guarded_tool"]),
         )
         .max_cycles(1)
         .build()
@@ -988,12 +924,5 @@ fn single_tool_response(tool_name: &str) -> LLMResponse {
 }
 
 fn finish_response(message: &str) -> LLMResponse {
-    LLMResponse::with_tool_calls(
-        "finish",
-        vec![ToolCall::from_raw_arguments(
-            "finish_call",
-            "task_finish",
-            json!({"message": message}),
-        )],
-    )
+    LLMResponse::new(message)
 }

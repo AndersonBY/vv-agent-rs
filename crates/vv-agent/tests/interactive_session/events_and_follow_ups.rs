@@ -215,15 +215,7 @@ async fn background_completion_queues_a_notification_for_the_next_turn() {
     );
     let defaults = build_default_registry();
     let bash_spec = defaults.get("bash").expect("default bash tool").clone();
-    let mut registry = ToolRegistry::new();
-    registry
-        .register(
-            defaults
-                .get("task_finish")
-                .expect("default task_finish tool")
-                .clone(),
-        )
-        .expect("minimal task_finish registry");
+    let registry = ToolRegistry::new();
     let bash = StaticTool::new(
         bash_spec.name,
         bash_spec.description,

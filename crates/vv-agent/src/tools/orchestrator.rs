@@ -124,7 +124,13 @@ impl DeferredToolExecution {
     }
 
     pub(crate) fn replace_result(&mut self, result: ToolExecutionResult) {
-        self.outcome = ToolCallOutcome::completed(result.clone());
+        self.outcome = match &self.outcome {
+            ToolCallOutcome::HostInteraction { request, .. } => ToolCallOutcome::HostInteraction {
+                result: result.clone(),
+                request: request.clone(),
+            },
+            _ => ToolCallOutcome::completed(result.clone()),
+        };
         self.result = result;
     }
 
@@ -158,6 +164,7 @@ impl DeferredToolExecution {
                         tool_metadata: lifecycle.tool_metadata,
                     },
                 ),
+                ToolCallOutcome::HostInteraction { .. } => {},
             }
         }
         self.result
@@ -501,6 +508,25 @@ impl ToolOrchestrator {
         // to the executor.
         let outcome = context.take_deferred_outcome().unwrap_or(outcome);
         match outcome {
+            ToolCallOutcome::HostInteraction { result, request } => {
+                let outcome = ToolCallOutcome::HostInteraction {
+                    result: result.clone(),
+                    request,
+                };
+                outcome
+                    .validate()
+                    .map_err(|error| crate::tools::ToolError::new(error.to_string()))?;
+                let mut execution = DeferredToolExecution::with_lifecycle(
+                    call,
+                    result,
+                    true,
+                    Some(elapsed_millis(started_at)),
+                    tool_metadata,
+                    options.lifecycle_callback,
+                );
+                execution.outcome = outcome;
+                Ok(execution)
+            }
             ToolCallOutcome::Completed { mut result } => {
                 if result.tool_call_id.trim().is_empty() || result.tool_call_id == "pending" {
                     result.tool_call_id = call.id.clone();

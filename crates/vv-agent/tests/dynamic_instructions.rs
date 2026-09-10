@@ -4,7 +4,7 @@ use serde_json::json;
 use vv_agent::{
     Agent, BeforeLlmEvent, BeforeLlmPatch, FunctionTool, LLMResponse, LlmClient, ModelError,
     ModelProvider, ModelRef, ResolvedModelConfig, RunConfig, Runner, RuntimeHook,
-    ScriptedModelProvider, ToolCall, ToolOutput,
+    ScriptedModelProvider, ToolOutput,
 };
 
 #[derive(Clone)]
@@ -59,14 +59,7 @@ async fn dynamic_instructions_receive_the_current_run_context() {
         assert!(request.messages[0].content.contains("tenant=acme"));
         assert!(request.messages[0].content.contains("agent=assistant"));
         assert!(request.messages[0].content.contains("run=run_"));
-        Ok(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "finish",
-                "task_finish",
-                json!({"message": "done"}),
-            )],
-        ))
+        Ok(LLMResponse::new("done"))
     });
     let agent = Agent::builder("assistant")
         .dynamic_instructions(move |context, current_agent| {
@@ -135,14 +128,7 @@ async fn resolved_model_alias_is_used_by_dynamic_instructions_and_tool_enablemen
                 .tools
                 .iter()
                 .any(|schema| schema["function"]["name"] == "resolved_only"));
-            Ok(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "finish",
-                    "task_finish",
-                    json!({"message": "done"}),
-                )],
-            ))
+            Ok(LLMResponse::new("done"))
         }),
     };
     let agent = Agent::builder("assistant")
@@ -190,14 +176,7 @@ impl RuntimeHook for OrderedHook {
 #[tokio::test]
 async fn agent_hooks_run_before_per_run_hooks() {
     let provider = ScriptedModelProvider::from_callback("scripted", "demo-model", |_request| {
-        Ok(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "finish",
-                "task_finish",
-                json!({"message": "done"}),
-            )],
-        ))
+        Ok(LLMResponse::new("done"))
     });
     let order = Arc::new(Mutex::new(Vec::new()));
     let agent = Agent::builder("assistant")

@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .workspace(config.workspace)
         .build()?;
     let agent = Agent::builder("assistant")
-        .instructions("你是可靠的执行型助手。先查证，再调用 task_finish 返回最终结果。")
+        .instructions("你是可靠的执行型助手。先查证，再返回最终结果。")
         .model(ModelRef::backend(config.backend, config.model))
         .build()?;
 

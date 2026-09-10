@@ -22,7 +22,6 @@ pub const WORKSPACE_TOOLS: &[&str] = &[
 pub fn default_tool_schemas() -> BTreeMap<String, Value> {
     let mut schemas = BTreeMap::new();
     for (name, schema) in [
-        ("task_finish", control::task_finish_schema()),
         ("ask_user", control::ask_user_schema()),
         ("activate_skill", control::activate_skill_schema()),
         ("read_file", workspace::read_file_schema()),

@@ -3,9 +3,10 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use vv_agent::{
-    session_store_conformance, Agent, LLMResponse, LlmRequest, MemorySession, MemorySessionStore,
-    MessageRole, ModelRef, RedisSessionStore, RunConfig, Runner, ScriptStep, ScriptedModelProvider,
-    Session, SessionItem, SqliteSessionStore, ToolCall,
+    session_store_conformance, Agent, FunctionTool, LLMResponse, LlmRequest, MemorySession,
+    MemorySessionStore, MessageRole, ModelRef, RedisSessionStore, RunConfig, Runner, ScriptStep,
+    ScriptedModelProvider, Session, SessionItem, SqliteSessionStore, ToolCall, ToolOutput,
+    ToolUseBehavior,
 };
 
 const SESSION_ITEMS_FIXTURE: &str = include_str!("fixtures/parity/session_items.jsonl");
@@ -68,18 +69,14 @@ async fn runner_persists_complete_result_message_delta_into_next_provider_histor
                     .lock()
                     .expect("requests")
                     .push(request.clone());
-                Ok(finish_response(
-                    "first assistant",
-                    "finish_1",
-                    "first result",
-                ))
+                Ok(echo_response("first assistant", "finish_1", "first result"))
             }),
             ScriptStep::callback(move |request| {
                 second_requests
                     .lock()
                     .expect("requests")
                     .push(request.clone());
-                Ok(finish_response(
+                Ok(echo_response(
                     "second assistant",
                     "finish_2",
                     "second result",
@@ -93,9 +90,23 @@ async fn runner_persists_complete_result_message_delta_into_next_provider_histor
         .workspace(workspace.path())
         .build()
         .expect("runner");
+    let echo = FunctionTool::builder("echo")
+        .description("Return the supplied message.")
+        .json_schema(json!({
+            "type": "object",
+            "properties": {"message": {"type": "string"}},
+            "required": ["message"]
+        }))
+        .handler(|_context, arguments: serde_json::Value| async move {
+            Ok(ToolOutput::text(arguments["message"].as_str().unwrap()))
+        })
+        .build()
+        .expect("echo tool");
     let agent = Agent::builder("history-agent")
         .instructions("Preserve exact conversation history.")
         .model(ModelRef::named("history-model"))
+        .tool(echo)
+        .tool_use_behavior(ToolUseBehavior::StopOnFirstTool)
         .build()
         .expect("agent");
     let session = MemorySession::new("runner-history");
@@ -146,13 +157,13 @@ async fn runner_persists_complete_result_message_delta_into_next_provider_histor
     assert_eq!(second_history[3].tool_call_id.as_deref(), Some("finish_1"));
 }
 
-fn finish_response(content: &str, call_id: &str, final_message: &str) -> LLMResponse {
+fn echo_response(content: &str, call_id: &str, message: &str) -> LLMResponse {
     LLMResponse::with_tool_calls(
         content,
         vec![ToolCall::new(
             call_id,
-            "task_finish",
-            BTreeMap::from([("message".to_string(), json!(final_message))]),
+            "echo",
+            BTreeMap::from([("message".to_string(), json!(message))]),
         )],
     )
 }

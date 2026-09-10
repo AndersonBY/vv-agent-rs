@@ -2,16 +2,7 @@ use super::*;
 
 #[test]
 fn runtime_seeds_skill_state_from_task_metadata() {
-    let mut finish_args = BTreeMap::new();
-    finish_args.insert("message".to_string(), json!("done"));
-    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
-        "finish",
-        vec![ToolCall::new(
-            "finish_skill_state",
-            "task_finish",
-            finish_args,
-        )],
-    )]);
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::new("done")]);
     let runtime = AgentRuntime::new(llm);
     let mut task = AgentTask::new(
         "skill_state",
@@ -41,16 +32,7 @@ fn runtime_seeds_skill_state_from_task_metadata() {
 
 #[test]
 fn runtime_keeps_initial_skill_state_over_task_metadata() {
-    let mut finish_args = BTreeMap::new();
-    finish_args.insert("message".to_string(), json!("done"));
-    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
-        "finish",
-        vec![ToolCall::new(
-            "finish_initial_skill_state",
-            "task_finish",
-            finish_args,
-        )],
-    )]);
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::new("done")]);
     let runtime = AgentRuntime::new(llm);
     let mut task = AgentTask::new(
         "initial_skill_state",
@@ -202,14 +184,7 @@ impl LlmClient for InspectingSubTaskStatusLlmClient {
             .first()
             .is_some_and(|message| message.content.contains("research profile"));
         if is_child_request {
-            return Ok(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::new(
-                    "child_async_finish",
-                    "task_finish",
-                    BTreeMap::from([("message".to_string(), json!("async child complete"))]),
-                )],
-            ));
+            return Ok(LLMResponse::new("async child complete"));
         }
         if !is_child_request {
             let latest_async_task_id = request
@@ -269,17 +244,7 @@ impl LlmClient for InspectingSubTaskStatusLlmClient {
                 .and_then(|tasks| tasks.first())
                 .is_some_and(|task| task["status"] == "completed");
             if completed {
-                return Ok(LLMResponse::with_tool_calls(
-                    "",
-                    vec![ToolCall::new(
-                        "parent_finish",
-                        "task_finish",
-                        BTreeMap::from([(
-                            "message".to_string(),
-                            json!("parent saw async child result"),
-                        )]),
-                    )],
-                ));
+                return Ok(LLMResponse::new("parent saw async child result"));
             }
             if let Some(task_id) = payload["tasks"]
                 .as_array()
@@ -347,18 +312,7 @@ impl LlmClient for InspectingSubTaskContinuationLlmClient {
             } else {
                 "initial child complete"
             };
-            return Ok(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::new(
-                    if is_follow_up {
-                        "child_follow_up_finish"
-                    } else {
-                        "child_initial_finish"
-                    },
-                    "task_finish",
-                    BTreeMap::from([("message".to_string(), json!(message))]),
-                )],
-            ));
+            return Ok(LLMResponse::new(message));
         }
 
         let latest_create_task_id = request
@@ -408,21 +362,11 @@ impl LlmClient for InspectingSubTaskContinuationLlmClient {
                     payload["tasks"][0]["status"] == "completed"
                         && payload["tasks"][0]["final_answer"] == "follow-up child complete"
                 });
-                return Ok(LLMResponse::with_tool_calls(
-                    "",
-                    vec![ToolCall::new(
-                        "parent_finish",
-                        "task_finish",
-                        BTreeMap::from([(
-                            "message".to_string(),
-                            json!(if follow_up_complete {
-                                "parent saw followed-up child result"
-                            } else {
-                                "parent saw follow-up failure"
-                            }),
-                        )]),
-                    )],
-                ));
+                return Ok(LLMResponse::new(if follow_up_complete {
+                    "parent saw followed-up child result"
+                } else {
+                    "parent saw follow-up failure"
+                }));
             }
 
             if let Some(payload) = latest_status_payload {

@@ -16,10 +16,7 @@ impl LlmClient for ContinuationCancellationClient {
         if is_child {
             let call = self.child_calls.fetch_add(1, Ordering::SeqCst) + 1;
             if call == 1 {
-                return Ok(finish_response(
-                    "initial-child-finish",
-                    "initial child done",
-                ));
+                return Ok(LLMResponse::new("initial child done"));
             }
             self.continuation_started
                 .send(())
@@ -29,10 +26,7 @@ impl LlmClient for ContinuationCancellationClient {
             while !*released {
                 released = wake.wait(released).expect("continuation release wait");
             }
-            return Ok(finish_response(
-                "continued-child-finish",
-                "continuation should be cancelled",
-            ));
+            return Ok(LLMResponse::new("continuation should be cancelled"));
         }
 
         let call = self.parent_calls.fetch_add(1, Ordering::SeqCst) + 1;
@@ -49,7 +43,7 @@ impl LlmClient for ContinuationCancellationClient {
                 )],
             ));
         }
-        Ok(finish_response("parent-finish", "parent done"))
+        Ok(LLMResponse::new("parent done"))
     }
 }
 

@@ -70,10 +70,7 @@ fn capture_task_metadata_continuation_trace(
                 }),
             )],
         )),
-        ScriptStep::response(finish_response(
-            &format!("parent-finish-{suffix}"),
-            "parent done",
-        )),
+        ScriptStep::response(LLMResponse::new("parent done")),
     ]);
     let mut parent = AgentTask::new(
         format!("trace-parent-{suffix}"),

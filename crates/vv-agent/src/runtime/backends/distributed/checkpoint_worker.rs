@@ -36,9 +36,10 @@ mod runtime;
 
 use lease::run_with_checkpoint_lease;
 use recovery::{
-    align_active_claim, commit_cycle, effective_claim_mode, initialize_extensions, load_checkpoint,
-    prepare_terminal_candidate, reconcile_recovery, reconciliation_candidate, snapshot_extensions,
-    suspend_reconciliation, validate_claimed_resume_attempt, validate_envelope_checkpoint_identity,
+    align_active_claim, commit_cycle, consume_controller_wakes, effective_claim_mode,
+    initialize_extensions, load_checkpoint, prepare_terminal_candidate, reconcile_recovery,
+    reconciliation_candidate, snapshot_extensions, suspend_reconciliation,
+    validate_claimed_resume_attempt, validate_envelope_checkpoint_identity,
     validate_extension_capabilities, validate_resume_attempt_observation,
 };
 use runtime::run_agent_runtime_cycle;
@@ -309,19 +310,14 @@ pub(super) fn run_distributed_cycle(
     {
         return CycleDispatchResult::committed(checkpoint.cycle_index, checkpoint.revision);
     }
-    if checkpoint.terminal_result.is_none() {
-        validate_resume_attempt_observation(&envelope, &checkpoint, delivery)?;
-    }
-    let retained_host_recovery_claim = checkpoint
-        .claim_token
-        .as_deref()
-        .is_some_and(|token| token.starts_with("host-recovery:"));
     if checkpoint
         .lease_expires_at_ms
         .is_some_and(|lease| lease > now_ms)
-        && !retained_host_recovery_claim
     {
         return Ok(CycleDispatchResult::pending());
+    }
+    if checkpoint.terminal_result.is_none() {
+        validate_resume_attempt_observation(&envelope, &checkpoint, delivery)?;
     }
 
     let resolved = worker
@@ -343,6 +339,12 @@ pub(super) fn run_distributed_cycle(
         .clone()
         .expect("checkpoint executor checked above");
 
+    let (checkpoint, retained_host_recovery_claim) =
+        if effective_claim_mode(&envelope, &checkpoint, delivery, now_ms) == ClaimMode::Recovery {
+            consume_controller_wakes(store.as_ref(), checkpoint, envelope.lease_duration_ms)?
+        } else {
+            (checkpoint, false)
+        };
     let claim_mode = effective_claim_mode(&envelope, &checkpoint, delivery, now_ms);
     let (claim_token, claimed, retained_claim) = if retained_host_recovery_claim {
         if checkpoint.claimed_cycle != Some(u64::from(envelope.cycle_index)) {

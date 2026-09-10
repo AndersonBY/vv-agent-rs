@@ -67,7 +67,7 @@ impl vv_llm::ChatClient for StreamingChatClient {
                 content: String::new(),
                 tool_calls: vec![vv_llm::ToolCall::function(
                     "call_nonstream",
-                    "task_finish",
+                    "handoff_result",
                     r#"{"message":"non-stream fallback"}"#,
                 )],
                 reasoning_content: None,
@@ -106,7 +106,7 @@ impl vv_llm::ChatClient for StreamingChatClient {
                 Ok(vv_llm::ChatStreamDelta {
                     tool_calls: vec![vv_llm::ToolCall::function(
                         "call_stream",
-                        "task_finish",
+                        "handoff_result",
                         r#"{"message":"streamed answer"}"#,
                     )],
                     ..vv_llm::ChatStreamDelta::default()

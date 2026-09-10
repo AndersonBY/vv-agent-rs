@@ -11,7 +11,20 @@ fn runtime_execution_context_observes_typed_stream_events() {
         Box::new(chat_client),
         90.0,
     );
-    let runtime = AgentRuntime::new(llm);
+    let mut registry = vv_agent::build_default_registry();
+    registry.register_tool_with_parameters(
+        "handoff_result",
+        "Return the delegated result.",
+        json!({"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"], "additionalProperties": false}),
+        Arc::new(|_context, arguments| {
+            let mut result = vv_agent::ToolExecutionResult::success(
+                "", arguments["message"].as_str().expect("message"),
+            );
+            result.directive = vv_agent::ToolDirective::Finish;
+            result
+        }),
+    ).expect("result tool");
+    let runtime = AgentRuntime::new(llm).with_tool_registry(registry);
     let events = Arc::new(Mutex::new(Vec::<RunEvent>::new()));
     let callback_events = Arc::clone(&events);
     let event_handler = Arc::new(move |event: &RunEvent| {
@@ -23,13 +36,16 @@ fn runtime_execution_context_observes_typed_stream_events() {
 
     let result = runtime
         .run_with_controls(
-            AgentTask::new(
-                "stream_ctx_task",
-                "demo",
-                vv_agent::prompt::PromptBundle::from_instruction_text("system")
-                    .expect("prompt bundle"),
-                "finish via stream",
-            ),
+            AgentTask {
+                extra_tool_names: vec!["handoff_result".to_string()],
+                ..AgentTask::new(
+                    "stream_ctx_task",
+                    "demo",
+                    vv_agent::prompt::PromptBundle::from_instruction_text("system")
+                        .expect("prompt bundle"),
+                    "finish via stream",
+                )
+            },
             RuntimeRunControls {
                 execution_context: Some(
                     ExecutionContext::default().with_event_handler(event_handler),
@@ -201,7 +217,7 @@ fn vv_llm_client_auto_streams_deepseek_v4_models() {
         .expect("automatic streaming completion");
 
     assert_eq!(response.content, "streamed content");
-    assert_eq!(response.tool_calls[0].name, "task_finish");
+    assert_eq!(response.tool_calls[0].name, "handoff_result");
     assert_eq!(probe.completion_calls(), 0);
     assert_eq!(probe.stream_calls(), 1);
 }

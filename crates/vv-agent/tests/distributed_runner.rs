@@ -143,6 +143,140 @@ fn distributed_fixture_with_stores(
 }
 
 #[tokio::test]
+async fn native_worker_consumes_host_response_before_model_and_retains_exclusive_claim() {
+    use vv_agent::{
+        ControllerCommand, ControllerCommandVariant, ControllerHandle,
+        HostInteractionAdmissionContext, HostInteractionMessage, HostInteractionRequest,
+    };
+    let fixture = distributed_fixture("native-host-response", 2);
+    let handle = fixture
+        .runner
+        .start_distributed(&fixture.agent, "answer", fixture.config.clone())
+        .await
+        .unwrap();
+    let previous = fixture.enqueuer.take_one();
+    let claimed = fixture
+        .store
+        .claim_checkpoint(
+            &handle.checkpoint_key,
+            1,
+            "host-producer",
+            10_000,
+            0,
+            ClaimMode::Continue,
+        )
+        .unwrap()
+        .unwrap();
+    let request = HostInteractionRequest::new(
+        "interaction-native",
+        1,
+        "operation-native",
+        "tool-native",
+        "Choose.",
+    )
+    .unwrap();
+    let admitted = fixture
+        .store
+        .produce_host_interaction(
+            request.clone(),
+            &HostInteractionAdmissionContext::new(
+                &handle.checkpoint_key,
+                claimed.revision,
+                "host-producer",
+                1,
+                0,
+                10_000,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let command = ControllerCommand::new(
+        "response-native",
+        ControllerHandle::new(&handle.checkpoint_key, &handle.run_id, &handle.trace_id).unwrap(),
+        claimed.resume_attempt,
+        admitted.checkpoint_revision,
+        ControllerCommandVariant::HostInteractionResponse {
+            interaction_id: request.interaction_id,
+            logical_cycle: request.logical_cycle,
+            operation_id: request.operation_id,
+            tool_call_id: request.tool_call_id,
+            request_digest: request.request_digest,
+            response: HostInteractionMessage::user("Accepted.").unwrap(),
+        },
+    )
+    .unwrap();
+    fixture.store.resolve_controller_command(command).unwrap();
+    let admission = fixture
+        .store
+        .load_checkpoint(&handle.checkpoint_key)
+        .unwrap()
+        .unwrap();
+    let dispatch = fixture
+        .backend
+        .advance(
+            &previous,
+            DistributedDeliveryOutcome::worker(vv_agent::CycleDispatchResult::pending()),
+        )
+        .unwrap();
+    assert!(matches!(
+        dispatch,
+        DistributedAdvanceDecision::Dispatch { .. }
+    ));
+    assert_eq!(
+        fixture
+            .store
+            .load_checkpoint(&handle.checkpoint_key)
+            .unwrap(),
+        Some(admission)
+    );
+    let recovery = fixture.enqueuer.take_one();
+    let result = fixture.worker.run_cycle(recovery.clone()).unwrap();
+    assert!(matches!(
+        result,
+        vv_agent::CycleDispatchResult::TerminalCandidate { .. }
+    ));
+    let owned = fixture
+        .store
+        .load_checkpoint(&handle.checkpoint_key)
+        .unwrap()
+        .unwrap();
+    assert_eq!(owned.resume_attempt, 2);
+    assert_eq!(owned.model_calls.len(), 1);
+    assert_eq!(
+        owned
+            .messages
+            .iter()
+            .filter(|message| message.content == "Accepted.")
+            .count(),
+        1
+    );
+    assert_eq!(
+        fixture.worker.run_cycle(recovery.clone()).unwrap(),
+        vv_agent::CycleDispatchResult::pending()
+    );
+    assert_eq!(
+        fixture
+            .store
+            .load_checkpoint(&handle.checkpoint_key)
+            .unwrap(),
+        Some(owned)
+    );
+    let decision = fixture
+        .backend
+        .advance(&recovery, DistributedDeliveryOutcome::worker(result))
+        .unwrap();
+    fixture
+        .runner
+        .finalize_distributed(&fixture.agent, "answer", decision, fixture.config.clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture.worker.run_cycle(recovery).unwrap(),
+        vv_agent::CycleDispatchResult::TerminalReplay { .. }
+    ));
+}
+
+#[tokio::test]
 async fn runner_starts_passively_and_finalizes_claimed_candidate_once() {
     let fixture = distributed_fixture("runner-distributed-candidate", 2);
     let handle = fixture

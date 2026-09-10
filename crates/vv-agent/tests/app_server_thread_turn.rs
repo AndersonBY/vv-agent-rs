@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -330,11 +329,11 @@ async fn json_rpc_thread_turn_streams_notifications_and_replays_items() {
     assert_eq!(completed.turn_id, turn_id);
     assert_eq!(completed.status, TurnStatus::Completed);
     assert_eq!(completed.final_output.as_deref(), Some("hello world"));
-    assert_eq!(completed.completion_reason.as_deref(), Some("tool_finish"));
     assert_eq!(
-        completed.completion_tool_name.as_deref(),
-        Some("task_finish")
+        completed.completion_reason.as_deref(),
+        Some("no_tool_finish")
     );
+    assert_eq!(completed.completion_tool_name, None);
     assert_eq!(completed.partial_output, None);
 
     processor
@@ -349,7 +348,7 @@ async fn json_rpc_thread_turn_streams_notifications_and_replays_items() {
         .items
         .iter()
         .any(|item| item.kind == AppItemKind::AgentMessage));
-    assert!(read
+    assert!(!read
         .items
         .iter()
         .any(|item| item.kind == AppItemKind::ToolCall));
@@ -358,8 +357,8 @@ async fn json_rpc_thread_turn_streams_notifications_and_replays_items() {
         .iter()
         .find(|turn| turn.turn_id == turn_id)
         .expect("persisted completed turn");
-    assert_eq!(persisted.result["completionReason"], "tool_finish");
-    assert_eq!(persisted.result["completionToolName"], "task_finish");
+    assert_eq!(persisted.result["completionReason"], "no_tool_finish");
+    assert!(!persisted.result.contains_key("completionToolName"));
     assert!(!persisted.result.contains_key("partialOutput"));
 }
 
@@ -718,7 +717,5 @@ fn decode_notification(notification: JsonRpcNotification) -> ServerNotification 
 }
 
 fn finish_response(message: &str) -> LLMResponse {
-    let mut args = BTreeMap::new();
-    args.insert("message".to_string(), json!(message));
-    LLMResponse::with_tool_calls(message, vec![ToolCall::new("finish", "task_finish", args)])
+    LLMResponse::new(message)
 }

@@ -5,13 +5,14 @@ use serde_json::Value;
 use vv_agent::{
     Agent, AgentStatus, BeforeLlmEvent, BeforeLlmPatch, CompletionReason, FunctionTool,
     LLMResponse, LlmRequest, ModelCallOperation, ModelRef, NoToolPolicy, RunConfig, Runner,
-    RuntimeHook, ScriptStep, ScriptedModelProvider, ToolCall, ToolOutput, ToolUseBehavior,
+    RuntimeHook, ScriptStep, ScriptedModelProvider, ToolCall, ToolDirective, ToolExecutionResult,
+    ToolOutput, ToolUseBehavior,
 };
 
 const FIXTURE: &str = include_str!("fixtures/parity/completion_policy.json");
 const REASONING_HISTORY_FIXTURE: &str =
     include_str!("fixtures/parity/assistant_reasoning_history.json");
-const CONTINUATION_HINT: &str = "Continue. If the task is complete, call task_finish.";
+const CONTINUATION_HINT: &str = "No tool call was produced. Continue the task.";
 
 #[derive(Debug, Deserialize)]
 struct CompletionContract {
@@ -101,8 +102,8 @@ fn contract() -> CompletionContract {
 #[test]
 fn completion_policy_fixture_declares_the_public_closed_sets() {
     let contract = contract();
-    assert_eq!(contract.version, 1);
-    assert_eq!(contract.framework_default, "continue");
+    assert_eq!(contract.version, 2);
+    assert_eq!(contract.framework_default, "finish");
     assert_eq!(contract.policy_values, ["continue", "wait_user", "finish"]);
     assert_eq!(
         contract.completion_reason_values,
@@ -151,7 +152,7 @@ fn completion_policy_fixture_declares_the_public_closed_sets() {
             .guardrail_allow_preserves_completion_observation
     );
     assert!(contract.rules.ordinary_llm_failure_is_typed_terminal);
-    assert_eq!(NoToolPolicy::default(), NoToolPolicy::Continue);
+    assert_eq!(NoToolPolicy::default(), NoToolPolicy::Finish);
     assert_eq!(
         CompletionReason::parse("budget_exhausted"),
         Some(CompletionReason::BudgetExhausted)
@@ -166,6 +167,22 @@ async fn real_runner_matches_every_canonical_completion_matrix_case() {
 }
 
 async fn run_case(case: CompletionCase) {
+    let mut registry = vv_agent::tools::build_default_registry();
+    registry
+        .register_tool(
+            "handoff_result",
+            "Return the delegated result.",
+            Arc::new(|_context, _arguments| {
+                let mut result = ToolExecutionResult::success("", "override done");
+                result.directive = ToolDirective::Finish;
+                result.metadata.insert(
+                    "final_message".to_string(),
+                    Value::String("override done".to_string()),
+                );
+                result
+            }),
+        )
+        .expect("handoff result tool");
     let requests = Arc::new(Mutex::new(Vec::<LlmRequest>::new()));
     let steps = case
         .steps
@@ -222,6 +239,7 @@ async fn run_case(case: CompletionCase) {
     }
     let agent = agent_builder.build().expect("agent");
     let mut runner_builder = Runner::builder()
+        .tool_registry(registry)
         .model_provider(provider)
         .workspace("./workspace");
     if let Some(policy) = case.runner_default_policy.as_deref() {
@@ -305,10 +323,10 @@ async fn run_case(case: CompletionCase) {
             .lock()
             .expect("requests")
             .iter()
-            .all(|request| request.tools.iter().any(|schema| {
+            .all(|request| !request.tools.iter().any(|schema| {
                 schema.pointer("/function/name").and_then(Value::as_str) == Some("task_finish")
             })),
-        "{} changed task_finish availability",
+        "{} exposed a completion tool",
         case.name
     );
     if result.status() == AgentStatus::Completed {
@@ -356,14 +374,7 @@ async fn reasoning_only_continue_preserves_history_and_usage_for_next_request() 
                 .lock()
                 .expect("second request capture")
                 .push(request.clone());
-            Ok(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "finish-reasoning",
-                    "task_finish",
-                    serde_json::json!({"message": "done"}),
-                )],
-            ))
+            Ok(LLMResponse::new("done"))
         }),
     ];
     let provider = ScriptedModelProvider::from_steps("scripted", "reasoning-history-model", steps);
@@ -411,7 +422,8 @@ async fn reasoning_only_continue_preserves_history_and_usage_for_next_request() 
         })
         .expect("first Agent cycle model-call record");
     assert_eq!(first_cycle_call.usage.reasoning_tokens, Some(2048));
-    assert_eq!(result.status(), AgentStatus::Completed);
+    assert_eq!(result.status(), AgentStatus::MaxCycles);
+    assert_eq!(result.partial_output(), Some("done"));
 }
 
 fn parse_policy(value: &str) -> NoToolPolicy {

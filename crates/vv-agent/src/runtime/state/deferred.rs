@@ -58,6 +58,12 @@ pub fn admit_deferred_batch(
             ));
         }
         match &batch.outcome {
+            ToolCallOutcome::HostInteraction { .. } => {
+                return Err(CheckpointError::new(
+                    "deferred_batch_not_admitted",
+                    "host interactions require their own admission",
+                ));
+            }
             ToolCallOutcome::Deferred { handle } => {
                 if handle.checkpoint_key != snapshot.checkpoint_key
                     || handle.operation_id != batch.operation_id

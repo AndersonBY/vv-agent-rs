@@ -21,9 +21,9 @@ use super::contract_helpers::{
 
 pub const DISTRIBUTED_RUN_SCHEMA_VERSION: &str = "vv-agent.distributed-run.v5";
 pub const DEFAULT_TOOLSET_ID: &str = "vv-agent.builtin-tools";
-pub const DEFAULT_TOOLSET_VERSION: &str = "2";
+pub const DEFAULT_TOOLSET_VERSION: &str = "3";
 pub const DEFAULT_TOOLSET_SCHEMA_DIGEST: &str =
-    "d266963bff5d4dc90f4fd4c9897381aa589375078f0c08c23af474e27f6b0269";
+    "4f535c2bfd1657cec4a8dce5f0d846dc8f683a5470100a8ce83801739b8e3c9a";
 pub const DEFAULT_CYCLE_NAME: &str = "vv_agent.distributed.run_single_cycle";
 pub const DEFAULT_LEASE_DURATION_MS: u64 = 5 * 60 * 1000;
 

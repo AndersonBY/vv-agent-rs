@@ -22,14 +22,7 @@ impl LlmClient for BlockingAsyncConfiguredClient {
             while !*released {
                 released = wake.wait(released).expect("async child release wait");
             }
-            return Ok(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "child-finish",
-                    "task_finish",
-                    json!({"message": "child done"}),
-                )],
-            ));
+            return Ok(LLMResponse::new("child done"));
         }
 
         let parent_call = self.parent_calls.fetch_add(1, Ordering::SeqCst) + 1;
@@ -47,14 +40,7 @@ impl LlmClient for BlockingAsyncConfiguredClient {
                 )],
             ));
         }
-        Ok(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "parent-finish",
-                "task_finish",
-                json!({"message": "parent done"}),
-            )],
-        ))
+        Ok(LLMResponse::new("parent done"))
     }
 }
 
@@ -74,14 +60,7 @@ impl LlmClient for PanicThenRecoverConfiguredClient {
             if child_call == 1 {
                 panic!("configured child panicked");
             }
-            return Ok(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "recovered-child-finish",
-                    "task_finish",
-                    json!({"message": "child recovered"}),
-                )],
-            ));
+            return Ok(LLMResponse::new("child recovered"));
         }
 
         let parent_call = self.parent_calls.fetch_add(1, Ordering::SeqCst) + 1;
@@ -99,14 +78,7 @@ impl LlmClient for PanicThenRecoverConfiguredClient {
                 )],
             ));
         }
-        Ok(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "parent-finish",
-                "task_finish",
-                json!({"message": "parent done"}),
-            )],
-        ))
+        Ok(LLMResponse::new("parent done"))
     }
 }
 
@@ -565,7 +537,14 @@ impl LlmClient for PanicAfterCompletedCycleClient {
         if request.metadata["is_sub_task"] == json!(true) {
             let child_call = self.child_calls.fetch_add(1, Ordering::SeqCst) + 1;
             if child_call == 1 {
-                let mut response = LLMResponse::new("continue after a billed cycle");
+                let mut response = LLMResponse::with_tool_calls(
+                    "continue after a billed cycle",
+                    vec![ToolCall::from_raw_arguments(
+                        "plan",
+                        "todo_write",
+                        json!({"todos": []}),
+                    )],
+                );
                 response.token_usage = TokenUsage {
                     input_tokens: Some(13),
                     output_tokens: Some(8),
@@ -592,14 +571,7 @@ impl LlmClient for PanicAfterCompletedCycleClient {
                 )],
             ));
         }
-        Ok(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "parent-progress-finish",
-                "task_finish",
-                json!({"message": "parent done"}),
-            )],
-        ))
+        Ok(LLMResponse::new("parent done"))
     }
 }
 

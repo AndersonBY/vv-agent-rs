@@ -190,7 +190,7 @@ async fn merged_tool_policy_filters_schemas_and_blocks_forced_calls_with_never_a
         });
     let agent_policy = ToolPolicy::default()
         .allow_only([
-            "task_finish",
+            "read_file",
             "allowed_custom",
             "agent_blocked",
             "runner_blocked",
@@ -238,13 +238,13 @@ async fn merged_tool_policy_filters_schemas_and_blocks_forced_calls_with_never_a
         .iter()
         .filter_map(|schema| schema["function"]["name"].as_str())
         .collect::<Vec<_>>();
-    assert_eq!(visible_names, vec!["task_finish", "allowed_custom"]);
+    assert_eq!(visible_names, vec!["read_file", "allowed_custom"]);
 
     let metadata = task_capture.metadata();
     assert_eq!(
         metadata["_vv_agent_allowed_tools"],
         json!([
-            "task_finish",
+            "read_file",
             "allowed_custom",
             "agent_blocked",
             "runner_blocked",
@@ -410,7 +410,7 @@ async fn never_approval_still_executes_tools_allowed_by_policy() {
         .instructions("Use the allowed tool.")
         .model(ModelRef::backend("scripted", "policy-model"))
         .tool(allowed)
-        .tool_policy(ToolPolicy::default().allow_only(["task_finish", "allowed_custom"]))
+        .tool_policy(ToolPolicy::default().allow_only(["allowed_custom"]))
         .build()
         .expect("agent");
     let runner = Runner::builder()
@@ -448,12 +448,5 @@ fn tool_schema<'a>(tools: &'a [Value], name: &str) -> &'a Value {
 }
 
 fn finish_response(message: &str) -> LLMResponse {
-    LLMResponse::with_tool_calls(
-        "finish",
-        vec![ToolCall::from_raw_arguments(
-            "finish_call",
-            "task_finish",
-            json!({"message": message}),
-        )],
-    )
+    LLMResponse::new(message)
 }

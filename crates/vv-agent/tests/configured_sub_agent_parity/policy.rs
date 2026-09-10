@@ -56,17 +56,6 @@ fn delegate_response() -> LLMResponse {
     )
 }
 
-fn finish_response(call_id: &str, message: &str) -> LLMResponse {
-    LLMResponse::with_tool_calls(
-        "finish",
-        vec![ToolCall::from_raw_arguments(
-            call_id,
-            "task_finish",
-            json!({"message": message}),
-        )],
-    )
-}
-
 fn schema_names(request: &vv_agent::LlmRequest) -> Vec<String> {
     request
         .tools
@@ -173,8 +162,8 @@ fn configured_child_hides_policy_tools_and_blocks_malicious_forced_calls() {
                 ],
             ))
         }),
-        ScriptStep::response(finish_response("child-finish", "child done")),
-        ScriptStep::response(finish_response("parent-finish", "parent done")),
+        ScriptStep::response(LLMResponse::new("child done")),
+        ScriptStep::response(LLMResponse::new("parent done")),
     ]);
     let mut runtime = AgentRuntime::new(llm).with_tool_registry(registry);
     runtime.set_tool_policy(
@@ -183,7 +172,6 @@ fn configured_child_hides_policy_tools_and_blocks_malicious_forced_calls() {
             ..ToolPolicy::default()
         }
         .allow_only([
-            "task_finish",
             "create_sub_task",
             "sub_task_status",
             "child_excluded",
@@ -272,7 +260,7 @@ impl ApprovalProvider for FullApprovalRequestProvider {
 }
 
 #[test]
-fn configured_child_approval_uses_canonical_identity_auto_broker_and_includes_finish() {
+fn configured_child_approval_uses_canonical_identity_and_auto_broker() {
     let executions = Arc::new(AtomicUsize::new(0));
     let mut registry = build_default_registry();
     register_counting_tool(
@@ -292,8 +280,8 @@ fn configured_child_approval_uses_canonical_identity_auto_broker_and_includes_fi
                 json!({"scope": "child"}),
             )],
         )),
-        ScriptStep::response(finish_response("child-finish", "child done")),
-        ScriptStep::response(finish_response("parent-finish", "parent done")),
+        ScriptStep::response(LLMResponse::new("child done")),
+        ScriptStep::response(LLMResponse::new("parent done")),
     ]);
     let requests = Arc::new(Mutex::new(Vec::<ApprovalRequest>::new()));
     let provider = FullApprovalRequestProvider {
@@ -327,12 +315,7 @@ fn configured_child_approval_uses_canonical_identity_auto_broker_and_includes_fi
             approval: ApprovalPolicy::Always,
             ..ToolPolicy::default()
         }
-        .allow_only([
-            "task_finish",
-            "create_sub_task",
-            "sub_task_status",
-            "approval_action",
-        ]),
+        .allow_only(["create_sub_task", "sub_task_status", "approval_action"]),
     );
 
     let result = runtime
@@ -376,7 +359,7 @@ fn configured_child_approval_uses_canonical_identity_auto_broker_and_includes_fi
             .iter()
             .map(|request| request.tool_name.as_str())
             .collect::<Vec<_>>(),
-        ["approval_action", "task_finish"]
+        ["approval_action"]
     );
     for request in child_requests {
         assert_eq!(request.trace_id, "trace-child-approval");
@@ -422,8 +405,8 @@ fn configured_child_can_use_tool_denial_precedes_approval_and_executor() {
                 )],
             ))
         }),
-        ScriptStep::response(finish_response("child-finish", "child done")),
-        ScriptStep::response(finish_response("parent-finish", "parent done")),
+        ScriptStep::response(LLMResponse::new("child done")),
+        ScriptStep::response(LLMResponse::new("parent done")),
     ]);
     let requests = Arc::new(Mutex::new(Vec::new()));
     let provider = RecordingApprovalProvider {
@@ -437,7 +420,7 @@ fn configured_child_can_use_tool_denial_precedes_approval_and_executor() {
             approval: ApprovalPolicy::OnRequest,
             ..ToolPolicy::default()
         }
-        .allow_only(["task_finish", "create_sub_task", "guarded_action"])
+        .allow_only(["create_sub_task", "guarded_action"])
         .can_use_tool(move |name, _arguments| {
             if name == "guarded_action" {
                 order_for_predicate
@@ -521,7 +504,7 @@ fn configured_child_required_approval_without_provider_does_not_execute() {
                 json!({}),
             )],
         )),
-        ScriptStep::response(finish_response("parent-finish", "parent done")),
+        ScriptStep::response(LLMResponse::new("parent done")),
     ]);
     let mut runtime = AgentRuntime::new(llm).with_tool_registry(registry);
     runtime.set_tool_policy(
@@ -529,7 +512,7 @@ fn configured_child_required_approval_without_provider_does_not_execute() {
             approval: ApprovalPolicy::OnRequest,
             ..ToolPolicy::default()
         }
-        .allow_only(["task_finish", "create_sub_task", "approval_action"]),
+        .allow_only(["create_sub_task", "approval_action"]),
     );
 
     let result = runtime
@@ -583,8 +566,8 @@ fn run_child_approval_mode(
                 json!({}),
             )],
         )),
-        ScriptStep::response(finish_response("child-finish", "child done")),
-        ScriptStep::response(finish_response("parent-finish", "parent done")),
+        ScriptStep::response(LLMResponse::new("child done")),
+        ScriptStep::response(LLMResponse::new("parent done")),
     ]);
     let requests = Arc::new(Mutex::new(Vec::new()));
     let provider = RecordingApprovalProvider {
@@ -597,7 +580,7 @@ fn run_child_approval_mode(
             approval,
             ..ToolPolicy::default()
         }
-        .allow_only(["task_finish", "create_sub_task", "approval_action"]),
+        .allow_only(["create_sub_task", "approval_action"]),
     );
     let controls = RuntimeRunControls {
         execution_context: Some(ExecutionContext {

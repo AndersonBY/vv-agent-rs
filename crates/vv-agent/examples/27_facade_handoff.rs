@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .workspace(config.workspace)
         .build()?;
     let researcher = Agent::builder("researcher")
-        .instructions("你负责收集事实并调用 task_finish 输出简洁结论。")
+        .instructions("你负责收集事实并输出简洁结论。")
         .model(ModelRef::backend(
             config.backend.clone(),
             config.model.clone(),

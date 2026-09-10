@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .build()?;
     let agent = Agent::builder("temporary-tool-agent")
-        .instructions("你必须先调用 temporary_context，再结合其结果调用 task_finish。")
+        .instructions("你必须先调用 temporary_context，再结合其结果回答。")
         .model(ModelRef::backend(
             config.backend.clone(),
             config.model.clone(),

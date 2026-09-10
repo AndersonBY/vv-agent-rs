@@ -438,7 +438,7 @@ async fn cancellation_precedes_output_guardrail_failure_in_result_and_event() {
         result.completion_reason(),
         Some(CompletionReason::Cancelled)
     );
-    assert_eq!(result.partial_output(), Some("finished"));
+    assert_eq!(result.partial_output(), Some("tool final output"));
     assert_eq!(result.final_output(), Some("Operation was cancelled"));
     let terminal = result.events().last().expect("terminal event");
     assert!(matches!(
@@ -492,12 +492,5 @@ async fn late_and_repeated_cancel_do_not_replace_completed_handle_state() {
 }
 
 fn finish_response(message: &str) -> LLMResponse {
-    LLMResponse::with_tool_calls(
-        "finished",
-        vec![ToolCall::new(
-            "finish",
-            "task_finish",
-            BTreeMap::from([("message".to_string(), json!(message))]),
-        )],
-    )
+    LLMResponse::new(message)
 }

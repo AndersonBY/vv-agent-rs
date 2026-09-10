@@ -93,22 +93,8 @@ fn real_configured_sub_agent_producer_matches_locked_event_fixture_line_by_line(
                 json!({}),
             )],
         )),
-        ScriptStep::response(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "child-finish",
-                "task_finish",
-                json!({"message": "child done"}),
-            )],
-        )),
-        ScriptStep::response(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "parent-finish",
-                "task_finish",
-                json!({"message": "parent done"}),
-            )],
-        )),
+        ScriptStep::response(LLMResponse::new("child done")),
+        ScriptStep::response(LLMResponse::new("parent done")),
     ]);
     let success = AgentRuntime::new(success_llm)
         .with_default_backend("test")
@@ -134,14 +120,7 @@ fn real_configured_sub_agent_producer_matches_locked_event_fixture_line_by_line(
                 json!({}),
             )],
         )),
-        ScriptStep::response(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "parent-finish-failed",
-                "task_finish",
-                json!({"message": "parent handled child failure"}),
-            )],
-        )),
+        ScriptStep::response(LLMResponse::new("parent handled child failure")),
     ]);
     let mut invalid_sub_agent = SubAgentConfig::new("child-model", "Research");
     invalid_sub_agent.system_prompt = Some(" \n ".to_string());

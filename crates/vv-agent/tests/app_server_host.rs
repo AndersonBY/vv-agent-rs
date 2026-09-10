@@ -17,7 +17,7 @@ use vv_agent::app_server::protocol::{
 };
 use vv_agent::app_server::thread_store::SqliteThreadStore;
 use vv_agent::app_server::transport::ConnectionId;
-use vv_agent::{Agent, LLMResponse, ModelRef, RunConfig, Runner, ScriptedModelProvider, ToolCall};
+use vv_agent::{Agent, LLMResponse, ModelRef, RunConfig, Runner, ScriptedModelProvider};
 
 #[tokio::test]
 async fn model_list_uses_the_injected_host() {
@@ -324,16 +324,7 @@ fn scripted_runner(responses: Vec<LLMResponse>) -> Runner {
 }
 
 fn finish_response(message: &str) -> LLMResponse {
-    let mut arguments = BTreeMap::new();
-    arguments.insert("message".to_string(), json!(message));
-    LLMResponse::with_tool_calls(
-        message,
-        vec![ToolCall::new(
-            format!("finish-{message}"),
-            "task_finish",
-            arguments,
-        )],
-    )
+    LLMResponse::new(message)
 }
 
 fn assert_resolution_request(

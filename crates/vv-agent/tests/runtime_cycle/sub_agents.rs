@@ -16,10 +16,6 @@ fn runtime_executes_configured_sub_agent_with_real_runner() {
         "task_description".to_string(),
         json!("Find the target crate"),
     );
-    let mut child_finish_args = BTreeMap::new();
-    child_finish_args.insert("message".to_string(), json!("child found vv-llm"));
-    let mut parent_finish_args = BTreeMap::new();
-    parent_finish_args.insert("message".to_string(), json!("parent saw child result"));
 
     let llm = ScriptedLlmClient::new(vec![
         LLMResponse::with_tool_calls(
@@ -30,22 +26,8 @@ fn runtime_executes_configured_sub_agent_with_real_runner() {
                 sub_task_args,
             )],
         ),
-        LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::new(
-                "child_finish",
-                "task_finish",
-                child_finish_args,
-            )],
-        ),
-        LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::new(
-                "parent_finish",
-                "task_finish",
-                parent_finish_args,
-            )],
-        ),
+        LLMResponse::new("child found vv-llm"),
+        LLMResponse::new("parent saw child result"),
     ]);
     let runtime = AgentRuntime::new(llm);
     let mut task = AgentTask::new(
@@ -89,10 +71,6 @@ fn configured_sub_agent_inherits_limits_with_fresh_counters_and_without_parent_m
         "task_description".to_string(),
         json!("Find the target crate"),
     );
-    let mut child_finish_args = BTreeMap::new();
-    child_finish_args.insert("message".to_string(), json!("child done"));
-    let mut parent_finish_args = BTreeMap::new();
-    parent_finish_args.insert("message".to_string(), json!("parent done"));
 
     let mut parent_delegate = LLMResponse::with_tool_calls(
         "delegate",
@@ -107,27 +85,13 @@ fn configured_sub_agent_inherits_limits_with_fresh_counters_and_without_parent_m
         usage_source: UsageSource::ProviderReported,
         ..TokenUsage::default()
     };
-    let mut child_finish = LLMResponse::with_tool_calls(
-        "child work",
-        vec![ToolCall::new(
-            "child_finish",
-            "task_finish",
-            child_finish_args,
-        )],
-    );
+    let mut child_finish = LLMResponse::new("child done");
     child_finish.token_usage = TokenUsage {
         total_tokens: Some(4),
         usage_source: UsageSource::ProviderReported,
         ..TokenUsage::default()
     };
-    let mut parent_finish = LLMResponse::with_tool_calls(
-        "parent synthesis",
-        vec![ToolCall::new(
-            "parent_finish",
-            "task_finish",
-            parent_finish_args,
-        )],
-    );
+    let mut parent_finish = LLMResponse::new("parent done");
     parent_finish.token_usage = TokenUsage {
         total_tokens: Some(1),
         usage_source: UsageSource::ProviderReported,
@@ -294,11 +258,6 @@ fn runtime_rejects_sub_agent_model_mismatch_without_settings_file() {
         "task_description".to_string(),
         json!("Use a different model"),
     );
-    let mut parent_finish_args = BTreeMap::new();
-    parent_finish_args.insert(
-        "message".to_string(),
-        json!("parent recorded child failure"),
-    );
 
     let llm = ScriptedLlmClient::new(vec![
         LLMResponse::with_tool_calls(
@@ -309,14 +268,7 @@ fn runtime_rejects_sub_agent_model_mismatch_without_settings_file() {
                 sub_task_args,
             )],
         ),
-        LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::new(
-                "parent_finish",
-                "task_finish",
-                parent_finish_args,
-            )],
-        ),
+        LLMResponse::new("parent recorded child failure"),
     ]);
     let runtime = AgentRuntime::new(llm);
     let mut task = AgentTask::new(
@@ -361,8 +313,6 @@ fn runtime_carries_generated_sub_agent_prompt_as_an_explicit_bundle() {
         "task_description".to_string(),
         json!("Inspect generated prompt sections"),
     );
-    let mut parent_finish_args = BTreeMap::new();
-    parent_finish_args.insert("message".to_string(), json!("parent saw prompt metadata"));
 
     let llm = InspectingSubAgentPromptLlmClient::new(vec![
         LLMResponse::with_tool_calls(
@@ -373,14 +323,7 @@ fn runtime_carries_generated_sub_agent_prompt_as_an_explicit_bundle() {
                 sub_task_args,
             )],
         ),
-        LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::new(
-                "parent_finish",
-                "task_finish",
-                parent_finish_args,
-            )],
-        ),
+        LLMResponse::new("parent saw prompt metadata"),
     ]);
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm);
@@ -429,11 +372,6 @@ fn runtime_ignores_sub_agent_prompt_metadata_side_channel() {
         "task_description".to_string(),
         json!("Inspect configured prompt sections"),
     );
-    let mut parent_finish_args = BTreeMap::new();
-    parent_finish_args.insert(
-        "message".to_string(),
-        json!("parent saw configured prompt metadata"),
-    );
 
     let llm = InspectingSubAgentPromptLlmClient::new(vec![
         LLMResponse::with_tool_calls(
@@ -444,14 +382,7 @@ fn runtime_ignores_sub_agent_prompt_metadata_side_channel() {
                 sub_task_args,
             )],
         ),
-        LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::new(
-                "parent_finish",
-                "task_finish",
-                parent_finish_args,
-            )],
-        ),
+        LLMResponse::new("parent saw configured prompt metadata"),
     ]);
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm);
@@ -499,8 +430,6 @@ fn runtime_sub_agent_identity_metadata_cannot_be_overridden_by_request() {
         "task_description".to_string(),
         json!("Inspect isolated metadata"),
     );
-    let mut parent_finish_args = BTreeMap::new();
-    parent_finish_args.insert("message".to_string(), json!("parent saw isolated metadata"));
 
     let llm = InspectingSubAgentPromptLlmClient::new(vec![
         LLMResponse::with_tool_calls(
@@ -511,14 +440,7 @@ fn runtime_sub_agent_identity_metadata_cannot_be_overridden_by_request() {
                 sub_task_args,
             )],
         ),
-        LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::new(
-                "parent_finish",
-                "task_finish",
-                parent_finish_args,
-            )],
-        ),
+        LLMResponse::new("parent saw isolated metadata"),
     ]);
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm);
@@ -623,14 +545,7 @@ impl LlmClient for InspectingSubAgentPromptLlmClient {
                 .child_system_metadata
                 .lock()
                 .expect("child metadata poisoned") = Some(metadata);
-            return Ok(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::new(
-                    "child_prompt_finish",
-                    "task_finish",
-                    BTreeMap::from([("message".to_string(), json!("child saw prompt"))]),
-                )],
-            ));
+            return Ok(LLMResponse::new("child saw prompt"));
         }
 
         self.responses
@@ -698,23 +613,9 @@ impl LlmClient for StreamingSubAgentLlmClient {
                         ("estimated_tokens".to_string(), json!(12)),
                     ]));
                 }
-                Ok(LLMResponse::with_tool_calls(
-                    "sub finish",
-                    vec![ToolCall::new(
-                        "sub_finish",
-                        "task_finish",
-                        BTreeMap::from([("message".to_string(), json!("sub done"))]),
-                    )],
-                ))
+                Ok(LLMResponse::new("sub done"))
             }
-            _ => Ok(LLMResponse::with_tool_calls(
-                "parent finish",
-                vec![ToolCall::new(
-                    "parent_finish",
-                    "task_finish",
-                    BTreeMap::from([("message".to_string(), json!("parent done"))]),
-                )],
-            )),
+            _ => Ok(LLMResponse::new("parent done")),
         }
     }
 }

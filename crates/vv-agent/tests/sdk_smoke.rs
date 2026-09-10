@@ -1,9 +1,4 @@
-use std::collections::BTreeMap;
-
-use serde_json::json;
-use vv_agent::{
-    Agent, AgentStatus, LLMResponse, ModelRef, Runner, ScriptedModelProvider, ToolCall,
-};
+use vv_agent::{Agent, AgentStatus, LLMResponse, ModelRef, Runner, ScriptedModelProvider};
 
 #[tokio::test]
 async fn runner_facade_can_run_a_simple_prompt() {
@@ -11,7 +6,7 @@ async fn runner_facade_can_run_a_simple_prompt() {
         .model_provider(ScriptedModelProvider::new(
             "scripted",
             "demo",
-            vec![finish_response("final answer")],
+            vec![LLMResponse::new("final answer")],
         ))
         .workspace(".")
         .build()
@@ -26,10 +21,4 @@ async fn runner_facade_can_run_a_simple_prompt() {
 
     assert_eq!(result.status(), AgentStatus::Completed);
     assert_eq!(result.final_output(), Some("final answer"));
-}
-
-fn finish_response(message: &str) -> LLMResponse {
-    let mut args = BTreeMap::new();
-    args.insert("message".to_string(), json!(message));
-    LLMResponse::with_tool_calls("", vec![ToolCall::new("finish", "task_finish", args)])
 }

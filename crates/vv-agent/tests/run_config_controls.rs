@@ -55,14 +55,7 @@ impl LlmClient for ProbeClient {
                     ToolCall::from_raw_arguments("probe_2", "probe_tool", json!({})),
                 ],
             )),
-            1 => Ok(LLMResponse::with_tool_calls(
-                "done",
-                vec![ToolCall::from_raw_arguments(
-                    "finish",
-                    "task_finish",
-                    json!({"message": "done"}),
-                )],
-            )),
+            1 => Ok(LLMResponse::new("done")),
             _ => Err(LlmError::ScriptExhausted),
         }
     }
@@ -231,14 +224,7 @@ async fn unsupported_debug_dump_configuration_fails_before_the_first_model_call(
     let provider = vv_agent::ScriptedModelProvider::new(
         "scripted",
         "demo-model",
-        vec![LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "finish",
-                "task_finish",
-                json!({"message": "unused"}),
-            )],
-        )],
+        vec![LLMResponse::new("unused")],
     );
     let runner = Runner::builder()
         .model_provider(provider)

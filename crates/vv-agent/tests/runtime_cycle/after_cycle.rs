@@ -48,7 +48,10 @@ fn after_cycle_steer_defers_native_no_tool_completion() {
         vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
         "answer",
     );
-    task.no_tool_policy = NoToolPolicy::Finish;
+    task.initial_shared_state.insert(
+        "todo_list".to_string(),
+        json!([{"title": "review", "status": "pending"}]),
+    );
     task.max_cycles = 3;
 
     let result = runtime.run(task).expect("run");
@@ -75,24 +78,17 @@ fn after_cycle_steer_defers_native_no_tool_completion() {
     assert!(!result
         .messages
         .iter()
-        .any(|message| message.content == "Continue. If the task is complete, call task_finish."));
+        .any(|message| message.content == "No tool call was produced. Continue the task."));
 }
 
 #[test]
-fn after_cycle_stop_cannot_project_tool_completion_as_success() {
+fn after_cycle_stop_cannot_project_native_completion_as_success() {
     let hook = Arc::new(|_snapshot: &AfterCycleSnapshot| {
         AfterCycleDecision::stop_non_success("host.policy_stop", "Host policy stopped this run.")
             .map(Some)
             .map_err(|error| error.to_string())
     });
-    let response = LLMResponse::with_tool_calls(
-        "done",
-        vec![ToolCall::new(
-            "finish",
-            "task_finish",
-            BTreeMap::from([("message".to_string(), json!("native success"))]),
-        )],
-    );
+    let response = LLMResponse::new("native success");
     let runtime = AgentRuntime::new(ScriptedLlmClient::new(vec![response]))
         .with_after_cycle_hooks(vec![hook]);
 
@@ -149,7 +145,7 @@ fn after_cycle_permission_narrowing_hides_schema_and_blocks_dispatch() {
     let hook = Arc::new(move |_snapshot: &AfterCycleSnapshot| {
         let call = hook_calls.fetch_add(1, Ordering::SeqCst);
         if call == 0 {
-            return AfterCycleDecision::continue_with_disallowed_tools(["bash"])
+            return AfterCycleDecision::steer_with_disallowed_tools(["Continue."], ["bash"])
                 .map(Some)
                 .map_err(|error| error.to_string());
         }
@@ -171,14 +167,7 @@ fn after_cycle_permission_narrowing_hides_schema_and_blocks_dispatch() {
             )],
         ))
     });
-    let finish = LLMResponse::with_tool_calls(
-        "done",
-        vec![ToolCall::new(
-            "finish",
-            "task_finish",
-            BTreeMap::from([("message".to_string(), json!("done"))]),
-        )],
-    );
+    let finish = LLMResponse::new("done");
     let llm = ScriptedLlmClient::from_steps(vec![
         ScriptStep::response(LLMResponse::new("observe")),
         inspect,
@@ -191,7 +180,6 @@ fn after_cycle_permission_narrowing_hides_schema_and_blocks_dispatch() {
         vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
         "work",
     );
-    task.no_tool_policy = NoToolPolicy::Continue;
     task.max_cycles = 4;
     task.use_workspace = true;
 

@@ -18,9 +18,9 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock adopts contract `14.0.0` at revision
-`b873f57607cc99a2d3b95f58e61a1f74d9316001`, canonical artifact SHA-256
-`0109fb57c04d9a0a058e2bc8df28bc777464e70687c52d2af36e5dba60e9dd4c`.
+The current lock adopts contract `15.0.0` at revision
+`86fb47c934ef8ef4b0671d895cd3c228c82b1395`, canonical artifact SHA-256
+`8f21696c853ada95883f92a45bfc7f32b220a2a5fce75118a29d558c3f9fa57d`.
 The current adoption state is not duplicated in this document. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
 as the machine-readable source for the current verified Python and Rust
@@ -89,7 +89,7 @@ the central cross-repository workflow.
 | System prompt | `crates/vv-agent/src/prompt/`, `crates/vv-agent/tests/prompt_public_api.rs` |
 | Resolved PromptBundle and one-run producer scope | `crates/vv-agent/src/agent.rs`, `crates/vv-agent/src/runner.rs`, `crates/vv-agent/src/runner/run_single.rs`, `crates/vv-agent/src/runtime/engine/model_request.rs`, `crates/vv-agent/src/llm/`; `crates/vv-agent/tests/context_providers.rs`, `crates/vv-agent/tests/runner_checkpoint.rs`, `crates/vv-agent/tests/parity_evidence_manifests.rs` |
 | Built-in tool specification | `crates/vv-agent/src/tools/`, `crates/vv-agent/tests/tool_schema_contract.rs` |
-| Canonical 15-tool surface and removed model memory tool | `crates/vv-agent/src/tools/registry/defaults.rs`, `crates/vv-agent/src/constants/tool_names.rs`, `crates/vv-agent/src/tools/executor.rs`; `crates/vv-agent/tests/parity_evidence_manifests.rs`, `crates/vv-agent/tests/tool_schema_contract.rs`, `crates/vv-agent/tests/builtin_tool_behavior_contract.rs` |
+| Canonical 14-tool surface | `crates/vv-agent/src/tools/registry/defaults.rs`, `crates/vv-agent/src/constants/tool_names.rs`, `crates/vv-agent/src/tools/executor.rs`; `crates/vv-agent/tests/parity_evidence_manifests.rs`, `crates/vv-agent/tests/tool_schema_contract.rs`, `crates/vv-agent/tests/builtin_tool_behavior_contract.rs` |
 | Sparse bounded tool results, artifact recovery, and read cursor | `crates/vv-agent/src/types/tool_calls.rs`, `crates/vv-agent/src/types/dict/tools.rs`, `crates/vv-agent/src/workspace/artifacts.rs`, `crates/vv-agent/src/tools/handlers/bash/execution.rs`, `crates/vv-agent/src/tools/handlers/background.rs`, `crates/vv-agent/src/tools/handlers/workspace/file_io/read.rs`; `crates/vv-agent/tests/bounded_tool_result_contract.rs`, `crates/vv-agent/tests/bash_tools.rs`, `crates/vv-agent/tests/workspace_tools.rs` |
 | Typed tool declaration and public propagation | `crates/vv-agent/src/tools/metadata.rs`, `crates/vv-agent/src/tools/function.rs`, `crates/vv-agent/src/tools/public_tool.rs`, `crates/vv-agent/src/tools/base/spec.rs`, `crates/vv-agent/src/tools/executor.rs`, `crates/vv-agent/src/tools/registry/mod.rs`; `crates/vv-agent/tests/tool_metadata_contract.rs`, `crates/vv-agent/tests/parity_evidence_manifests.rs`, `crates/vv-agent/tests/tool_orchestrator.rs`, `crates/vv-agent/tests/tool_schema_contract.rs` |
 | Metadata denial policy and delegation | `crates/vv-agent/src/tools/policy.rs`, `crates/vv-agent/src/runner/support.rs`, `crates/vv-agent/src/runtime/tool_planner.rs`, `crates/vv-agent/src/runtime/sub_agents/`, `crates/vv-agent/src/runner/handoff.rs`, `crates/vv-agent/src/runtime/backends/distributed/`; `crates/vv-agent/tests/runner_tool_policy.rs`, `crates/vv-agent/tests/configured_sub_agent_parity.rs`, `crates/vv-agent/tests/agent_tool_contract.rs`, `crates/vv-agent/tests/handoff_contract.rs`, `crates/vv-agent/tests/distributed_checkpoint.rs` |
@@ -115,7 +115,7 @@ A fixture parser or private helper test cannot replace a real public producer
 test. A field that is declared but ignored by a planner, executor, provider, or
 store remains a contract failure.
 
-## Contract 14.0.0 Boundaries
+## Contract 15.0.0 Boundaries
 
 Definitive ordinary and deferred tool receipts use the closed RFC 8785 receipt
 identity object `{attempt, checkpoint_key, operation_id, request_digest,
@@ -131,10 +131,12 @@ Memory, SQLite, and Redis stores reuse their existing receipt indexes and CAS
 boundaries, return complete `ControllerCommandWakeRecord` values for pending or
 expired claimed `recovery_dispatch` wakes in `(expected_revision, command_id)`
 order, and never return ambiguous or cross-checkpoint rows. Distributed
-host-response recovery consumes the wake through the combined
-checkpoint/interaction CAS before model or tool work and hands the retained
-`host-recovery:` execution claim to the worker without a second claim or
-resume-attempt increment.
+host-response recovery runs inside the worker, after capability admission and
+before model or tool work. Only the invocation receiving an applied combined
+checkpoint/interaction CAS owns the retained execution claim. A consumed replay
+does not transfer ownership, and an unexpired claim excludes duplicate workers
+without changing the checkpoint revision. The scheduler observes one checkpoint
+snapshot and dispatches recovery without consuming the response or acquiring a claim.
 
 ## Current Runtime Boundaries
 
@@ -178,9 +180,9 @@ the runtime does not materialize the full capture in application memory, and
 shell commands cannot mutate recovery bytes. Recovery still passes through the
 normal workspace and `read_file` policy boundary.
 
-The current built-in manifest is `vv-agent-builtin-tools-v2` with 15
-model-visible tools. Its fixture schema version is `2`; the canonical
-distributed `ToolsetRef.version` remains `1`. `ToolExposure` contains only
+The current built-in manifest is `vv-agent-builtin-tools-v3` with 14
+model-visible tools. Its fixture schema version is `3`; the canonical
+distributed `ToolsetRef.version` is `3`. `ToolExposure` contains only
 `direct` and `hidden`. The model-visible `compress_memory` tool,
 `memory_notes` state, and `deferred` exposure do not exist; framework-owned
 automatic compaction remains internal.
@@ -228,7 +230,7 @@ case-folded, whitespace-normalized content, so replay does not duplicate an
 existing fact. Producer coverage for the crash boundary and terminal replay is
 in `crates/vv-agent/tests/runner_checkpoint.rs`.
 
-Contract `14.0.0` persists every ordinary definitive `ERROR` tool receipt as
+Contract `15.0.0` persists every ordinary definitive `ERROR` tool receipt as
 the complete strict `ToolExecutionResult` plus its digest. `OperationError` is
 only the normalized projection of that result; resume verifies the digest and
 reconstructs the tool `Message` from the result, preserving metadata, directive,

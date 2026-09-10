@@ -775,14 +775,7 @@ fn approval_processor_with_timeout(
                         json!({}),
                     )],
                 ),
-                LLMResponse::with_tool_calls(
-                    "",
-                    vec![ToolCall::from_raw_arguments(
-                        "finish",
-                        "task_finish",
-                        json!({"message":"done"}),
-                    )],
-                ),
+                LLMResponse::new("done"),
                 LLMResponse::with_tool_calls(
                     "",
                     vec![ToolCall::from_raw_arguments(
@@ -791,14 +784,7 @@ fn approval_processor_with_timeout(
                         json!({}),
                     )],
                 ),
-                LLMResponse::with_tool_calls(
-                    "",
-                    vec![ToolCall::from_raw_arguments(
-                        "finish_2",
-                        "task_finish",
-                        json!({"message":"done again"}),
-                    )],
-                ),
+                LLMResponse::new("done again"),
             ],
         ))
         .workspace(".")

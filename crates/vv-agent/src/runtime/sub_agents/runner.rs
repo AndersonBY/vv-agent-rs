@@ -329,16 +329,7 @@ mod parity_event_tests {
 
     #[test]
     fn real_configured_sub_agent_events_normalize_to_shared_fixture() {
-        let mut finish_arguments = BTreeMap::new();
-        finish_arguments.insert("message".to_string(), json!("child done"));
-        let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::new(
-                "child-finish",
-                "task_finish",
-                finish_arguments,
-            )],
-        )]);
+        let llm = ScriptedLlmClient::new(vec![LLMResponse::new("child done")]);
         let mut parent_task = AgentTask::new(
             "parent-task",
             "child-model",
@@ -605,7 +596,14 @@ mod parity_event_tests {
             ),
             (
                 "max_cycles",
-                ScriptedLlmClient::new(vec![LLMResponse::new("keep going")]),
+                ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
+                    "keep going",
+                    vec![ToolCall::new(
+                        "track_progress",
+                        "todo_write",
+                        BTreeMap::from([("todos".to_string(), json!([]))]),
+                    )],
+                )]),
                 false,
             ),
             ("failed", ScriptedLlmClient::new(Vec::new()), true),

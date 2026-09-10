@@ -6,11 +6,6 @@ use super::helpers::{description, property_description};
 fn concise_tool_descriptions_keep_only_runtime_relevant_guidance() {
     let registry = build_default_registry();
 
-    let task_finish = description(&registry, "task_finish");
-    assert!(task_finish.contains("optional"));
-    assert!(task_finish.contains("no-tool policy"));
-    assert!(task_finish.contains("unfinished-TODO checks"));
-
     let edit_file = description(&registry, "edit_file");
     assert!(edit_file.contains("current read/write baseline"));
     assert!(edit_file.contains("stale baselines are rejected"));
@@ -40,7 +35,6 @@ fn descriptions_do_not_reintroduce_repeated_operational_manuals() {
         "create_sub_task",
         "sub_task_status",
         "read_image",
-        "task_finish",
         "ask_user",
         "activate_skill",
     ] {

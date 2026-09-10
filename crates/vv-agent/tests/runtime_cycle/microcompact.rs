@@ -135,21 +135,19 @@ impl LlmClient for MicrocompactInspectingLlmClient {
             ));
         }
         if *responses_seen == 2 {
-            return Ok(LLMResponse::new(
+            return Ok(LLMResponse::with_tool_calls(
                 "continue once so older tool output can age",
+                vec![ToolCall::new(
+                    "track_progress",
+                    "todo_write",
+                    BTreeMap::from([("todos".to_string(), json!([]))]),
+                )],
             ));
         }
         *self
             .third_request_messages
             .lock()
             .expect("messages poisoned") = request.messages.clone();
-        Ok(LLMResponse::with_tool_calls(
-            "finish",
-            vec![ToolCall::new(
-                "finish_after_microcompact",
-                "task_finish",
-                BTreeMap::from([("message".to_string(), json!("memory compacted"))]),
-            )],
-        ))
+        Ok(LLMResponse::new("memory compacted"))
     }
 }

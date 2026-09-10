@@ -418,7 +418,7 @@ impl AgentTask {
             memory_compact_threshold: default_memory_compact_threshold(),
             memory_threshold_percentage: 90,
             microcompaction_policy: MicrocompactionPolicy::default(),
-            no_tool_policy: NoToolPolicy::Continue,
+            no_tool_policy: NoToolPolicy::Finish,
             allow_interruption: true,
             use_workspace: true,
             sub_agents: BTreeMap::new(),

@@ -41,7 +41,17 @@ async fn public_runner_emits_run_agent_tool_topology() {
         .model_provider(ScriptedModelProvider::new(
             "scripted",
             "trace-model",
-            vec![finish_response("done")],
+            vec![
+                LLMResponse::with_tool_calls(
+                    "update todos",
+                    vec![ToolCall::new(
+                        "todo",
+                        "todo_write",
+                        BTreeMap::from([("todos".to_string(), json!([]))]),
+                    )],
+                ),
+                finish_response("done"),
+            ],
         ))
         .workspace("./workspace")
         .build()
@@ -94,6 +104,7 @@ async fn public_runner_emits_run_agent_tool_topology() {
     assert_eq!(ends, ["tool", "agent", "run"]);
     assert_eq!(agent_span.parent_id.as_deref(), Some(run.span_id.as_str()));
     assert_eq!(tool.parent_id.as_deref(), Some(agent_span.span_id.as_str()));
+    assert_eq!(tool.metadata["tool_name"], "todo_write");
     assert_eq!(result.status(), AgentStatus::Completed);
     assert_eq!(result.trace_id(), "trace-public-run");
     assert_eq!(run.metadata["workflow_name"], "public-workflow");
@@ -257,12 +268,5 @@ async fn trace_sink_failures_are_isolated_from_run() {
 }
 
 fn finish_response(message: &str) -> LLMResponse {
-    LLMResponse::with_tool_calls(
-        "",
-        vec![ToolCall::new(
-            "finish",
-            "task_finish",
-            BTreeMap::from([("message".to_string(), json!(message))]),
-        )],
-    )
+    LLMResponse::new(message)
 }

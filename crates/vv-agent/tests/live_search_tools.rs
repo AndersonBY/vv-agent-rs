@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 use vv_agent::{
-    constants::{FIND_FILES_TOOL_NAME, SEARCH_FILES_TOOL_NAME, TASK_FINISH_TOOL_NAME},
-    Agent, AgentStatus, ModelRef, ModelSettings, RunConfig, RunResult, Runner, ToolChoice,
-    ToolPolicy, ToolResultStatus, VvLlmModelProvider,
+    constants::{FIND_FILES_TOOL_NAME, SEARCH_FILES_TOOL_NAME},
+    Agent, AgentStatus, ModelRef, ModelSettings, RunConfig, RunResult, Runner, ToolPolicy,
+    ToolResultStatus, VvLlmModelProvider,
 };
 
 #[test]
@@ -39,7 +39,7 @@ fn live_model_uses_find_files_then_search_files() {
             r#"Validate the renamed search tools against the workspace.
 Step 1: call find_files with path ".", glob "**/*.txt", sort "path_asc", and max_results 10.
 Step 2: call search_files with pattern "CALYPSO_NEEDLE_7421", glob "**/*.txt", output_mode "content", and n true.
-Step 3: call task_finish with message exactly "LIVE_SEARCH_TOOLS_OK".
+Step 3: reply exactly "LIVE_SEARCH_TOOLS_OK".
 Do not call read_file, bash, workspace_grep, or list_files."#
                 .into(),
             live_run_config(),
@@ -72,7 +72,13 @@ Do not call read_file, bash, workspace_grep, or list_files."#
         Some(&[FIND_FILES_TOOL_NAME, SEARCH_FILES_TOOL_NAME][..]),
         "model did not call find_files then search_files: {events:#?}"
     );
-    assert_eq!(event_names.last().copied(), Some(TASK_FINISH_TOOL_NAME));
+    assert!(result
+        .result()
+        .cycles
+        .last()
+        .expect("final cycle")
+        .tool_calls
+        .is_empty());
 
     let find_event = &events[0];
     assert_eq!(find_event.status, ToolResultStatus::Success);
@@ -160,7 +166,7 @@ fn live_runner(workspace: &Path) -> Result<(Runner, ModelRef), String> {
 fn live_agent(name: &str, model: &ModelRef) -> Agent {
     Agent::builder(name)
         .instructions(
-            "You are a precise live integration-test agent. Follow the user's requested tool order exactly. Use only the available search tools, then finish with task_finish.",
+            "You are a precise live integration-test agent. Follow the user's requested tool order exactly. Use only the available search tools, then answer briefly.",
         )
         .model(model.clone())
         .model_settings(live_model_settings())
@@ -168,7 +174,6 @@ fn live_agent(name: &str, model: &ModelRef) -> Agent {
             ToolPolicy::default().allow_only([
                 FIND_FILES_TOOL_NAME,
                 SEARCH_FILES_TOOL_NAME,
-                TASK_FINISH_TOOL_NAME,
             ]),
         )
         .build()
@@ -179,11 +184,9 @@ fn live_run_config() -> RunConfig {
     RunConfig::builder()
         .max_cycles(8)
         .model_settings(live_model_settings())
-        .tool_policy(ToolPolicy::default().allow_only([
-            FIND_FILES_TOOL_NAME,
-            SEARCH_FILES_TOOL_NAME,
-            TASK_FINISH_TOOL_NAME,
-        ]))
+        .tool_policy(
+            ToolPolicy::default().allow_only([FIND_FILES_TOOL_NAME, SEARCH_FILES_TOOL_NAME]),
+        )
         .build()
 }
 
@@ -191,7 +194,6 @@ fn live_model_settings() -> ModelSettings {
     ModelSettings::builder()
         .temperature(0.0)
         .parallel_tool_calls(false)
-        .tool_choice(ToolChoice::Required)
         .timeout(Duration::from_secs(180))
         .build()
 }

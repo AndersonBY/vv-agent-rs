@@ -633,14 +633,7 @@ impl LlmClient for SessionMemoryExtractingLlmClient {
             .second_request_messages
             .lock()
             .expect("messages poisoned") = request.messages.clone();
-        Ok(LLMResponse::with_tool_calls(
-            "finish",
-            vec![ToolCall::new(
-                "finish_after_compact",
-                "task_finish",
-                BTreeMap::from([("message".to_string(), json!("memory compacted"))]),
-            )],
-        ))
+        Ok(LLMResponse::new("memory compacted"))
     }
 }
 

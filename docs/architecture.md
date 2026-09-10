@@ -28,10 +28,11 @@ CLI / SDK / embedding application
   -> RunResult / AgentResult
 ```
 
-The default is tool-driven: `task_finish` finishes and
-`ask_user` waits for input. `Agent` and `RunConfig` can explicitly select a
-no-tool finish or wait policy. The runtime applies that control without
-classifying assistant text or inferring task-specific success.
+The default `NoToolPolicy::Finish` uses an assistant response without tool calls
+as the final answer. `ask_user` waits for required input. Hosts can explicitly
+select `Continue` or `WaitUser`, and existing after-cycle hooks can steer a
+completion candidate before finalization. The runtime does not classify
+response text or use TODO state as a success predicate.
 
 Raw model stream callbacks are synchronous at-least-once observers, not a
 durable event store. The Runner projects only assistant/reasoning deltas and

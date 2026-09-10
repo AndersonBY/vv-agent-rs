@@ -160,16 +160,10 @@ impl CheckpointResumeController {
         }
 
         let now_ms = now_ms()?;
-        let retained_host_recovery_claim = self
-            .require_checkpoint()?
-            .claim_token
-            .as_deref()
-            .is_some_and(|token| token.starts_with("host-recovery:"));
         if self
             .require_checkpoint()?
             .lease_expires_at_ms
             .is_some_and(|expiry| expiry > now_ms)
-            && !retained_host_recovery_claim
         {
             return Err(CheckpointError::new(
                 "checkpoint_claim_active",

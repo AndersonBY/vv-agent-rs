@@ -275,14 +275,7 @@ impl LlmClient for MemoryCompactionInspectingLlmClient {
             .second_request_messages
             .lock()
             .expect("messages poisoned") = request.messages.clone();
-        Ok(LLMResponse::with_tool_calls(
-            "finish",
-            vec![ToolCall::new(
-                "finish_after_compact",
-                "task_finish",
-                BTreeMap::from([("message".to_string(), json!("memory compacted"))]),
-            )],
-        ))
+        Ok(LLMResponse::new("memory compacted"))
     }
 }
 
@@ -309,7 +302,14 @@ impl LlmClient for PromptTokenCompactionInspectingLlmClient {
             .map_err(|_| LlmError::Request("counter poisoned".to_string()))?;
         *responses_seen += 1;
         if *responses_seen == 1 {
-            let mut response = LLMResponse::new("continue after measuring prompt tokens");
+            let mut response = LLMResponse::with_tool_calls(
+                "continue after measuring prompt tokens",
+                vec![ToolCall::new(
+                    "track_progress",
+                    "todo_write",
+                    BTreeMap::from([("todos".to_string(), json!([]))]),
+                )],
+            );
             response.token_usage = TokenUsage {
                 input_tokens: Some(101),
                 total_tokens: Some(120),
@@ -321,13 +321,6 @@ impl LlmClient for PromptTokenCompactionInspectingLlmClient {
             .second_request_messages
             .lock()
             .expect("messages poisoned") = request.messages.clone();
-        Ok(LLMResponse::with_tool_calls(
-            "finish",
-            vec![ToolCall::new(
-                "finish_after_prompt_usage_compaction",
-                "task_finish",
-                BTreeMap::from([("message".to_string(), json!("memory compacted"))]),
-            )],
-        ))
+        Ok(LLMResponse::new("memory compacted"))
     }
 }

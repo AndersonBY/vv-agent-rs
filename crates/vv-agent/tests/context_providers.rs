@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -6,7 +5,7 @@ use serde_json::json;
 use vv_agent::{
     assemble_context_fragments, Agent, ContextError, ContextFragment, ContextProvider,
     ContextRequest, LLMResponse, ModelRef, NoToolPolicy, PromptBundle, PromptSection, RunConfig,
-    Runner, ScriptStep, ScriptedModelProvider, SubAgentConfig, ToolCall,
+    Runner, ScriptStep, ScriptedModelProvider, SubAgentConfig,
 };
 
 struct StaticProvider;
@@ -121,11 +120,7 @@ async fn runner_globally_orders_instructions_and_provider_context_with_cache_met
             .lock()
             .expect("requests")
             .push(request.clone());
-        let args = BTreeMap::from([("message".to_string(), json!("done"))]);
-        Ok(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::new("finish", "task_finish", args)],
-        ))
+        Ok(LLMResponse::new("done"))
     });
     let runner = Runner::builder()
         .model_provider(provider)
@@ -207,11 +202,7 @@ async fn runner_resolves_prompt_producers_once_per_run_and_reuses_the_bundle_acr
                     .expect("requests")
                     .push(request.clone());
                 if request_index % 3 == 2 {
-                    let args = BTreeMap::from([("message".to_string(), json!("done"))]);
-                    Ok(LLMResponse::with_tool_calls(
-                        "",
-                        vec![ToolCall::new("finish", "task_finish", args)],
-                    ))
+                    Ok(LLMResponse::new("done"))
                 } else {
                     Ok(LLMResponse::new("continue"))
                 }
@@ -258,15 +249,17 @@ async fn runner_resolves_prompt_producers_once_per_run_and_reuses_the_bundle_acr
             .build()
     };
 
-    runner
+    let first = runner
         .run_with_config(&agent, "first run", config())
         .await
         .expect("first run");
-    runner
+    let second = runner
         .run_with_config(&agent, "second run", config())
         .await
         .expect("second run");
 
+    assert_eq!(first.status(), vv_agent::AgentStatus::MaxCycles);
+    assert_eq!(second.status(), vv_agent::AgentStatus::MaxCycles);
     assert_eq!(instruction_calls.load(Ordering::SeqCst), 2);
     assert_eq!(context_calls.load(Ordering::SeqCst), 2);
     let requests = captured.lock().expect("requests");

@@ -7,14 +7,7 @@ use vv_agent::{
 };
 
 fn finish(message: &str) -> LLMResponse {
-    LLMResponse::with_tool_calls(
-        "",
-        vec![ToolCall::from_raw_arguments(
-            format!("finish-{message}"),
-            "task_finish",
-            json!({"message": message}),
-        )],
-    )
+    LLMResponse::new(message)
 }
 
 #[tokio::test]

@@ -81,14 +81,7 @@ async fn function_handler_receives_real_identity_app_state_and_mutable_shared_st
                     json!({"value": "persisted"}),
                 )],
             ),
-            LLMResponse::with_tool_calls(
-                "finish",
-                vec![ToolCall::from_raw_arguments(
-                    "finish_call",
-                    "task_finish",
-                    json!({"message": "done"}),
-                )],
-            ),
+            LLMResponse::new("done"),
         ],
     );
     let runner = Runner::builder()

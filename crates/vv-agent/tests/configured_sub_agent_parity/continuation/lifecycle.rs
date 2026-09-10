@@ -114,8 +114,8 @@ fn real_continuation_preserves_complete_history_state_and_lineage() {
                 json!({"mode": "set"}),
             )],
         )),
-        ScriptStep::response(finish_response("first-finish", "first answer")),
-        ScriptStep::response(finish_response("parent-finish", "parent done")),
+        ScriptStep::response(LLMResponse::new("first answer")),
+        ScriptStep::response(LLMResponse::new("parent done")),
         ScriptStep::callback(move |request| {
             first_continuation_messages
                 .lock()
@@ -130,13 +130,13 @@ fn real_continuation_preserves_complete_history_state_and_lineage() {
                 )],
             ))
         }),
-        ScriptStep::response(finish_response("second-finish", "second answer")),
+        ScriptStep::response(LLMResponse::new("second answer")),
         ScriptStep::callback(move |request| {
             second_continuation_messages
                 .lock()
                 .expect("continuation messages")
                 .push(request.messages.clone());
-            Ok(finish_response("third-finish", "third answer"))
+            Ok(LLMResponse::new("third answer"))
         }),
     ]);
     let mut registry = build_default_registry();

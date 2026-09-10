@@ -47,7 +47,7 @@ pub(super) fn build_sub_agent_task(
     sub_task.max_cycles = sub_agent.max_cycles.max(1);
     sub_task.memory_threshold_percentage = parent_task.memory_threshold_percentage;
     sub_task.microcompaction_policy = parent_task.microcompaction_policy;
-    sub_task.no_tool_policy = NoToolPolicy::Continue;
+    sub_task.no_tool_policy = NoToolPolicy::Finish;
     sub_task.allow_interruption = false;
     sub_task.use_workspace = parent_task.use_workspace;
     sub_task.sub_agents = BTreeMap::new();

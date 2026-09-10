@@ -38,7 +38,6 @@ fn tools_module_is_split_into_handler_files() {
         "tools/schemas/workspace/search.rs",
         "tools/handlers/control/mod.rs",
         "tools/handlers/control/ask_user.rs",
-        "tools/handlers/control/task_finish.rs",
         "tools/handlers/todo.rs",
         "tools/handlers/workspace/mod.rs",
         "tools/handlers/workspace/edit.rs",
@@ -408,7 +407,7 @@ fn tools_module_is_split_into_handler_files() {
         ),
         (
             "tools/handlers/control.rs",
-            "control handlers should be split into task_finish and ask_user modules",
+            "control handlers should live in src/tools/handlers/control/ modules",
         ),
         (
             "tools/handlers/skills/models.rs",

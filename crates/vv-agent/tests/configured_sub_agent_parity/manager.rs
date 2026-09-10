@@ -688,14 +688,7 @@ fn explicit_backend_and_resolved_limits_reach_real_child_request_and_run_context
                     )],
                 ))
             }),
-            ScriptStep::response(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "child-finish",
-                    "task_finish",
-                    json!({"message": "child done"}),
-                )],
-            )),
+            ScriptStep::response(LLMResponse::new("child done")),
         ]));
         let resolved_refs = Arc::new(Mutex::new(Vec::new()));
         let provider: Arc<dyn ModelProvider> = Arc::new(ExplicitBackendModelProvider {
@@ -734,14 +727,7 @@ fn explicit_backend_and_resolved_limits_reach_real_child_request_and_run_context
                     }),
                 )],
             )),
-            ScriptStep::response(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "parent-finish",
-                    "task_finish",
-                    json!({"message": "parent done"}),
-                )],
-            )),
+            ScriptStep::response(LLMResponse::new("parent done")),
         ]);
         let manager = SubTaskManager::default();
         let mut parent = AgentTask::new(
@@ -867,14 +853,7 @@ fn lifecycle_starts_before_model_resolution_failure_and_remains_paired() {
                 json!({"agent_id": "researcher", "task_description": "Collect facts"}),
             )],
         )),
-        ScriptStep::response(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "parent-finish",
-                "task_finish",
-                json!({"message": "parent handled resolution failure"}),
-            )],
-        )),
+        ScriptStep::response(LLMResponse::new("parent handled resolution failure")),
     ]);
     let mut parent = AgentTask::new(
         "parent-task",

@@ -20,26 +20,8 @@ async fn agent_as_tool_emits_sub_run_parent_lineage() {
                     )],
                 ))
             }),
-            ScriptStep::callback(|_| {
-                Ok(LLMResponse::with_tool_calls(
-                    "",
-                    vec![ToolCall::from_raw_arguments(
-                        "finish_child",
-                        "task_finish",
-                        json!({"message":"child facts"}),
-                    )],
-                ))
-            }),
-            ScriptStep::callback(|_| {
-                Ok(LLMResponse::with_tool_calls(
-                    "",
-                    vec![ToolCall::from_raw_arguments(
-                        "finish_parent",
-                        "task_finish",
-                        json!({"message":"done"}),
-                    )],
-                ))
-            }),
+            ScriptStep::callback(|_| Ok(LLMResponse::new("child facts"))),
+            ScriptStep::callback(|_| Ok(LLMResponse::new("done"))),
         ],
     );
     let runner = Runner::builder()
@@ -97,16 +79,7 @@ async fn background_agent_tool_emits_sub_run_parent_lineage() {
                     )],
                 ))
             }),
-            ScriptStep::callback(|_| {
-                Ok(LLMResponse::with_tool_calls(
-                    "",
-                    vec![ToolCall::from_raw_arguments(
-                        "finish_parent",
-                        "task_finish",
-                        json!({"message":"queued"}),
-                    )],
-                ))
-            }),
+            ScriptStep::callback(|_| Ok(LLMResponse::new("queued"))),
         ],
     );
     let runner = Runner::builder()
@@ -168,16 +141,7 @@ async fn handoff_emits_started_and_completed_events() {
                     )],
                 ))
             }),
-            ScriptStep::callback(|_| {
-                Ok(LLMResponse::with_tool_calls(
-                    "",
-                    vec![ToolCall::from_raw_arguments(
-                        "finish_research",
-                        "task_finish",
-                        json!({"message":"researcher final"}),
-                    )],
-                ))
-            }),
+            ScriptStep::callback(|_| Ok(LLMResponse::new("researcher final"))),
         ],
     );
     let runner = Runner::builder()

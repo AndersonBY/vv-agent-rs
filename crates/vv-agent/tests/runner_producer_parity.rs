@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use vv_agent::{
     Agent, FunctionTool, LLMResponse, LlmClient, LlmError, LlmRequest, LlmStreamCallback,
     MemorySession, ModelError, ModelProvider, ModelRef, NoToolPolicy, ResolvedModelConfig,
-    RunConfig, RunEvent, RunEventPayload, Runner, ToolCall, ToolOutput,
+    RunConfig, RunEvent, RunEventPayload, Runner, ToolCall, ToolOutput, ToolUseBehavior,
 };
 
 const RUNNER_EVENTS_FIXTURE: &str = include_str!("fixtures/parity/runner_events.jsonl");
@@ -61,14 +61,7 @@ impl LlmClient for StreamingGoldenClient {
                 ("content_delta".to_string(), json!("assistant message")),
             ]));
         }
-        Ok(LLMResponse::with_tool_calls(
-            "complete assistant message",
-            vec![ToolCall::new(
-                "finish_golden",
-                "task_finish",
-                BTreeMap::from([("message".to_string(), json!("done"))]),
-            )],
-        ))
+        Ok(LLMResponse::new("complete assistant message"))
     }
 }
 
@@ -146,7 +139,7 @@ impl LlmClient for ContractStreamClient {
             "done",
             vec![ToolCall::new(
                 "call_stream",
-                "task_finish",
+                "echo",
                 BTreeMap::from([("message".to_string(), json!("done"))]),
             )],
         ))
@@ -174,6 +167,28 @@ impl ModelProvider for ContractStreamProvider {
     }
 }
 
+fn stream_agent() -> Agent {
+    let echo = FunctionTool::builder("echo")
+        .description("Return the supplied message.")
+        .json_schema(json!({
+            "type": "object",
+            "properties": {"message": {"type": "string"}},
+            "required": ["message"]
+        }))
+        .handler(|_context, arguments: Value| async move {
+            Ok(ToolOutput::text(arguments["message"].as_str().unwrap()))
+        })
+        .build()
+        .expect("echo tool");
+    Agent::builder("stream-agent")
+        .instructions("Return the third-cycle tool result.")
+        .model(ModelRef::named("stream-model"))
+        .tool(echo)
+        .tool_use_behavior(ToolUseBehavior::StopOnFirstTool)
+        .build()
+        .expect("stream agent")
+}
+
 #[tokio::test]
 async fn real_runner_projects_contract_stream_fixture_with_framework_identity() {
     let fixture: Value =
@@ -189,11 +204,7 @@ async fn real_runner_projects_contract_stream_fixture_with_framework_identity() 
         .workspace(workspace.path())
         .build()
         .expect("runner");
-    let agent = Agent::builder("stream-agent")
-        .instructions("Finish on the third cycle.")
-        .model(ModelRef::named("stream-model"))
-        .build()
-        .expect("agent");
+    let agent = stream_agent();
     let config = RunConfig::builder()
         .session(MemorySession::new("session_stream_parity"))
         .max_cycles(3)
@@ -313,11 +324,7 @@ async fn typed_stream_observer_panic_cannot_suppress_journal_or_terminal() {
         .workspace(workspace.path())
         .build()
         .expect("runner");
-    let agent = Agent::builder("stream-agent")
-        .instructions("Finish on the third cycle.")
-        .model(ModelRef::named("stream-model"))
-        .build()
-        .expect("agent");
+    let agent = stream_agent();
     let config = RunConfig::builder()
         .max_cycles(3)
         .no_tool_policy(NoToolPolicy::Continue)
@@ -362,12 +369,12 @@ async fn malformed_known_provider_payloads_are_dropped() {
         BTreeMap::from([
             ("event".to_string(), json!("tool_call_started")),
             ("tool_call_id".to_string(), json!("")),
-            ("function_name".to_string(), json!("task_finish")),
+            ("function_name".to_string(), json!("echo")),
         ]),
         BTreeMap::from([
             ("event".to_string(), json!("tool_call_progress")),
             ("tool_call_id".to_string(), json!("call_stream")),
-            ("function_name".to_string(), json!("task_finish")),
+            ("function_name".to_string(), json!("echo")),
             ("arguments_chars".to_string(), json!(-1)),
         ]),
     ];
@@ -382,11 +389,7 @@ async fn malformed_known_provider_payloads_are_dropped() {
             .workspace(workspace.path())
             .build()
             .expect("runner");
-        let agent = Agent::builder("stream-agent")
-            .instructions("Finish on the third cycle.")
-            .model(ModelRef::named("stream-model"))
-            .build()
-            .expect("agent");
+        let agent = stream_agent();
         let config = RunConfig::builder()
             .max_cycles(3)
             .no_tool_policy(NoToolPolicy::Continue)
@@ -434,7 +437,7 @@ async fn real_runner_live_events_match_python_producer_golden() {
         .build()
         .expect("runner");
     let agent = Agent::builder("runner-agent")
-        .instructions("Finish with task_finish.")
+        .instructions("Return the final answer.")
         .model(ModelRef::named("golden-model"))
         .build()
         .expect("agent");
@@ -528,7 +531,7 @@ async fn ordinary_run_collects_observability_without_a_live_handle() {
         .build()
         .expect("runner");
     let agent = Agent::builder("runner-agent")
-        .instructions("Finish with task_finish.")
+        .instructions("Return the final answer.")
         .model(ModelRef::named("golden-model"))
         .build()
         .expect("agent");
@@ -575,14 +578,7 @@ impl LlmClient for PythonTraceClient {
                     BTreeMap::from([("query".to_string(), json!("parity"))]),
                 )],
             ),
-            1 => LLMResponse::with_tool_calls(
-                "finish",
-                vec![ToolCall::new(
-                    "finish-call",
-                    "task_finish",
-                    BTreeMap::from([("message".to_string(), json!("done"))]),
-                )],
-            ),
+            1 => LLMResponse::new("done"),
             _ => return Err(LlmError::ScriptExhausted),
         };
         if let Some(callback) = stream_callback {

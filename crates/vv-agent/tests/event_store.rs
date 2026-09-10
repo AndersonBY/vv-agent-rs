@@ -1,11 +1,10 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde_json::json;
 use vv_agent::{
     event_payload_digest, Agent, AgentStatus, InMemoryRunEventStore, JsonlRunEventStore,
     LLMResponse, ModelRef, RunConfig, RunEvent, RunEventPayload, RunEventReplayQuery,
-    RunEventStore, Runner, ScriptedModelProvider, ToolCall,
+    RunEventStore, Runner, ScriptedModelProvider,
 };
 
 #[test]
@@ -205,7 +204,5 @@ async fn runner_appends_captured_events_to_configured_store() {
 }
 
 fn finish_response(message: &str) -> LLMResponse {
-    let mut args = BTreeMap::new();
-    args.insert("message".to_string(), json!(message));
-    LLMResponse::with_tool_calls("", vec![ToolCall::new("finish", "task_finish", args)])
+    LLMResponse::new(message)
 }

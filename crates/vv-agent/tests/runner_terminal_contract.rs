@@ -2,12 +2,13 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::Value;
 use vv_agent::{
     Agent, AgentResult, AgentStatus, CompletionReason, EventStoreError, GuardrailOutcome,
     LLMResponse, MemorySession, ModelRef, NoToolPolicy, OutputGuardrail, RunBudgetLimits,
     RunConfig, RunContext, RunEvent, RunEventIter, RunEventPayload, RunEventReplayQuery,
-    RunEventStore, Runner, ScriptedModelProvider, TokenUsage, ToolCall, UsageSource,
+    RunEventStore, Runner, ScriptedModelProvider, TokenUsage, ToolCall, ToolDirective,
+    ToolExecutionResult, UsageSource,
 };
 
 const FIXTURE: &str = include_str!("fixtures/parity/runner_terminal.json");
@@ -29,14 +30,7 @@ fn guarded_provider() -> ScriptedModelProvider {
     ScriptedModelProvider::new(
         "scripted",
         "terminal-model",
-        vec![LLMResponse::with_tool_calls(
-            "blocked final output candidate",
-            vec![ToolCall::new(
-                "finish",
-                "task_finish",
-                BTreeMap::from([("message".to_string(), json!("tool final output"))]),
-            )],
-        )],
+        vec![LLMResponse::new("blocked final output candidate")],
     )
 }
 
@@ -51,8 +45,28 @@ fn agent() -> Agent {
 #[tokio::test]
 async fn session_persists_before_the_only_success_terminal() {
     let expected = &contract()["success_with_session"];
+    let mut registry = vv_agent::tools::build_default_registry();
+    registry
+        .register_tool(
+            "handoff_result",
+            "Return the delegated result.",
+            Arc::new(|_context, _arguments| {
+                let mut result = ToolExecutionResult::success("", "done");
+                result.directive = ToolDirective::Finish;
+                result
+            }),
+        )
+        .expect("result tool");
     let runner = Runner::builder()
-        .model_provider(provider())
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "terminal-model",
+            vec![LLMResponse::with_tool_calls(
+                "done",
+                vec![ToolCall::new("result", "handoff_result", BTreeMap::new())],
+            )],
+        ))
+        .tool_registry(registry)
         .workspace("./workspace")
         .build()
         .expect("runner");
@@ -83,6 +97,10 @@ async fn session_persists_before_the_only_success_terminal() {
         [expected["terminal"].as_str().expect("terminal")]
     );
     assert_eq!(result.status(), AgentStatus::Completed);
+    assert_eq!(
+        result.completion_reason().map(|reason| reason.as_str()),
+        expected["completion_reason"].as_str()
+    );
 }
 
 struct BlockOutput;
@@ -150,7 +168,6 @@ async fn output_guardrail_block_short_circuits_and_owns_final_terminal() {
     assert_eq!(result.final_output(), expected["error"].as_str());
     assert_eq!(result.completion_reason(), Some(CompletionReason::Failed));
     assert_eq!(result.partial_output(), expected["partial_output"].as_str());
-    assert_ne!(result.partial_output(), Some("tool final output"));
     assert_eq!(result.result().final_answer, None);
     let terminal = result.events().iter().find(terminal).unwrap();
     assert_eq!(terminal.completion_reason(), Some(CompletionReason::Failed));
@@ -332,14 +349,7 @@ async fn event_store_fail_closed_is_a_normal_runner_error() {
 }
 
 fn finish_response(message: &str) -> LLMResponse {
-    LLMResponse::with_tool_calls(
-        "",
-        vec![ToolCall::new(
-            "finish",
-            "task_finish",
-            BTreeMap::from([("message".to_string(), json!(message))]),
-        )],
-    )
+    LLMResponse::new(message)
 }
 
 fn event_type(event: &RunEvent) -> &'static str {

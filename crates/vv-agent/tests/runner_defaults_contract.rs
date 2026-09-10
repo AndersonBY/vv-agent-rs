@@ -107,14 +107,7 @@ async fn assert_max_cycles_rejected_before_client(
 }
 
 fn finish_response(message: &str) -> LLMResponse {
-    LLMResponse::with_tool_calls(
-        "",
-        vec![ToolCall::from_raw_arguments(
-            "finish",
-            "task_finish",
-            json!({"message": message}),
-        )],
-    )
+    LLMResponse::new(message)
 }
 
 #[tokio::test]

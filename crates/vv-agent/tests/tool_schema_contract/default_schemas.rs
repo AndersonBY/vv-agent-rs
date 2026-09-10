@@ -3,8 +3,7 @@ use vv_agent::build_default_registry;
 
 use super::helpers::{description, property_description};
 
-const BUILTIN_TOOL_NAMES: [&str; 15] = [
-    "task_finish",
+const BUILTIN_TOOL_NAMES: [&str; 14] = [
     "ask_user",
     "activate_skill",
     "todo_write",

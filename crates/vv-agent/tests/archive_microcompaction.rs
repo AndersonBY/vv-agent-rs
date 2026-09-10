@@ -112,14 +112,7 @@ impl LlmClient for InspectingLlm {
             ));
         }
         *self.observed_messages.lock().expect("observed messages") = request.messages;
-        Ok(LLMResponse::with_tool_calls(
-            "finish",
-            vec![ToolCall::new(
-                "finish-call",
-                "task_finish",
-                BTreeMap::from([("message".to_string(), json!("done"))]),
-            )],
-        ))
+        Ok(LLMResponse::new("done"))
     }
 }
 

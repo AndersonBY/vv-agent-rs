@@ -101,15 +101,16 @@ pub fn create_system_prompt_builder(
             tools_lines.push(skills_prompt);
         }
     }
-    tools_lines.push(templates::task_finish_prompt(&language).to_string());
-    builder.add_section(
-        PromptSection::new(
-            "tools",
-            format!("<Tools>\n{}\n</Tools>", tools_lines.join("\n\n")),
-            true,
-        )
-        .source("runtime.tools"),
-    );
+    if !tools_lines.is_empty() {
+        builder.add_section(
+            PromptSection::new(
+                "tools",
+                format!("<Tools>\n{}\n</Tools>", tools_lines.join("\n\n")),
+                true,
+            )
+            .source("runtime.tools"),
+        );
+    }
 
     if options.session_memory_enabled && !options.session_memory_context.trim().is_empty() {
         builder.add_section(

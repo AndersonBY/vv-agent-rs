@@ -498,14 +498,7 @@ fn approval_runner(contract: &Contract, executions: Arc<AtomicUsize>) -> (Runner
         "approval-contract-model",
         vec![
             LLMResponse::with_tool_calls("", vec![contract_tool_call(contract)]),
-            LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "finish-contract",
-                    "task_finish",
-                    json!({"message": "done"}),
-                )],
-            ),
+            LLMResponse::new("done"),
         ],
     );
     let runner = Runner::builder()

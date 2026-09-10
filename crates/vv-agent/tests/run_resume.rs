@@ -34,14 +34,7 @@ async fn resume_with_input_restores_messages_and_shared_state() {
                     .lock()
                     .expect("requests")
                     .push(request.clone());
-                Ok(LLMResponse::with_tool_calls(
-                    "resumed",
-                    vec![ToolCall::from_raw_arguments(
-                        "finish_1",
-                        "task_finish",
-                        json!({"message": "selected blue"}),
-                    )],
-                ))
+                Ok(LLMResponse::new("selected blue"))
             }),
         ],
     );

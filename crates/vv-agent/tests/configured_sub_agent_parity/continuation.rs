@@ -40,17 +40,6 @@ fn typed_event_parts(event: &vv_agent::RunEvent) -> (String, BTreeMap<String, Va
     super::typed_event_parts(event)
 }
 
-fn finish_response(tool_call_id: &str, message: &str) -> LLMResponse {
-    LLMResponse::with_tool_calls(
-        "",
-        vec![ToolCall::new(
-            tool_call_id,
-            "task_finish",
-            BTreeMap::from([("message".to_string(), json!(message))]),
-        )],
-    )
-}
-
 fn completed_outcome_for_manager(task_id: &str, session_id: &str) -> SubTaskOutcome {
     SubTaskOutcome {
         task_id: task_id.to_string(),

@@ -10,11 +10,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::{canonical_json_bytes, CheckpointError, CheckpointResult};
-use crate::types::{ToolExecutionResult, ToolResultStatus};
+use super::{canonical_json_bytes, CheckpointError, CheckpointResult, HostInteractionRequest};
+use crate::types::{ToolDirective, ToolExecutionResult, ToolResultStatus};
 
 pub const DEFERRED_HANDLE_SCHEMA: &str = "vv-agent.deferred-tool-handle.v2";
-pub const TOOL_CALL_OUTCOME_SCHEMA: &str = "vv-agent.tool-call-outcome.v2";
+pub const TOOL_CALL_OUTCOME_SCHEMA: &str = "vv-agent.tool-call-outcome.v3";
 pub const DEFERRED_RESOLVE_DECISION_SCHEMA: &str = "vv-agent.deferred-resolve-decision.v1";
 pub const RECONCILIATION_DECISION_SCHEMA: &str = "vv-agent.reconciliation-decision.v1";
 
@@ -164,12 +164,16 @@ impl DeferredToolHandle {
     }
 }
 
-/// The closed result-or-deferred outcome returned by a tool invocation.
+/// The closed completed, deferred, or host-interaction tool outcome.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolCallOutcome {
     Completed { result: ToolExecutionResult },
     Deferred { handle: DeferredToolHandle },
+    HostInteraction {
+        result: ToolExecutionResult,
+        request: HostInteractionRequest,
+    },
 }
 
 impl Serialize for ToolCallOutcome {
@@ -187,6 +191,12 @@ impl Serialize for ToolCallOutcome {
                 "schema_version": TOOL_CALL_OUTCOME_SCHEMA,
                 "kind": "deferred",
                 "handle": handle,
+            }),
+            Self::HostInteraction { result, request } => serde_json::json!({
+                "schema_version": TOOL_CALL_OUTCOME_SCHEMA,
+                "kind": "host_interaction",
+                "result": result,
+                "request": request.to_value(),
             }),
         };
         value.serialize(serializer)
@@ -218,6 +228,7 @@ impl<'de> Deserialize<'de> for ToolCallOutcome {
         let expected = match kind {
             "completed" => ["schema_version", "kind", "result"].as_slice(),
             "deferred" => ["schema_version", "kind", "handle"].as_slice(),
+            "host_interaction" => ["schema_version", "kind", "result", "request"].as_slice(),
             _ => return Err(serde::de::Error::custom("tool_call_outcome_invalid")),
         };
         if object.keys().any(|key| !expected.contains(&key.as_str()))
@@ -240,6 +251,12 @@ impl<'de> Deserialize<'de> for ToolCallOutcome {
                 )
                 .map_err(serde::de::Error::custom)?,
             },
+            "host_interaction" => Self::HostInteraction {
+                result: serde_json::from_value(object["result"].clone())
+                    .map_err(serde::de::Error::custom)?,
+                request: HostInteractionRequest::from_value(&object["request"])
+                    .map_err(serde::de::Error::custom)?,
+            },
             _ => unreachable!("kind validated above"),
         };
         outcome.validate().map_err(serde::de::Error::custom)?;
@@ -258,14 +275,14 @@ impl ToolCallOutcome {
 
     pub fn result(&self) -> Option<&ToolExecutionResult> {
         match self {
-            Self::Completed { result } => Some(result),
+            Self::Completed { result } | Self::HostInteraction { result, .. } => Some(result),
             Self::Deferred { .. } => None,
         }
     }
 
     pub fn handle(&self) -> Option<&DeferredToolHandle> {
         match self {
-            Self::Completed { .. } => None,
+            Self::Completed { .. } | Self::HostInteraction { .. } => None,
             Self::Deferred { handle } => Some(handle),
         }
     }
@@ -286,6 +303,21 @@ impl ToolCallOutcome {
                 Ok(())
             }
             Self::Deferred { handle } => handle.validate(),
+            Self::HostInteraction { result, request } => {
+                request.validate()?;
+                validate_definitive_result(result).map_err(|error| {
+                    CheckpointError::new("tool_call_outcome_invalid", error.to_string())
+                })?;
+                if result.directive != ToolDirective::Continue
+                    || result.tool_call_id != request.tool_call_id
+                {
+                    return Err(CheckpointError::new(
+                        "tool_call_outcome_invalid",
+                        "host interaction result identity or directive is invalid",
+                    ));
+                }
+                Ok(())
+            }
         }
     }
 

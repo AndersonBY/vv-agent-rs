@@ -7,6 +7,11 @@ use vv_agent::{build_default_registry, SubAgentConfig};
 #[test]
 fn planned_tool_schemas_respect_task_capability_flags() {
     let registry = build_default_registry();
+    assert_eq!(
+        vv_agent::runtime::backends::distributed::toolset_schema_digest(&registry)
+            .expect("toolset digest"),
+        vv_agent::runtime::backends::distributed::ToolsetRef::default().schema_digest,
+    );
     let mut task = AgentTask::new(
         "task_planner",
         "dummy",
@@ -19,7 +24,7 @@ fn planned_tool_schemas_respect_task_capability_flags() {
     let names = registry.planned_tool_names(&task);
     let free_names = plan_tool_names(&task, None);
 
-    assert_eq!(names, vec!["task_finish".to_string()]);
+    assert!(names.is_empty());
     assert_eq!(free_names, names);
 }
 
@@ -114,7 +119,7 @@ fn planned_tool_schemas_exclude_tools() {
 
     assert!(!names.contains(&"read_file".to_string()));
     assert!(!names.contains(&"write_file".to_string()));
-    assert!(names.contains(&"task_finish".to_string()));
+    assert!(!names.contains(&"task_finish".to_string()));
     assert_eq!(free_names, names);
 }
 
@@ -130,12 +135,12 @@ fn planned_tool_names_respect_allowed_tool_policy_metadata() {
     task.extra_tool_names = vec!["allowed_custom".to_string(), "blocked_custom".to_string()];
     task.metadata.insert(
         "_vv_agent_allowed_tools".to_string(),
-        json!(["task_finish", "allowed_custom"]),
+        json!(["ask_user", "allowed_custom"]),
     );
 
     let names = plan_tool_names(&task, None);
 
-    assert_eq!(names, vec!["task_finish", "allowed_custom"]);
+    assert_eq!(names, vec!["ask_user", "allowed_custom"]);
     assert_eq!(registry.planned_tool_names(&task), names);
 }
 

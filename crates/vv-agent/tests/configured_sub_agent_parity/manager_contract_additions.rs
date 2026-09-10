@@ -291,23 +291,9 @@ fn same_model_parent_client_inherits_fixture_token_limits() {
             *child_request_for_step
                 .lock()
                 .expect("captured child request") = Some(request.clone());
-            Ok(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "child-finish",
-                    "task_finish",
-                    json!({"message": "child done"}),
-                )],
-            ))
+            Ok(LLMResponse::new("child done"))
         }),
-        ScriptStep::response(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "parent-finish",
-                "task_finish",
-                json!({"message": "parent done"}),
-            )],
-        )),
+        ScriptStep::response(LLMResponse::new("parent done")),
     ]);
     let mut parent = AgentTask::new(
         "limit-parent",

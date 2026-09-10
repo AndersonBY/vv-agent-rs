@@ -321,7 +321,7 @@ fn current_public_runtime_names_are_available() {
 #[test]
 fn tools_builtins_module_matches_import_path() {
     let registry = vv_agent::tools::builtins::build_default_registry();
-    assert!(registry.has_tool(vv_agent::constants::TASK_FINISH_TOOL_NAME));
+    assert!(registry.has_tool(vv_agent::constants::ASK_USER_TOOL_NAME));
 }
 
 #[test]
@@ -345,7 +345,6 @@ fn tools_handlers_module_reexports_agent_handler_functions() {
     assert_handler(vv_agent::tools::handlers::read_image);
     assert_handler(vv_agent::tools::handlers::run_bash_command);
     assert_handler(vv_agent::tools::handlers::sub_task_status);
-    assert_handler(vv_agent::tools::handlers::task_finish);
     assert_handler(vv_agent::tools::handlers::todo_read);
     assert_handler(vv_agent::tools::handlers::todo_write);
     assert_handler(vv_agent::tools::handlers::search_files);
@@ -354,7 +353,6 @@ fn tools_handlers_module_reexports_agent_handler_functions() {
     assert_handler(vv_agent::tools::handlers::background::check_background_command);
     assert_handler(vv_agent::tools::handlers::bash::run_bash_command);
     assert_handler(vv_agent::tools::handlers::control::ask_user);
-    assert_handler(vv_agent::tools::handlers::control::task_finish);
     assert_handler(vv_agent::tools::handlers::image::read_image);
     assert_handler(vv_agent::tools::handlers::search::search_files);
     assert_handler(vv_agent::tools::handlers::skills::activate_skill);
@@ -371,9 +369,7 @@ fn tools_handlers_module_reexports_agent_handler_functions() {
 fn constants_module_exports_agent_tool_names_and_workspace_tool_list() {
     use vv_agent::constants;
 
-    assert_eq!(constants::TODO_INCOMPLETE_ERROR_CODE, "todo_incomplete");
     assert_eq!(constants::ASK_USER_TOOL_NAME, "ask_user");
-    assert_eq!(constants::TASK_FINISH_TOOL_NAME, "task_finish");
     assert_eq!(constants::READ_FILE_TOOL_NAME, "read_file");
     assert_eq!(constants::WRITE_FILE_TOOL_NAME, "write_file");
     assert_eq!(constants::FIND_FILES_TOOL_NAME, "find_files");
@@ -404,19 +400,13 @@ fn constants_module_exports_agent_tool_names_and_workspace_tool_list() {
     );
 
     let default_schemas = constants::get_default_tool_schemas();
-    assert!(default_schemas.contains_key(constants::TASK_FINISH_TOOL_NAME));
     assert!(default_schemas.contains_key(constants::ASK_USER_TOOL_NAME));
     assert!(default_schemas.contains_key(constants::ACTIVATE_SKILL_TOOL_NAME));
 
     let workspace_schemas = constants::workspace_tools_schemas();
     assert_eq!(workspace_schemas.len(), constants::WORKSPACE_TOOLS.len());
     assert!(workspace_schemas.contains_key(constants::READ_FILE_TOOL_NAME));
-    assert!(!workspace_schemas.contains_key(constants::TASK_FINISH_TOOL_NAME));
-
-    assert_eq!(
-        constants::task_finish_tool_schema()["function"]["name"],
-        constants::TASK_FINISH_TOOL_NAME
-    );
+    assert!(!workspace_schemas.contains_key(constants::ASK_USER_TOOL_NAME));
     assert_eq!(
         constants::ask_user_tool_schema()["function"]["name"],
         constants::ASK_USER_TOOL_NAME
@@ -434,15 +424,7 @@ fn constants_module_exports_agent_tool_names_and_workspace_tool_list() {
         constants::FIND_FILES_TOOL_NAME
     );
     assert!(constants::workspace::get_default_tool_schemas()
-        .contains_key(constants::TASK_FINISH_TOOL_NAME));
-    assert_eq!(
-        constants::workspace::task_finish_tool_schema()["function"]["name"],
-        constants::TASK_FINISH_TOOL_NAME
-    );
-    assert_eq!(
-        constants::workspace::TASK_FINISH_TOOL_SCHEMA()["function"]["name"],
-        constants::TASK_FINISH_TOOL_NAME
-    );
+        .contains_key(constants::ASK_USER_TOOL_NAME));
     assert_eq!(
         constants::workspace::ASK_USER_TOOL_SCHEMA()["function"]["name"],
         constants::ASK_USER_TOOL_NAME
@@ -453,10 +435,6 @@ fn constants_module_exports_agent_tool_names_and_workspace_tool_list() {
     );
     assert!(constants::workspace::WORKSPACE_TOOLS_SCHEMAS()
         .contains_key(constants::READ_FILE_TOOL_NAME));
-    assert!(
-        constants::TASK_FINISH_TOOL_SCHEMA()["function"]["name"]
-            == constants::TASK_FINISH_TOOL_NAME
-    );
 }
 
 #[test]

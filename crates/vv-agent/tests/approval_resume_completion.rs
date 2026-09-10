@@ -8,7 +8,7 @@ use vv_agent::{
     EventStoreError, FunctionTool, GuardrailOutcome, LLMResponse, LlmRequest, ModelRef,
     OutputGuardrail, RunConfig, RunContext, RunEvent, RunEventIter, RunEventPayload,
     RunEventReplayQuery, RunEventStore, Runner, ScriptStep, ScriptedModelProvider, ToolCall,
-    ToolOutput, ToolPolicy, ToolUseBehavior,
+    ToolDirective, ToolExecutionResult, ToolOutput, ToolPolicy, ToolUseBehavior,
 };
 
 const COMPLETION_CONTRACT: &str = include_str!("fixtures/parity/completion_policy.json");
@@ -214,7 +214,7 @@ async fn direct_approval_finish_runs_output_guardrails() {
         finish.completion_reason(),
         Some(CompletionReason::ToolFinish)
     );
-    assert_eq!(finish.completion_tool_name(), Some("task_finish"));
+    assert_eq!(finish.completion_tool_name(), Some("handoff_result"));
     assert_eq!(finish_calls.load(Ordering::SeqCst), before_resume + 1);
     assert_resume_terminal_ids(&interrupted_run_id, &finish, &store);
 }
@@ -346,11 +346,7 @@ async fn approved_error_continue_is_returned_to_the_llm() {
                     .lock()
                     .expect("requests")
                     .push(request.clone());
-                Ok(finish_response(
-                    "recovered",
-                    "finish after tool error",
-                    "recovered after approved error",
-                ))
+                Ok(LLMResponse::new("recovered after approved error"))
             }),
         ],
     );
@@ -783,7 +779,24 @@ async fn approval_typed_output_error_is_raised_after_fresh_terminal_is_persisted
 }
 
 fn runner(responses: Vec<LLMResponse>) -> Runner {
+    let mut registry = vv_agent::tools::build_default_registry();
+    registry
+        .register_tool_with_parameters(
+            "handoff_result",
+            "Return the delegated result.",
+            json!({"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"], "additionalProperties": false}),
+            Arc::new(|_context, arguments| {
+                let mut result = ToolExecutionResult::success(
+                    "",
+                    arguments["message"].as_str().expect("message"),
+                );
+                result.directive = ToolDirective::Finish;
+                result
+            }),
+        )
+        .expect("result tool");
     Runner::builder()
+        .tool_registry(registry)
         .model_provider(ScriptedModelProvider::new(
             "scripted",
             "approval-model",
@@ -814,7 +827,7 @@ fn finish_response(id: &str, assistant_output: &str, final_output: &str) -> LLMR
         assistant_output,
         vec![ToolCall::from_raw_arguments(
             id,
-            "task_finish",
+            "handoff_result",
             json!({"message": final_output}),
         )],
     )

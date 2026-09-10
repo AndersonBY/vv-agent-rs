@@ -69,23 +69,9 @@ fn real_child_run_projects_capabilities_identity_model_and_filtered_workspace() 
                     .any(|message| message.image_url.as_deref() == Some("memory://child-image")),
                 "resolved child native_multimodal capability was not applied"
             );
-            Ok(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "child-finish",
-                    "task_finish",
-                    json!({"message": "child done"}),
-                )],
-            ))
+            Ok(LLMResponse::new("child done"))
         }),
-        ScriptStep::response(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "parent-finish",
-                "task_finish",
-                json!({"message": "parent done"}),
-            )],
-        )),
+        ScriptStep::response(LLMResponse::new("parent done")),
     ]);
     let provider: Arc<dyn ModelProvider> = Arc::new(ChildModelProvider {
         client: Arc::new(shared_llm.clone()),
@@ -316,14 +302,7 @@ fn runtime_boundary_reports_fixture_validation_errors_and_pairs_lifecycle() {
                     json!({"agent_id": "researcher", "task_description": "Research"}),
                 )],
             ),
-            LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "parent-finish",
-                    "task_finish",
-                    json!({"message": "parent done"}),
-                )],
-            ),
+            LLMResponse::new("parent done"),
         ]);
         let runtime = AgentRuntime::new(llm);
         let mut parent = AgentTask::new(

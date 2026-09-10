@@ -71,14 +71,7 @@ fn provider_resolve_and_client_panics_emit_one_failed_completion_and_cleanup() {
                     }),
                 )],
             )),
-            ScriptStep::response(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    format!("parent-finish-{label}"),
-                    "task_finish",
-                    json!({"message": "parent done"}),
-                )],
-            )),
+            ScriptStep::response(LLMResponse::new("parent done")),
         ]);
         let mut parent = AgentTask::new(
             format!("provider-panic-parent-{label}"),

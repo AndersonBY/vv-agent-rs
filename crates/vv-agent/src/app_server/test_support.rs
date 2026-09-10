@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use serde_json::json;
 
 use crate::app_server::client::AppServerClient;
@@ -65,9 +63,7 @@ pub fn approval_app_server_client() -> AppServerClient {
 }
 
 pub fn finish_response(message: &str) -> LLMResponse {
-    let mut args = BTreeMap::new();
-    args.insert("message".to_string(), json!(message));
-    LLMResponse::with_tool_calls(message, vec![ToolCall::new("finish", "task_finish", args)])
+    LLMResponse::new(message)
 }
 
 fn client_from_runner(runner: Runner, agent: Agent) -> AppServerClient {

@@ -270,22 +270,8 @@ fn run_real_identity_case(
                 json!({}),
             )],
         )),
-        ScriptStep::response(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "child-finish",
-                "task_finish",
-                json!({"message": "child done"}),
-            )],
-        )),
-        ScriptStep::response(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "parent-finish",
-                "task_finish",
-                json!({"message": "parent done"}),
-            )],
-        )),
+        ScriptStep::response(LLMResponse::new("child done")),
+        ScriptStep::response(LLMResponse::new("parent done")),
     ]);
     let mut parent = AgentTask::new(
         "parent-task",
@@ -418,14 +404,7 @@ impl LlmClient for AsyncLineageClient {
                 .lock()
                 .expect("async lineage child requests")
                 .push(request);
-            return Ok(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "child-finish",
-                    "task_finish",
-                    json!({"message": "child done"}),
-                )],
-            ));
+            return Ok(LLMResponse::new("child done"));
         }
 
         let parent_call = self.parent_calls.fetch_add(1, Ordering::SeqCst) + 1;
@@ -443,14 +422,7 @@ impl LlmClient for AsyncLineageClient {
                 )],
             ));
         }
-        Ok(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "parent-finish",
-                "task_finish",
-                json!({"message": "parent done"}),
-            )],
-        ))
+        Ok(LLMResponse::new("parent done"))
     }
 }
 

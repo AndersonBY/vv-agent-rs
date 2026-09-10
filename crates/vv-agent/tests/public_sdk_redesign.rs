@@ -532,22 +532,23 @@ async fn memory_session_persists_context_across_runner_calls() {
     assert!(items
         .iter()
         .any(|item| matches!(item, SessionItem::User { content } if content == "first prompt")));
-    assert!(items.iter().any(|item| {
-        let message = item.to_message();
-        message.role == MessageRole::Assistant
-            && message.tool_calls.iter().any(|call| {
-                call.name == "task_finish"
-                    && call.arguments.get("message") == Some(&json!("second"))
-            })
-    }));
-    assert!(items.iter().any(|item| {
-        let message = item.to_message();
-        message.role == MessageRole::Tool
-            && serde_json::from_str::<serde_json::Value>(&message.content)
-                .ok()
-                .and_then(|payload| payload.get("message").cloned())
-                == Some(json!("second"))
-    }));
+    for answer in ["first", "second"] {
+        assert_eq!(
+            items
+                .iter()
+                .filter(|item| {
+                    let message = item.to_message();
+                    message.role == MessageRole::Assistant
+                        && message.content == answer
+                        && message.tool_calls.is_empty()
+                })
+                .count(),
+            1,
+        );
+    }
+    assert!(items
+        .iter()
+        .all(|item| item.to_message().role != MessageRole::Tool));
     assert_eq!(captured_requests.lock().expect("lock").len(), 1);
 }
 
@@ -900,7 +901,5 @@ async fn handoff_switches_current_agent_and_emits_typed_event() {
 }
 
 fn finish_response(message: &str) -> LLMResponse {
-    let mut args = BTreeMap::new();
-    args.insert("message".to_string(), json!(message));
-    LLMResponse::with_tool_calls("", vec![ToolCall::new("finish", "task_finish", args)])
+    LLMResponse::new(message)
 }

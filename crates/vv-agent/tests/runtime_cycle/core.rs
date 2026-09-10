@@ -1,16 +1,8 @@
 use super::*;
 
 #[test]
-fn runtime_executes_tool_calls_until_task_finish() {
-    let mut finish_args = BTreeMap::new();
-    finish_args.insert(
-        "message".to_string(),
-        json!("final answer from task_finish"),
-    );
-    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
-        "",
-        vec![ToolCall::new("call_1", "task_finish", finish_args)],
-    )]);
+fn runtime_completes_with_natural_output() {
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::new("final answer")]);
     let runtime = AgentRuntime::new(llm);
 
     let result = runtime
@@ -23,20 +15,15 @@ fn runtime_executes_tool_calls_until_task_finish() {
         .expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
-    assert_eq!(
-        result.final_answer.as_deref(),
-        Some("final answer from task_finish")
-    );
+    assert_eq!(result.final_answer.as_deref(), Some("final answer"));
     assert_eq!(result.cycles.len(), 1);
-    assert_eq!(result.cycles[0].tool_results.len(), 1);
+    assert!(result.cycles[0].tool_results.is_empty());
+    assert!(result.cycles[0].tool_calls.is_empty());
     assert_eq!(
-        result.cycles[0].tool_results[0].directive,
-        ToolDirective::Finish
+        result.messages.last().unwrap().role,
+        vv_agent::MessageRole::Assistant
     );
-    assert_eq!(
-        result.messages.last().unwrap().tool_call_id.as_deref(),
-        Some("call_1")
-    );
+    assert_eq!(result.messages.last().unwrap().tool_call_id, None);
 }
 
 #[test]
@@ -133,11 +120,7 @@ fn runtime_collects_cycle_and_total_token_usage_from_llm_responses() {
         }),
     );
 
-    let finish_args = BTreeMap::from([("message".to_string(), json!("ok"))]);
-    let mut finish_response = LLMResponse::with_tool_calls(
-        "done",
-        vec![ToolCall::new("finish_call", "task_finish", finish_args)],
-    );
+    let mut finish_response = LLMResponse::new("ok");
     finish_response.raw.insert(
         "usage".to_string(),
         json!({
@@ -227,21 +210,20 @@ fn runtime_collects_cycle_and_total_token_usage_from_llm_responses() {
 }
 
 #[test]
-fn runtime_preserves_shared_state_when_task_finishes() {
+fn runtime_natural_completion_preserves_pending_todos() {
     let todo_args = BTreeMap::from([(
         "todos".to_string(),
         json!([
-            {"id": "t1", "title": "done item", "status": "completed", "priority": "medium"}
+            {"id": "t1", "title": "pending item", "status": "pending", "priority": "medium"}
         ]),
     )]);
-    let finish_args = BTreeMap::from([("message".to_string(), json!("done"))]);
-    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
-        "",
-        vec![
-            ToolCall::new("todo_call", "todo_write", todo_args),
-            ToolCall::new("finish_call", "task_finish", finish_args),
-        ],
-    )]);
+    let llm = ScriptedLlmClient::new(vec![
+        LLMResponse::with_tool_calls(
+            "",
+            vec![ToolCall::new("todo_call", "todo_write", todo_args)],
+        ),
+        LLMResponse::new("done"),
+    ]);
     let runtime = AgentRuntime::new(llm);
 
     let result = runtime
@@ -254,7 +236,9 @@ fn runtime_preserves_shared_state_when_task_finishes() {
         .expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
-    assert_eq!(result.todo_list()[0]["title"], "done item");
+    assert_eq!(result.todo_list()[0]["title"], "pending item");
+    assert_eq!(result.todo_list()[0]["status"], "pending");
+    assert_eq!(result.cycles.len(), 2);
 }
 
 #[test]
@@ -321,18 +305,13 @@ fn runtime_injects_image_message_after_read_image() {
 
     let mut read_image_args = BTreeMap::new();
     read_image_args.insert("path".to_string(), json!("img.png"));
-    let mut finish_args = BTreeMap::new();
-    finish_args.insert("message".to_string(), json!("ok"));
 
     let llm = InspectingImageLlmClient::new(
         LLMResponse::with_tool_calls(
             "read image",
             vec![ToolCall::new("call_1", "read_image", read_image_args)],
         ),
-        LLMResponse::with_tool_calls(
-            "done",
-            vec![ToolCall::new("call_2", "task_finish", finish_args)],
-        ),
+        LLMResponse::new("ok"),
     );
     let inspector = llm.clone();
     let mut runtime = AgentRuntime::new(llm);
@@ -361,18 +340,13 @@ fn runtime_does_not_inject_image_message_for_text_only_task() {
 
     let mut read_image_args = BTreeMap::new();
     read_image_args.insert("path".to_string(), json!("img.png"));
-    let mut finish_args = BTreeMap::new();
-    finish_args.insert("message".to_string(), json!("ok"));
 
     let llm = InspectingImageLlmClient::new(
         LLMResponse::with_tool_calls(
             "read image",
             vec![ToolCall::new("call_1", "read_image", read_image_args)],
         ),
-        LLMResponse::with_tool_calls(
-            "done",
-            vec![ToolCall::new("call_2", "task_finish", finish_args)],
-        ),
+        LLMResponse::new("ok"),
     );
     let inspector = llm.clone();
     let mut runtime = AgentRuntime::new(llm);
@@ -412,7 +386,6 @@ fn runtime_keeps_tool_results_adjacent_before_image_notifications() {
         "todos".to_string(),
         json!([{"title": "done", "status": "completed", "priority": "medium"}]),
     )]);
-    let finish_args = BTreeMap::from([("message".to_string(), json!("ok"))]);
     let llm = MessageOrderInspectingLlmClient::new(
         LLMResponse::with_tool_calls(
             "run tools",
@@ -421,10 +394,7 @@ fn runtime_keeps_tool_results_adjacent_before_image_notifications() {
                 ToolCall::new("todo1", "todo_write", todo_args),
             ],
         ),
-        LLMResponse::with_tool_calls(
-            "done",
-            vec![ToolCall::new("finish_order", "task_finish", finish_args)],
-        ),
+        LLMResponse::new("ok"),
     );
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm).with_tool_registry(registry);
@@ -480,16 +450,12 @@ fn runtime_skips_custom_image_notifications_when_multimodal_disabled() {
         )
         .expect("register image tool");
 
-    let finish_args = BTreeMap::from([("message".to_string(), json!("ok"))]);
     let llm = MessageOrderInspectingLlmClient::new(
         LLMResponse::with_tool_calls(
             "capture",
             vec![ToolCall::new("img1", "_demo_image", BTreeMap::new())],
         ),
-        LLMResponse::with_tool_calls(
-            "done",
-            vec![ToolCall::new("finish_no_image", "task_finish", finish_args)],
-        ),
+        LLMResponse::new("ok"),
     );
     let inspector = llm.clone();
     let runtime = AgentRuntime::new(llm).with_tool_registry(registry);
@@ -520,16 +486,12 @@ fn runtime_tool_context_uses_execution_context_metadata() {
     std::fs::write(&outside_file, "outside context metadata").expect("outside file");
 
     let read_args = BTreeMap::from([("path".to_string(), json!(outside_file))]);
-    let finish_args = BTreeMap::from([("message".to_string(), json!("done"))]);
     let llm = ScriptedLlmClient::new(vec![
         LLMResponse::with_tool_calls(
             "read outside file",
             vec![ToolCall::new("read_outside", "read_file", read_args)],
         ),
-        LLMResponse::with_tool_calls(
-            "finish",
-            vec![ToolCall::new("finish", "task_finish", finish_args)],
-        ),
+        LLMResponse::new("done"),
     ]);
     let mut runtime = AgentRuntime::new(llm);
     runtime.default_workspace = Some(workspace.path().to_path_buf());
@@ -575,16 +537,12 @@ fn runtime_allows_outside_workspace_paths_from_integer_metadata() {
     std::fs::write(&outside_file, "outside task metadata").expect("outside file");
 
     let read_args = BTreeMap::from([("path".to_string(), json!(outside_file))]);
-    let finish_args = BTreeMap::from([("message".to_string(), json!("done"))]);
     let llm = ScriptedLlmClient::new(vec![
         LLMResponse::with_tool_calls(
             "read outside file",
             vec![ToolCall::new("read_outside", "read_file", read_args)],
         ),
-        LLMResponse::with_tool_calls(
-            "finish",
-            vec![ToolCall::new("finish", "task_finish", finish_args)],
-        ),
+        LLMResponse::new("done"),
     ]);
     let mut runtime = AgentRuntime::new(llm);
     runtime.default_workspace = Some(workspace.path().to_path_buf());

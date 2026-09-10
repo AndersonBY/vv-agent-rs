@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = run_facade_prompt(
         &config,
         "budgeted-agent",
-        "Keep the answer concise and call task_finish when the work is complete.",
+        "Keep the answer concise.",
         "Summarize how Agent run budgets work.",
         RunConfig::builder().budget_limits(budget_limits).build(),
     )

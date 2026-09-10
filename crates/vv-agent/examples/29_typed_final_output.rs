@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use serde_json::json;
-use vv_agent::{Agent, LLMResponse, ModelRef, Runner, ScriptedModelProvider, ToolCall};
+use vv_agent::{Agent, LLMResponse, ModelRef, Runner, ScriptedModelProvider};
 
 #[derive(Debug, Deserialize)]
 struct ResearchSummary {
@@ -18,19 +18,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .model_provider(ScriptedModelProvider::new(
             "scripted",
             "demo-model",
-            vec![LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "finish",
-                    "task_finish",
-                    json!({"message": final_output}),
-                )],
-            )],
+            vec![LLMResponse::new(final_output)],
         ))
         .workspace(".")
         .build()?;
     let agent = Agent::builder("researcher")
-        .instructions("Return the requested JSON through task_finish.")
+        .instructions("Return the requested JSON.")
         .model(ModelRef::named("demo-model"))
         .output_type::<ResearchSummary>()
         .build()?;

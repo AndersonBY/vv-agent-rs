@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde_json::Value;
 use vv_agent::{
     AfterToolCallEvent, Agent, AgentStatus, ModelRef, ModelSettings, RunConfig, RunResult, Runner,
-    RuntimeHook, ToolChoice, ToolExecutionResult, ToolResultStatus, VvLlmModelProvider,
+    RuntimeHook, ToolExecutionResult, ToolResultStatus, VvLlmModelProvider,
 };
 
 #[test]
@@ -34,7 +34,7 @@ Follow this exact order:
 1. First call edit_file without calling read_file. Replace old_string `color = "red"` with new_string `color = "blue"`.
 2. If edit_file reports file_not_read or says the file must be read first, call read_file for the relevant lines or the full file.
 3. Then call edit_file again to make the replacement.
-4. Finish by calling task_finish with message exactly `LIVE_EDIT_BEFORE_READ_OK`.
+4. Reply exactly `LIVE_EDIT_BEFORE_READ_OK`.
 
 Do not use bash. Do not use write_file."#
                 .into(),
@@ -115,7 +115,7 @@ Follow this exact order:
 2. Then call edit_file replacing old_string `status = "stale-base"` with new_string `status = "agent-final"`.
 3. If edit_file reports file_changed_since_read, call read_file again for the relevant lines or the full file.
 4. Then call edit_file replacing the current latest text `status = "external-change"` with `status = "agent-final"`.
-5. Finish by calling task_finish with message exactly `LIVE_STALE_BASELINE_OK`.
+5. Reply exactly `LIVE_STALE_BASELINE_OK`.
 
 Do not use bash. Do not use write_file."#
                 .into(),
@@ -261,14 +261,13 @@ fn live_runner(workspace: &Path) -> Result<(Runner, ModelRef), String> {
 fn live_agent(name: &str, model: &ModelRef) -> Agent {
     Agent::builder(name)
         .instructions(
-            "You are a precise live integration-test agent. Follow the user's requested tool order exactly. Use workspace tools only as requested, then finish with task_finish.",
+            "You are a precise live integration-test agent. Follow the user's requested tool order exactly. Use workspace tools only as requested, then answer briefly.",
         )
         .model(model.clone())
         .model_settings(
             ModelSettings::builder()
                 .temperature(0.0)
                 .parallel_tool_calls(false)
-                .tool_choice(ToolChoice::Required)
                 .timeout(Duration::from_secs(180))
                 .build(),
         )
@@ -295,7 +294,6 @@ fn live_model_settings() -> ModelSettings {
     ModelSettings::builder()
         .temperature(0.0)
         .parallel_tool_calls(false)
-        .tool_choice(ToolChoice::Required)
         .timeout(Duration::from_secs(180))
         .build()
 }

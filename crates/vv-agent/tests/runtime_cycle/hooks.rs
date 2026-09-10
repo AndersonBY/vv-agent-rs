@@ -49,7 +49,7 @@ fn runtime_hooks_normalize_pending_tool_call_ids() {
         "finish through pending hook",
         vec![ToolCall::new(
             "pending_hook_finish",
-            "task_finish",
+            "handoff_result",
             BTreeMap::from([("message".to_string(), json!("original"))]),
         )],
     )]);
@@ -87,7 +87,7 @@ fn before_tool_call_patch_accepts_direct_result_and_call_conversions() {
         "finish through direct hook result",
         vec![ToolCall::new(
             "direct_result_finish",
-            "task_finish",
+            "handoff_result",
             BTreeMap::from([("message".to_string(), json!("original"))]),
         )],
     )]);
@@ -114,20 +114,24 @@ fn before_tool_call_patch_accepts_direct_result_and_call_conversions() {
         "finish through patched hook call",
         vec![ToolCall::new(
             "patch_call_finish",
-            "task_finish",
+            "handoff_result",
             BTreeMap::from([("message".to_string(), json!("original"))]),
         )],
     )]);
-    let mut runtime = AgentRuntime::new(llm);
+    let mut runtime = AgentRuntime::new(llm).with_tool_registry(handoff_registry());
     runtime.hooks.push(call_hook);
 
     let result = runtime
-        .run(AgentTask::new(
-            "patch_call_hook_task",
-            "demo",
-            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
-            "go",
-        ))
+        .run(AgentTask {
+            extra_tool_names: vec!["handoff_result".to_string()],
+            ..AgentTask::new(
+                "patch_call_hook_task",
+                "demo",
+                vv_agent::prompt::PromptBundle::from_instruction_text("system")
+                    .expect("prompt bundle"),
+                "go",
+            )
+        })
         .expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
@@ -144,7 +148,7 @@ fn runtime_short_circuit_tool_result_keeps_original_tool_call_id_after_call_patc
         "finish through patched short circuit",
         vec![ToolCall::new(
             "runtime_original_call",
-            "task_finish",
+            "handoff_result",
             BTreeMap::from([("message".to_string(), json!("original"))]),
         )],
     )]);
@@ -181,19 +185,23 @@ fn runtime_emits_typed_lifecycle_events() {
     finish_args.insert("message".to_string(), json!("logged finish"));
     let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
         "assistant log",
-        vec![ToolCall::new("log_finish", "task_finish", finish_args)],
+        vec![ToolCall::new("log_finish", "handoff_result", finish_args)],
     )]);
     let (events, event_handler) = run_event_collector();
-    let mut runtime = AgentRuntime::new(llm);
+    let mut runtime = AgentRuntime::new(llm).with_tool_registry(handoff_registry());
     runtime.event_handler = Some(event_handler);
 
     let result = runtime
-        .run(AgentTask::new(
-            "log_task",
-            "demo",
-            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
-            "finish",
-        ))
+        .run(AgentTask {
+            extra_tool_names: vec!["handoff_result".to_string()],
+            ..AgentTask::new(
+                "log_task",
+                "demo",
+                vv_agent::prompt::PromptBundle::from_instruction_text("system")
+                    .expect("prompt bundle"),
+                "finish",
+            )
+        })
         .expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
@@ -224,12 +232,12 @@ fn runtime_emits_typed_lifecycle_events() {
     assert!(matches!(
         events[6].payload(),
         RunEventPayload::ToolCallPlanned { tool_call_id, tool_name, .. }
-            if tool_call_id == "log_finish" && tool_name == "task_finish"
+            if tool_call_id == "log_finish" && tool_name == "handoff_result"
     ));
     assert!(matches!(
         events[7].payload(),
         RunEventPayload::ToolCallStarted { tool_call_id, tool_name, .. }
-            if tool_call_id == "log_finish" && tool_name == "task_finish"
+            if tool_call_id == "log_finish" && tool_name == "handoff_result"
     ));
     assert!(matches!(
         events[8].payload(),
@@ -239,7 +247,7 @@ fn runtime_emits_typed_lifecycle_events() {
             directive: ToolDirective::Finish,
             execution_started: true,
             ..
-        } if tool_call_id == "log_finish" && tool_name == "task_finish"
+        } if tool_call_id == "log_finish" && tool_name == "handoff_result"
     ));
     let tool_result_details =
         diagnostic_details(&events[9], "tool_result").expect("tool result details");
@@ -268,20 +276,28 @@ fn runtime_diagnostic_events_include_agent_previews() {
     finish_args.insert("message".to_string(), json!(final_text.clone()));
     let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
         assistant_text.clone(),
-        vec![ToolCall::new("preview_finish", "task_finish", finish_args)],
+        vec![ToolCall::new(
+            "preview_finish",
+            "handoff_result",
+            finish_args,
+        )],
     )]);
     let (events, event_handler) = run_event_collector();
-    let mut runtime = AgentRuntime::new(llm);
+    let mut runtime = AgentRuntime::new(llm).with_tool_registry(handoff_registry());
     runtime.log_preview_chars = Some(10);
     runtime.event_handler = Some(event_handler);
 
     let result = runtime
-        .run(AgentTask::new(
-            "preview_task",
-            "demo",
-            vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
-            "finish with previews",
-        ))
+        .run(AgentTask {
+            extra_tool_names: vec!["handoff_result".to_string()],
+            ..AgentTask::new(
+                "preview_task",
+                "demo",
+                vv_agent::prompt::PromptBundle::from_instruction_text("system")
+                    .expect("prompt bundle"),
+                "finish with previews",
+            )
+        })
         .expect("run");
 
     assert_eq!(result.status, AgentStatus::Completed);
@@ -320,16 +336,12 @@ fn runtime_tool_result_event_keeps_full_content_by_default() {
         "todos".to_string(),
         json!([{"title": long_title, "status": "completed", "priority": "medium"}]),
     )]);
-    let finish_args = BTreeMap::from([("message".to_string(), json!("ok"))]);
     let llm = ScriptedLlmClient::new(vec![
         LLMResponse::with_tool_calls(
             "write todo",
             vec![ToolCall::new("todo_long", "todo_write", todo_args)],
         ),
-        LLMResponse::with_tool_calls(
-            "done",
-            vec![ToolCall::new("finish_long", "task_finish", finish_args)],
-        ),
+        LLMResponse::new("ok"),
     ]);
     let (events, event_handler) = run_event_collector();
     let mut runtime = AgentRuntime::new(llm);
@@ -372,6 +384,7 @@ fn runtime_emits_run_max_cycles_diagnostic_with_final_answer() {
         "keep going",
     );
     task.max_cycles = 2;
+    task.no_tool_policy = vv_agent::NoToolPolicy::Continue;
 
     let result = runtime.run(task).expect("run");
 
@@ -392,12 +405,7 @@ fn runtime_emits_run_max_cycles_diagnostic_with_final_answer() {
 
 #[test]
 fn runtime_controls_can_inject_messages_before_each_cycle() {
-    let mut finish_args = BTreeMap::new();
-    finish_args.insert("message".to_string(), json!("saw injected message"));
-    let llm = ScriptedLlmClient::new(vec![LLMResponse::with_tool_calls(
-        "finish",
-        vec![ToolCall::new("finish_injected", "task_finish", finish_args)],
-    )]);
+    let llm = ScriptedLlmClient::new(vec![LLMResponse::new("saw injected message")]);
     let runtime = AgentRuntime::new(llm);
 
     let result = runtime
@@ -439,8 +447,6 @@ fn runtime_interruption_provider_skips_remaining_tools() {
         )
         .expect("register noop");
 
-    let mut finish_args = BTreeMap::new();
-    finish_args.insert("message".to_string(), json!("done"));
     let llm = ScriptedLlmClient::new(vec![
         LLMResponse::with_tool_calls(
             "two tools",
@@ -449,14 +455,7 @@ fn runtime_interruption_provider_skips_remaining_tools() {
                 ToolCall::new("t2", "_demo_noop", BTreeMap::new()),
             ],
         ),
-        LLMResponse::with_tool_calls(
-            "finish",
-            vec![ToolCall::new(
-                "finish_after_steer",
-                "task_finish",
-                finish_args,
-            )],
-        ),
+        LLMResponse::new("done"),
     ]);
     let runtime = AgentRuntime::new(llm).with_tool_registry(registry);
     let used = Arc::new(Mutex::new(false));
@@ -632,7 +631,7 @@ impl RuntimeHook for InspectingRuntimeHook {
         &self,
         event: vv_agent::BeforeToolCallEvent<'_>,
     ) -> Option<BeforeToolCallPatch> {
-        assert_eq!(event.call.name, "task_finish");
+        assert_eq!(event.call.name, "handoff_result");
         assert_eq!(event.context.cycle_index, 1);
         self.events
             .lock()
@@ -704,9 +703,30 @@ impl LlmClient for HookInspectingLlmClient {
             "finish through hook",
             vec![ToolCall::new(
                 "hook_finish",
-                "task_finish",
+                "handoff_result",
                 BTreeMap::from([("message".to_string(), json!("original finish"))]),
             )],
         ))
     }
+}
+
+fn handoff_registry() -> vv_agent::tools::ToolRegistry {
+    let mut registry = vv_agent::tools::build_default_registry();
+    registry
+        .register_tool_with_parameters(
+            "handoff_result",
+            "Return the delegated result.",
+            json!({"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"], "additionalProperties": false}),
+            Arc::new(|_context, arguments| {
+                let mut result = ToolExecutionResult::success(
+                    "",
+                    json!({"message": arguments["message"], "ok": true}).to_string(),
+                );
+                result.directive = ToolDirective::Finish;
+                result.metadata.insert("final_message".to_string(), arguments["message"].clone());
+                result
+            }),
+        )
+        .expect("result tool");
+    registry
 }

@@ -19,10 +19,11 @@ limit order is:
 of `80` cycles.
 
 The no-tool policy order is per-run `RunConfig`, configured Runner default,
-Agent, then `NoToolPolicy::Continue`. `Continue` preserves the tool-driven
-default, `Finish` treats a normal assistant response as successful completion,
-and `WaitUser` pauses on that response. These controls never inspect the text
-or change which tools are available.
+Agent, then `NoToolPolicy::Finish`. `Finish` treats an assistant response without
+tool calls as a completion candidate, `Continue` requests another cycle, and
+`WaitUser` pauses on that response. Existing after-cycle hooks can reject or
+steer a candidate within the remaining cycle budget. These controls never
+inspect the text or change which tools are available.
 
 ## Per-Run Controls
 

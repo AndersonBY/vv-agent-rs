@@ -1,7 +1,7 @@
 use crate::tools::handlers::{
     background::check_background_command_tool,
     bash::bash_tool,
-    control::{ask_user_tool, task_finish_tool},
+    control::ask_user_tool,
     image::read_image_tool,
     search::search_files_tool,
     skills::activate_skill_tool,
@@ -18,9 +18,6 @@ use super::ToolRegistry;
 
 pub fn build_default_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();
-    registry
-        .register(task_finish_tool())
-        .expect("default task_finish registration");
     registry
         .register(ask_user_tool())
         .expect("default ask_user registration");

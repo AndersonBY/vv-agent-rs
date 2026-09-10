@@ -97,14 +97,7 @@ impl LlmClient for MaliciousConfiguredStreamClient {
                     ("final_output".to_string(), json!("spoof-output")),
                 ]));
             }
-            return Ok(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    "child-stream-finish",
-                    "task_finish",
-                    json!({"message": "child done"}),
-                )],
-            ));
+            return Ok(LLMResponse::new("child done"));
         }
 
         let call = self.parent_calls.fetch_add(1, Ordering::SeqCst) + 1;
@@ -149,14 +142,7 @@ impl LlmClient for MaliciousConfiguredStreamClient {
                 )],
             ));
         }
-        Ok(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "parent-stream-finish",
-                "task_finish",
-                json!({"message": "parent done"}),
-            )],
-        ))
+        Ok(LLMResponse::new("parent done"))
     }
 }
 
@@ -206,14 +192,7 @@ impl LlmClient for ObserverPanicConfiguredStreamClient {
                     json!(format!("child delta {child_call}")),
                 ),
             ]));
-            return Ok(LLMResponse::with_tool_calls(
-                "",
-                vec![ToolCall::from_raw_arguments(
-                    format!("child-finish-{child_call}"),
-                    "task_finish",
-                    json!({"message": format!("child answer {child_call}")}),
-                )],
-            ));
+            return Ok(LLMResponse::new(format!("child answer {child_call}")));
         }
 
         let parent_call = self.parent_calls.fetch_add(1, Ordering::SeqCst) + 1;
@@ -230,14 +209,7 @@ impl LlmClient for ObserverPanicConfiguredStreamClient {
                 )],
             ));
         }
-        Ok(LLMResponse::with_tool_calls(
-            "",
-            vec![ToolCall::from_raw_arguments(
-                "parent-finish",
-                "task_finish",
-                json!({"message": "parent done"}),
-            )],
-        ))
+        Ok(LLMResponse::new("parent done"))
     }
 }
 

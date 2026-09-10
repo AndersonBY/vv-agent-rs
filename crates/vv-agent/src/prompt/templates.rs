@@ -6,13 +6,6 @@ use serde_json::Value;
 use crate::constants::WORKSPACE_TOOLS;
 use crate::skills::{normalize_skill_list, render_skills_xml, MAX_SKILLS_PROMPT_CHARS};
 
-pub fn task_finish_prompt(language: &str) -> &'static str {
-    match language {
-        "zh-CN" => "可使用 task_finish 显式返回最终结果；若配置的 no-tool policy 允许，也可自然结束。",
-        _ => "Use task_finish for an explicit final result. Natural completion is allowed when the configured no-tool policy permits it.",
-    }
-}
-
 pub fn ask_user_prompt(language: &str) -> &'static str {
     match language {
         "zh-CN" => "只有缺少无法从上下文或可用工具中获得的必要决策时才询问用户。",

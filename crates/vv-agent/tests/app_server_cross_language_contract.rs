@@ -567,6 +567,5 @@ async fn next_server_request_id(
 }
 
 fn finish_response(message: &str) -> LLMResponse {
-    let args = BTreeMap::from([("message".to_string(), json!(message))]);
-    LLMResponse::with_tool_calls(message, vec![ToolCall::new("finish", "task_finish", args)])
+    LLMResponse::new(message)
 }

@@ -706,14 +706,7 @@ fn approval_processor_with_store(
                         json!({}),
                     )],
                 ),
-                LLMResponse::with_tool_calls(
-                    "",
-                    vec![ToolCall::from_raw_arguments(
-                        "finish",
-                        "task_finish",
-                        json!({"message":"done"}),
-                    )],
-                ),
+                LLMResponse::new("done"),
             ],
         ))
         .workspace(".")
