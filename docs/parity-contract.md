@@ -18,9 +18,6 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current lock adopts contract `18.0.0` at revision
-`8a25b5529fb6226bf23070e958b4233af9bfdcc3`, canonical artifact SHA-256
-`b6bc9096b677a9325eac954b24b5875aa16a705e1848bdd945495e9d54bc304c`.
 The current adoption state is not duplicated in this document. Treat
 [`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
 as the machine-readable source for the current verified Python and Rust
@@ -65,6 +62,13 @@ python3 scripts/contract_snapshot.py sync \
 
 Never repair a contract failure by editing a file under
 `crates/vv-agent/tests/fixtures/parity/` or changing only a digest.
+
+## Workspace Edit Producer
+
+`crates/vv-agent/src/tools/handlers/workspace/edit.rs` produces the canonical edit receipt and
+file metadata. The `builtin_tool_behavior_contract` producer tests consume the
+central success fixture. Workspace tool tests exercise large-file consecutive
+edits, stale baselines, exact replacement, and BOM/CRLF preservation.
 
 ## Verification Scope
 

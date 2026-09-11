@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::super::RuntimeRecipe;
 use super::capabilities::DistributedCapabilityRegistry;
 use super::dispatch::CycleDispatcher;
-use super::driver::CycleEnqueuer;
+use super::driver::{CycleEnqueuer, StartAdmission};
 use super::{DEFAULT_CYCLE_NAME, DEFAULT_LEASE_DURATION_MS};
 use crate::checkpoint::{
     ControllerCommand, ControllerCommandResolution, HostInteractionAdmissionContext,
@@ -19,6 +19,7 @@ pub struct DistributedBackend {
     pub(super) cycle_dispatcher: Option<Arc<dyn CycleDispatcher>>,
     pub(super) capability_registry: Option<DistributedCapabilityRegistry>,
     pub(super) cycle_enqueuer: Option<Arc<dyn CycleEnqueuer>>,
+    pub(super) start_admission: Option<Arc<dyn StartAdmission>>,
     pub(super) cycle_name: String,
     pub(super) dispatch_timeout: Duration,
     pub(super) lease_duration_ms: u64,
@@ -37,6 +38,7 @@ impl std::fmt::Debug for DistributedBackend {
                 &self.capability_registry.is_some(),
             )
             .field("has_cycle_enqueuer", &self.cycle_enqueuer.is_some())
+            .field("has_start_admission", &self.start_admission.is_some())
             .field("cycle_name", &self.cycle_name)
             .field("dispatch_timeout", &self.dispatch_timeout)
             .field("lease_duration_ms", &self.lease_duration_ms)
@@ -56,6 +58,7 @@ impl DistributedBackend {
             cycle_dispatcher: None,
             capability_registry: None,
             cycle_enqueuer: None,
+            start_admission: None,
             cycle_name: DEFAULT_CYCLE_NAME.to_string(),
             dispatch_timeout: Duration::from_secs(10 * 60),
             lease_duration_ms: DEFAULT_LEASE_DURATION_MS,
@@ -70,6 +73,7 @@ impl DistributedBackend {
             cycle_dispatcher: Some(cycle_dispatcher),
             capability_registry: None,
             cycle_enqueuer: None,
+            start_admission: None,
             cycle_name: DEFAULT_CYCLE_NAME.to_string(),
             dispatch_timeout: Duration::from_secs(10 * 60),
             lease_duration_ms: DEFAULT_LEASE_DURATION_MS,
@@ -80,6 +84,11 @@ impl DistributedBackend {
 
     pub fn with_cycle_name(mut self, cycle_name: impl Into<String>) -> Self {
         self.cycle_name = cycle_name.into();
+        self
+    }
+
+    pub fn with_start_admission(mut self, admission: Arc<dyn StartAdmission>) -> Self {
+        self.start_admission = Some(admission);
         self
     }
 

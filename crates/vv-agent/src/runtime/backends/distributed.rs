@@ -31,6 +31,6 @@ pub use dispatch::{
 };
 pub use driver::{
     CycleEnqueuer, DistributedAdvanceDecision, DistributedDeliveryOutcome, DistributedRunHandle,
-    DistributedWaitReason,
+    DistributedWaitReason, StartAdmission,
 };
 pub use worker::DistributedCycleWorker;

@@ -236,6 +236,34 @@ fn fixture_drives_builtin_handler_envelopes_and_metadata() {
         contract,
     );
 
+    let edit_case = &tools["edit_file"]["success"];
+    let mut context = ToolContext::new(workspace.path());
+    let target = workspace
+        .path()
+        .join(edit_case["arguments"]["path"].as_str().expect("edit path"));
+    std::fs::write(
+        &target,
+        edit_case["before"].as_str().expect("original content"),
+    )
+    .expect("file");
+    execute(
+        &registry,
+        &mut context,
+        "read_file",
+        &json!({"path": edit_case["arguments"]["path"]}),
+    );
+    let result = execute(
+        &registry,
+        &mut context,
+        "edit_file",
+        &edit_case["arguments"],
+    );
+    assert_result(&result, &edit_case["result"], contract);
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("file"),
+        edit_case["after"]
+    );
+
     let image_case = &tools["read_image"]["too_large"];
     std::fs::write(
         workspace

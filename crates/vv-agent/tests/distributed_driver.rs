@@ -7,7 +7,7 @@ use vv_agent::runtime::backends::distributed::{
     CapabilityRef, CycleEnqueuer, DistributedAdvanceDecision, DistributedBackend,
     DistributedCapabilities, DistributedCapabilityRegistry, DistributedCheckpointConfig,
     DistributedCycleWorker, DistributedDeliveryOutcome, DistributedRunEnvelope,
-    DistributedWaitReason, DEFAULT_CYCLE_NAME,
+    DistributedWaitReason, StartAdmission, DEFAULT_CYCLE_NAME,
 };
 use vv_agent::runtime::checkpoint_codec::checkpoint_from_value;
 use vv_agent::types::AgentTask;
@@ -43,6 +43,24 @@ impl CycleEnqueuer for RecordingEnqueuer {
             .map_err(|_| "deliveries lock poisoned".to_string())?
             .push((envelope.clone(), not_before_unix_ms));
         Ok(())
+    }
+}
+
+struct OwningStartAdmission {
+    calls: Mutex<Vec<(String, String)>>,
+}
+
+impl StartAdmission for OwningStartAdmission {
+    fn admit(
+        &self,
+        handle: &vv_agent::runtime::backends::distributed::DistributedRunHandle,
+        envelope: &DistributedRunEnvelope,
+    ) -> Result<bool, String> {
+        self.calls
+            .lock()
+            .map_err(|_| "admission lock poisoned".to_string())?
+            .push((handle.run_id.clone(), envelope.job_id.clone()));
+        Ok(false)
     }
 }
 
@@ -300,6 +318,24 @@ fn start_enqueues_only_cycle_one_and_returns_passive_handle() {
     assert_eq!(deliveries[0].0.cycle_index, 1);
     assert_eq!(deliveries[0].0.claim_mode, ClaimMode::Continue);
     assert_eq!(deliveries[0].1, None);
+}
+
+#[test]
+fn start_admission_can_own_first_delivery() {
+    let checkpoint = minimal_checkpoint("driver-start-admission");
+    let config = checkpoint_config(&checkpoint);
+    let task = task(&checkpoint, 10);
+    let (backend, _store, enqueuer) = build_backend(checkpoint, recipe());
+    let admission = Arc::new(OwningStartAdmission {
+        calls: Mutex::new(Vec::new()),
+    });
+    let backend = backend.with_start_admission(admission.clone());
+
+    let handle = backend.start(task, config, None).expect("start");
+
+    assert!(!handle.run_id.is_empty());
+    assert_eq!(admission.calls.lock().expect("admission calls").len(), 1);
+    assert!(enqueuer.deliveries().is_empty());
 }
 
 #[test]

@@ -94,6 +94,14 @@ pub trait CycleEnqueuer: Send + Sync {
     ) -> Result<(), String>;
 }
 
+pub trait StartAdmission: Send + Sync {
+    fn admit(
+        &self,
+        handle: &DistributedRunHandle,
+        envelope: &DistributedRunEnvelope,
+    ) -> Result<bool, String>;
+}
+
 type NonblockingComponents<'a> = (
     &'a RuntimeRecipe,
     Arc<dyn CheckpointStore>,
@@ -195,6 +203,11 @@ impl DistributedBackend {
             budget_limits,
             None,
         )?;
+        if let Some(admission) = &self.start_admission {
+            if !admission.admit(&handle, &envelope)? {
+                return Ok(handle);
+            }
+        }
         enqueuer.enqueue_envelope(&envelope, None)?;
         Ok(handle)
     }

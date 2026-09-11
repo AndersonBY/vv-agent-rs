@@ -25,7 +25,6 @@ pub(crate) const WRITE_FILE_ALLOWED_BASELINE_SOURCES: &[&str] = &[
     WRITE_FILE_BASELINE_SOURCE,
     EDIT_FILE_BASELINE_SOURCE,
 ];
-const MAX_DIFF_CHARS: usize = 12_000;
 
 pub fn edit_file(context: &mut ToolContext, arguments: &ToolArguments) -> ToolExecutionResult {
     let spec = edit_file_tool();
@@ -158,13 +157,7 @@ pub(crate) fn edit_file_tool() -> ToolSpec {
                                 false,
                                 EDIT_FILE_BASELINE_SOURCE,
                             );
-                            edit_success_result(
-                                &path,
-                                &text,
-                                &replaced_text,
-                                replaced_count,
-                                line_ending,
-                            )
+                            edit_success_result(&path, replaced_count, line_ending)
                         }
                         Err(error) => workspace_backend_error(error),
                     }
@@ -297,31 +290,6 @@ pub(crate) fn baseline_issue(
     None
 }
 
-pub(crate) fn changed_file_metadata(
-    path: &str,
-    before: &str,
-    after: &str,
-    operation: &str,
-    line_ending: &str,
-) -> Metadata {
-    let (diff, diff_truncated, additions, deletions) = bounded_diff(path, before, after);
-    let mut metadata = Metadata::new();
-    metadata.insert("changed_files".to_string(), json!([path]));
-    metadata.insert("diff".to_string(), Value::String(diff));
-    metadata.insert("additions".to_string(), json!(additions));
-    metadata.insert("deletions".to_string(), json!(deletions));
-    metadata.insert(
-        "operation".to_string(),
-        Value::String(operation.to_string()),
-    );
-    metadata.insert(
-        "line_ending".to_string(),
-        Value::String(line_ending.to_string()),
-    );
-    metadata.insert("diff_truncated".to_string(), Value::Bool(diff_truncated));
-    metadata
-}
-
 pub(crate) fn detect_line_ending(text: &str) -> &'static str {
     let lf_count = text.matches('\n').count();
     let crlf_count = text.matches("\r\n").count();
@@ -336,8 +304,6 @@ pub(crate) fn detect_line_ending(text: &str) -> &'static str {
 
 fn edit_success_result(
     path: &str,
-    before: &str,
-    after: &str,
     replaced_count: usize,
     line_ending: &str,
 ) -> ToolExecutionResult {
@@ -352,7 +318,11 @@ fn edit_success_result(
         status: ToolResultStatus::Success,
         directive: crate::types::ToolDirective::Continue,
         error_code: None,
-        metadata: changed_file_metadata(path, before, after, "edit_file", line_ending),
+        metadata: Metadata::from([
+            ("changed_files".to_string(), json!([path])),
+            ("operation".to_string(), json!("edit_file")),
+            ("line_ending".to_string(), json!(line_ending)),
+        ]),
         image_url: None,
         image_path: None,
         truncated: false,
@@ -367,107 +337,4 @@ fn edit_success_result(
 fn content_hash(raw: &[u8]) -> String {
     let digest = Sha256::digest(raw);
     format!("{digest:x}")
-}
-
-fn bounded_diff(path: &str, before: &str, after: &str) -> (String, bool, usize, usize) {
-    let before_lines = split_unified_diff_lines(before);
-    let after_lines = split_unified_diff_lines(after);
-    let mut prefix = 0;
-    while prefix < before_lines.len()
-        && prefix < after_lines.len()
-        && before_lines[prefix] == after_lines[prefix]
-    {
-        prefix += 1;
-    }
-    let mut suffix = 0;
-    while suffix + prefix < before_lines.len()
-        && suffix + prefix < after_lines.len()
-        && before_lines[before_lines.len() - 1 - suffix]
-            == after_lines[after_lines.len() - 1 - suffix]
-    {
-        suffix += 1;
-    }
-    let before_changed_end = before_lines.len().saturating_sub(suffix);
-    let after_changed_end = after_lines.len().saturating_sub(suffix);
-    let additions = after_changed_end.saturating_sub(prefix);
-    let deletions = before_changed_end.saturating_sub(prefix);
-    if additions == 0 && deletions == 0 {
-        return (String::new(), false, 0, 0);
-    }
-
-    let context_start = prefix.saturating_sub(3);
-    let before_hunk_end = before_changed_end.saturating_add(3).min(before_lines.len());
-    let after_hunk_end = after_changed_end.saturating_add(3).min(after_lines.len());
-    let before_hunk_count = before_hunk_end.saturating_sub(context_start);
-    let after_hunk_count = after_hunk_end.saturating_sub(context_start);
-    let mut diff = format!(
-        "--- {path}\n+++ {path}\n@@ -{} +{} @@\n",
-        format_unified_range(context_start, before_hunk_count),
-        format_unified_range(context_start, after_hunk_count),
-    );
-    for line in &before_lines[context_start..prefix] {
-        render_unified_line(&mut diff, ' ', line);
-    }
-    for line in &before_lines[prefix..before_changed_end] {
-        render_unified_line(&mut diff, '-', line);
-    }
-    for line in &after_lines[prefix..after_changed_end] {
-        render_unified_line(&mut diff, '+', line);
-    }
-    for line in &after_lines[after_changed_end..after_hunk_end] {
-        render_unified_line(&mut diff, ' ', line);
-    }
-
-    let truncated = diff.chars().count() > MAX_DIFF_CHARS;
-    if truncated {
-        diff = diff.chars().take(MAX_DIFF_CHARS).collect();
-    }
-    (diff, truncated, additions, deletions)
-}
-
-fn split_unified_diff_lines(text: &str) -> Vec<&str> {
-    let mut lines = Vec::new();
-    let mut start = 0;
-    for (index, character) in text.char_indices() {
-        if character == '\n' {
-            let end = index + character.len_utf8();
-            lines.push(&text[start..end]);
-            start = end;
-        }
-    }
-    if start < text.len() {
-        lines.push(&text[start..]);
-    }
-    lines
-}
-
-fn format_unified_range(start_index: usize, count: usize) -> String {
-    let start_line = if count == 0 {
-        start_index
-    } else {
-        start_index + 1
-    };
-    if count == 1 {
-        start_line.to_string()
-    } else {
-        format!("{start_line},{count}")
-    }
-}
-
-fn render_unified_line(output: &mut String, marker: char, line: &str) {
-    let has_newline = line.ends_with('\n');
-    let mut body = if has_newline {
-        &line[..line.len() - 1]
-    } else {
-        line
-    };
-    if has_newline && body.ends_with('\r') {
-        body = &body[..body.len() - 1];
-    }
-    output.push(marker);
-    output.push_str(body);
-    output.push('\n');
-    if !has_newline {
-        output.push_str("\\ No newline at end of file\n");
-    }
 }
