@@ -92,17 +92,17 @@ fn bash_tools_reject_schema_invalid_argument_types() {
             "bash",
             BTreeMap::from([
                 ("command".to_string(), json!("printf no-run")),
-                ("run_in_background".to_string(), json!("false")),
+                ("yield_time_ms".to_string(), json!("false")),
             ]),
-            "/run_in_background",
+            "/yield_time_ms",
         ),
         (
             "bash",
             BTreeMap::from([
                 ("command".to_string(), json!("printf no-run")),
-                ("timeout".to_string(), json!("1")),
+                ("timeout_seconds".to_string(), json!("1")),
             ]),
-            "/timeout",
+            "/timeout_seconds",
         ),
         (
             "check_background_command",
@@ -163,15 +163,15 @@ fn background_command_lifecycle_can_be_polled() {
                         "command".to_string(),
                         json!("printf start; sleep 0.2; printf done"),
                     ),
-                    ("run_in_background".to_string(), json!(true)),
-                    ("timeout".to_string(), json!(5)),
+                    ("yield_time_ms".to_string(), json!(0)),
+                    ("timeout_seconds".to_string(), json!(5)),
                 ]),
             ),
             &mut context,
         )
         .expect("bash background start");
 
-    assert_eq!(start.status, ToolResultStatus::Running);
+    assert_eq!(start.status, ToolResultStatus::Success);
     let start_payload: Value = serde_json::from_str(&start.content).expect("start payload");
     let session_id = start_payload["session_id"]
         .as_str()
@@ -192,7 +192,10 @@ fn background_command_lifecycle_can_be_polled() {
                 &mut context,
             )
             .expect("check background command");
-        if probe.status == ToolResultStatus::Running {
+        if matches!(
+            probe.metadata.get("status").and_then(Value::as_str),
+            Some("running" | "stopping" | "unknown")
+        ) {
             assert!(Instant::now() < deadline, "background command timed out");
             thread::sleep(Duration::from_millis(50));
             continue;
@@ -218,8 +221,8 @@ fn background_command_listener_receives_terminal_event() {
                 "bash",
                 BTreeMap::from([
                     ("command".to_string(), json!("printf listen; sleep 0.1")),
-                    ("run_in_background".to_string(), json!(true)),
-                    ("timeout".to_string(), json!(5)),
+                    ("yield_time_ms".to_string(), json!(0)),
+                    ("timeout_seconds".to_string(), json!(5)),
                 ]),
             ),
             &mut context,
@@ -252,7 +255,10 @@ fn background_command_listener_receives_terminal_event() {
                     &mut context,
                 )
                 .expect("check background command");
-            probe.status != ToolResultStatus::Running
+            !matches!(
+                probe.metadata.get("status").and_then(Value::as_str),
+                Some("running" | "stopping" | "unknown")
+            )
         },
     );
 
@@ -276,8 +282,8 @@ fn background_command_listener_is_notified_without_polling() {
                 "bash",
                 BTreeMap::from([
                     ("command".to_string(), json!("printf watched")),
-                    ("run_in_background".to_string(), json!(true)),
-                    ("timeout".to_string(), json!(5)),
+                    ("yield_time_ms".to_string(), json!(0)),
+                    ("timeout_seconds".to_string(), json!(5)),
                 ]),
             ),
             &mut context,
@@ -341,7 +347,7 @@ fn background_session_manager_can_start_process() {
 }
 
 #[test]
-fn background_session_snapshot_keeps_null_shell() {
+fn background_session_snapshot_omits_unspecified_shell() {
     let workspace = tempfile::tempdir().expect("workspace");
     let command = vec![
         "bash".to_string(),
@@ -361,14 +367,14 @@ fn background_session_snapshot_keeps_null_shell() {
     let final_payload = wait_for_background_payload("background manager task finished", || {
         let payload = background_session_manager().check(&session_id);
         if payload["status"] == "running" {
-            assert_eq!(payload.get("shell"), Some(&Value::Null));
+            assert!(payload.get("shell").is_none());
         }
         payload
     });
 
     assert_eq!(final_payload["status"], "completed");
     assert_eq!(final_payload["output"], "null-shell");
-    assert_eq!(final_payload.get("shell"), Some(&Value::Null));
+    assert!(final_payload.get("shell").is_none());
 }
 
 #[test]
@@ -456,7 +462,7 @@ fn background_session_timeout_kills_process_and_preserves_output() {
 }
 
 #[test]
-fn foreground_timeout_moves_command_to_background() {
+fn foreground_yield_returns_handle_without_stopping_command() {
     let workspace = tempfile::tempdir().expect("workspace");
     let registry = build_default_registry();
     let mut context = ToolContext::new(workspace.path());
@@ -468,22 +474,17 @@ fn foreground_timeout_moves_command_to_background() {
                 "bash",
                 BTreeMap::from([
                     ("command".to_string(), json!("printf partial; sleep 2")),
-                    ("timeout".to_string(), json!(1)),
+                    ("yield_time_ms".to_string(), json!(1000)),
                 ]),
             ),
             &mut context,
         )
         .expect("bash timeout");
 
-    assert_eq!(result.status, ToolResultStatus::Running);
+    assert_eq!(result.status, ToolResultStatus::Success);
     let payload: Value = serde_json::from_str(&result.content).expect("timeout payload");
     assert_eq!(payload["status"], "running");
-    assert_eq!(payload["transitioned_to_background"], true);
     assert!(payload["session_id"].as_str().is_some());
-    assert!(payload["message"]
-        .as_str()
-        .expect("message")
-        .contains("check_background_command"));
     assert!(payload["output"]
         .as_str()
         .expect("output")
@@ -747,7 +748,7 @@ fn background_bash_reuses_terminal_artifact_across_polls() {
                 "bash",
                 BTreeMap::from([
                     ("command".to_string(), json!("printf '%012001d' 0")),
-                    ("run_in_background".to_string(), json!(true)),
+                    ("yield_time_ms".to_string(), json!(0)),
                 ]),
             ),
             &mut context,
@@ -771,7 +772,10 @@ fn background_bash_reuses_terminal_artifact_across_polls() {
                 &mut context,
             )
             .expect("background check");
-        if result.status != ToolResultStatus::Running {
+        if !matches!(
+            result.metadata.get("status").and_then(Value::as_str),
+            Some("running" | "stopping" | "unknown")
+        ) {
             break result;
         }
         assert!(Instant::now() < deadline, "background artifact timed out");

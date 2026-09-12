@@ -382,6 +382,18 @@ started 事件，wire 上是 `execution_started=false`、`duration_ms=null`。�
 未配置预算时保留原有事件流。详见[运行预算](docs/run-budgets.md)和
 `crates/vv-agent/examples/07_token_budget_guard.rs`。
 
+### Bash 进程管理
+
+`bash` 接受 `command`、`exec_dir`、`stdin`、`auto_confirm`、`yield_time_ms`
+（默认 1000，整数范围 0..10000）和可选 `timeout_seconds`（整数范围 1..86400）。
+初始等待只控制何时返回输出和句柄；显式执行期限从进程启动时计算一次，省略则不设置期限。
+`check_background_command` 与 `stop_background_command` 均只接受 `session_id`，
+并校验所属任务和 workspace。
+
+成功启动与运行中查询返回已完成的 `SUCCESS` / `continue` 管理回执，checkpointed
+Runner 能继续下一轮模型调用。实际非零退出仍是错误，未确认停止时不生成退出码。
+运行中的大输出通过不可变 artifact 完整恢复。参见 [Bash 进程管理](docs/bash-process-management.md)。
+
 ### App Server
 
 当产品宿主需要通过稳定 JSON-RPC 协议驱动 `vv-agent`，而不是直接链接 runtime 内部实现时，

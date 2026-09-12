@@ -191,8 +191,8 @@ async fn background_completion_queues_a_notification_for_the_next_turn() {
                         "bash",
                         BTreeMap::from([
                             ("command".to_string(), json!("sleep 1; printf bridge-ready")),
-                            ("run_in_background".to_string(), json!(true)),
-                            ("timeout".to_string(), json!(5)),
+                            ("yield_time_ms".to_string(), json!(0)),
+                            ("timeout_seconds".to_string(), json!(5)),
                         ]),
                     )],
                 ))

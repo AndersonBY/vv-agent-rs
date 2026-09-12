@@ -428,6 +428,21 @@ successful answer. Runs without configured limits preserve the existing event
 flow. See [Run Budgets](docs/run-budgets.md) and
 `crates/vv-agent/examples/07_token_budget_guard.rs`.
 
+### Bash process management
+
+`bash` accepts `command`, `exec_dir`, `stdin`, `auto_confirm`, `yield_time_ms`
+(default 1000, integer 0..10000) and optional `timeout_seconds` (1..86400).
+The initial wait only controls when output and a session handle are returned.
+An explicit execution deadline starts once with the process; omission means
+no deadline. `check_background_command` and `stop_background_command` each
+take `session_id` and enforce task/workspace ownership.
+
+Starting and observing an ongoing command returns a completed `SUCCESS` /
+`continue` receipt, allowing the next model cycle under a checkpoint. Actual
+nonzero exits remain errors, and an unconfirmed stop never invents an exit
+code. Running output has an immutable artifact when oversized. See
+[Bash process management](docs/bash-process-management.md).
+
 ### App Server
 
 Use the App Server when a product shell needs to drive `vv-agent` over a stable

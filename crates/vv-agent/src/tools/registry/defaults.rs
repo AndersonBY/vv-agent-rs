@@ -1,5 +1,5 @@
 use crate::tools::handlers::{
-    background::check_background_command_tool,
+    background::{check_background_command_tool, stop_background_command_tool},
     bash::bash_tool,
     control::ask_user_tool,
     image::read_image_tool,
@@ -51,6 +51,9 @@ pub fn build_default_registry() -> ToolRegistry {
     registry
         .register(check_background_command_tool())
         .expect("default check_background_command registration");
+    registry
+        .register(stop_background_command_tool())
+        .expect("default stop_background_command registration");
     registry
         .register(create_sub_task_tool())
         .expect("default create_sub_task registration");

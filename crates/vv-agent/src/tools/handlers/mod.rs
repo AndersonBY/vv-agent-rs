@@ -9,7 +9,7 @@ pub mod sub_task_status;
 pub mod todo;
 pub mod workspace;
 
-pub use background::check_background_command;
+pub use background::{check_background_command, stop_background_command};
 pub use bash::run_bash_command;
 pub use control::ask_user;
 pub use image::read_image;

@@ -36,6 +36,10 @@ pub fn default_tool_schemas() -> BTreeMap<String, Value> {
             "check_background_command",
             command::check_background_command_schema(),
         ),
+        (
+            "stop_background_command",
+            command::stop_background_command_schema(),
+        ),
         ("create_sub_task", sub_agents::create_sub_task_schema()),
         ("sub_task_status", sub_agents::sub_task_status_schema()),
         ("read_image", media::read_image_schema()),

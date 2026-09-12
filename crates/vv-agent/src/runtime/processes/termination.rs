@@ -1,21 +1,27 @@
-use std::process::Child;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use super::capture::wait_for_child;
-use super::platform::kill_process_group_or_child;
+use super::platform::{kill_process_group_or_child, process_tree_is_running};
+use super::ManagedChild;
 
-pub fn kill_process_tree(child: &mut Child) {
-    if child.try_wait().ok().flatten().is_some() {
-        return;
+pub fn kill_process_tree(child: &mut ManagedChild) -> bool {
+    for force in [false, true] {
+        if matches!(process_tree_is_running(child), Ok(false)) {
+            return true;
+        }
+        // A failed signal write may race the supervisor's completion proof.
+        let _ = kill_process_group_or_child(child, force);
+        let deadline = Instant::now() + Duration::from_millis(500);
+        loop {
+            if matches!(child.try_wait(), Ok(Some(_)))
+                && matches!(process_tree_is_running(child), Ok(false))
+            {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
-    kill_process_group_or_child(child, false);
-    if wait_for_child(child, Duration::from_millis(500))
-        .ok()
-        .flatten()
-        .is_some()
-    {
-        return;
-    }
-    kill_process_group_or_child(child, true);
-    let _ = wait_for_child(child, Duration::from_millis(500));
+    false
 }

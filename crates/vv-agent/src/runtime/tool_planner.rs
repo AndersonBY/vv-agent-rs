@@ -5,7 +5,7 @@ use serde_json::Value;
 use crate::constants::{
     ACTIVATE_SKILL_TOOL_NAME, ASK_USER_TOOL_NAME, BASH_TOOL_NAME,
     CHECK_BACKGROUND_COMMAND_TOOL_NAME, CREATE_SUB_TASK_TOOL_NAME, READ_IMAGE_TOOL_NAME,
-    SUB_TASK_STATUS_TOOL_NAME, WORKSPACE_TOOLS,
+    STOP_BACKGROUND_COMMAND_TOOL_NAME, SUB_TASK_STATUS_TOOL_NAME, WORKSPACE_TOOLS,
 };
 use crate::tools::{ToolPolicy, ToolRegistry};
 use crate::types::AgentTask;
@@ -186,6 +186,7 @@ pub fn plan_tool_names(task: &AgentTask, memory_usage_percentage: Option<u32>) -
     if task.agent_type.as_deref() == Some("computer") {
         names.push(BASH_TOOL_NAME.to_string());
         names.push(CHECK_BACKGROUND_COMMAND_TOOL_NAME.to_string());
+        names.push(STOP_BACKGROUND_COMMAND_TOOL_NAME.to_string());
     }
     if task.sub_agents_enabled() {
         names.push(CREATE_SUB_TASK_TOOL_NAME.to_string());

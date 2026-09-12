@@ -6,13 +6,14 @@ mod subscription;
 mod tests;
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use crate::runtime::processes::start_captured_process_with_env;
 use crate::workspace::WorkspaceBackend;
@@ -32,8 +33,7 @@ pub fn background_session_manager() -> &'static BackgroundSessionManager {
 
 #[derive(Default)]
 pub struct BackgroundSessionManager {
-    sessions: Mutex<BTreeMap<String, BackgroundSession>>,
-    next_id: AtomicU64,
+    sessions: Mutex<BTreeMap<String, Arc<Mutex<BackgroundSession>>>>,
     next_listener_id: AtomicU64,
 }
 
@@ -42,11 +42,15 @@ impl BackgroundSessionManager {
         &self,
         command: impl Into<String>,
         cwd: impl Into<PathBuf>,
-        timeout_seconds: u64,
+        timeout_seconds: impl Into<Option<u64>>,
         options: BackgroundSessionStartOptions,
     ) -> Result<String, String> {
         let command = command.into();
         let cwd = cwd.into();
+        let timeout_seconds = timeout_seconds.into();
+        if timeout_seconds.is_some_and(|timeout| !(1..=86400).contains(&timeout)) {
+            return Err("timeout_seconds must be an integer from 1 through 86400".to_string());
+        }
         let prepared = super::shell::prepare_shell_execution(
             &command,
             options.auto_confirm,
@@ -61,22 +65,24 @@ impl BackgroundSessionManager {
             options.env.as_ref(),
         )
         .map_err(|error| error.to_string())?;
-        Ok(self.adopt_running_process(
+        let mut adopted = BackgroundSessionAdoptOptions::new(
             command,
             cwd,
             timeout_seconds,
             started.child,
             started.output_path,
-            prepared.shell,
-        ))
+        )
+        .with_started_at(started.started_at);
+        adopted.shell = prepared.shell;
+        Ok(self.adopt_running_process_with_options(adopted))
     }
 
     pub fn adopt_running_process(
         &self,
         command: impl Into<String>,
         cwd: impl Into<PathBuf>,
-        timeout_seconds: u64,
-        child: std::process::Child,
+        timeout_seconds: impl Into<Option<u64>>,
+        child: impl Into<super::processes::ManagedChild>,
         output_path: PathBuf,
         shell: Option<String>,
     ) -> String {
@@ -90,15 +96,57 @@ impl BackgroundSessionManager {
         &self,
         options: BackgroundSessionAdoptOptions,
     ) -> String {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-        let session_id = format!("bg_{id:012x}");
-        let session = BackgroundSession::from_adopt_options(session_id.clone(), options);
+        let session_id = format!("bg_{}", &Uuid::new_v4().simple().to_string()[..12]);
+        let session = Arc::new(Mutex::new(BackgroundSession::from_adopt_options(
+            session_id.clone(),
+            options,
+        )));
         self.sessions
             .lock()
             .expect("background session manager poisoned")
-            .insert(session_id.clone(), session);
-        self.start_watch_thread(session_id.clone());
+            .insert(session_id.clone(), session.clone());
+        let _ = thread::Builder::new()
+            .name(format!("vv-agent-bg-{session_id}"))
+            .spawn(move || loop {
+                let (terminal, listeners, payload) = {
+                    let mut session = session.lock().expect("background session poisoned");
+                    let listeners = session.advance();
+                    (session.is_terminal(), listeners, session.snapshot())
+                };
+                notify_background_listeners(listeners, &payload);
+                if terminal {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
+            });
         session_id
+    }
+
+    fn get(&self, session_id: &str) -> Option<Arc<Mutex<BackgroundSession>>> {
+        self.sessions
+            .lock()
+            .expect("background session manager poisoned")
+            .get(session_id)
+            .cloned()
+    }
+
+    pub(crate) fn wait(&self, session_id: &str, yield_time_ms: u64) {
+        let Some(session) = self.get(session_id) else {
+            return;
+        };
+        loop {
+            let remaining = {
+                let session = session.lock().expect("background session poisoned");
+                if session.is_terminal() {
+                    return;
+                }
+                session.remaining_yield(Duration::from_millis(yield_time_ms))
+            };
+            if remaining.is_zero() {
+                return;
+            }
+            thread::sleep(remaining.min(Duration::from_millis(10)));
+        }
     }
 
     pub fn subscribe(
@@ -106,123 +154,103 @@ impl BackgroundSessionManager {
         session_id: &str,
         listener: BackgroundSessionListener,
     ) -> BackgroundSessionSubscription {
-        let mut snapshot = None;
+        let Some(session) = self.get(session_id) else {
+            return BackgroundSessionSubscription::noop();
+        };
         let listener_id = self.next_listener_id.fetch_add(1, Ordering::Relaxed) + 1;
-        {
-            let mut sessions = self
-                .sessions
-                .lock()
-                .expect("background session manager poisoned");
-            let Some(session) = sessions.get_mut(session_id) else {
-                return BackgroundSessionSubscription::noop();
-            };
+        let snapshot = {
+            let mut session = session.lock().expect("background session poisoned");
             if session.is_terminal() {
-                snapshot = Some(session.snapshot());
+                Some(session.snapshot())
             } else {
                 session.add_listener(listener_id, listener.clone());
+                None
             }
-        }
-        if let Some(payload) = snapshot {
-            listener(&payload);
+        };
+        if let Some(snapshot) = snapshot {
+            listener(&snapshot);
             return BackgroundSessionSubscription::noop();
         }
         BackgroundSessionSubscription::new(session_id.to_string(), listener_id, self)
     }
 
     fn unsubscribe(&self, session_id: &str, listener_id: u64) {
-        let mut sessions = self
-            .sessions
-            .lock()
-            .expect("background session manager poisoned");
-        if let Some(session) = sessions.get_mut(session_id) {
-            session.remove_listener(listener_id);
+        if let Some(session) = self.get(session_id) {
+            session
+                .lock()
+                .expect("background session poisoned")
+                .remove_listener(listener_id);
         }
     }
 
-    fn start_watch_thread(&self, session_id: String) {
-        let thread_name = format!("vv-agent-bg-{session_id}");
-        let _ = thread::Builder::new()
-            .name(thread_name)
-            .spawn(move || loop {
-                thread::sleep(Duration::from_millis(200));
-                let payload = background_session_manager().check(&session_id);
-                let status = payload
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .unwrap_or("missing");
-                if status != "running" {
-                    break;
-                }
-            });
-    }
-
+    /// Trusted local observation. Model tools must use the owner-checked entry.
     pub fn check(&self, session_id: &str) -> Value {
-        let mut sessions = self
-            .sessions
-            .lock()
-            .expect("background session manager poisoned");
-        let Some(session) = sessions.get_mut(session_id) else {
-            return json!({
-                "status": "missing",
-                "session_id": session_id,
-                "error": "Background session not found",
-            });
+        let Some(session) = self.get(session_id) else {
+            return missing(session_id);
         };
-
-        if session.is_terminal() {
-            return session.snapshot();
-        }
-
-        let elapsed = session.elapsed();
-        if session.timed_out(elapsed) {
-            session.finalize_timeout();
-            let payload = session.snapshot();
-            let terminal_listeners = session.take_listeners();
-            drop(sessions);
-            notify_background_listeners(terminal_listeners, &payload);
-            return payload;
-        }
-
-        match session.try_wait() {
-            Ok(Some(exit_code)) => {
-                session.finalize_completed(exit_code);
-                let payload = session.snapshot();
-                let terminal_listeners = session.take_listeners();
-                drop(sessions);
-                notify_background_listeners(terminal_listeners, &payload);
-                payload
-            }
-            Ok(None) => session.running_snapshot(elapsed),
-            Err(error) => {
-                session.finalize_failed_with_output(-1, error.to_string());
-                let payload = session.snapshot();
-                let terminal_listeners = session.take_listeners();
-                drop(sessions);
-                notify_background_listeners(terminal_listeners, &payload);
-                payload
-            }
-        }
+        let (observation, listeners) = {
+            let mut session = session.lock().expect("background session poisoned");
+            let listeners = session.advance();
+            (session.live_snapshot(), listeners)
+        };
+        let payload = observation.render();
+        notify_background_listeners(listeners, &payload);
+        payload
     }
 
     pub(crate) fn check_for_tool(
         &self,
         session_id: &str,
-        fallback_backend: std::sync::Arc<dyn WorkspaceBackend>,
-        fallback_task_id: &str,
-        fallback_tool_call_id: &str,
+        backend: Arc<dyn WorkspaceBackend>,
+        task_id: &str,
+        call_id: &str,
+        workspace: &Path,
     ) -> Value {
-        let payload = self.check(session_id);
-        if payload.get("status").and_then(Value::as_str) == Some("running") {
-            return payload;
-        }
-        let mut sessions = self
-            .sessions
-            .lock()
-            .expect("background session manager poisoned");
-        let Some(session) = sessions.get_mut(session_id) else {
-            return payload;
-        };
-        session.ensure_artifact(fallback_backend, fallback_task_id, fallback_tool_call_id);
-        session.snapshot()
+        self.access_for_tool(session_id, backend, task_id, call_id, workspace, false)
     }
+
+    pub(crate) fn stop_for_tool(
+        &self,
+        session_id: &str,
+        backend: Arc<dyn WorkspaceBackend>,
+        task_id: &str,
+        call_id: &str,
+        workspace: &Path,
+    ) -> Value {
+        self.access_for_tool(session_id, backend, task_id, call_id, workspace, true)
+    }
+
+    fn access_for_tool(
+        &self,
+        session_id: &str,
+        backend: Arc<dyn WorkspaceBackend>,
+        task_id: &str,
+        call_id: &str,
+        workspace: &Path,
+        stop: bool,
+    ) -> Value {
+        let Some(session) = self.get(session_id) else {
+            return missing(session_id);
+        };
+        let (observation, listeners) = {
+            let mut session = session.lock().expect("background session poisoned");
+            if !session.owned_by(task_id, workspace) {
+                return json!({"status": "forbidden", "session_id": session_id,
+                    "error": "Background session belongs to another task or workspace", "error_code": "background_session_forbidden"});
+            }
+            session.set_artifact_context(backend, task_id, call_id);
+            let mut listeners = session.advance();
+            if stop {
+                listeners.extend(session.request_stop(false));
+            }
+            (session.live_snapshot(), listeners)
+        };
+        let payload = observation.render();
+        notify_background_listeners(listeners, &payload);
+        payload
+    }
+}
+
+fn missing(session_id: &str) -> Value {
+    json!({"status": "missing", "session_id": session_id, "error": "Background session not found"})
 }

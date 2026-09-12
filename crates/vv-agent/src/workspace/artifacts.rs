@@ -1,6 +1,6 @@
 use std::fs::File;
-use std::io::{Error, ErrorKind, Read};
-use std::path::Path;
+use std::io::{Error, ErrorKind, Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
@@ -22,35 +22,7 @@ pub(crate) struct BoundedTextPreview {
     pub original_bytes: u64,
     pub visible_bytes: u64,
     pub truncated: bool,
-}
-
-pub(crate) fn bounded_text_preview(text: &str) -> BoundedTextPreview {
-    let original_bytes = text.len() as u64;
-    if text.chars().count() <= BOUNDED_TEXT_CHARS {
-        return BoundedTextPreview {
-            content: text.to_string(),
-            original_bytes,
-            visible_bytes: original_bytes,
-            truncated: false,
-        };
-    }
-    let head = text.chars().take(PREVIEW_HEAD_CHARS).collect::<String>();
-    let tail = text
-        .chars()
-        .rev()
-        .take(PREVIEW_TAIL_CHARS)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<String>();
-    let content = format!("{head}{PREVIEW_MARKER}{tail}");
-    debug_assert_eq!(content.chars().count(), BOUNDED_TEXT_CHARS);
-    BoundedTextPreview {
-        visible_bytes: content.len() as u64,
-        content,
-        original_bytes,
-        truncated: true,
-    }
+    pub json_bytes: u64,
 }
 
 pub(crate) fn bounded_captured_text_preview(path: &Path) -> std::io::Result<BoundedTextPreview> {
@@ -59,11 +31,13 @@ pub(crate) fn bounded_captured_text_preview(path: &Path) -> std::io::Result<Boun
     let mut tail = String::new();
     let mut total_chars = 0usize;
     let mut original_bytes = 0u64;
+    let mut json_bytes = 2u64;
 
     for chunk in CapturedTextChunks::open(path)? {
         let chunk = chunk?;
         total_chars = total_chars.saturating_add(chunk.chars().count());
         original_bytes = original_bytes.saturating_add(chunk.len() as u64);
+        json_bytes += serde_json::to_string(&chunk)?.len() as u64 - 2;
         if first_chars < BOUNDED_TEXT_CHARS {
             let prefix = prefix_chars(&chunk, BOUNDED_TEXT_CHARS - first_chars);
             first_chars += prefix.chars().count();
@@ -79,6 +53,7 @@ pub(crate) fn bounded_captured_text_preview(path: &Path) -> std::io::Result<Boun
             content: first,
             original_bytes,
             truncated: false,
+            json_bytes,
         });
     }
 
@@ -90,7 +65,35 @@ pub(crate) fn bounded_captured_text_preview(path: &Path) -> std::io::Result<Boun
         content,
         original_bytes,
         truncated: true,
+        json_bytes,
     })
+}
+
+pub(crate) struct CapturedTextSnapshot {
+    pub path: PathBuf,
+}
+
+impl Drop for CapturedTextSnapshot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+pub(crate) fn snapshot_captured_text(path: &Path) -> std::io::Result<CapturedTextSnapshot> {
+    let mut chunks = CapturedTextChunks::open(path)?;
+    chunks.remaining = Some(chunks.file.metadata()?.len());
+    chunks.finish_partial = false;
+    let snapshot = CapturedTextSnapshot {
+        path: std::env::temp_dir()
+            .join(format!("vv_agent_snapshot_{}.log", Uuid::new_v4().simple())),
+    };
+    let mut output = File::create_new(&snapshot.path)?;
+    for chunk in chunks {
+        let chunk = chunk?;
+        output.write_all(chunk.as_bytes())?;
+    }
+    output.flush()?;
+    Ok(snapshot)
 }
 
 pub(crate) fn read_captured_text_prefix(path: &Path, limit_chars: usize) -> String {
@@ -298,6 +301,8 @@ struct CapturedTextChunks {
     file: File,
     pending: Vec<u8>,
     eof: bool,
+    remaining: Option<u64>,
+    finish_partial: bool,
 }
 
 impl CapturedTextChunks {
@@ -306,6 +311,8 @@ impl CapturedTextChunks {
             file: File::open(path)?,
             pending: Vec::with_capacity(CAPTURE_CHUNK_BYTES * 2),
             eof: false,
+            remaining: None,
+            finish_partial: true,
         })
     }
 
@@ -344,7 +351,7 @@ impl Iterator for CapturedTextChunks {
                 return Some(Ok(chunk));
             }
             if self.eof {
-                if self.pending.is_empty() {
+                if self.pending.is_empty() || !self.finish_partial {
                     return None;
                 }
                 let output = String::from_utf8_lossy(&self.pending).into_owned();
@@ -353,9 +360,17 @@ impl Iterator for CapturedTextChunks {
             }
 
             let mut buffer = [0u8; CAPTURE_CHUNK_BYTES];
-            match self.file.read(&mut buffer) {
+            let limit = self.remaining.map_or(buffer.len(), |remaining| {
+                remaining.min(buffer.len() as u64) as usize
+            });
+            match self.file.read(&mut buffer[..limit]) {
                 Ok(0) => self.eof = true,
-                Ok(read) => self.pending.extend_from_slice(&buffer[..read]),
+                Ok(read) => {
+                    if let Some(remaining) = self.remaining.as_mut() {
+                        *remaining -= read as u64;
+                    }
+                    self.pending.extend_from_slice(&buffer[..read]);
+                }
                 Err(error) => return Some(Err(error)),
             }
         }

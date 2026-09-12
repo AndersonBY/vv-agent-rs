@@ -727,7 +727,7 @@ impl InteractiveSession {
     fn sync_background_command_result(&self, tool_name: &str, tool_result: &ToolExecutionResult) {
         if !matches!(
             tool_name.trim().to_ascii_lowercase().as_str(),
-            "bash" | "check_background_command"
+            "bash" | "check_background_command" | "stop_background_command"
         ) {
             return;
         }
@@ -747,11 +747,13 @@ impl InteractiveSession {
             .unwrap_or_default()
             .trim()
             .to_ascii_lowercase();
-        if status == "running" || tool_result.status == ToolResultStatus::Running {
+        if matches!(status.as_str(), "running" | "stopping" | "unknown")
+            || tool_result.status == ToolResultStatus::Running
+        {
             self.subscribe_background_command(background_session_id);
         } else if matches!(
             status.as_str(),
-            "completed" | "failed" | "timeout" | "missing"
+            "completed" | "failed" | "timeout" | "stopped" | "missing"
         ) {
             self.unsubscribe_background_command(background_session_id);
         }

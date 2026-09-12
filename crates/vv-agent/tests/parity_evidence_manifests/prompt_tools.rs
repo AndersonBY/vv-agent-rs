@@ -210,8 +210,8 @@ fn build_builtin_tools_manifest() -> Value {
         })
         .collect::<Vec<_>>();
     json!({
-        "contract": "vv-agent-builtin-tools-v3",
-        "schema_version": 3,
+        "contract": "vv-agent-builtin-tools-v4",
+        "schema_version": 4,
         "exposure_contract": {
             "allowed_values": ["direct", "hidden"],
             "model_visible_values": ["direct"],
@@ -254,6 +254,6 @@ fn builtin_tools_manifest_uses_real_rust_default_registry() {
     let actual = build_builtin_tools_manifest();
     assert_eq!(fixture, actual);
     let tools = fixture["tools"].as_array().expect("builtin tools");
-    assert_eq!(tools.len(), 14);
+    assert_eq!(tools.len(), 15);
     assert!(tools.iter().all(|tool| tool["model_visible"] == true));
 }

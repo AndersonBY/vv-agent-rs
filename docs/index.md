@@ -14,6 +14,7 @@ duplicating the details.
 | `interactive-sessions.md` | Embedded session lifecycle, live control, events, and typed final output. |
 | `model-settings.md` | `LLM_SETTINGS`, key-file handling, exact model resolution, defaults, and `vv-llm` boundaries. |
 | `runtime-control.md` | Per-run controls, language adaptations, resume, approvals, sessions, cancellation, and event producers. |
+| `bash-process-management.md` | Bash initial wait, execution deadline, owner-scoped query/stop, live output, and checkpoint receipts. |
 | `run-budgets.md` | Token, tool, wall-time, and host-cost limits; observations, resume, and distributed behavior. |
 | `output-validation.md` | Default-off host output validation, one-shot tools-free repair, failure, and replay semantics. |
 | `checkpoint-resume.md` | Checkpoint v11 ownership, model-call ledgers, deferred and host-interaction barriers, controller commands, exact recovery, worker reconstruction, terminal ordering, and Apalis result transport. |

@@ -1,16 +1,18 @@
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{Seek, Write};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use super::output::{next_output_path, open_output_file, remove_captured_output};
 use super::platform::configure_process_group;
+use super::ManagedChild;
 
 #[derive(Debug)]
 pub struct CapturedProcess {
-    pub child: Child,
+    pub child: ManagedChild,
     pub output_path: std::path::PathBuf,
+    pub started_at: Instant,
 }
 
 pub fn start_captured_process(
@@ -34,41 +36,60 @@ pub fn start_captured_process_with_env(
         ));
     };
     let output_path = next_output_path();
-    let stdout_file = open_output_file(&output_path)?;
-    let stderr_file = stdout_file.try_clone()?;
-
-    let mut child_command = Command::new(program);
-    child_command
-        .args(&command[1..])
-        .current_dir(cwd)
-        .stdin(if stdin_text.is_some() {
-            Stdio::piped()
+    let input_path = stdin_text.map(|_| next_output_path().with_extension("stdin"));
+    let started = (|| {
+        let stdout_file = open_output_file(&output_path)?;
+        let stderr_file = stdout_file.try_clone()?;
+        // A command that does not read stdin cannot block yield or the watchdog.
+        let stdin = if let (Some(text), Some(path)) = (stdin_text, input_path.as_ref()) {
+            let mut file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(path)?;
+            file.write_all(text.as_bytes())?;
+            file.rewind()?;
+            Stdio::from(file)
         } else {
             Stdio::null()
+        };
+        let mut child_command = Command::new(program);
+        child_command
+            .args(&command[1..])
+            .current_dir(cwd)
+            .stdin(stdin)
+            .stdout(Stdio::from(stdout_file))
+            .stderr(Stdio::from(stderr_file));
+        if let Some(env) = env {
+            child_command.envs(env);
+        }
+        configure_process_group(&mut child_command);
+        let started_at = Instant::now();
+        ManagedChild::spawn(&mut child_command).map(|child| CapturedProcess {
+            child,
+            output_path: output_path.clone(),
+            started_at,
         })
-        .stdout(Stdio::from(stdout_file))
-        .stderr(Stdio::from(stderr_file));
-    if let Some(env) = env {
-        child_command.envs(env);
+    })();
+    if let Some(path) = input_path {
+        remove_captured_output(&path);
     }
-
-    configure_process_group(&mut child_command);
-
-    let mut child = match child_command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            remove_captured_output(&output_path);
-            return Err(error);
-        }
-    };
-
-    if let Some(stdin_text) = stdin_text {
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(stdin_text.as_bytes())?;
-        }
+    if started.is_err() {
+        remove_captured_output(&output_path);
     }
+    started
+}
 
-    Ok(CapturedProcess { child, output_path })
+pub(crate) fn observed_exit_code(status: ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        status
+            .code()
+            .or_else(|| status.signal().map(|signal| -signal))
+    }
+    #[cfg(not(unix))]
+    status.code()
 }
 
 pub fn wait_for_child(child: &mut Child, timeout: Duration) -> std::io::Result<Option<ExitStatus>> {

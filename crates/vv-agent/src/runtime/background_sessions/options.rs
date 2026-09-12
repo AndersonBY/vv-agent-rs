@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::process::Child;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::runtime::processes::ManagedChild;
 use crate::workspace::WorkspaceBackend;
 
 #[derive(Debug, Clone, Default)]
@@ -18,29 +18,34 @@ pub struct BackgroundSessionStartOptions {
 pub struct BackgroundSessionAdoptOptions {
     pub command: String,
     pub cwd: PathBuf,
-    pub timeout_seconds: u64,
-    pub child: Child,
+    pub timeout_seconds: Option<u64>,
+    pub child: ManagedChild,
     pub output_path: PathBuf,
     pub shell: Option<String>,
     pub started_at: Option<Instant>,
     pub artifact_backend: Option<Arc<dyn WorkspaceBackend>>,
     pub artifact_task_id: String,
     pub artifact_tool_call_id: String,
+    pub owner_task_id: String,
+    pub owner_workspace: PathBuf,
 }
 
 impl BackgroundSessionAdoptOptions {
     pub fn new(
         command: impl Into<String>,
         cwd: impl Into<PathBuf>,
-        timeout_seconds: u64,
-        child: Child,
+        timeout_seconds: impl Into<Option<u64>>,
+        child: impl Into<ManagedChild>,
         output_path: impl Into<PathBuf>,
     ) -> Self {
+        let cwd = cwd.into();
         Self {
             command: command.into(),
-            cwd: cwd.into(),
-            timeout_seconds,
-            child,
+            owner_workspace: cwd.canonicalize().unwrap_or_else(|_| cwd.clone()),
+            owner_task_id: String::new(),
+            cwd,
+            timeout_seconds: timeout_seconds.into(),
+            child: child.into(),
             output_path: output_path.into(),
             shell: None,
             started_at: None,
@@ -57,6 +62,13 @@ impl BackgroundSessionAdoptOptions {
 
     pub fn with_started_at(mut self, started_at: Instant) -> Self {
         self.started_at = Some(started_at);
+        self
+    }
+
+    pub fn with_owner(mut self, task_id: impl Into<String>, workspace: impl Into<PathBuf>) -> Self {
+        let workspace = workspace.into();
+        self.owner_task_id = task_id.into();
+        self.owner_workspace = workspace.canonicalize().unwrap_or(workspace);
         self
     }
 
