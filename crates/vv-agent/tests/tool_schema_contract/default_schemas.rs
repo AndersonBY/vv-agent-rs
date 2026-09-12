@@ -3,7 +3,7 @@ use vv_agent::build_default_registry;
 
 use super::helpers::{description, property_description};
 
-const BUILTIN_TOOL_NAMES: [&str; 14] = [
+const BUILTIN_TOOL_NAMES: [&str; 15] = [
     "ask_user",
     "activate_skill",
     "todo_write",
@@ -15,6 +15,7 @@ const BUILTIN_TOOL_NAMES: [&str; 14] = [
     "search_files",
     "bash",
     "check_background_command",
+    "stop_background_command",
     "create_sub_task",
     "sub_task_status",
     "read_image",
@@ -59,9 +60,11 @@ fn default_tool_schema_order_matches_the_canonical_runtime_surface() {
 fn bounded_result_recovery_is_visible_in_the_relevant_tool_schemas() {
     let registry = build_default_registry();
 
-    assert!(description(&registry, "bash").contains("head/tail preview"));
-    assert!(description(&registry, "bash").contains("artifact path"));
-    assert!(description(&registry, "check_background_command").contains("preview-and-artifact"));
+    assert!(description(&registry, "bash").contains("Oversized output"));
+    assert!(description(&registry, "bash").contains("recoverable workspace artifact"));
+    assert!(description(&registry, "check_background_command").contains("bounded output"));
+    assert!(description(&registry, "check_background_command")
+        .contains("recoverable workspace artifact"));
     assert!(description(&registry, "read_file").contains("returned cursor"));
     assert!(description(&registry, "read_file").contains("stale cursors are rejected"));
     assert_eq!(
