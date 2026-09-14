@@ -325,10 +325,10 @@ fn history_frontier_rejects_missing_nullable_fields() {
 }
 
 #[test]
+#[ignore = "requires paired cross-runtime history store"]
 fn cross_runtime_history_store() {
-    let Ok(location) = std::env::var("VV_AGENT_CROSS_HISTORY_LOCATION") else {
-        return;
-    };
+    let location = std::env::var("VV_AGENT_CROSS_HISTORY_LOCATION")
+        .expect("VV_AGENT_CROSS_HISTORY_LOCATION is required for paired history tests");
     let store: Box<dyn CheckpointStore> = match std::env::var("VV_AGENT_CROSS_HISTORY_STORE")
         .unwrap()
         .as_str()
