@@ -19,6 +19,23 @@ fn store_identity(&self) -> String {
         Ok(checkpoints.get(checkpoint_key).cloned())
     }
 
+    fn load_checkpoint_history(
+        &self,
+        checkpoint_key: &str,
+    ) -> CheckpointResult<crate::runtime::state::CheckpointHistoryRecords> {
+        let checkpoints = self.lock()?;
+        let Some(checkpoint) = checkpoints.get(checkpoint_key) else {
+            return Ok(Default::default());
+        };
+        let history = self.history.lock().map_err(|_| {
+            CheckpointError::new("checkpoint_store_lock_poisoned", "checkpoint history lock poisoned")
+        })?;
+        crate::runtime::state::decode_checkpoint_history(
+            checkpoint,
+            history.get(checkpoint_key).map(|archive| archive.payloads.as_slice()).unwrap_or_default(),
+        )
+    }
+
     fn claim_checkpoint(
         &self,
         checkpoint_key: &str,
@@ -77,6 +94,7 @@ fn store_identity(&self) -> String {
         let Some(updated) = prepare_progress(&current, checkpoint, claim_token, expected_revision)? else {
             return Ok(false);
         };
+        let updated = self.persist_history(updated)?;
         checkpoints.insert(updated.checkpoint_key.clone(), updated);
         Ok(true)
     }
@@ -95,6 +113,7 @@ fn store_identity(&self) -> String {
         else {
             return Ok(false);
         };
+        let updated = self.persist_history(updated)?;
         checkpoints.insert(updated.checkpoint_key.clone(), updated);
         Ok(true)
     }
@@ -113,6 +132,7 @@ fn store_identity(&self) -> String {
         else {
             return Ok(false);
         };
+        let updated = self.persist_history(updated)?;
         checkpoints.insert(updated.checkpoint_key.clone(), updated);
         Ok(true)
     }
@@ -129,6 +149,7 @@ fn store_identity(&self) -> String {
         let Some(updated) = prepare_finalize(&current, checkpoint, expected_revision)? else {
             return Ok(false);
         };
+        let updated = self.persist_history(updated)?;
         checkpoints.insert(updated.checkpoint_key.clone(), updated);
         Ok(true)
     }
@@ -148,6 +169,7 @@ fn store_identity(&self) -> String {
         else {
             return Ok(false);
         };
+        let updated = self.persist_history(updated)?;
         checkpoints.insert(updated.checkpoint_key.clone(), updated);
         Ok(true)
     }
@@ -243,6 +265,7 @@ fn store_identity(&self) -> String {
         else {
             return Ok(false);
         };
+        let updated = self.persist_history(updated)?;
         checkpoints.insert(updated.checkpoint_key.clone(), updated);
         Ok(true)
     }
@@ -259,6 +282,7 @@ fn store_identity(&self) -> String {
         let Some(updated) = prepare_ack(&current, expected_revision)? else {
             return Ok(false);
         };
+        let updated = self.persist_history(updated)?;
         checkpoints.insert(checkpoint_key.to_string(), updated);
         Ok(true)
     }
@@ -287,6 +311,7 @@ fn store_identity(&self) -> String {
         else {
             return Ok(false);
         };
+        let updated = self.persist_history(updated)?;
         checkpoints.insert(checkpoint_key.to_string(), updated);
         Ok(true)
     }
@@ -320,6 +345,7 @@ fn store_identity(&self) -> String {
                 "deferred batch admission precondition failed",
             ));
         }
+        let updated = self.persist_history(updated)?;
         checkpoints.insert(checkpoint_key.to_string(), updated.clone());
         Ok(crate::checkpoint::DeferredBatchAdmission {
             checkpoint: updated,
@@ -444,6 +470,7 @@ fn store_identity(&self) -> String {
         })?;
         updated.validate()?;
         let receipt = DeferredReceipt::new(handle, result, event_id, event_digest)?;
+        let updated = self.persist_history(updated)?;
         receipts.insert(key, receipt.clone());
         checkpoints.insert(updated.checkpoint_key.clone(), updated);
         Ok(if unresolved || suspended {
@@ -488,6 +515,7 @@ fn store_identity(&self) -> String {
             ));
         }
         let handles = decisions.iter().map(|d| d.handle.clone()).collect();
+        let updated = self.persist_history(updated)?;
         checkpoints.insert(checkpoint_key.to_string(), updated.clone());
         Ok(crate::checkpoint::DeferredBatchAdmission {
             checkpoint: updated,

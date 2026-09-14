@@ -497,7 +497,14 @@ pub(super) fn run_distributed_cycle(
         } => CycleDispatchResult::committed(cycle_index, revision),
         PostCommitAction::DeferredPending => Ok(CycleDispatchResult::pending()),
         PostCommitAction::TerminalCandidate { result, revision } => {
-            CycleDispatchResult::terminal_candidate(*result, revision)
+            let checkpoint = load_checkpoint(store.as_ref(), checkpoint_key)?;
+            let result = crate::runtime::state::hydrate_checkpoint_result(
+                store.as_ref(),
+                &checkpoint,
+                *result,
+            )
+            .map_err(|error| error.to_string())?;
+            CycleDispatchResult::terminal_candidate(result, revision)
         }
     }
 }

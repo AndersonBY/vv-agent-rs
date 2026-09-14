@@ -61,7 +61,14 @@ impl CheckpointResumeController {
     ) -> CheckpointResult<()> {
         let checkpoint = self.require_checkpoint_mut()?;
         checkpoint.messages = messages.to_vec();
-        checkpoint.cycles = cycles.to_vec();
+        let cutoff = (checkpoint.history.sequence > 0)
+            .then(|| checkpoint.cycles.first().map(|cycle| cycle.index))
+            .flatten();
+        checkpoint.cycles = cycles
+            .iter()
+            .filter(|cycle| cutoff.is_none_or(|cutoff| cycle.index >= cutoff))
+            .cloned()
+            .collect();
         checkpoint.shared_state = shared_state.clone();
         checkpoint.budget_usage = budget_usage;
         self.snapshot_extensions()

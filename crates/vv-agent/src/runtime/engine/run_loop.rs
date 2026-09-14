@@ -2,17 +2,15 @@ use super::approval::{
     approval_error_result, approval_provider_result, PendingToolApprovalCapture,
 };
 use super::budget::{
-    budget_snapshot, enforce_cycle_start, finalize_run_budget, lock_budget,
-    observe_tool_batch_completion, preflight_tool_batch, project_model_call_completion,
-    PreparedRunBudget,
+    budget_snapshot, enforce_cycle_start, lock_budget, observe_tool_batch_completion,
+    preflight_tool_batch, project_model_call_completion, PreparedRunBudget,
 };
 use super::checkpoint::{CheckpointModelCompletion, CheckpointToolPlan, DeferredBatchCollector};
 use super::controls::{CheckpointRuntimeControl, RuntimeRunControls};
 use super::helpers::{
     cancelled_agent_result, collect_interruption_messages, controls_cancelled,
-    drain_steering_queue, emit_sub_run_completed, failed_agent_result,
-    finalize_terminal_projection, image_notification_from_tool_result, project_cycle_cancellation,
-    task_token_usage,
+    drain_steering_queue, emit_sub_run_completed, failed_agent_result, finalize_run_result,
+    image_notification_from_tool_result, project_cycle_cancellation, task_token_usage,
 };
 use super::lifecycle::{
     finalize_no_tool_cycle, finalize_tool_cycle, NoToolCycleFinalization, ToolCycleFinalization,
@@ -46,7 +44,7 @@ use crate::types::{AgentResult, AgentTask, CompletionReason, ToolDirective, Tool
 use serde_json::Value;
 use std::collections::BTreeMap;
 impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
-    pub fn run_with_controls(
+    pub(crate) fn run_with_controls_active(
         &self,
         mut task: AgentTask,
         mut controls: RuntimeRunControls,
@@ -107,10 +105,19 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             self.emit_log(
                 &controls,
                 "run_cancelled",
-                BTreeMap::from([(
-                    "error".to_string(),
-                    Value::String("Operation was cancelled".to_string()),
-                )]),
+                BTreeMap::from([
+                    (
+                        "cycle".to_string(),
+                        cycles
+                            .last()
+                            .map(|cycle| Value::from(cycle.index))
+                            .unwrap_or(Value::Null),
+                    ),
+                    (
+                        "error".to_string(),
+                        Value::String("Operation was cancelled".to_string()),
+                    ),
+                ]),
             );
             return Ok(cancelled_agent_result(
                 messages,
@@ -129,6 +136,11 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             shared_state,
             |cycle_index, messages, cycles, shared_state, cancellation_token| {
                 let _cancellation_scope = CancellationToken::enter_scope(cancellation_token);
+                if let Err(error) = checkpoint.prune_history(cycles) {
+                    let message = error.to_string();
+                    pending_error = Some(error);
+                    return Some(failed_agent_result(messages.clone(), cycles.clone(), shared_state.clone(), message, task_token_usage(&controls)));
+                }
                 if !backend_manages_checkpoint_cycles {
                     if let Some(result) =
                         checkpoint.begin_cycle(cycle_index, messages, cycles, shared_state)
@@ -983,14 +995,9 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                 .map_err(LlmError::Request)?;
         }
         result.token_usage = model_call_ledger.usage();
-        result = finalize_run_budget(
-            &budget_controller,
-            &controls,
-            effective_cancellation_token.as_ref(),
-            result,
-        );
-        result = finalize_terminal_projection(
+        result = finalize_run_result(
             self,
+            &budget_controller,
             &controls,
             effective_cancellation_token.as_ref(),
             result,

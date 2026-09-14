@@ -184,7 +184,16 @@ fn native_host_concurrent_recovery_retains_exclusive_claim() {
     let store = SqliteCheckpointStore::new(directory.path().join("host-tool.sqlite")).unwrap();
     let terminal = store.load_checkpoint("host-tool").unwrap().unwrap();
     assert!(terminal.terminal_acknowledged);
-    assert_eq!(terminal.model_calls.len(), 2);
+    assert_eq!(terminal.model_calls.len(), 1);
+    assert_eq!(terminal.history.model_call_count, 1);
+    assert_eq!(
+        store
+            .load_checkpoint_history("host-tool")
+            .unwrap()
+            .model_calls
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -250,7 +259,16 @@ fn assert_unclaimed_recovery_race(after_wake: bool) {
     assert!(statuses.iter().all(std::process::ExitStatus::success));
     let terminal = store.load_checkpoint("host-tool").unwrap().unwrap();
     assert!(terminal.terminal_acknowledged && terminal.claim_token.is_none());
-    assert_eq!(terminal.model_calls.len(), 2);
+    assert_eq!(terminal.model_calls.len(), 1);
+    assert_eq!(terminal.history.model_call_count, 1);
+    assert_eq!(
+        store
+            .load_checkpoint_history("host-tool")
+            .unwrap()
+            .model_calls
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -286,7 +304,16 @@ fn native_host_process_exit_replays_in_a_new_worker() {
                 );
             } else {
                 assert!(checkpoint.terminal_acknowledged);
-                assert_eq!(checkpoint.model_calls.len(), 2);
+                assert_eq!(checkpoint.model_calls.len(), 1);
+                assert_eq!(checkpoint.history.model_call_count, 1);
+                assert_eq!(
+                    store
+                        .load_checkpoint_history("host-tool")
+                        .unwrap()
+                        .model_calls
+                        .len(),
+                    1
+                );
             }
         }
     }

@@ -56,10 +56,19 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             self.emit_log(
                 controls,
                 "run_cancelled",
-                BTreeMap::from([(
-                    "error".to_string(),
-                    Value::String("Operation was cancelled".to_string()),
-                )]),
+                BTreeMap::from([
+                    (
+                        "cycle".to_string(),
+                        cycles
+                            .last()
+                            .map(|cycle| Value::from(cycle.index))
+                            .unwrap_or(Value::Null),
+                    ),
+                    (
+                        "error".to_string(),
+                        Value::String("Operation was cancelled".to_string()),
+                    ),
+                ]),
             );
             let mut result = cancelled_agent_result(
                 messages.to_vec(),

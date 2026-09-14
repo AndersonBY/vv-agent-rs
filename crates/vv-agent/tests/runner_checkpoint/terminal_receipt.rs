@@ -2,6 +2,15 @@ use super::*;
 
 #[tokio::test]
 async fn checkpoint_completion_sink_failure_keeps_claim_and_retries_pending_receipt() {
+    assert_checkpoint_receipt_recovery(false).await;
+}
+
+#[tokio::test]
+async fn checkpoint_receipt_acknowledged_before_cycle_commit_replays_once() {
+    assert_checkpoint_receipt_recovery(true).await;
+}
+
+async fn assert_checkpoint_receipt_recovery(acknowledge_before_resume: bool) {
     let provider = ScriptedModelProvider::from_steps(
         "scripted",
         "checkpoint-sink-model",
@@ -77,6 +86,15 @@ async fn checkpoint_completion_sink_failure_keeps_claim_and_retries_pending_rece
         .load_checkpoint(checkpoint_key)
         .expect("load pending checkpoint")
         .expect("pending checkpoint");
+    assert_eq!(pending.cycle_index, 0);
+    assert!(
+        pending.cycles.is_empty(),
+        "only committed cycles enter the transcript"
+    );
+    assert!(!pending
+        .messages
+        .iter()
+        .any(|message| message.role == vv_agent::MessageRole::Tool));
     assert!(
         pending.claim_token.is_some(),
         "failed delivery keeps the claim"
@@ -86,6 +104,33 @@ async fn checkpoint_completion_sink_failure_keeps_claim_and_retries_pending_rece
             && entry.event["type"] == "tool_call_completed"
             && entry.event["tool_call_id"] == "call-sink-retry"
     }));
+    if acknowledge_before_resume {
+        for entry in pending
+            .event_outbox
+            .clone()
+            .into_iter()
+            .filter(|entry| entry.state == "pending")
+        {
+            let event = serde_json::from_value(entry.event).expect("durable event");
+            let cursor = event_store
+                .append_once(&entry.event_id, &entry.payload_digest, &event)
+                .expect("deliver the receipt before the interrupted cycle commit");
+            assert!(checkpoint_store
+                .record_event_delivery(
+                    checkpoint_key,
+                    pending.claim_token.as_deref(),
+                    pending.revision,
+                    &entry.event_id,
+                    &entry.payload_digest,
+                    cursor,
+                )
+                .expect("acknowledge receipt"));
+            pending = checkpoint_store
+                .load_checkpoint(checkpoint_key)
+                .unwrap()
+                .unwrap();
+        }
+    }
     pending.lease_expires_at_ms = Some(1);
     checkpoint_store
         .save_checkpoint(pending)
@@ -107,6 +152,17 @@ async fn checkpoint_completion_sink_failure_keeps_claim_and_retries_pending_rece
         .expect("retry after sink recovery");
     assert_eq!(resumed.status(), AgentStatus::Completed);
     assert_eq!(effects.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        resumed
+            .result()
+            .cycles
+            .iter()
+            .map(|cycle| cycle.index)
+            .collect::<Vec<_>>(),
+        vec![1, 2],
+        "receipt replay reconstructs the uncommitted cycle exactly once"
+    );
+    assert_eq!(resumed.token_usage().model_calls.len(), 2);
     let persisted = checkpoint_store
         .load_checkpoint(checkpoint_key)
         .expect("load committed checkpoint")

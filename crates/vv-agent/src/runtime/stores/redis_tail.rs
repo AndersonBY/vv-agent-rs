@@ -39,10 +39,10 @@ impl RedisCheckpointStore {
                     expected_revision,
                 )?,
             };
-            let Some(updated) = updated else {
+            let Some(mut updated) = updated else {
                 return Ok(None);
             };
-            let payload = checkpoint_to_json(&updated, MAX_EXTENSION_STATE_BYTES)?;
+            let payload = encode_history_update(&mut updated, connection, pipeline)?;
             pipeline.set(&data_key, payload).ignore();
             if updated.claim_token.is_none() {
                 pipeline.del(&lease_key).ignore();
@@ -109,4 +109,65 @@ fn decode_receipt(raw: &str) -> CheckpointResult<crate::checkpoint::DeferredRece
 
 fn redis_error(error: redis::RedisError) -> CheckpointError {
     CheckpointError::new("checkpoint_store_redis", error.to_string())
+}
+
+fn encode_history_update(
+    checkpoint: &mut Checkpoint,
+    connection: &mut Connection,
+    pipeline: &mut Pipeline,
+) -> CheckpointResult<String> {
+    let call_ids_key = RedisCheckpointStore::history_call_ids_key(&checkpoint.checkpoint_key);
+    redis::cmd("WATCH")
+        .arg(&call_ids_key)
+        .query::<()>(connection)
+        .map_err(redis_error)?;
+    for record in &checkpoint.model_calls {
+        if connection
+            .sismember::<_, _, bool>(&call_ids_key, &record.call_id)
+            .map_err(redis_error)?
+        {
+            return Err(CheckpointError::new(
+                "checkpoint_history_invalid",
+                "model call identity is already archived",
+            ));
+        }
+    }
+    if let Some(batch) = crate::runtime::state::normalize_checkpoint_history(checkpoint)? {
+        let key = RedisCheckpointStore::history_key(&checkpoint.checkpoint_key);
+        redis::cmd("WATCH")
+            .arg(&key)
+            .query::<()>(connection)
+            .map_err(redis_error)?;
+        let existing: Option<String> = connection
+            .hget(&key, batch.sequence.to_string())
+            .map_err(redis_error)?;
+        if existing.is_some() {
+            return Err(CheckpointError::new(
+                "checkpoint_history_invalid",
+                "history sequence already exists before cursor commit",
+            ));
+        }
+        let payload = String::from_utf8(crate::checkpoint::canonical_json_bytes(
+            &batch.payload,
+            "checkpoint history",
+        )?)
+        .expect("canonical JSON is UTF-8");
+        pipeline
+            .hset(key, batch.sequence.to_string(), payload)
+            .ignore();
+        for record in batch.payload["model_calls"]
+            .as_array()
+            .expect("typed history records")
+        {
+            pipeline
+                .sadd(
+                    &call_ids_key,
+                    record["call_id"]
+                        .as_str()
+                        .expect("typed model call identity"),
+                )
+                .ignore();
+        }
+    }
+    checkpoint_to_json(checkpoint, MAX_EXTENSION_STATE_BYTES)
 }

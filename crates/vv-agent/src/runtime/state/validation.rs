@@ -7,6 +7,16 @@ use crate::types::{AgentResult, AgentStatus, ModelCallStatus};
 use super::*;
 
 pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
+    checkpoint.history.validate()?;
+    if checkpoint.cycles.iter().any(|cycle| {
+        cycle.index == 0 || u64::from(cycle.index) > checkpoint.cycle_index.saturating_add(1)
+    }) || checkpoint
+        .cycles
+        .windows(2)
+        .any(|pair| pair[0].index >= pair[1].index)
+    {
+        return Err(CheckpointError::new("checkpoint_history_invalid", "checkpoint cycles must be positive, strictly ordered, and no later than the active cycle"));
+    }
     if checkpoint.schema_version != CHECKPOINT_SCHEMA {
         return Err(CheckpointError::new(
             "checkpoint_schema_unsupported",
@@ -406,6 +416,9 @@ pub fn validate_checkpoint_creation(checkpoint: &Checkpoint) -> CheckpointResult
     }
     if checkpoint.resume_attempt != 1 {
         return Err(invalid("new checkpoints must start at resume_attempt one"));
+    }
+    if *checkpoint.history != CheckpointHistory::default() {
+        return Err(invalid("new checkpoints cannot reference archived history"));
     }
     if checkpoint.claim_token.is_some()
         || checkpoint.claimed_cycle.is_some()

@@ -218,7 +218,8 @@ fn redis_delete_checkpoint(
                     return Err(redis_error(error));
                 }
             }
-            let mut keys = vec![
+            let mut keys = vec![RedisCheckpointStore::history_key(checkpoint_key),
+                RedisCheckpointStore::history_call_ids_key(checkpoint_key),
                 data_key.clone(),
                 lease_key.clone(),
                 receipt_set_key.clone(),

@@ -8,21 +8,30 @@ for model-driven automation.
 
 ## Install
 
-The current crate version is `0.16.0`. This release uses Contract `14.0.0` and
-exposes a Rust-idiomatic API.
+Repository `HEAD` targets crate `0.21.0` and Contract `22.0.0` (unreleased).
+To install the latest published crate:
 
 ```bash
-cargo add vv-agent@0.16.0
+cargo add vv-agent
 ```
 
 Enable the Apalis adapter with:
 
 ```bash
-cargo add vv-agent@0.16.0 --features apalis
+cargo add vv-agent --features apalis
 ```
 
 Repository `HEAD` is forward-only: current readers accept only the current
 strict public and wire shapes.
+
+### 0.21.0 Highlights (unreleased)
+
+- Checkpoint v12 keeps an active tail and atomically archives retired cycle and
+  model-call records in Memory, SQLite, and Redis stores.
+- Public results retain complete history; progress checkpoints and after-cycle
+  usage totals do not reload or rewrite that history.
+- Archive digests and model-call identity indexes reject corrupted or
+  reintroduced historical evidence.
 
 ### 0.16.0 Highlights
 

@@ -175,6 +175,7 @@ impl DistributedBackend {
                 let result = AgentResult::from_dict(terminal_result).map_err(|error| {
                     checkpoint_error("checkpoint_terminal_result_invalid", error)
                 })?;
+                let result = lock_controller(checkpoint_controller)?.hydrate_result(result)?;
                 return CycleDispatchResult::terminal_replay(result, checkpoint.revision).map_err(
                     |error| checkpoint_error("checkpoint_terminal_result_invalid", error),
                 );
@@ -311,10 +312,8 @@ fn handle_terminal_dispatch(
             })?;
             let authoritative = AgentResult::from_dict(durable_terminal)
                 .map_err(|error| checkpoint_error("checkpoint_terminal_result_invalid", error))?;
-            if checkpoint_revision != checkpoint.revision
-                || result.to_dict() != *durable_terminal
-                || result != authoritative
-            {
+            let authoritative = controller.hydrate_result(authoritative)?;
+            if checkpoint_revision != checkpoint.revision || result != authoritative {
                 return Err(checkpoint_error(
                     "checkpoint_store_conflict",
                     "distributed terminal replay does not match the durable checkpoint",

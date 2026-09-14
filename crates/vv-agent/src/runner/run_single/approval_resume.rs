@@ -175,7 +175,7 @@ pub(super) fn run_approval_resume(
         controls.initial_messages = Some(initial_messages);
         controls.initial_shared_state = Some(invocation.source_result.shared_state.clone());
         runtime
-            .run_with_controls(task, controls)
+            .run_with_controls_active(task, controls)
             .map_err(|error| error.to_string())
     } else {
         let mut resumed = invocation.source_result.clone();

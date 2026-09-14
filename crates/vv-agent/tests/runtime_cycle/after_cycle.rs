@@ -264,7 +264,7 @@ fn after_cycle_manager_composes_same_snapshot_in_registration_order() {
         },
         &[Message::assistant("answer")],
         &BTreeMap::new(),
-        vv_agent::TaskTokenUsage::default(),
+        vv_agent::TaskTokenUsageTotals::default(),
         Vec::new(),
         Vec::new(),
         vv_agent::NativeCycleOutcome::continuing(),

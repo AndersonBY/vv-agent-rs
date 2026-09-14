@@ -8,7 +8,7 @@ mod finalize;
 use crate::memory::MicrocompactionPolicy;
 use approval_resume::run_approval_resume;
 use finalize::{
-    checkpoint_result_new_items, close_checkpoint_controller, prepare_checkpoint_result,
+    checkpoint_result_new_items, close_checkpoint_result, prepare_checkpoint_result,
     validate_checkpoint_result,
 };
 
@@ -803,7 +803,7 @@ impl Runner {
             )?
         } else {
             runtime
-                .run_with_controls(task, controls)
+                .run_with_controls_active(task, controls)
                 .map_err(|error| error.to_string())?
         };
         let (mut result, terminal_replayed, reconciliation_required, operator_abort, deferred) =
@@ -937,7 +937,7 @@ impl Runner {
                 handler(&event);
             }
         }
-        close_checkpoint_controller(checkpoint_controller.as_ref());
+        result = close_checkpoint_result(checkpoint_controller.as_ref(), result)?;
         let ended_run_span = if let Some(error) = output_validation_error.as_ref() {
             trace.finish("failed", Some(("error", Value::String(error.clone()))))
         } else {

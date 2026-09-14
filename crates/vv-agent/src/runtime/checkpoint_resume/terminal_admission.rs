@@ -55,7 +55,7 @@ impl CheckpointResumeController {
         }
         let checkpoint = self.require_checkpoint()?;
         if checkpoint.revision != checkpoint_revision
-            || requires_claim != checkpoint.claim_token.is_some()
+            || (requires_claim && checkpoint.claim_token.is_none())
         {
             return Err(CheckpointError::new(
                 "checkpoint_store_conflict",

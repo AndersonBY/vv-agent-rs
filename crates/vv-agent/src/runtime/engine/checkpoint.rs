@@ -316,14 +316,29 @@ impl CheckpointCoordinator {
         let Some(controller) = self.controller.as_ref() else {
             return Ok(false);
         };
-        let model_calls = lock_controller(controller)
+        let snapshot = lock_controller(controller)
             .and_then(|mut controller| controller.refresh_authoritative())
-            .map_err(checkpoint_llm_error)?
-            .model_calls;
+            .map_err(checkpoint_llm_error)?;
         self.model_call_ledger
-            .replace(model_calls)
+            .replace_checkpoint(&snapshot)
             .map_err(LlmError::Request)?;
         Ok(true)
+    }
+
+    pub(super) fn prune_history(&self, cycles: &mut Vec<CycleRecord>) -> Result<(), LlmError> {
+        let Some(controller) = &self.controller else {
+            return Ok(());
+        };
+        let controller = lock_controller(controller).map_err(checkpoint_llm_error)?;
+        let snapshot = controller.checkpoint().map_err(checkpoint_llm_error)?;
+        if snapshot.history.sequence > 0 {
+            if let Some(first) = snapshot.cycles.first() {
+                cycles.retain(|cycle| cycle.index >= first.index);
+            }
+        }
+        self.model_call_ledger
+            .replace_checkpoint(snapshot)
+            .map_err(LlmError::Request)
     }
 
     pub(super) fn begin_cycle(

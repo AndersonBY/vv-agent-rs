@@ -106,6 +106,7 @@ the central cross-repository workflow.
 | Tool planned/started/completed lifecycle | `crates/vv-agent/src/tools/orchestrator.rs`, `crates/vv-agent/src/runtime/engine/tool_batch.rs`, `crates/vv-agent/src/events.rs`, `crates/vv-agent/src/events/wire.rs`, `crates/vv-agent/src/runner/event_stream.rs`, `crates/vv-agent/src/runner/resume.rs`; `crates/vv-agent/tests/runtime_cycle/hooks.rs`, `crates/vv-agent/tests/runner_producer_parity.rs`, `crates/vv-agent/tests/run_events_contract.rs`, `crates/vv-agent/tests/run_event_validation.rs`, `crates/vv-agent/tests/approval_resume_completion.rs` |
 | Model stream projection | `crates/vv-agent/src/events/`, `crates/vv-agent/src/runner/event_stream/stream_projection.rs`, `crates/vv-agent/src/runner/run_single.rs`, `crates/vv-agent/src/runtime/sub_agents/events.rs`, `crates/vv-agent/src/app_server/protocol/item.rs`, `crates/vv-agent/tests/runner_producer_parity.rs` |
 | Model-call ledger, token, and cache usage | `crates/vv-agent/src/types/token_usage.rs`, `crates/vv-agent/src/runtime/model_calls.rs`, `crates/vv-agent/src/runtime/token_usage.rs`, `crates/vv-agent/src/runtime/checkpoint_resume/operations.rs`, `crates/vv-agent/src/llm/vv_llm_client/`; `crates/vv-agent/tests/token_usage.rs`, `crates/vv-agent/tests/runtime_cycle/session_memory.rs`, `crates/vv-agent/tests/runner_checkpoint.rs` |
+| Bounded checkpoint history and cumulative token totals | `crates/vv-agent/src/runtime/state/history.rs`, `crates/vv-agent/src/runtime/stores/`, `crates/vv-agent/src/types/token_usage.rs`; `crates/vv-agent/tests/checkpoint_core/history.rs`, `crates/vv-agent/tests/checkpoint_core/history_wire_metrics.rs`, `crates/vv-agent/tests/runner_checkpoint.rs`, `crates/vv-agent/tests/distributed_runner.rs` |
 | Assistant reasoning history | `crates/vv-agent/src/memory/message_sanitizer.rs`, `crates/vv-agent/src/llm/vv_llm_client/`, `crates/vv-agent/tests/message_sanitizer.rs`, `crates/vv-agent/tests/completion_policy_contract.rs` |
 | Memory capacity, Session Memory, and compaction lifecycle | `crates/vv-agent/src/config.rs`, `crates/vv-agent/src/memory/`, `crates/vv-agent/src/runtime/engine/memory/`, `crates/vv-agent/src/runner/event_stream.rs`, `crates/vv-agent/src/events/`; `crates/vv-agent/tests/memory_lifecycle_contract.rs`, `crates/vv-agent/tests/runtime_cycle/microcompact.rs`, `crates/vv-agent/tests/runtime_cycle/session_memory.rs`, `crates/vv-agent/tests/run_events_contract.rs`, `crates/vv-agent/tests/configured_sub_agent_parity.rs`, `crates/vv-agent/tests/runner_checkpoint.rs` |
 | Run budgets | `crates/vv-agent/src/budget.rs`, `crates/vv-agent/src/runtime/engine/budget.rs`, `crates/vv-agent/tests/run_budget.rs` |
@@ -232,11 +233,12 @@ unresolved tools with unknown-effect observations and rejects their late
 results. `runner_checkpoint/deferred_control.rs` exercises the real Runner producer
 and controller/receipt replay through memory, reopened SQLite and Redis stores.
 
-Checkpoints require `vv-agent.checkpoint.v11`, and run definitions require
+Checkpoints require `vv-agent.checkpoint.v12`, and run definitions require
 `vv-agent.run-definition.v5`. The run definition stores `prompt_bundle` and
-never stores an independent flattened prompt. The checkpoint owns the complete
-ordered run-level model-call ledger. A started model journal entry and started
-event become durable together. After dispatch, the terminal journal state,
+never stores an independent flattened prompt. The checkpoint and its immutable
+same-store archive own the complete ordered run-level model-call ledger. A
+started model journal entry and started event become durable together. After
+dispatch, the terminal journal state,
 ledger record, budget observation, provider response receipt, and terminal event
 become durable together and must agree on identity.
 
@@ -336,7 +338,7 @@ shapes remain unchanged.
 
 ## Durable Cycle Ownership And Receipts
 
-The current producer carries `cancel_requested` in checkpoint v11. A live cancel
+The current producer carries `cancel_requested` in checkpoint v12. A live cancel
 sets the signal without advancing the revision or releasing the claim; renewal
 returns the typed `renewed`, `cancel_requested`, or `claim_lost` outcome. A
 successful cycle uses `commit_cycle`; cancellation, operator abort, and lease

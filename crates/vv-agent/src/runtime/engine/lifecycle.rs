@@ -358,7 +358,11 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             cycle,
             messages,
             shared_state,
-            task_token_usage(controls),
+            controls
+                .execution_context
+                .as_ref()
+                .map(|context| context.runtime_state.model_call_ledger.cumulative_usage())
+                .unwrap_or_default(),
             available_tool_names,
             disallowed_tool_names,
             native_outcome.clone(),

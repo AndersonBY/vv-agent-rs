@@ -10,10 +10,10 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use vv_agent::checkpoint::tool_result_digest;
 use vv_agent::{
-    build_default_registry, Agent, AgentStatus, CapabilityRef, CheckpointConfig, CheckpointStore,
-    LLMResponse, ModelRef, NoToolPolicy, RunConfig, Runner, ScriptStep, ScriptedModelProvider,
-    SqliteCheckpointStore, StaticTool, ToolCall, ToolContext, ToolDirective, ToolExecutionResult,
-    ToolPolicy, ToolRegistry, ToolResultStatus,
+    build_default_registry, canonical_json_bytes, Agent, AgentStatus, CapabilityRef,
+    CheckpointConfig, CheckpointStore, LLMResponse, ModelRef, NoToolPolicy, RunConfig, Runner,
+    ScriptStep, ScriptedModelProvider, SqliteCheckpointStore, StaticTool, ToolCall, ToolContext,
+    ToolDirective, ToolExecutionResult, ToolPolicy, ToolRegistry, ToolResultStatus,
 };
 
 const FIXTURE: &str = include_str!("fixtures/parity/bash_process_management.json");
@@ -328,12 +328,13 @@ fn checkpoint_receipt(
     key: &str,
     call_id: &str,
 ) -> ToolExecutionResult {
-    store
-        .load_checkpoint(key)
-        .unwrap()
-        .unwrap()
+    let checkpoint = store.load_checkpoint(key).unwrap().unwrap();
+    let history = store.load_checkpoint_history(key).unwrap();
+    assert_eq!(history.frontier, *checkpoint.history);
+    history
         .cycles
         .into_iter()
+        .chain(checkpoint.cycles)
         .flat_map(|cycle| cycle.tool_results)
         .find(|result| result.tool_call_id == call_id)
         .expect("durable committed tool receipt")
@@ -534,7 +535,10 @@ async fn runner_management_case(yield_time_ms: u64) {
     );
     for (call_id, (original, digest)) in receipts.lock().unwrap().iter() {
         let current = checkpoint_receipt(&store, key, call_id);
-        assert_eq!(current.to_dict(), original.to_dict());
+        assert_eq!(
+            canonical_json_bytes(&current.to_dict(), "persisted receipt").unwrap(),
+            canonical_json_bytes(&original.to_dict(), "original receipt").unwrap(),
+        );
         assert_eq!(tool_result_digest(&current).unwrap(), *digest);
     }
     let port: u16 = std::fs::read_to_string(root.join("port"))

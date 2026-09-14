@@ -38,6 +38,17 @@ macro_rules! redis_impl_core {
         )
     }
 
+    fn load_checkpoint_history(&self, checkpoint_key: &str) -> CheckpointResult<crate::runtime::state::CheckpointHistoryRecords> {
+        let mut connection = self.lock()?;
+        let Some(checkpoint) = Self::load_from_connection(&mut connection, &Self::data_key(checkpoint_key), &Self::lease_key(checkpoint_key), checkpoint_key)? else { return Ok(Default::default()) };
+        let mut payloads = Vec::new();
+        for sequence in 1..=checkpoint.history.sequence {
+            let raw: Option<String> = connection.hget(Self::history_key(checkpoint_key), sequence.to_string()).map_err(redis_error)?;
+            payloads.push(raw.ok_or_else(|| CheckpointError::new("checkpoint_history_invalid", "history archive is incomplete"))?);
+        }
+        crate::runtime::state::decode_checkpoint_history(&checkpoint, &payloads)
+    }
+
     fn claim_checkpoint(
         &self,
         checkpoint_key: &str,
@@ -198,11 +209,11 @@ macro_rules! redis_impl_core {
                     .map_err(redis_error)?,
                 &checkpoint.checkpoint_key,
             )?;
-            let Some(updated) = prepare_finalize(&current, checkpoint.clone(), expected_revision)?
+            let Some(mut updated) = prepare_finalize(&current, checkpoint.clone(), expected_revision)?
             else {
                 return Ok(None);
             };
-            let payload = checkpoint_to_json(&updated, MAX_EXTENSION_STATE_BYTES)?;
+            let payload = encode_history_update(&mut updated, connection, pipeline)?;
             pipeline.set(&data_key, payload).ignore();
             pipeline.del(&lease_key).ignore();
             Ok(Some(true))
@@ -322,7 +333,7 @@ macro_rules! redis_impl_core {
                     "tool receipt conflicts with the retained identity",
                 ));
             }
-            let Some(updated) = crate::runtime::state::prepare_tool_receipt(
+            let Some(mut updated) = crate::runtime::state::prepare_tool_receipt(
                 &current,
                 &checkpoint,
                 operation_id,
@@ -337,7 +348,7 @@ macro_rules! redis_impl_core {
             else {
                 return Ok(Some(false));
             };
-            let payload = checkpoint_to_json(&updated, MAX_EXTENSION_STATE_BYTES)?;
+            let payload = encode_history_update(&mut updated, connection, pipeline)?;
             pipeline.set(&data_key, payload).ignore();
             Ok(Some(true))
         });
@@ -369,10 +380,10 @@ macro_rules! redis_impl_core {
                     .map_err(redis_error)?,
                 checkpoint_key,
             )?;
-            let Some(updated) = prepare_ack(&current, expected_revision)? else {
+            let Some(mut updated) = prepare_ack(&current, expected_revision)? else {
                 return Ok(None);
             };
-            let payload = checkpoint_to_json(&updated, MAX_EXTENSION_STATE_BYTES)?;
+            let payload = encode_history_update(&mut updated, connection, pipeline)?;
             pipeline.set(&data_key, payload).ignore();
             pipeline.del(&lease_key).ignore();
             Ok(Some(true))
@@ -409,7 +420,7 @@ macro_rules! redis_impl_core {
                     .map_err(redis_error)?,
                 checkpoint_key,
             )?;
-            let Some(updated) = prepare_event_delivery(
+            let Some(mut updated) = prepare_event_delivery(
                 &current,
                 claim_token,
                 expected_revision,
@@ -420,7 +431,7 @@ macro_rules! redis_impl_core {
             else {
                 return Ok(None);
             };
-            let payload = checkpoint_to_json(&updated, MAX_EXTENSION_STATE_BYTES)?;
+            let payload = encode_history_update(&mut updated, connection, pipeline)?;
             pipeline.set(&data_key, payload).ignore();
             if updated.claim_token.is_none() {
                 pipeline.del(&lease_key).ignore();
@@ -461,7 +472,7 @@ macro_rules! redis_impl_core {
                     .map_err(redis_error)?,
                 checkpoint_key,
             )?;
-            let (updated, handles) = crate::runtime::state::admit_deferred_batch(
+            let (mut updated, handles) = crate::runtime::state::admit_deferred_batch(
                 &current,
                 expected_revision,
                 claim_token,
@@ -471,7 +482,7 @@ macro_rules! redis_impl_core {
             if updated.revision == current.revision {
                 return Ok(None);
             }
-            let payload = checkpoint_to_json(&updated, MAX_EXTENSION_STATE_BYTES)?;
+            let payload = encode_history_update(&mut updated, connection, pipeline)?;
             pipeline.set(&data_key, payload).ignore();
             pipeline.del(&lease_key).ignore();
             Ok(Some(crate::checkpoint::DeferredBatchAdmission {
@@ -633,7 +644,7 @@ macro_rules! redis_impl_core {
                 updated.validate()?;
                 let receipt =
                     DeferredReceipt::new(handle.clone(), result.clone(), event_id, event_digest)?;
-                let payload = checkpoint_to_json(&updated, MAX_EXTENSION_STATE_BYTES)?;
+                let payload = encode_history_update(&mut updated, connection, pipeline)?;
                 let receipt_payload = encode_receipt(&receipt)?;
                 pipeline.set(&data_key, payload).ignore();
                 pipeline.del(&lease_key).ignore();

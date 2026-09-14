@@ -269,6 +269,12 @@ impl DistributedBackend {
         if let Some(terminal_result) = checkpoint.terminal_result.as_ref() {
             let result = AgentResult::from_dict(terminal_result)
                 .map_err(|error| format!("invalid durable terminal result: {error}"))?;
+            let result = crate::runtime::state::hydrate_checkpoint_result(
+                store.as_ref(),
+                &checkpoint,
+                result,
+            )
+            .map_err(|error| error.to_string())?;
             if let Some(CycleDispatchResult::TerminalReplay {
                 checkpoint_revision,
                 result: observed,
@@ -381,7 +387,12 @@ impl DistributedBackend {
             return Ok(DistributedAdvanceDecision::FinalizeRequired {
                 handle,
                 checkpoint_revision: checkpoint.revision,
-                result: result.clone(),
+                result: crate::runtime::state::hydrate_checkpoint_result(
+                    store.as_ref(),
+                    &checkpoint,
+                    result.clone(),
+                )
+                .map_err(|error| error.to_string())?,
             });
         }
 
@@ -472,7 +483,12 @@ impl DistributedBackend {
             return Ok(DistributedAdvanceDecision::FinalizeRequired {
                 handle,
                 checkpoint_revision: checkpoint.revision,
-                result,
+                result: crate::runtime::state::hydrate_checkpoint_result(
+                    store.as_ref(),
+                    &checkpoint,
+                    result,
+                )
+                .map_err(|error| error.to_string())?,
             });
         }
 

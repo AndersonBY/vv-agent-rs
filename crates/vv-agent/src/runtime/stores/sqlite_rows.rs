@@ -83,11 +83,21 @@ struct SqlValues {
     lease_expires_at_ms: Option<i64>,
     terminal_result: Option<String>,
     terminal_acknowledged: i64,
+    history: String,
+    history_batch: Option<crate::runtime::state::CheckpointHistoryBatch>,
+    candidate_call_ids: Vec<String>,
 }
 
 impl SqlValues {
     fn from_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<Self> {
-        let value = checkpoint_to_value(checkpoint, MAX_EXTENSION_STATE_BYTES)?;
+        let candidate_call_ids = checkpoint
+            .model_calls
+            .iter()
+            .map(|record| record.call_id.clone())
+            .collect();
+        let mut checkpoint = checkpoint.clone();
+        let history_batch = crate::runtime::state::normalize_checkpoint_history(&mut checkpoint)?;
+        let value = checkpoint_to_value(&checkpoint, MAX_EXTENSION_STATE_BYTES)?;
         let object = value.as_object().expect("codec emits an object");
         Ok(Self {
             checkpoint_key: string_field(object, "checkpoint_key")?,
@@ -126,10 +136,13 @@ impl SqlValues {
                 .transpose()?,
             terminal_result: nullable_json_field(object, "terminal_result")?,
             terminal_acknowledged: i64::from(checkpoint.terminal_acknowledged),
+            history: json_field(object, "history")?,
+            history_batch,
+            candidate_call_ids,
         })
     }
 
-    fn params(&self) -> [&(dyn rusqlite::ToSql + Sync); 30] {
+    fn params(&self) -> [&(dyn rusqlite::ToSql + Sync); 31] {
         [
             &self.checkpoint_key,
             &self.schema_version,
@@ -161,6 +174,7 @@ impl SqlValues {
             &self.lease_expires_at_ms,
             &self.terminal_result,
             &self.terminal_acknowledged,
+            &self.history,
         ]
     }
 }
@@ -177,6 +191,7 @@ fn update_row(
             "an expected revision is required for an update",
         ));
     };
+    validate_archive_call_ids(transaction, values)?;
     let changed = transaction
         .execute(
             r#"
@@ -190,7 +205,7 @@ fn update_row(
                 extension_state = ?21, model_call_journal = ?22, tool_journal = ?23,
                 revision = ?24, claim_token = ?25, claimed_cycle = ?26,
                 lease_expires_at_ms = ?27, terminal_result = ?28,
-                terminal_acknowledged = ?29
+                terminal_acknowledged = ?29, history = ?33
             WHERE checkpoint_key = ?30 AND revision = ?31
               AND (?32 IS NULL OR claim_token = ?32)
             "#,
@@ -227,9 +242,13 @@ fn update_row(
                 values.checkpoint_key,
                 to_i64(expected_revision, "revision")?,
                 claim_token,
+                values.history,
             ],
         )
         .map_err(sqlite_error)?;
+    if changed == 1 {
+        append_history_row(transaction, values)?;
+    }
     Ok(changed == 1)
 }
 
@@ -243,7 +262,7 @@ fn load_row(connection: &Connection, checkpoint_key: &str) -> CheckpointResult<O
                    messages, cycles, model_calls, shared_state,
                    budget_usage, event_cursor, event_outbox, extension_state,
                    model_call_journal, tool_journal, revision, claim_token, claimed_cycle,
-                   lease_expires_at_ms, terminal_result, terminal_acknowledged
+                   lease_expires_at_ms, terminal_result, terminal_acknowledged, history
             FROM checkpoints WHERE checkpoint_key = ?1
             "#,
         )
@@ -268,7 +287,7 @@ fn load_row_transaction(
                    messages, cycles, model_calls, shared_state,
                    budget_usage, event_cursor, event_outbox, extension_state,
                    model_call_journal, tool_journal, revision, claim_token, claimed_cycle,
-                   lease_expires_at_ms, terminal_result, terminal_acknowledged
+                   lease_expires_at_ms, terminal_result, terminal_acknowledged, history
             FROM checkpoints WHERE checkpoint_key = ?1
             "#,
         )
@@ -311,6 +330,7 @@ fn row_to_checkpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<CheckpointResu
     let lease_expires_at_ms: Option<i64> = row.get(27)?;
     let terminal_result: Option<String> = row.get(28)?;
     let terminal_acknowledged: i64 = row.get(29)?;
+    let history: String = row.get(30)?;
 
     let result = (|| {
         let mut object = Map::new();
@@ -389,6 +409,7 @@ fn row_to_checkpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<CheckpointResu
             "terminal_acknowledged".to_string(),
             Value::Bool(terminal_acknowledged != 0),
         );
+        object.insert("history".to_string(), parse_value(&history)?);
         checkpoint_from_value(&Value::Object(object), MAX_EXTENSION_STATE_BYTES)
     })();
     Ok(result)
@@ -452,4 +473,44 @@ fn to_u64(value: i64) -> CheckpointResult<u64> {
 
 fn sqlite_error(error: rusqlite::Error) -> CheckpointError {
     CheckpointError::new("checkpoint_store_sqlite", error.to_string())
+}
+
+fn append_history_row(connection: &Connection, values: &SqlValues) -> CheckpointResult<()> {
+    if let Some(batch) = &values.history_batch {
+        let payload = String::from_utf8(crate::checkpoint::canonical_json_bytes(
+            &batch.payload,
+            "checkpoint history",
+        )?)
+        .expect("canonical JSON is UTF-8");
+        connection.execute("INSERT INTO checkpoint_history (checkpoint_key, sequence, payload, payload_digest) VALUES (?1, ?2, ?3, ?4)", params![values.checkpoint_key, to_i64(batch.sequence, "history.sequence")?, payload, batch.payload_digest]).map_err(sqlite_error)?;
+        for record in batch.payload["model_calls"]
+            .as_array()
+            .expect("typed history records")
+        {
+            connection.execute("INSERT INTO checkpoint_history_call_ids (checkpoint_key, call_id) VALUES (?1, ?2)", params![values.checkpoint_key, record["call_id"].as_str().expect("typed model call identity")]).map_err(sqlite_error)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_archive_call_ids(connection: &Connection, values: &SqlValues) -> CheckpointResult<()> {
+    let mut statement = connection
+        .prepare(
+            "SELECT 1 FROM checkpoint_history_call_ids WHERE checkpoint_key = ?1 AND call_id = ?2",
+        )
+        .map_err(sqlite_error)?;
+    for call_id in &values.candidate_call_ids {
+        if statement
+            .query_row(params![values.checkpoint_key, call_id], |_| Ok(()))
+            .optional()
+            .map_err(sqlite_error)?
+            .is_some()
+        {
+            return Err(CheckpointError::new(
+                "checkpoint_history_invalid",
+                "model call identity is already archived",
+            ));
+        }
+    }
+    Ok(())
 }

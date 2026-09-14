@@ -220,12 +220,8 @@ fn redis_produce_host_interaction(
                     "host interaction admission revision is invalid",
                 ));
             }
-            pipeline
-                .set(
-                    &data_key,
-                    checkpoint_to_json(&updated, MAX_EXTENSION_STATE_BYTES)?,
-                )
-                .ignore();
+            let payload = encode_history_update(&mut updated, connection, pipeline)?;
+            pipeline.set(&data_key, payload).ignore();
             pipeline.del(&lease_key).ignore();
             pipeline
                 .set(&record_key, serde_json::to_string(&record.to_value())?)
@@ -402,7 +398,7 @@ fn redis_resolve_controller_command(
         } else {
             None
         };
-        let (updated, updated_record, receipt, resolution) = match crate::runtime::stores::memory::apply_controller_command_single(
+        let (mut updated, updated_record, receipt, resolution) = match crate::runtime::stores::memory::apply_controller_command_single(
             current,
             host_record,
             &command,
@@ -420,12 +416,8 @@ fn redis_resolve_controller_command(
                 }
             Err(error) => return Err(error),
         };
-        pipeline
-            .set(
-                &data_key,
-                checkpoint_to_json(&updated, MAX_EXTENSION_STATE_BYTES)?,
-            )
-            .ignore();
+        let payload = encode_history_update(&mut updated, connection, pipeline)?;
+        pipeline.set(&data_key, payload).ignore();
         if let Some(lease) = updated.lease_expires_at_ms {
             pipeline.set(&lease_key, lease).ignore();
         } else {

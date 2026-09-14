@@ -116,6 +116,9 @@ fn public_export_path(id: &str) -> &'static str {
         "result.task_token_usage" => {
             export_type!(vv_agent::TaskTokenUsage, "vv_agent::TaskTokenUsage")
         }
+        "result.task_token_usage_totals" => {
+            export_type!(vv_agent::TaskTokenUsageTotals, "vv_agent::TaskTokenUsageTotals")
+        }
         "result.host_cost" => export_type!(vv_agent::HostCost, "vv_agent::HostCost"),
         "result.budget_dimension" => {
             export_type!(vv_agent::BudgetDimension, "vv_agent::BudgetDimension")

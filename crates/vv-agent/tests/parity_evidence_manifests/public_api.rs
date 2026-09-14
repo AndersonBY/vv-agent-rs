@@ -632,7 +632,7 @@ fn public_api_manifest_compiles_real_rust_exports() {
             );
         }
     }
-    assert_eq!(capability_ids.len(), 178);
+    assert_eq!(capability_ids.len(), 179);
 
     let surfaces = fixture["surfaces"].as_array().expect("public API surfaces");
     let surface_map = surfaces

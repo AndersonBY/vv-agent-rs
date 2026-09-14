@@ -21,7 +21,7 @@ pub use tasks::{
 };
 pub use token_usage::{
     CacheUsage, CacheUsageStatus, ModelCallOperation, ModelCallRecord, ModelCallStatus,
-    TaskTokenUsage, TokenUsage, UsageSource,
+    TaskTokenUsage, TaskTokenUsageTotals, TokenUsage, UsageSource,
 };
 pub use tool_calls::{
     ToolArtifactRef, ToolCall, ToolExecutionResult, ToolResultCursor, ToolTruncationReason,

@@ -243,7 +243,10 @@ impl<C: LlmClient> AgentRuntime<C> {
             controls,
             "run_max_cycles",
             BTreeMap::from([
-                ("cycle".to_string(), Value::from(result.cycles.len())),
+                (
+                    "cycle".to_string(),
+                    Value::from(result.cycles.last().map(|cycle| cycle.index).unwrap_or(0)),
+                ),
                 (
                     "final_answer".to_string(),
                     Value::String(

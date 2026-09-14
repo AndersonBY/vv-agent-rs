@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::types::{CompletionReason, CycleRecord, Message, Metadata, TaskTokenUsage};
+use crate::types::{CompletionReason, CycleRecord, Message, Metadata, TaskTokenUsageTotals};
 
 pub const AFTER_CYCLE_CONTROL_STATE_KEY: &str = "_vv_agent_after_cycle_control";
 pub const AFTER_CYCLE_CONTROL_SCHEMA: &str = "vv-agent.after-cycle-control.v1";
@@ -64,7 +64,7 @@ pub struct AfterCycleSnapshot {
     pub cycle: CycleRecord,
     pub messages: Vec<Message>,
     pub shared_state: Metadata,
-    pub cumulative_token_usage: TaskTokenUsage,
+    pub cumulative_token_usage: TaskTokenUsageTotals,
     pub available_tool_names: Vec<String>,
     pub disallowed_tool_names: Vec<String>,
     pub native_outcome: NativeCycleOutcome,
@@ -79,7 +79,7 @@ impl AfterCycleSnapshot {
         cycle: &CycleRecord,
         messages: &[Message],
         shared_state: &Metadata,
-        cumulative_token_usage: TaskTokenUsage,
+        cumulative_token_usage: TaskTokenUsageTotals,
         available_tool_names: Vec<String>,
         disallowed_tool_names: Vec<String>,
         native_outcome: NativeCycleOutcome,

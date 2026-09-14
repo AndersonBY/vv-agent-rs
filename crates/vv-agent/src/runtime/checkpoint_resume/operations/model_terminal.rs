@@ -68,10 +68,9 @@ impl CheckpointResumeController {
             }
         }
         self.progress()?;
-        let records = self.require_checkpoint()?.model_calls.clone();
         accounting
             .ledger
-            .replace(records)
+            .replace_checkpoint(self.require_checkpoint()?)
             .map_err(|error| CheckpointError::new("checkpoint_status_invalid", error))?;
         self.deliver_pending_outbox()
     }

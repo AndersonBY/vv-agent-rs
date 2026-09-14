@@ -7,21 +7,28 @@
 
 ## 安装
 
-当前 crate 版本为 `0.16.0`。本版本采用 Contract `14.0.0`，提供符合 Rust 语言习惯的
-API 写法。
+仓库 `HEAD` 对应 crate `0.21.0` 和 Contract `22.0.0`（尚未发布）。
+安装最新已发布 crate：
 
 ```bash
-cargo add vv-agent@0.16.0
+cargo add vv-agent
 ```
 
 需要 Apalis adapter 时使用：
 
 ```bash
-cargo add vv-agent@0.16.0 --features apalis
+cargo add vv-agent --features apalis
 ```
 
-Contract 13 和仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
+仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
 公共 API 与传输数据结构。需要旧协议的应用应固定旧 crate 版本。
+
+### 0.21.0 重点能力（尚未发布）
+
+- Checkpoint v12 保留活动尾部，Memory、SQLite 和 Redis store 在同一原子提交中
+  归档较早的 cycle 与模型调用记录。
+- 公共结果仍返回完整历史；进度检查点及 after-cycle 用量汇总不再反复读取或重写历史。
+- 归档摘要与模型调用身份索引拒绝损坏数据和被重新插入的历史证据。
 
 ### 0.16.0 重点能力
 

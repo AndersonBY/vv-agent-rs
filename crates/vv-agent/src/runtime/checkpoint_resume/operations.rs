@@ -1,6 +1,7 @@
 //! Controller entry points for checkpointed execution.
 
 use super::*;
+use crate::types::CompletionReason;
 
 mod authoritative;
 mod controller_state;
@@ -15,6 +16,13 @@ use model_terminal::require_effective_model_identity;
 use terminal::{cancellation_event, cancellation_result};
 
 impl CheckpointResumeController {
+    pub(crate) fn hydrate_result(&self, result: AgentResult) -> CheckpointResult<AgentResult> {
+        crate::runtime::state::hydrate_checkpoint_result(
+            self.store.as_ref(),
+            self.require_checkpoint()?,
+            result,
+        )
+    }
     pub(crate) fn adopt_claim_for_terminal_finalize(
         &mut self,
         claim_token: &str,
@@ -694,9 +702,11 @@ impl CheckpointResumeController {
                 "cannot commit a checkpoint without the completed cycle record",
             ));
         }
-        self.refresh_snapshot(messages, cycles, shared_state, budget_usage)?;
         self.progress()?;
         self.deliver_pending_outbox()?;
+        // Publish the new transcript only with the cycle commit. Recovery after
+        // receipt delivery must still reconstruct this cycle from its journals.
+        self.refresh_snapshot(messages, cycles, shared_state, budget_usage)?;
         let checkpoint = self.require_checkpoint_mut()?;
         checkpoint.cycle_index = u64::from(cycle_index);
         checkpoint.status = CheckpointStatus::Running;
@@ -859,10 +869,26 @@ impl CheckpointResumeController {
         {
             let checkpoint = self.require_checkpoint_mut()?;
             if let Some(terminal_cycle) = result.cycles.last().map(|cycle| u64::from(cycle.index)) {
+                // A recovered claim may stop before starting any new work. Its
+                // terminal result still ends at the last committed cycle.
+                let closes_unstarted_claim = terminal_cycle == checkpoint.cycle_index
+                    && checkpoint.claimed_cycle == checkpoint.cycle_index.checked_add(1)
+                    && result.status == AgentStatus::Failed
+                    && (result.completion_reason == Some(CompletionReason::Cancelled)
+                        || (result.completion_reason == Some(CompletionReason::BudgetExhausted)
+                            && result.budget_exhaustion.as_ref().is_some_and(|exhaustion| {
+                                exhaustion.enforcement_boundary
+                                    == crate::budget::BudgetEnforcementBoundary::RunStart
+                            })))
+                    && checkpoint.model_call_journal.is_empty()
+                    && checkpoint.tool_journal.is_empty()
+                    && result.messages == checkpoint.messages
+                    && result.shared_state == checkpoint.shared_state;
                 if terminal_cycle < checkpoint.cycle_index
                     || checkpoint
                         .claimed_cycle
                         .is_some_and(|claimed_cycle| claimed_cycle != terminal_cycle)
+                        && !closes_unstarted_claim
                 {
                     return Err(CheckpointError::new(
                         "checkpoint_cycle_conflict",
@@ -872,9 +898,20 @@ impl CheckpointResumeController {
                 checkpoint.cycle_index = terminal_cycle;
             }
             checkpoint.status = status;
-            checkpoint.terminal_result = Some(result.to_dict());
             checkpoint.messages = result.messages.clone();
-            checkpoint.cycles = result.cycles.clone();
+            let cutoff = (checkpoint.history.sequence > 0)
+                .then(|| checkpoint.cycles.first().map(|cycle| cycle.index))
+                .flatten();
+            checkpoint.cycles = result
+                .cycles
+                .iter()
+                .filter(|cycle| cutoff.is_none_or(|cutoff| cycle.index >= cutoff))
+                .cloned()
+                .collect();
+            let mut retained_result = result.clone();
+            retained_result.cycles = checkpoint.cycles.clone();
+            retained_result.token_usage = summarize_task_token_usage(&checkpoint.model_calls);
+            checkpoint.terminal_result = Some(retained_result.to_dict());
             checkpoint.shared_state = result.shared_state.clone();
             checkpoint.budget_usage = result.budget_usage.clone();
         }

@@ -202,6 +202,7 @@ fn produce_host_interaction(
             &record_id,
             &notification,
         )?;
+        let updated = self.persist_history(updated)?;
         checkpoints.insert(checkpoint_key.clone(), updated);
         ledger.host_interactions.insert(record_id, record);
         ledger.notifications.insert(notification_id, notification);
@@ -461,6 +462,7 @@ fn produce_host_interaction(
         consumed.claim_token = None;
         consumed.lease_expires_at_ms = None;
         consumed.validate()?;
+        let updated = self.persist_history(updated)?;
         checkpoints.insert(envelope.checkpoint_key, updated.clone());
         ledger
             .host_interactions
@@ -969,6 +971,7 @@ fn produce_host_interaction(
         let mut receipts = self.receipt_lock()?;
         let mut controller = self.controller_lock()?;
         checkpoints.remove(checkpoint_key);
+        self.history.lock().map_err(|_| CheckpointError::new("checkpoint_store_lock_poisoned", "checkpoint history lock poisoned"))?.remove(checkpoint_key);
         receipts.retain(|_, receipt| receipt.handle.checkpoint_key != checkpoint_key);
         controller
             .host_interactions

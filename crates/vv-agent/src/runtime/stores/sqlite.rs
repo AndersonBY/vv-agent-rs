@@ -1,4 +1,4 @@
-//! SQLite checkpoint v11 store.
+//! SQLite checkpoint v12 store.
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
@@ -64,8 +64,12 @@ impl SqliteCheckpointStore {
     pub fn save_checkpoint(&self, checkpoint: Checkpoint) -> CheckpointResult<()> {
         checkpoint.validate()?;
         let values = SqlValues::from_checkpoint(&checkpoint)?;
-        let connection = self.lock()?;
-        connection
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sqlite_error)?;
+        validate_archive_call_ids(&transaction, &values)?;
+        transaction
             .execute(
                 r#"
                 INSERT INTO checkpoints (
@@ -76,11 +80,11 @@ impl SqliteCheckpointStore {
                     budget_usage, event_cursor, event_outbox, extension_state,
                     model_call_journal, tool_journal, revision, claim_token,
                     claimed_cycle, lease_expires_at_ms, terminal_result,
-                    terminal_acknowledged
+                    terminal_acknowledged, history
                 ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
                 ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27,
-                ?28, ?29, ?30
+                ?28, ?29, ?30, ?31
                 )
                 ON CONFLICT(checkpoint_key) DO UPDATE SET
                     schema_version = excluded.schema_version,
@@ -111,11 +115,14 @@ impl SqliteCheckpointStore {
                     claimed_cycle = excluded.claimed_cycle,
                     lease_expires_at_ms = excluded.lease_expires_at_ms,
                     terminal_result = excluded.terminal_result,
-                    terminal_acknowledged = excluded.terminal_acknowledged
+                    terminal_acknowledged = excluded.terminal_acknowledged,
+                    history = excluded.history
                 "#,
                 values.params(),
             )
             .map_err(sqlite_error)?;
+        append_history_row(&transaction, &values)?;
+        transaction.commit().map_err(sqlite_error)?;
         Ok(())
     }
 
@@ -134,6 +141,8 @@ fn initialize_schema(connection: &Connection) -> CheckpointResult<()> {
         .execute_batch("PRAGMA foreign_keys=ON;")
         .map_err(sqlite_error)?;
     let expected_objects = [
+        ("table", "checkpoint_history_call_ids", sqlite_schema::CREATE_CHECKPOINT_HISTORY_CALL_IDS_TABLE_SQL, "existing checkpoint history call identities do not match current schema; create a new database"),
+        ("table", "checkpoint_history", sqlite_schema::CREATE_CHECKPOINT_HISTORY_TABLE_SQL, "existing checkpoint history does not match current schema; create a new database"),
         (
             "table",
             "checkpoints",
@@ -231,6 +240,12 @@ fn initialize_schema(connection: &Connection) -> CheckpointResult<()> {
     } else {
         connection
             .execute_batch(sqlite_schema::CREATE_CHECKPOINTS_TABLE_SQL)
+            .map_err(sqlite_error)?;
+        connection
+            .execute_batch(sqlite_schema::CREATE_CHECKPOINT_HISTORY_TABLE_SQL)
+            .map_err(sqlite_error)?;
+        connection
+            .execute_batch(sqlite_schema::CREATE_CHECKPOINT_HISTORY_CALL_IDS_TABLE_SQL)
             .map_err(sqlite_error)?;
         connection
             .execute_batch(sqlite_schema::CREATE_CHECKPOINTS_STATUS_INDEX_SQL)
@@ -348,11 +363,11 @@ impl CheckpointStore for SqliteCheckpointStore {
                     budget_usage, event_cursor, event_outbox, extension_state,
                     model_call_journal, tool_journal, revision, claim_token,
                     claimed_cycle, lease_expires_at_ms, terminal_result,
-                    terminal_acknowledged
+                    terminal_acknowledged, history
                 ) VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
                     ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27,
-                    ?28, ?29, ?30
+                    ?28, ?29, ?30, ?31
                 )
                 "#,
                 values.params(),
@@ -364,6 +379,49 @@ impl CheckpointStore for SqliteCheckpointStore {
     fn load_checkpoint(&self, checkpoint_key: &str) -> CheckpointResult<Option<Checkpoint>> {
         let connection = self.lock()?;
         load_row(&connection, checkpoint_key)
+    }
+
+    fn load_checkpoint_history(
+        &self,
+        checkpoint_key: &str,
+    ) -> CheckpointResult<crate::runtime::state::CheckpointHistoryRecords> {
+        let mut guard = self.lock()?;
+        let connection = guard
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(sqlite_error)?;
+        let Some(checkpoint) = load_row(&connection, checkpoint_key)? else {
+            return Ok(Default::default());
+        };
+        let mut statement = connection.prepare("SELECT payload, payload_digest FROM checkpoint_history WHERE checkpoint_key = ?1 ORDER BY sequence").map_err(sqlite_error)?;
+        let rows = statement
+            .query_map(params![checkpoint_key], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(sqlite_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sqlite_error)?;
+        let mut payloads = Vec::with_capacity(rows.len());
+        for (payload, digest) in rows {
+            use sha2::{Digest, Sha256};
+            let value: Value = serde_json::from_str(&payload).map_err(|error| {
+                CheckpointError::new("checkpoint_history_invalid", error.to_string())
+            })?;
+            let actual = format!(
+                "{:x}",
+                Sha256::digest(crate::checkpoint::canonical_json_bytes(
+                    &value,
+                    "checkpoint history"
+                )?)
+            );
+            if actual != digest {
+                return Err(CheckpointError::new(
+                    "checkpoint_history_invalid",
+                    "history payload digest mismatch",
+                ));
+            }
+            payloads.push(payload);
+        }
+        crate::runtime::state::decode_checkpoint_history(&checkpoint, &payloads)
     }
 
     fn claim_checkpoint(

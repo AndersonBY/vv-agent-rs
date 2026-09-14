@@ -177,11 +177,11 @@ pub use types::{
     AgentResult, AgentResultError, AgentStatus, AgentTask, CacheUsage, CacheUsageStatus,
     CompletionReason, CycleRecord, CycleStatus, LLMResponse, Message, MessageRole,
     ModelCallOperation, ModelCallRecord, ModelCallStatus, NoToolPolicy, SubAgentConfig,
-    SubAgentConfigValidationError, SubTaskOutcome, SubTaskRequest, TaskTokenUsage, TokenUsage,
-    ToolArtifactRef, ToolCall, ToolDirective, ToolExecutionResult, ToolResultCursor,
-    ToolResultStatus, ToolTruncationReason, UsageSource, INVALID_SUB_AGENT_MODEL_CODE,
-    INVALID_SUB_AGENT_MODEL_MESSAGE, INVALID_SUB_AGENT_SYSTEM_PROMPT_CODE,
-    INVALID_SUB_AGENT_SYSTEM_PROMPT_MESSAGE,
+    SubAgentConfigValidationError, SubTaskOutcome, SubTaskRequest, TaskTokenUsage,
+    TaskTokenUsageTotals, TokenUsage, ToolArtifactRef, ToolCall, ToolDirective,
+    ToolExecutionResult, ToolResultCursor, ToolResultStatus, ToolTruncationReason, UsageSource,
+    INVALID_SUB_AGENT_MODEL_CODE, INVALID_SUB_AGENT_MODEL_MESSAGE,
+    INVALID_SUB_AGENT_SYSTEM_PROMPT_CODE, INVALID_SUB_AGENT_SYSTEM_PROMPT_MESSAGE,
 };
 pub use workspace::{
     validate_portable_exclude_pattern, DiscoveryFilteredWorkspaceBackend, FileInfo,

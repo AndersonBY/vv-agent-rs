@@ -89,7 +89,10 @@ fn distributed_fixture_with_stores(
     registry.register_checkpoint_store(checkpoint_ref.clone(), Arc::new(registry_store));
     registry.register_llm_client(
         llm_ref.clone(),
-        Arc::new(ScriptedLlmClient::new(vec![LLMResponse::new("done")])),
+        Arc::new(ScriptedLlmClient::new(vec![
+            LLMResponse::new("done");
+            max_cycles as usize
+        ])),
     );
     let mut recipe = RuntimeRecipe::new("", "scripted", "driver-model", ".");
     recipe.capabilities = DistributedCapabilities {
@@ -595,4 +598,73 @@ async fn runner_finalizes_unclaimed_max_cycles_decision() {
     assert_eq!(persisted.status, vv_agent::CheckpointStatus::MaxCycles);
     assert!(persisted.terminal_acknowledged);
     assert!(persisted.claim_token.is_none());
+}
+
+#[tokio::test]
+async fn distributed_history_is_bounded_until_public_terminal_and_replay() {
+    let key = "runner-distributed-history";
+    let mut fixture = distributed_fixture(key, 4);
+    fixture.config.no_tool_policy = Some(NoToolPolicy::Continue);
+    fixture
+        .runner
+        .start_distributed(&fixture.agent, "answer", fixture.config.clone())
+        .await
+        .unwrap();
+    let mut envelope = fixture.enqueuer.take_one();
+    let decision = loop {
+        let response = fixture.worker.run_cycle(envelope.clone()).unwrap();
+        if let vv_agent::CycleDispatchResult::TerminalCandidate { ref result, .. } = response {
+            assert_eq!(envelope.cycle_index, 4);
+            assert_eq!(result.cycles.len(), 4);
+            assert_eq!(result.token_usage.model_calls.len(), 4);
+        } else {
+            assert!(matches!(
+                response,
+                vv_agent::CycleDispatchResult::Committed { .. }
+            ));
+        }
+        let checkpoint = fixture.store.load_checkpoint(key).unwrap().unwrap();
+        assert_eq!(checkpoint.cycles.len(), 1);
+        assert!(checkpoint.model_calls.len() <= 2);
+        assert_eq!(checkpoint.history.cycle_count + 1, checkpoint.cycle_index);
+        let decision = fixture
+            .backend
+            .advance(&envelope, DistributedDeliveryOutcome::worker(response))
+            .unwrap();
+        if matches!(
+            decision,
+            DistributedAdvanceDecision::FinalizeRequired { .. }
+        ) {
+            break decision;
+        }
+        envelope = fixture.enqueuer.take_one();
+    };
+    let DistributedAdvanceDecision::FinalizeRequired { ref result, .. } = decision else {
+        unreachable!()
+    };
+    assert_eq!(result.cycles.len(), 4);
+    assert_eq!(result.token_usage.model_calls.len(), 4);
+    let finalized = fixture
+        .runner
+        .finalize_distributed(&fixture.agent, "answer", decision, fixture.config.clone())
+        .await
+        .unwrap();
+    assert_eq!(finalized.result().cycles.len(), 4);
+    assert_eq!(finalized.result().token_usage.model_calls.len(), 4);
+    let response = fixture.worker.run_cycle(envelope.clone()).unwrap();
+    let vv_agent::CycleDispatchResult::TerminalReplay { ref result, .. } = response else {
+        panic!("expected terminal replay")
+    };
+    assert_eq!(result, finalized.result());
+    let replay = fixture
+        .backend
+        .advance(&envelope, DistributedDeliveryOutcome::worker(response))
+        .unwrap();
+    let DistributedAdvanceDecision::TerminalReplay { result, .. } = replay else {
+        panic!("expected terminal replay decision")
+    };
+    assert_eq!(&result, finalized.result());
+    let checkpoint = fixture.store.load_checkpoint(key).unwrap().unwrap();
+    assert_eq!(checkpoint.cycles.len(), 1);
+    assert_eq!(checkpoint.history.cycle_count, 3);
 }

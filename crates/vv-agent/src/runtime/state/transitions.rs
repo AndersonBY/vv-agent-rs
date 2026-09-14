@@ -97,6 +97,12 @@ pub fn claim_matches(
 }
 
 pub fn checkpoint_definition_matches(current: &Checkpoint, snapshot: &Checkpoint) -> bool {
+    let committed_count = current
+        .cycles
+        .iter()
+        .take_while(|cycle| u64::from(cycle.index) <= current.cycle_index)
+        .count();
+    let active_cycle = current.cycle_index.checked_add(1);
     current.schema_version == snapshot.schema_version
         && current.run_definition_schema == snapshot.run_definition_schema
         && current.checkpoint_key == snapshot.checkpoint_key
@@ -107,6 +113,19 @@ pub fn checkpoint_definition_matches(current: &Checkpoint, snapshot: &Checkpoint
         && current.run_definition == snapshot.run_definition
         && current.resume_attempt == snapshot.resume_attempt
         && current.terminal_acknowledged == snapshot.terminal_acknowledged
+        && current.history == snapshot.history
+        && snapshot.model_calls.starts_with(&current.model_calls)
+        && snapshot
+            .model_calls
+            .iter()
+            .skip(current.model_calls.len())
+            .all(|record| Some(u64::from(record.cycle_index)) == active_cycle)
+        && snapshot.cycles.get(..committed_count) == Some(&current.cycles[..committed_count])
+        && snapshot
+            .cycles
+            .iter()
+            .skip(committed_count)
+            .all(|cycle| Some(u64::from(cycle.index)) == active_cycle)
 }
 
 pub fn prepare_progress(

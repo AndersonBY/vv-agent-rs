@@ -1,4 +1,4 @@
-//! Checkpoint v11 state and store contract.
+//! Checkpoint v12 state and store contract.
 
 use std::collections::BTreeMap;
 
@@ -22,6 +22,7 @@ use crate::types::{
 };
 
 mod deferred;
+mod history;
 mod journal;
 mod transitions;
 mod validation;
@@ -30,6 +31,7 @@ pub use deferred::{
     accept_deferred_batch, admit_deferred_batch, deferred_batch_is_idempotent, handle_key,
     receipt_event,
 };
+pub use history::*;
 pub use transitions::*;
 pub use validation::*;
 use validation::{optional_string, required_string, required_u64, validate_json};
@@ -391,6 +393,7 @@ pub struct Checkpoint {
     pub messages: Vec<Message>,
     pub cycles: Vec<CycleRecord>,
     pub model_calls: Vec<ModelCallRecord>,
+    pub history: Box<CheckpointHistory>,
     pub shared_state: BTreeMap<String, Value>,
     pub budget_usage: Option<BudgetUsageSnapshot>,
     pub event_cursor: Option<EventCursor>,
@@ -426,6 +429,7 @@ impl Default for Checkpoint {
             messages: Vec::new(),
             cycles: Vec::new(),
             model_calls: Vec::new(),
+            history: Box::default(),
             shared_state: BTreeMap::new(),
             budget_usage: None,
             event_cursor: None,
@@ -507,6 +511,19 @@ pub trait CheckpointStore: Send + Sync {
 
     fn create_checkpoint(&self, checkpoint: Checkpoint) -> CheckpointResult<bool>;
     fn load_checkpoint(&self, checkpoint_key: &str) -> CheckpointResult<Option<Checkpoint>>;
+    fn load_checkpoint_history(
+        &self,
+        checkpoint_key: &str,
+    ) -> CheckpointResult<CheckpointHistoryRecords> {
+        let checkpoint = self.load_checkpoint(checkpoint_key)?;
+        if checkpoint.is_some_and(|checkpoint| checkpoint.history.sequence != 0) {
+            return Err(CheckpointError::new(
+                "checkpoint_history_unsupported",
+                "checkpoint store does not implement history reads",
+            ));
+        }
+        Ok(CheckpointHistoryRecords::default())
+    }
     fn claim_checkpoint(
         &self,
         checkpoint_key: &str,

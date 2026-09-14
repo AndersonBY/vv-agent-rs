@@ -1,6 +1,6 @@
 # Durable Checkpoint And Resume
 
-Checkpoint v11 is an opt-in Runner capability. It preserves the last committed
+Checkpoint v12 is an opt-in Runner capability. It preserves the last committed
 cycle, operation receipts, budget usage, extension state, event cursor, claim,
 lease, and retained terminal result. The language-neutral behavior is defined
 by the locked `vv-agent-contract`; this document records the Rust producer and
@@ -14,7 +14,7 @@ used by the scheduler process. A distributed worker resolves the same logical
 store through `RuntimeRecipe.capabilities.checkpoint_store_ref` and its
 `DistributedCapabilityRegistry`.
 
-Enabled records require `schema_version=vv-agent.checkpoint.v11` and
+Enabled records require `schema_version=vv-agent.checkpoint.v12` and
 `run_definition_schema=vv-agent.run-definition.v5`. Distributed workers accept
 only `vv-agent.distributed-run.v5` and return only
 `vv-agent.distributed-worker-response.v4`; no other current record or envelope
@@ -42,7 +42,7 @@ synthesized and no stored definition or digest is rewritten.
 
 Execution telemetry is not a durable receipt. A `tool_call_started` event may
 exist without `tool_call_completed` after cancellation, process loss, or an
-exception. The checkpoint v11 operation journal remains authoritative for
+exception. The checkpoint v12 operation journal remains authoritative for
 whether an operation is planned, started, committed, replayable, or ambiguous;
 neither `duration_ms` nor a lifecycle observer provides exactly-once effects.
 
@@ -89,10 +89,56 @@ call. In-flight messages and cycles are reconstructed from those receipts;
 only a completed cycle or final terminal commit advances the durable
 transcript.
 
+## Bounded Active State And Immutable History
+
+Checkpoint v12 retains the newest committed cycle plus the active cycle, the
+current model-call tail, current messages, unresolved operations, and pending
+outbox state. Completed historical cycles and model calls move to an immutable
+archive inside the same backing store. Each retirement batch and its cursor,
+counts, token totals, previous model-input observation, and digest chain commit
+in the existing revision/claim CAS together with the outbox. A stale owner or
+failed archive insertion cannot advance the checkpoint frontier.
+
+`CheckpointStore::load_checkpoint` reads the active snapshot only.
+`CheckpointStore::load_checkpoint_history` explicitly reads and authenticates
+the complete archived prefix. Memory retains batches under checkpoint locking;
+SQLite uses `checkpoint_history` with a cascading foreign key; Redis uses the
+checkpoint data key plus `:history` as a sequence-indexed hash in the same
+WATCH/MULTI transaction. Deleting a checkpoint deletes its history. History
+cursors and retained completed facts cannot be changed by a caller's snapshot.
+Retired model-call identities are indexed by SQLite's
+`checkpoint_history_call_ids` table and Redis's `:history:call_ids` set. The
+same transaction checks and extends this index, so progress writes reject
+reintroduced call IDs without scanning archived records. Deletion also removes
+these identity entries.
+
+Execution and provider-request construction use the bounded tail. Public
+`AgentResult` values hydrate complete cycles and model calls at result/read
+boundaries, including terminal replay and distributed candidates. The retained
+terminal checkpoint itself stores the tail result, so finalization and delivery
+acknowledgements do not rewrite the complete ledger. After-cycle hooks receive
+`TaskTokenUsageTotals` in `AfterCycleSnapshot.cumulative_token_usage`, without
+model-call records; missing provider accounting remains unknown.
+
+The history archive preserves evidence separately from the compacted model
+context. It does not replace media storage: hosts must persist stable immutable
+media references before checkpoint or tool-receipt writes and resolve them only
+when constructing a provider request.
+
+Incremental storage applies to completed cycles and model-call records. Current
+`messages` are still serialized in full at each checkpoint write. The retained
+size and linear cumulative-write guarantees assume fixed active context size;
+without compaction, linearly growing context can still produce quadratic
+cumulative writes. The Python producer's real `Runner.run_sync`/SQLite workload
+in `tests/test_checkpoint_history_growth.py` separately reports this boundary
+at 20 and 40 cycles with 4 KiB added per cycle and verifies complete output and
+public history. Its SQLite JSON binding bytes are not disk, WAL, network, or
+Rust measurements, and its write ratio is not a linear-growth pass criterion.
+
 ## Model Call Ledger
 
 Every model dispatch attempt admitted across the local provider boundary adds
-one `ModelCallRecord` to the checkpoint and to the public
+one `ModelCallRecord` to the active checkpoint tail and to the public
 `result.token_usage().model_calls` ledger. The ledger covers `AgentCycle`,
 `SessionMemory`, and `MemoryCompaction` operations. Logical retries retain
 their `operation_id`, receive a new `call_id`, and increment `attempt`; failed
@@ -107,7 +153,7 @@ transition share the same checkpoint progress boundary.
 
 ## Worker Reconstruction
 
-`DistributedCycleWorker::new()` has a production checkpoint-v11 executor. It
+`DistributedCycleWorker::new()` has a production checkpoint-v12 executor. It
 resolves the declared model, workspace, toolset, policy, hooks, observers,
 budget meter, extensions, and reconciliation provider, then rebuilds an inline
 single-cycle `AgentRuntime`. `with_checkpoint_executor()` remains available for

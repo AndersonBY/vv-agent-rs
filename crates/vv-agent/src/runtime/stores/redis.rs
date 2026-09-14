@@ -78,6 +78,14 @@ impl RedisCheckpointStore {
         format!("{KEY_PREFIX}{digest:x}")
     }
 
+    pub fn history_key(checkpoint_key: &str) -> String {
+        format!("{}:history", Self::data_key(checkpoint_key))
+    }
+
+    pub fn history_call_ids_key(checkpoint_key: &str) -> String {
+        format!("{}:call_ids", Self::history_key(checkpoint_key))
+    }
+
     pub fn lease_key(checkpoint_key: &str) -> String {
         format!("{}{LEASE_SUFFIX}", Self::data_key(checkpoint_key))
     }

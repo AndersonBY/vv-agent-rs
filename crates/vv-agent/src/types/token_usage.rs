@@ -270,6 +270,108 @@ impl<'de> Deserialize<'de> for ModelCallRecord {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskTokenUsageTotals {
+    #[serde(deserialize_with = "required_safe_token_count")]
+    pub input_tokens: Option<u64>,
+    #[serde(deserialize_with = "required_safe_token_count")]
+    pub output_tokens: Option<u64>,
+    #[serde(deserialize_with = "required_safe_token_count")]
+    pub total_tokens: Option<u64>,
+    #[serde(deserialize_with = "required_safe_token_count")]
+    pub reasoning_tokens: Option<u64>,
+    #[serde(deserialize_with = "aggregate_cache_totals")]
+    pub cache_usage: CacheUsage,
+}
+
+impl Default for TaskTokenUsageTotals {
+    fn default() -> Self {
+        let usage = TaskTokenUsage::default();
+        Self {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            total_tokens: usage.total_tokens,
+            reasoning_tokens: usage.reasoning_tokens,
+            cache_usage: usage.cache_usage,
+        }
+    }
+}
+
+impl TaskTokenUsageTotals {
+    pub(crate) fn append(&mut self, record: &ModelCallRecord, first: bool) {
+        fn add(left: Option<u64>, right: Option<u64>) -> Option<u64> {
+            left?.checked_add(right?)
+        }
+        self.input_tokens = add(self.input_tokens, record.usage.input_tokens);
+        self.output_tokens = add(self.output_tokens, record.usage.output_tokens);
+        self.total_tokens = add(self.total_tokens, record.usage.total_tokens);
+        self.reasoning_tokens = add(self.reasoning_tokens, record.usage.reasoning_tokens);
+        let cache = &record.usage.cache_usage;
+        if first {
+            self.cache_usage = cache.clone();
+            self.cache_usage.source = Some("aggregate".to_string());
+        } else if self.cache_usage.status == CacheUsageStatus::ProviderReported
+            && cache.status == CacheUsageStatus::ProviderReported
+        {
+            self.cache_usage.read_input_tokens =
+                add(self.cache_usage.read_input_tokens, cache.read_input_tokens);
+            self.cache_usage.write_input_tokens = add(
+                self.cache_usage.write_input_tokens,
+                cache.write_input_tokens,
+            );
+            self.cache_usage.uncached_input_tokens = add(
+                self.cache_usage.uncached_input_tokens,
+                cache.uncached_input_tokens,
+            );
+        } else {
+            if self.cache_usage.status != CacheUsageStatus::Unsupported
+                || cache.status != CacheUsageStatus::Unsupported
+            {
+                self.cache_usage.status = CacheUsageStatus::AccountingMissing;
+            }
+            self.cache_usage.read_input_tokens = None;
+            self.cache_usage.write_input_tokens = None;
+            self.cache_usage.uncached_input_tokens = None;
+        }
+    }
+}
+
+fn required_safe_token_count<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<u64>::deserialize(deserializer)?;
+    if value.is_some_and(|value| value > (1_u64 << 53) - 1) {
+        return Err(serde::de::Error::custom(
+            "token count exceeds JSON-safe integer range",
+        ));
+    }
+    Ok(value)
+}
+
+fn aggregate_cache_totals<'de, D>(deserializer: D) -> Result<CacheUsage, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let cache = CacheUsage::deserialize(deserializer)?;
+    if cache.source.as_deref() != Some("aggregate")
+        || [
+            cache.read_input_tokens,
+            cache.write_input_tokens,
+            cache.uncached_input_tokens,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|value| value > (1_u64 << 53) - 1)
+    {
+        return Err(serde::de::Error::custom(
+            "cache totals require aggregate source and JSON-safe counts",
+        ));
+    }
+    Ok(cache)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskTokenUsage {
     pub input_tokens: Option<u64>,

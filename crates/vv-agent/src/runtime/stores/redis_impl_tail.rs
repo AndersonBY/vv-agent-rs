@@ -36,7 +36,7 @@ macro_rules! redis_impl_tail {
                         .collect(),
                 }));
             }
-            let (updated, changed) = crate::runtime::state::accept_deferred_batch(
+            let (mut updated, changed) = crate::runtime::state::accept_deferred_batch(
                 &current,
                 expected_revision,
                 claim_token,
@@ -46,7 +46,7 @@ macro_rules! redis_impl_tail {
             if !changed {
                 return Ok(None);
             }
-            let payload = checkpoint_to_json(&updated, MAX_EXTENSION_STATE_BYTES)?;
+            let payload = encode_history_update(&mut updated, connection, pipeline)?;
             pipeline.set(&data_key, payload).ignore();
             pipeline.del(&lease_key).ignore();
             Ok(Some(crate::checkpoint::DeferredBatchAdmission {

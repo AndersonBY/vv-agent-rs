@@ -964,9 +964,11 @@ impl RunEvent {
                 "budget_usage".to_string(),
                 serde_json::to_value(budget_usage).expect("budget usage serializes"),
             );
-            self.extra_fields
-                .entry("completion_tool_name".to_string())
-                .or_insert(Value::Null);
+            if !matches!(self.payload, RunEventPayload::RunCancelled { .. }) {
+                self.extra_fields
+                    .entry("completion_tool_name".to_string())
+                    .or_insert(Value::Null);
+            }
             self.extra_fields
                 .entry("partial_output".to_string())
                 .or_insert(Value::Null);

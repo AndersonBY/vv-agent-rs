@@ -59,6 +59,9 @@ pub(super) fn run_agent_runtime_cycle(
         let retained = controller
             .refresh_authoritative()
             .map_err(|error| error.to_string())?;
+        let replayed = controller
+            .hydrate_result(replayed)
+            .map_err(|error| error.to_string())?;
         controller.close();
         return CycleDispatchResult::terminal_replay(replayed, retained.revision);
     }
@@ -135,7 +138,7 @@ pub(super) fn run_agent_runtime_cycle(
         ..RuntimeRunControls::default()
     };
     let result = runtime
-        .run_with_controls(task, controls)
+        .run_with_controls_active(task, controls)
         .map_err(|error| error.to_string())?;
     let mut controller = checkpoint_controller
         .lock()
@@ -192,6 +195,9 @@ pub(super) fn run_agent_runtime_cycle(
         .refresh_authoritative()
         .map_err(|error| error.to_string())?
         .revision;
+    let result = controller
+        .hydrate_result(result)
+        .map_err(|error| error.to_string())?;
     controller.close();
     CycleDispatchResult::terminal_candidate(result, revision)
 }

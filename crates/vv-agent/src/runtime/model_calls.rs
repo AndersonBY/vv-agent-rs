@@ -6,7 +6,8 @@ use crate::budget::{BudgetExhaustion, BudgetUsageSnapshot};
 use crate::events::{ModelCallFailureOutcome, RunEvent, RunEventPayload};
 use crate::llm::{LlmError, LlmRequest};
 use crate::types::{
-    LLMResponse, ModelCallOperation, ModelCallRecord, ModelCallStatus, TaskTokenUsage, TokenUsage,
+    LLMResponse, ModelCallOperation, ModelCallRecord, ModelCallStatus, TaskTokenUsage,
+    TaskTokenUsageTotals, TokenUsage,
 };
 
 use super::token_usage::{normalize_token_usage, summarize_task_token_usage};
@@ -74,9 +75,42 @@ impl ModelCallIdentity {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ModelCallLedger {
     records: Arc<Mutex<Vec<ModelCallRecord>>>,
+    history: Arc<Mutex<crate::runtime::state::CheckpointHistory>>,
 }
 
 impl ModelCallLedger {
+    pub(crate) fn replace_checkpoint(
+        &self,
+        checkpoint: &crate::runtime::state::Checkpoint,
+    ) -> Result<(), String> {
+        self.replace(checkpoint.model_calls.clone())?;
+        *self
+            .history
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            checkpoint.history.as_ref().clone();
+        Ok(())
+    }
+
+    pub(crate) fn cumulative_usage(&self) -> TaskTokenUsageTotals {
+        let mut history = self
+            .history
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let records = self.records();
+        for record in &records {
+            history.usage.append(record, history.model_call_count == 0);
+            history.model_call_count += 1;
+        }
+        TaskTokenUsageTotals {
+            input_tokens: history.usage.input_tokens,
+            output_tokens: history.usage.output_tokens,
+            total_tokens: history.usage.total_tokens,
+            reasoning_tokens: history.usage.reasoning_tokens,
+            cache_usage: history.usage.cache_usage,
+        }
+    }
     pub(crate) fn replace(&self, records: Vec<ModelCallRecord>) -> Result<(), String> {
         let usage = summarize_task_token_usage_checked(&records)?;
         *self
@@ -113,17 +147,24 @@ impl ModelCallLedger {
     }
 
     pub(crate) fn previous_agent_input_tokens(&self, cycle_index: u32) -> Option<u64> {
-        self.records
+        let records = self
+            .records
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(record) = records.iter().rev().find(|record| {
+            record.operation == ModelCallOperation::AgentCycle
+                && record.cycle_index < cycle_index
+                && record.status == ModelCallStatus::Completed
+        }) {
+            return record.usage.input_tokens;
+        }
+        self.history
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-            .rev()
-            .find(|record| {
-                record.operation == ModelCallOperation::AgentCycle
-                    && record.cycle_index < cycle_index
-                    && record.status == ModelCallStatus::Completed
-            })
-            .and_then(|record| record.usage.input_tokens)
+            .previous_agent_input
+            .as_ref()
+            .filter(|previous| previous.cycle_index < cycle_index)
+            .and_then(|previous| previous.input_tokens)
     }
 }
 
@@ -582,5 +623,38 @@ fn normalize_operation_slot(value: &str) -> Result<String, String> {
         Err("model operation slot must be non-empty".to_string())
     } else {
         Ok(normalized)
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+    use crate::runtime::state::PreviousAgentInput;
+
+    #[test]
+    fn latest_missing_input_does_not_fall_back_to_archived_known_usage() {
+        let ledger = ModelCallLedger::default();
+        ledger.history.lock().unwrap().previous_agent_input = Some(PreviousAgentInput {
+            cycle_index: 1,
+            input_tokens: Some(10),
+        });
+        assert_eq!(ledger.previous_agent_input_tokens(2), Some(10));
+        ledger
+            .append(ModelCallRecord {
+                call_id: "cycle2:attempt:1".to_string(),
+                operation_id: "cycle2".to_string(),
+                attempt: 1,
+                operation: ModelCallOperation::AgentCycle,
+                cycle_index: 2,
+                backend: "test".to_string(),
+                model: "test".to_string(),
+                status: ModelCallStatus::Completed,
+                usage: TokenUsage::default(),
+                error_code: None,
+            })
+            .unwrap();
+        assert_eq!(ledger.previous_agent_input_tokens(3), None);
+        ledger.records.lock().unwrap()[0].usage.input_tokens = Some(0);
+        assert_eq!(ledger.previous_agent_input_tokens(3), Some(0));
     }
 }

@@ -11,6 +11,9 @@ use crate::workspace::{LocalWorkspaceBackend, WorkspaceBackend};
 
 use super::{AgentRuntime, RuntimeRunControls};
 
+#[cfg(test)]
+mod tests;
+
 impl<C: LlmClient> AgentRuntime<C> {
     pub fn new(llm_client: C) -> Self {
         Self {
@@ -105,5 +108,22 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
 
     pub fn run(&self, task: AgentTask) -> Result<AgentResult, LlmError> {
         self.run_with_controls(task, RuntimeRunControls::default())
+    }
+
+    pub fn run_with_controls(
+        &self,
+        task: AgentTask,
+        controls: RuntimeRunControls,
+    ) -> Result<AgentResult, LlmError> {
+        let checkpoint = controls.effective_checkpoint_controller().cloned();
+        let result = self.run_with_controls_active(task, controls)?;
+        match checkpoint {
+            Some(controller) => controller
+                .lock()
+                .map_err(|_| LlmError::Request("checkpoint controller lock poisoned".to_string()))?
+                .hydrate_result(result)
+                .map_err(|error| LlmError::Request(error.to_string())),
+            None => Ok(result),
+        }
     }
 }

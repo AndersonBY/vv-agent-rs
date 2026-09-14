@@ -23,6 +23,8 @@ const STORE_FIXTURE: &str = include_str!("fixtures/parity/checkpoint_store.json"
 
 #[path = "checkpoint_core/strict.rs"]
 mod checkpoint_core_strict;
+#[path = "checkpoint_core/history.rs"]
+mod history;
 #[path = "checkpoint_core/store_contract.rs"]
 mod store_contract;
 

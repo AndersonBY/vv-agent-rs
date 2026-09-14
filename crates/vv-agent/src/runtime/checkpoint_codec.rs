@@ -1,4 +1,4 @@
-//! Strict codec for the current checkpoint v11 wire format.
+//! Strict codec for the current checkpoint v12 wire format.
 
 use std::collections::BTreeMap;
 
@@ -35,6 +35,7 @@ const KNOWN_FIELDS: &[&str] = &[
     "messages",
     "cycles",
     "model_calls",
+    "history",
     "shared_state",
     "budget_usage",
     "event_cursor",
@@ -143,6 +144,12 @@ pub fn checkpoint_to_value(
         Value::Object(checkpoint.shared_state.clone().into_iter().collect()),
     );
     object.insert(
+        "history".to_string(),
+        serde_json::to_value(&checkpoint.history).map_err(|error| {
+            CheckpointError::new("checkpoint_history_invalid", error.to_string())
+        })?,
+    );
+    object.insert(
         "budget_usage".to_string(),
         checkpoint
             .budget_usage
@@ -238,7 +245,7 @@ pub fn checkpoint_from_value(
     let object = payload.as_object().ok_or_else(|| {
         CheckpointError::new(
             "checkpoint_payload_invalid",
-            "checkpoint v11 payload must be an object",
+            "checkpoint v12 payload must be an object",
         )
     })?;
     if let Some(field) = object
@@ -253,7 +260,7 @@ pub fn checkpoint_from_value(
     if object.get("schema_version").and_then(Value::as_str) != Some(CHECKPOINT_SCHEMA) {
         return Err(CheckpointError::new(
             "checkpoint_schema_unsupported",
-            "checkpoint schema_version is not vv-agent.checkpoint.v11",
+            "checkpoint schema_version is not vv-agent.checkpoint.v12",
         ));
     }
     let run_definition_schema = required_string(
@@ -321,6 +328,9 @@ pub fn checkpoint_from_value(
         messages: parse_messages(object.get("messages"))?,
         cycles: parse_cycles(object.get("cycles"))?,
         model_calls: parse_model_calls(object.get("model_calls"))?,
+        history: serde_json::from_value(object["history"].clone()).map_err(|error| {
+            CheckpointError::new("checkpoint_history_invalid", error.to_string())
+        })?,
         shared_state: parse_object_map(object, "shared_state", "checkpoint_shared_state_invalid")?,
         budget_usage: parse_optional_budget(object.get("budget_usage"))?,
         event_cursor: parse_optional_event_cursor(object.get("event_cursor"))?,
@@ -365,7 +375,7 @@ pub fn checkpoint_to_json(
     max_extension_state_bytes: u64,
 ) -> CheckpointResult<String> {
     let value = checkpoint_to_value(checkpoint, max_extension_state_bytes)?;
-    let bytes = canonical_json_bytes(&value, "checkpoint v11")?;
+    let bytes = canonical_json_bytes(&value, "checkpoint v12")?;
     String::from_utf8(bytes).map_err(|error| {
         CheckpointError::new(
             "checkpoint_canonicalization_invalid",
@@ -566,7 +576,7 @@ fn required_u64(object: &Map<String, Value>, field: &str, code: &str) -> Checkpo
     })
 }
 
-fn strict_json_value(payload: &str) -> CheckpointResult<Value> {
+pub(crate) fn strict_json_value(payload: &str) -> CheckpointResult<Value> {
     let mut deserializer = serde_json::Deserializer::from_str(payload);
     let StrictValue(value) = StrictValue::deserialize(&mut deserializer)
         .map_err(|error| CheckpointError::new("checkpoint_json_invalid", error.to_string()))?;

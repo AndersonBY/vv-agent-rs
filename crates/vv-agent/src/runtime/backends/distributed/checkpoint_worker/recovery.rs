@@ -714,9 +714,21 @@ pub(super) fn commit_cycle(
         .any(|entry| entry.state == "pending")
     {
         checkpoint.cycle_index = progress.checkpoint.cycle_index;
+        let messages = std::mem::replace(
+            &mut checkpoint.messages,
+            progress.checkpoint.messages.clone(),
+        );
+        let cycles = std::mem::replace(&mut checkpoint.cycles, progress.checkpoint.cycles.clone());
+        let shared_state = std::mem::replace(
+            &mut checkpoint.shared_state,
+            progress.checkpoint.shared_state.clone(),
+        );
         progress.persist(checkpoint)?;
         progress.deliver_pending_outbox(event_store, event_sink)?;
         checkpoint = progress.checkpoint.clone();
+        checkpoint.messages = messages;
+        checkpoint.cycles = cycles;
+        checkpoint.shared_state = shared_state;
     }
     checkpoint.cycle_index = cycle_index;
     checkpoint.status = CheckpointStatus::Running;

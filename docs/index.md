@@ -17,7 +17,7 @@ duplicating the details.
 | `bash-process-management.md` | Bash initial wait, execution deadline, owner-scoped query/stop, live output, and checkpoint receipts. |
 | `run-budgets.md` | Token, tool, wall-time, and host-cost limits; observations, resume, and distributed behavior. |
 | `output-validation.md` | Default-off host output validation, one-shot tools-free repair, failure, and replay semantics. |
-| `checkpoint-resume.md` | Checkpoint v11 ownership, model-call ledgers, deferred and host-interaction barriers, controller commands, exact recovery, worker reconstruction, terminal ordering, and Apalis result transport. |
+| `checkpoint-resume.md` | Checkpoint v12 ownership, model-call ledgers, deferred and host-interaction barriers, controller commands, exact recovery, worker reconstruction, terminal ordering, and Apalis result transport. |
 | `../crates/vv-agent/docs/app_server.md` | JSONL protocol, lifecycle, approval, schema generation, CLI startup, and host boundary. |
 | `../crates/vv-agent/docs/app_server_runtime_mapping.md` | Mapping from App Server lifecycle objects to typed runtime events and state. |
 

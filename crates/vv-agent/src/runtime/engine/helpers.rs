@@ -9,6 +9,7 @@ use crate::types::{
     Message, MessageRole, TaskTokenUsage, ToolExecutionResult,
 };
 
+use super::budget::{finalize_run_budget, SharedRunBudgetController};
 use super::{AgentRuntime, RuntimeRunControls};
 
 pub(super) use crate::runtime::cancelled_agent_result;
@@ -205,12 +206,14 @@ pub(super) fn failed_agent_result(
     }
 }
 
-pub(super) fn finalize_terminal_projection<C: LlmClient>(
+pub(super) fn finalize_run_result<C: LlmClient>(
     runtime: &AgentRuntime<C>,
+    budget_controller: &Option<SharedRunBudgetController>,
     controls: &RuntimeRunControls,
     cancellation_token: Option<&CancellationToken>,
     mut result: AgentResult,
 ) -> AgentResult {
+    result = finalize_run_budget(budget_controller, controls, cancellation_token, result);
     if result.status == AgentStatus::Failed
         && cancellation_token.is_some_and(CancellationToken::is_cancelled)
     {

@@ -967,7 +967,16 @@ async fn distributed_execution_commits_nonterminal_cycle_before_max_cycles_candi
         .unwrap();
     assert_eq!(terminal.status, CheckpointStatus::MaxCycles);
     assert_eq!(terminal.cycle_index, 2);
-    assert_eq!(terminal.cycles.len(), 2);
+    assert_eq!(terminal.cycles.len(), 1);
+    assert_eq!(terminal.history.cycle_count, 1);
+    assert_eq!(
+        store
+            .load_checkpoint_history("distributed-multicycle")
+            .unwrap()
+            .cycles
+            .len(),
+        1
+    );
     assert!(terminal.terminal_acknowledged);
 }
 
@@ -977,6 +986,8 @@ mod cancel;
 mod deferred;
 #[path = "runner_checkpoint/deferred_control.rs"]
 mod deferred_control;
+#[path = "runner_checkpoint/history.rs"]
+mod history;
 #[path = "runner_checkpoint/resume.rs"]
 mod resume;
 #[path = "runner_checkpoint/session_memory.rs"]

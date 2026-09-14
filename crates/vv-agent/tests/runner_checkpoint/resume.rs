@@ -79,6 +79,155 @@ where
     config
 }
 
+#[derive(Clone, Default)]
+struct ResumeAuthorityCostMeter {
+    amount: Arc<AtomicUsize>,
+    reads: Arc<AtomicUsize>,
+}
+
+impl vv_agent::HostCostMeter for ResumeAuthorityCostMeter {
+    fn read(&self) -> Result<Option<vv_agent::HostCost>, String> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        vv_agent::HostCost::new("credits", self.amount.load(Ordering::SeqCst) as u64).map(Some)
+    }
+}
+
+#[tokio::test]
+async fn resume_authority_precedes_precancel_and_exhausted_run_start_budget() {
+    for deferred in [true, false] {
+        for pre_cancelled in [true, false] {
+            let store = InMemoryCheckpointStore::new();
+            let key = "resume-authority-before-budget";
+            let model_calls = Arc::new(AtomicUsize::new(0));
+            let observed_model_calls = model_calls.clone();
+            let tool_calls = Arc::new(AtomicUsize::new(0));
+            let observed_tool_calls = tool_calls.clone();
+            let workspace = tempfile::tempdir().unwrap();
+            let runner = Runner::builder()
+                .model_provider(ScriptedModelProvider::from_steps(
+                    "scripted",
+                    "resume-authority-model",
+                    vec![ScriptStep::callback(move |_| {
+                        observed_model_calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(LLMResponse::with_tool_calls(
+                            "perform the external write",
+                            vec![ToolCall::new(
+                                "call-external",
+                                "external_write",
+                                BTreeMap::new(),
+                            )],
+                        ))
+                    })],
+                ))
+                .workspace(workspace.path())
+                .build()
+                .unwrap();
+            let tool = StaticTool::new(
+                "external_write",
+                "Perform an external write once.",
+                json!({"type": "object", "properties": {}, "additionalProperties": false}),
+                Arc::new(move |context, _| {
+                    observed_tool_calls.fetch_add(1, Ordering::SeqCst);
+                    if deferred {
+                        let _ = context.defer();
+                        ToolExecutionResult::success(context.tool_call_id.clone(), "pending")
+                    } else {
+                        ToolExecutionResult::error(context.tool_call_id.clone(), "outcome unknown")
+                            .with_error_code("tool_execution_failed")
+                    }
+                }),
+            )
+            .with_tool_metadata(ToolMetadata {
+                idempotency: ToolIdempotency::Unknown,
+                ..ToolMetadata::default()
+            });
+            let agent = Agent::builder("resume-authority-agent")
+                .instructions("Perform the external write once.")
+                .model(ModelRef::named("resume-authority-model"))
+                .tool(tool)
+                .build()
+                .unwrap();
+            let meter = ResumeAuthorityCostMeter::default();
+            let limits = RunBudgetLimits::builder()
+                .max_host_cost(vv_agent::HostCost::new("credits", 10).unwrap())
+                .build()
+                .unwrap();
+            let mut checkpoint = checkpoint_config(store.clone(), key);
+            checkpoint.ambiguous_tool_policy = vv_agent::AmbiguousToolPolicy::RequireReconciliation;
+            checkpoint.capability_refs.insert(
+                "host_cost_meter".to_string(),
+                CapabilityRef::new("test.resume-authority-cost", "1").unwrap(),
+            );
+            let mut config = RunConfig::builder()
+                .max_cycles(1)
+                .checkpoint_config(checkpoint)
+                .budget_limits(limits.clone())
+                .host_cost_meter(meter.clone())
+                .session_memory_enabled(false)
+                .build();
+            let first = runner
+                .run_with_config(&agent, "write", config.clone())
+                .await
+                .unwrap();
+            let expected = if deferred {
+                AgentStatus::Deferred
+            } else {
+                AgentStatus::ReconciliationRequired
+            };
+            assert_eq!(first.status(), expected);
+            let before = store.load_checkpoint(key).unwrap().unwrap();
+            assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+            assert_eq!(tool_calls.load(Ordering::SeqCst), 1);
+
+            if pre_cancelled {
+                let token = vv_agent::CancellationToken::default();
+                token.cancel();
+                config.cancellation_token = Some(token);
+            } else {
+                meter.amount.store(20, Ordering::SeqCst);
+                let mut budget = vv_agent::budget::BudgetEvaluator::new(
+                    limits,
+                    Some(Arc::new(meter.clone())),
+                    before.budget_usage.clone(),
+                )
+                .unwrap();
+                assert_eq!(
+                    budget.run_start().unwrap().enforcement_boundary,
+                    vv_agent::BudgetEnforcementBoundary::RunStart
+                );
+            }
+            let meter_reads = meter.reads.load(Ordering::SeqCst);
+            let resumed = runner
+                .run_with_config(&agent, "write", config)
+                .await
+                .unwrap();
+            assert_eq!(
+                resumed.status(),
+                expected,
+                "deferred={deferred}, pre_cancelled={pre_cancelled}"
+            );
+            assert_eq!(resumed.budget_exhaustion(), None);
+            assert_eq!(resumed.result().wait_reason, first.result().wait_reason);
+            assert_eq!(model_calls.load(Ordering::SeqCst), 1);
+            assert_eq!(tool_calls.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                meter.reads.load(Ordering::SeqCst),
+                meter_reads,
+                "recovery must resolve authority before entering runtime budget checks"
+            );
+            let after = store.load_checkpoint(key).unwrap().unwrap();
+            assert_eq!(after.status, before.status);
+            assert_eq!(after.cycles, before.cycles);
+            assert_eq!(after.model_calls, before.model_calls);
+            assert_eq!(after.budget_usage, before.budget_usage);
+            assert!(after.terminal_result.is_none());
+            assert!(after.claim_token.is_none());
+            assert!(!after.cancel_requested);
+            assert_eq!(after.tool_journal, before.tool_journal, "unknown or deferred external work must not be retried or replaced with cancellation");
+        }
+    }
+}
+
 #[tokio::test]
 async fn runner_recovery_surfaces_unknown_tool_outcome_by_default() {
     let model_calls = Arc::new(AtomicUsize::new(0));

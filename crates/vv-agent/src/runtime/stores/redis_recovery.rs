@@ -158,12 +158,8 @@ fn redis_claim_and_consume_host_interaction_response(
         consumed.claim_token = None;
         consumed.lease_expires_at_ms = None;
         consumed.validate()?;
-        pipeline
-            .set(
-                &data_key,
-                checkpoint_to_json(&updated, MAX_EXTENSION_STATE_BYTES)?,
-            )
-            .ignore();
+        let payload = encode_history_update(&mut updated, connection, pipeline)?;
+        pipeline.set(&data_key, payload).ignore();
         if let Some(lease) = updated.lease_expires_at_ms {
             pipeline.set(&lease_key, lease).ignore();
         } else {

@@ -214,3 +214,24 @@ fn duplicate_model_call_ids_and_superseded_task_wire_are_rejected() {
     );
     assert!(serde_json::from_value::<TaskTokenUsage>(Value::Object(superseded)).is_err());
 }
+
+#[test]
+fn cumulative_totals_are_closed_bounded_and_independent_of_model_call_records() {
+    let totals = vv_agent::TaskTokenUsageTotals::default();
+    let value = serde_json::to_value(&totals).unwrap();
+    assert_eq!(
+        serde_json::from_value::<vv_agent::TaskTokenUsageTotals>(value.clone()).unwrap(),
+        totals
+    );
+    let mut missing = value.clone();
+    missing.as_object_mut().unwrap().remove("input_tokens");
+    let mut unknown = value.clone();
+    unknown["model_calls"] = serde_json::json!([]);
+    let mut oversized = value.clone();
+    oversized["total_tokens"] = serde_json::json!(1_u64 << 53);
+    let mut wrong_source = value;
+    wrong_source["cache_usage"]["source"] = serde_json::json!("provider");
+    for malformed in [missing, unknown, oversized, wrong_source] {
+        assert!(serde_json::from_value::<vv_agent::TaskTokenUsageTotals>(malformed).is_err());
+    }
+}

@@ -1,7 +1,7 @@
 pub(super) const CREATE_CHECKPOINTS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS checkpoints (
     checkpoint_key TEXT PRIMARY KEY,
-    schema_version TEXT NOT NULL CHECK (schema_version = 'vv-agent.checkpoint.v11'),
+    schema_version TEXT NOT NULL CHECK (schema_version = 'vv-agent.checkpoint.v12'),
     run_definition_schema TEXT NOT NULL CHECK (run_definition_schema = 'vv-agent.run-definition.v5'),
     run_definition TEXT NOT NULL,
     task_id TEXT NOT NULL,
@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS checkpoints (
     lease_expires_at_ms INTEGER,
     terminal_result TEXT,
     terminal_acknowledged INTEGER NOT NULL DEFAULT 0 CHECK (terminal_acknowledged IN (0, 1)),
+    history TEXT NOT NULL,
     CHECK (status <> 'deferred' OR (claim_token IS NULL AND claimed_cycle IS NULL AND lease_expires_at_ms IS NULL)),
     CHECK (status <> 'deferred' OR tool_journal <> '[]'),
     CHECK (
@@ -157,4 +158,24 @@ CREATE INDEX IF NOT EXISTS controller_command_receipts_checkpoint_idx ON control
 
 pub(super) const CREATE_CONTROLLER_RECEIPTS_OUTBOX_INDEX_SQL: &str = r#"
 CREATE INDEX IF NOT EXISTS controller_command_receipts_outbox_idx ON controller_command_receipts(outbox_state, lease_expires_at_ms)
+"#;
+
+pub(super) const CREATE_CHECKPOINT_HISTORY_TABLE_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS checkpoint_history (
+    checkpoint_key TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK (sequence >= 1),
+    payload TEXT NOT NULL,
+    payload_digest TEXT NOT NULL,
+    PRIMARY KEY (checkpoint_key, sequence),
+    FOREIGN KEY (checkpoint_key) REFERENCES checkpoints(checkpoint_key) ON DELETE CASCADE
+)
+"#;
+
+pub(super) const CREATE_CHECKPOINT_HISTORY_CALL_IDS_TABLE_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS checkpoint_history_call_ids (
+    checkpoint_key TEXT NOT NULL,
+    call_id TEXT NOT NULL,
+    PRIMARY KEY (checkpoint_key, call_id),
+    FOREIGN KEY (checkpoint_key) REFERENCES checkpoints(checkpoint_key) ON DELETE CASCADE
+)
 "#;
