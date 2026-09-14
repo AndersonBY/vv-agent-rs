@@ -238,6 +238,26 @@ impl<C: LlmClient> AgentRuntime<C> {
         );
     }
 
+    pub(super) fn emit_run_cancelled(&self, controls: &RuntimeRunControls, cycles: &[CycleRecord]) {
+        self.emit_log(
+            controls,
+            "run_cancelled",
+            BTreeMap::from([
+                (
+                    "cycle".to_string(),
+                    cycles
+                        .last()
+                        .map(|cycle| Value::from(cycle.index))
+                        .unwrap_or(Value::Null),
+                ),
+                (
+                    "error".to_string(),
+                    Value::String("Operation was cancelled".to_string()),
+                ),
+            ]),
+        );
+    }
+
     pub(super) fn emit_run_max_cycles(&self, controls: &RuntimeRunControls, result: &AgentResult) {
         self.emit_log(
             controls,

@@ -1,4 +1,13 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use super::{CreatedAtWire, EventId, RunEvent};
+
+pub(super) fn timestamp_seconds() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_micros() as f64 / 1_000_000.0)
+        .unwrap_or_default()
+}
 
 impl RunEvent {
     pub(crate) fn with_observed_identity(

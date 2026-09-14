@@ -102,23 +102,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
             BTreeMap::from([("model".to_string(), Value::String(task.model.clone()))]),
         );
         if effective_budget_limits.is_none() && controls_cancelled(&controls) {
-            self.emit_log(
-                &controls,
-                "run_cancelled",
-                BTreeMap::from([
-                    (
-                        "cycle".to_string(),
-                        cycles
-                            .last()
-                            .map(|cycle| Value::from(cycle.index))
-                            .unwrap_or(Value::Null),
-                    ),
-                    (
-                        "error".to_string(),
-                        Value::String("Operation was cancelled".to_string()),
-                    ),
-                ]),
-            );
+            self.emit_run_cancelled(&controls, &cycles);
             return Ok(cancelled_agent_result(
                 messages,
                 cycles,

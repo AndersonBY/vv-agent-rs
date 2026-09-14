@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use serde::{de::Error as _, ser::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Number, Value};
 
@@ -11,6 +9,8 @@ use crate::types::{AgentStatus, CompletionReason, Metadata};
 mod identity;
 mod payload;
 mod wire;
+
+use identity::timestamp_seconds;
 
 pub use payload::{
     AgentErrorPayload, ApprovalAction, DiagnosticLevel, MemoryCompactMode, MemoryCompactTrigger,
@@ -992,11 +992,4 @@ impl RunEvent {
             .get("final_output")
             .and_then(Value::as_str)
     }
-}
-
-fn timestamp_seconds() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_micros() as f64 / 1_000_000.0)
-        .unwrap_or_default()
 }
