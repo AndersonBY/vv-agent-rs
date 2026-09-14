@@ -7,7 +7,7 @@
 
 ## 安装
 
-仓库 `HEAD` 对应 crate `0.21.0` 和 Contract `22.0.0`（尚未发布）。
+仓库 `HEAD` 对应 crate `0.21.0` 和 Contract `22.0.0`。
 安装最新已发布 crate：
 
 ```bash
@@ -23,7 +23,7 @@ cargo add vv-agent --features apalis
 仓库 `HEAD` 采用 forward-only 设计：当前版本只读取当前严格定义的
 公共 API 与传输数据结构。需要旧协议的应用应固定旧 crate 版本。
 
-### 0.21.0 重点能力（尚未发布）
+### 0.21.0 重点能力
 
 - Checkpoint v12 保留活动尾部，Memory、SQLite 和 Redis store 在同一原子提交中
   归档较早的 cycle 与模型调用记录。

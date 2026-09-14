@@ -8,7 +8,7 @@ for model-driven automation.
 
 ## Install
 
-Repository `HEAD` targets crate `0.21.0` and Contract `22.0.0` (unreleased).
+Repository `HEAD` targets crate `0.21.0` and Contract `22.0.0`.
 To install the latest published crate:
 
 ```bash
@@ -24,7 +24,7 @@ cargo add vv-agent --features apalis
 Repository `HEAD` is forward-only: current readers accept only the current
 strict public and wire shapes.
 
-### 0.21.0 Highlights (unreleased)
+### 0.21.0 Highlights
 
 - Checkpoint v12 keeps an active tail and atomically archives retired cycle and
   model-call records in Memory, SQLite, and Redis stores.
