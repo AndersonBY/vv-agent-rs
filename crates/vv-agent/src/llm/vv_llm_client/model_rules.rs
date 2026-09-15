@@ -74,18 +74,17 @@ pub(super) fn resolve_request_options(
     }
 
     if normalized_model.starts_with("qwen3") {
-        if normalized_model.ends_with("-thinking") {
-            if !QWEN_THINKING_KEEP_SUFFIX_MODELS
+        // qwen3.x 全系支持思考模式；DashScope 混合思考模型在
+        // enable_thinking=false 时禁止携带非 none 的 reasoning_effort。
+        if normalized_model.ends_with("-thinking")
+            && !QWEN_THINKING_KEEP_SUFFIX_MODELS
                 .iter()
                 .any(|candidate| normalized_model == *candidate)
-            {
-                resolved_model = remove_suffix_case_insensitive(&resolved_model, "-thinking");
-                normalized_model = resolved_model.to_ascii_lowercase();
-            }
-            extra_body = serde_json::json!({"enable_thinking": true});
-        } else {
-            extra_body = serde_json::json!({"enable_thinking": false});
+        {
+            resolved_model = remove_suffix_case_insensitive(&resolved_model, "-thinking");
+            normalized_model = resolved_model.to_ascii_lowercase();
         }
+        extra_body = serde_json::json!({"enable_thinking": true});
     }
 
     if (normalized_model.starts_with("glm-4.") || normalized_model.starts_with("glm-5"))
