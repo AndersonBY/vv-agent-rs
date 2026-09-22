@@ -259,6 +259,11 @@ pub fn prepare_tool_receipt(
     let event_entry = entry.clone();
     let event = crate::runtime::state::receipt_event(&updated, &event_entry, result)?;
     updated.event_outbox.push(event);
+    // Recovery stages its resolved audit in the caller snapshot.  Retain it
+    // in the receipt CAS without rewriting authoritative event bytes.
+    for event in &checkpoint.event_outbox {
+        crate::runtime::state::append_event_outbox_once(&mut updated.event_outbox, event.clone())?;
+    }
     updated.revision = expected_revision
         .checked_add(1)
         .ok_or_else(|| CheckpointError::new("checkpoint_revision_overflow", "revision overflow"))?;

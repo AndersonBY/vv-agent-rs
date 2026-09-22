@@ -52,6 +52,17 @@ to an older decoder. Checkpoint outbox entries must contain a canonical current
 `RunEvent`, match its embedded `event_id`, and match the recorded payload
 digest before a checkpoint is accepted.
 
+Reconciliation captures the source attempt before applying a decision. Its
+stable `reconciliation_resolved` event coordinates include that attempt and
+the decision. Retry/model progress commits its journal change and audit
+together; tool resolution uses `record_tool_receipt` with the staged audit in
+the caller snapshot so both receipt and outbox share one claim/revision CAS.
+Recovery delivers the retained bytes without consulting the provider again
+for a resolved attempt. Current-schema retained events keep their original
+IDs, timestamps, and digests. Paired producer regressions seeded from the locked
+checkpoint/journal fixtures live in
+`runtime/checkpoint_resume/recovery/tests.rs`.
+
 ## Ownership And Terminal Ordering
 
 Only one component owns a claim at a time:

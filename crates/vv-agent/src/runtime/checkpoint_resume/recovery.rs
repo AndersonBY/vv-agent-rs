@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 impl CheckpointResumeController {
     pub(super) fn create_new_checkpoint(&mut self, key: String) -> CheckpointResult<()> {
         let mut checkpoint = Checkpoint {
@@ -213,7 +216,7 @@ impl CheckpointResumeController {
                     .is_some_and(|error| error.code == "tool_outcome_unknown");
             let receipt_result =
                 crate::runtime::checkpoint_resume::reconciliation_tool_result(&entry, &decision)?;
-            let receipt = {
+            if receipt_result.is_none() {
                 let current = self.find_operation_mut(entry.kind, &entry.operation_id)?;
                 apply_reconciliation_decision(
                     current,
@@ -221,22 +224,16 @@ impl CheckpointResumeController {
                     &checkpoint_key,
                     unknown_tool_outcome.then_some(&observation),
                 )?;
-                receipt_result
-                    .as_ref()
-                    .map(|result| (current.clone(), result.clone()))
-            };
-            if let Some((receipt_entry, receipt_result)) = receipt {
-                let event = crate::runtime::state::receipt_event(
-                    self.require_checkpoint()?,
-                    &receipt_entry,
-                    &receipt_result,
-                )?;
-                crate::runtime::state::append_event_outbox_once(
-                    &mut self.require_checkpoint_mut()?.event_outbox,
-                    event,
-                )?;
             }
-            self.progress()?;
+            // `entry` is the source snapshot, before RETRY advances the journal.
+            // The decision also separates a new resolution from retained retry
+            // events that older producers keyed by the destination attempt.
+            let decision_name = match decision.kind {
+                ReconciliationDecisionKind::Retry => "retry",
+                ReconciliationDecisionKind::ReplaySuccess => "replay_success",
+                ReconciliationDecisionKind::RecordFailure => "record_failure",
+                _ => unreachable!("other reconciliation paths handled above"),
+            };
             let event = self.checkpoint_event(
                 u32::try_from(entry.cycle_index).unwrap_or(u32::MAX),
                 RunEventPayload::ReconciliationResolved {
@@ -244,15 +241,51 @@ impl CheckpointResumeController {
                     operation_id: entry.operation_id.clone(),
                     operation_kind: entry.kind,
                     decision: decision.kind,
-                    claim_mode: (decision.kind == ReconciliationDecisionKind::AcceptDeferred)
-                        .then_some(ClaimMode::Recovery),
+                    claim_mode: None,
                 },
                 self.stable_event_id(
                     "reconciliation_resolved",
-                    &[&entry.operation_id, &entry.attempt.to_string()],
+                    &[
+                        &entry.operation_id,
+                        &entry.attempt.to_string(),
+                        decision_name,
+                    ],
                 )?,
             )?;
-            self.emit_durable(event)?;
+            if let Some(result) = receipt_result {
+                self.find_operation_mut(entry.kind, &entry.operation_id)?
+                    .resume_observation = unknown_tool_outcome.then_some(observation);
+                self.queue_outbox_event(event)?;
+                self.assert_heartbeat()?;
+                let checkpoint = self.require_checkpoint()?.clone();
+                let claim_token = checkpoint.claim_token.as_deref().ok_or_else(|| {
+                    CheckpointError::new(
+                        "checkpoint_claim_active",
+                        "reconciliation receipt requires an active claim",
+                    )
+                })?;
+                if !self.store.record_tool_receipt(
+                    checkpoint.clone(),
+                    &entry.operation_id,
+                    entry.attempt,
+                    entry.tool_call_id.as_deref().unwrap_or_default(),
+                    &entry.request_digest,
+                    result,
+                    claim_token,
+                    checkpoint.revision,
+                    entry.cycle_index,
+                )? {
+                    return Err(CheckpointError::new(
+                        "checkpoint_store_conflict",
+                        "reconciliation receipt lost its claim",
+                    ));
+                }
+                self.reload()?;
+                self.deliver_pending_outbox()?;
+            } else {
+                // Queue before progress so state/attempt and audit share one CAS.
+                self.emit_durable(event)?;
+            }
         }
         if !deferred_decisions.is_empty() {
             self.accept_deferred_batch(&deferred_decisions)?;
