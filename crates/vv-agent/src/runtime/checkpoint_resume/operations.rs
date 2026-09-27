@@ -251,9 +251,6 @@ impl CheckpointResumeController {
                 "model operation slot must be non-empty",
             ));
         }
-        if let Some(interruption) = self.ensure_claim(u64::from(dispatch.cycle_index))? {
-            return Ok(ModelOperationOutcome::Interrupted(Box::new(interruption)));
-        }
         self.bind_model_accounting(dispatch.accounting.clone());
         self.set_budget_snapshot(budget_usage);
         let projection =
@@ -275,6 +272,18 @@ impl CheckpointResumeController {
             })?;
         let operation_id = initial_identity.operation_id.clone();
 
+        if self
+            .find_operation(OperationKind::Model, &operation_id)
+            .is_some_and(|entry| entry.request_digest != digest)
+        {
+            return Err(CheckpointError::new(
+                "checkpoint_journal_integrity_mismatch",
+                "model request does not match the durable operation slot",
+            ));
+        }
+        if let Some(interruption) = self.ensure_claim(u64::from(dispatch.cycle_index))? {
+            return Ok(ModelOperationOutcome::Interrupted(Box::new(interruption)));
+        }
         if let Some(entry) = self.find_operation(OperationKind::Model, &operation_id) {
             if entry.request_digest != digest {
                 return Err(CheckpointError::new(

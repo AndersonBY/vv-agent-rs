@@ -280,3 +280,12 @@ cargo test -p vv-agent --all-features
 cargo check --examples
 cargo clippy --all-targets --all-features -- -D warnings
 ```
+
+## Microcompaction replay
+
+Rebuilding the same context reuses a content-addressed private artifact for the
+same task, tool call and complete text. Existing bytes are verified before reuse;
+corruption leaves the original message intact. A recovered model slot with a
+changed request fails with `checkpoint_journal_integrity_mismatch` before claim
+or external model execution. These are corrections to contract 22's stable
+receipt and request-integrity requirements; no wire discriminator changes.

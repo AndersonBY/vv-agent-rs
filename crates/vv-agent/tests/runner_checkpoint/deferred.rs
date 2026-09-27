@@ -867,3 +867,99 @@ async fn completed_only_admission_rejects_invalid_success_error_code() {
         .iter()
         .all(|entry| entry.event["type"] != "tool_call_completed"));
 }
+
+#[tokio::test]
+async fn microcompacted_deferred_resume_replays_model_and_tool_once() {
+    use vv_agent::{DeferredToolHandle, MemoryWorkspaceBackend, Message, ToolCallOutcome};
+    let store = InMemoryCheckpointStore::new();
+    let handles = Arc::new(Mutex::new(Vec::<DeferredToolHandle>::new()));
+    let observed = handles.clone();
+    let tool = StaticTool::new(
+        "verify",
+        "Verify once.",
+        json!({"type":"object","properties":{},"required":[]}),
+        Arc::new(move |context, _| {
+            let ToolCallOutcome::Deferred { handle } = context.defer() else {
+                panic!("durable tool");
+            };
+            observed.lock().unwrap().push(handle);
+            ToolExecutionResult::success(context.tool_call_id.clone(), "unused")
+        }),
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let first_calls = calls.clone();
+    let last_calls = calls.clone();
+    let provider = ScriptedModelProvider::from_steps(
+        "scripted",
+        "replay-model",
+        vec![
+            ScriptStep::callback(move |request| {
+                first_calls.fetch_add(1, Ordering::SeqCst);
+                assert!(request
+                    .messages
+                    .iter()
+                    .any(|m| m.content.contains("<Tool Result Compact>")));
+                Ok(LLMResponse::with_tool_calls(
+                    "",
+                    vec![ToolCall::new("verify-once", "verify", BTreeMap::new())],
+                ))
+            }),
+            ScriptStep::callback(move |request| {
+                last_calls.fetch_add(1, Ordering::SeqCst);
+                assert!(request.messages.iter().any(|m| m.content == "verified"));
+                Ok(LLMResponse::new("done"))
+            }),
+        ],
+    );
+    let runner = Runner::builder()
+        .model_provider(provider)
+        .workspace(".")
+        .build()
+        .unwrap();
+    let agent = Agent::builder("replay")
+        .instructions("Verify once, then finish.")
+        .model(ModelRef::named("replay-model"))
+        .tool(tool)
+        .build()
+        .unwrap();
+    let mut messages = vec![Message::user("request")];
+    for i in 0..3 {
+        let id = format!("old-{i}");
+        messages.push(Message {
+            tool_calls: vec![ToolCall::new(&id, "search", BTreeMap::new())],
+            ..Message::assistant("search")
+        });
+        messages.push(Message::tool("old result ".repeat(1_000), id));
+    }
+    let mut checkpoint = checkpoint_config(store.clone(), "microcompact-deferred");
+    checkpoint.capability_refs.insert(
+        "workspace".to_string(),
+        CapabilityRef::new("memory", "1").unwrap(),
+    );
+    let config = RunConfig::builder()
+        .max_cycles(2)
+        .initial_messages(messages)
+        .workspace_backend(Arc::new(MemoryWorkspaceBackend::default()))
+        .microcompaction_policy(MicrocompactionPolicy::new(0.01, 0.005, 0, 100).unwrap())
+        .checkpoint_config(checkpoint)
+        .build();
+    let first = runner
+        .run_with_config(&agent, "request", config.clone())
+        .await
+        .unwrap();
+    assert_eq!(first.status(), AgentStatus::Deferred);
+    let handle = handles.lock().unwrap()[0].clone();
+    store
+        .resolve_deferred(
+            handle,
+            ToolExecutionResult::success("verify-once", "verified"),
+        )
+        .unwrap();
+    let resumed = runner
+        .run_with_config(&agent, "request", config)
+        .await
+        .unwrap();
+    assert_eq!(resumed.status(), AgentStatus::Completed);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(handles.lock().unwrap().len(), 1);
+}

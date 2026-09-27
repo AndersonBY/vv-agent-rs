@@ -7,7 +7,7 @@ use crate::memory::artifacts::{
 use crate::memory::token_utils::count_messages_tokens;
 use crate::tools::ToolResultRetention;
 use crate::types::{Message, MessageRole, ToolArtifactRef};
-use crate::workspace::{persist_text_artifact, read_validated_text_artifact};
+use crate::workspace::{persist_replayable_text_artifact, read_validated_text_artifact};
 
 use super::MemoryManager;
 
@@ -289,7 +289,7 @@ fn archive_tool_message(
     if has_recovery_envelope(&message.content) {
         return None;
     }
-    let artifact = persist_text_artifact(
+    let artifact = persist_replayable_text_artifact(
         backend.clone(),
         &manager.artifact_namespace,
         message.tool_call_id.as_deref().unwrap_or("tool-result"),

@@ -169,15 +169,50 @@ pub(crate) fn persist_text_artifact(
     tool_call_id: &str,
     content: &str,
 ) -> std::io::Result<ToolArtifactRef> {
+    persist_text_artifact_impl(backend, task_id, tool_call_id, content, false)
+}
+
+pub(crate) fn persist_replayable_text_artifact(
+    backend: Arc<dyn WorkspaceBackend>,
+    task_id: &str,
+    tool_call_id: &str,
+    content: &str,
+) -> std::io::Result<ToolArtifactRef> {
+    persist_text_artifact_impl(backend, task_id, tool_call_id, content, true)
+}
+
+fn persist_text_artifact_impl(
+    backend: Arc<dyn WorkspaceBackend>,
+    task_id: &str,
+    tool_call_id: &str,
+    content: &str,
+    reuse_existing: bool,
+) -> std::io::Result<ToolArtifactRef> {
     let task = artifact_segment(task_id, "task");
     let call = artifact_segment(tool_call_id, "call");
     let size_bytes = content.len() as u64;
     let sha256 = format!("{:x}", Sha256::digest(content.as_bytes()));
     let mut last_collision = None;
     for _ in 0..32 {
-        let suffix = Uuid::new_v4().simple().to_string();
+        let suffix = if reuse_existing {
+            sha256.clone()
+        } else {
+            Uuid::new_v4().simple().to_string()
+        };
         let path = format!(".vv-agent/artifacts/{task}/{call}-{suffix}.txt");
-        match backend.write_text_exclusive(&path, content) {
+        let written = match backend.write_text_exclusive(&path, content) {
+            Err(error) if reuse_existing && error.kind() == ErrorKind::AlreadyExists => {
+                if backend.read_bytes(&path)? != content.as_bytes() {
+                    return Err(Error::new(
+                        ErrorKind::InvalidData,
+                        "existing artifact differs from selected text",
+                    ));
+                }
+                Ok(content.len())
+            }
+            result => result,
+        };
+        match written {
             Ok(written) => {
                 if written != content.len() {
                     return Err(Error::new(

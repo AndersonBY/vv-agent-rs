@@ -669,3 +669,31 @@ fn recovery_envelope_without_typed_artifact_is_not_archived_as_complete_output()
         .expect("artifacts")
         .is_empty());
 }
+
+#[test]
+fn rebuilding_same_context_reuses_identical_verified_artifacts() {
+    let messages = vec![
+        Message::system("sys"),
+        Message {
+            tool_calls: vec![ToolCall::new("old", CUSTOM_TOOL, BTreeMap::new())],
+            ..Message::assistant("old call")
+        },
+        Message::tool("old result ".repeat(1_200), "old"),
+    ];
+    let backend = Arc::new(MemoryWorkspaceBackend::default());
+    let mut first = manager_for(&messages)
+        .with_workspace_backend(backend.clone())
+        .with_recovery_tool_available(true);
+    let mut second = manager_for(&messages)
+        .with_workspace_backend(backend.clone())
+        .with_recovery_tool_available(true);
+    let (a, changed) = first.compact_for_cycle(&messages, 3, false);
+    let (b, _) = second.compact_for_cycle(&messages, 3, false);
+    assert!(changed);
+    assert_eq!(a, b);
+    let artifact = a[2].artifact_ref.as_ref().expect("artifact");
+    assert_eq!(
+        backend.read_text(&artifact.path).expect("stored bytes"),
+        messages[2].content
+    );
+}
