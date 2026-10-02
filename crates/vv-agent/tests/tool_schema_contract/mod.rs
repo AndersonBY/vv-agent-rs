@@ -1,4 +1,4 @@
-pub(crate) const MAX_REASONABLE_SOURCE_LINES: usize = 1000;
+pub(crate) const MAX_REASONABLE_SOURCE_LINES: usize = 2000;
 
 mod default_schemas;
 mod guidance;
