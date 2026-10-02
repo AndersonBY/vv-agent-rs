@@ -219,6 +219,8 @@ pub(crate) struct ModelCallTerminal {
     pub budget: ModelCallBudgetObservation,
 }
 
+type ModelBudgetAdmission = Arc<dyn Fn(u32) -> Result<(), LlmError> + Send + Sync>;
+
 #[derive(Clone)]
 pub(crate) struct ModelCallCoordinator {
     pub ledger: ModelCallLedger,
@@ -229,6 +231,7 @@ pub(crate) struct ModelCallCoordinator {
     parent_run_id: Option<String>,
     event_sink: Option<ModelEventSink>,
     budget_observer: Option<ModelBudgetObserver>,
+    pub(crate) budget_admission: Option<ModelBudgetAdmission>,
     slot_counts: Arc<Mutex<BTreeMap<(u32, String), u32>>>,
 }
 
@@ -267,6 +270,7 @@ impl ModelCallCoordinator {
             parent_run_id,
             event_sink,
             budget_observer,
+            budget_admission: None,
             slot_counts: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
@@ -285,6 +289,7 @@ impl ModelCallCoordinator {
     where
         F: FnOnce() -> Result<LLMResponse, LlmError>,
     {
+        self.check_admission(cycle_index)?;
         let identity = self
             .new_identity(
                 cycle_index,
@@ -327,6 +332,13 @@ impl ModelCallCoordinator {
             usage,
             budget_exhaustion,
         })
+    }
+
+    pub(crate) fn check_admission(&self, cycle_index: u32) -> Result<(), LlmError> {
+        match &self.budget_admission {
+            Some(admit) => admit(cycle_index),
+            None => Ok(()),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

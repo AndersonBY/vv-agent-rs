@@ -316,6 +316,21 @@ impl RunBudgetController {
         )
     }
 
+    pub(super) fn model_call_start(
+        &mut self,
+        controls: &RuntimeRunControls,
+        cycle_index: u32,
+    ) -> Option<BudgetExhaustion> {
+        self.observe(
+            controls,
+            BudgetEnforcementBoundary::CycleStart,
+            Some(cycle_index),
+            false,
+            false,
+            BudgetEvaluator::model_call_start,
+        )
+    }
+
     pub(super) fn model_call_complete(
         &mut self,
         cycle_index: u32,

@@ -10,7 +10,7 @@ use crate::types::{Metadata, ToolArguments, ToolExecutionResult, ToolResultStatu
 
 use super::workspace_backend_error;
 
-const FILE_BASELINES_STATE_KEY: &str = "_workspace_file_baselines";
+pub(crate) const FILE_BASELINES_STATE_KEY: &str = "_workspace_file_baselines";
 const UTF8_BOM: &[u8] = b"\xef\xbb\xbf";
 pub(crate) const READ_FILE_BASELINE_SOURCE: &str = "read_file";
 pub(crate) const WRITE_FILE_BASELINE_SOURCE: &str = "write_file";

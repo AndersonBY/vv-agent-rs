@@ -424,6 +424,14 @@ impl BudgetEvaluator {
     }
 
     pub fn cycle_start(&mut self) -> Option<BudgetExhaustion> {
+        let exhaustion = self.model_call_start();
+        if exhaustion.is_none() {
+            self.cycles = self.cycles.saturating_add(1);
+        }
+        exhaustion
+    }
+
+    pub(crate) fn model_call_start(&mut self) -> Option<BudgetExhaustion> {
         let boundary = BudgetEnforcementBoundary::CycleStart;
         self.observe_boundary();
         self.strict_unavailable(boundary).or_else(|| {
@@ -441,7 +449,6 @@ impl BudgetEvaluator {
 
     pub fn model_call_complete(&mut self, usage: &TokenUsage) -> Option<BudgetExhaustion> {
         let boundary = BudgetEnforcementBoundary::ModelCallComplete;
-        self.cycles = self.cycles.saturating_add(1);
         self.observe_token_usage(usage);
         self.observe_boundary();
         self.strict_unavailable(boundary).or_else(|| {

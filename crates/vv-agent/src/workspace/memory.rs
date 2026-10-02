@@ -25,6 +25,22 @@ impl Default for MemoryWorkspaceBackend {
     }
 }
 
+impl MemoryWorkspaceBackend {
+    pub(crate) fn read_chunks(
+        &self,
+        path: &str,
+        consume: &mut dyn FnMut(&[u8]) -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        let key = normalize_workspace_path(path);
+        let files = self.files.lock().expect("memory workspace poisoned");
+        let data = files.get(&key).ok_or_else(|| not_found(path))?;
+        for chunk in data.chunks(65_536) {
+            consume(chunk)?;
+        }
+        Ok(())
+    }
+}
+
 impl WorkspaceBackend for MemoryWorkspaceBackend {
     fn as_any(&self) -> &dyn Any {
         self

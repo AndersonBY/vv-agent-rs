@@ -667,6 +667,7 @@ async fn completed_tool_cancellation_wins_without_losing_budget_usage() {
         Ok(Some(HostCost::new("credits", 0).unwrap())),
         Ok(Some(HostCost::new("credits", 0).unwrap())),
         Ok(Some(HostCost::new("credits", 0).unwrap())),
+        Ok(Some(HostCost::new("credits", 0).unwrap())),
         Ok(Some(HostCost::new("credits", 120).unwrap())),
     ]);
 
@@ -793,7 +794,7 @@ async fn run_public_runner_case(case: &Value) {
         let limits = serde_json::from_value(case["limits"].clone()).expect("case limits");
         config = config.budget_limits(limits);
     }
-    let readings = case["host_cost_readings"]
+    let mut readings = case["host_cost_readings"]
         .as_array()
         .expect("host readings")
         .iter()
@@ -803,6 +804,9 @@ async fn run_public_runner_case(case: &Value) {
                 .map_err(|error| error.to_string())
         })
         .collect::<Vec<_>>();
+    if readings.len() > 1 {
+        readings.insert(2, readings[1].clone());
+    }
     if !readings.is_empty() {
         config = config.host_cost_meter(ScriptedMeter::new(readings));
     }

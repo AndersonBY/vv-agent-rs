@@ -249,7 +249,7 @@ where
             lock_budget(&controller).model_call_complete(cycle_index, usage, suppress_exhaustion)
         }) as ModelBudgetObserver
     });
-    let model_call_coordinator = ModelCallCoordinator::new(
+    let mut model_call_coordinator = ModelCallCoordinator::new(
         model_call_ledger.clone(),
         run_id.clone(),
         trace_id.clone(),
@@ -259,6 +259,34 @@ where
         event_handler.clone(),
         budget_observer,
     );
+    if let Some(controller) = budget_controller.as_ref() {
+        let controller = Arc::clone(controller);
+        let admission_controls = RuntimeRunControls {
+            event_handler: event_handler.clone(),
+            execution_context: controls.execution_context.as_ref().map(|context| {
+                crate::runtime::context::ExecutionContext {
+                    metadata: context.metadata.clone(),
+                    ..Default::default()
+                }
+            }),
+            ..Default::default()
+        };
+        let cancellation = cancellation_token.clone();
+        model_call_coordinator.budget_admission = Some(Arc::new(move |cycle_index| {
+            if cancellation
+                .as_ref()
+                .is_some_and(crate::runtime::cancellation::CancellationToken::is_cancelled)
+            {
+                return Err(crate::llm::LlmError::Request("cancelled".to_string()));
+            }
+            match lock_budget(&controller).model_call_start(&admission_controls, cycle_index) {
+                Some(_) => Err(crate::llm::LlmError::Request(
+                    "run_budget_exhausted".to_string(),
+                )),
+                None => Ok(()),
+            }
+        }));
+    }
     if let Some(context) = controls.execution_context.as_mut() {
         context.runtime_state.model_call_ledger = model_call_ledger.clone();
         context.runtime_state.model_call_coordinator = Some(model_call_coordinator.clone());

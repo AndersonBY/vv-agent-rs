@@ -392,3 +392,13 @@ outside-workspace access are boundary concerns, not handler-specific shortcuts.
   backends must compose without changing public result shapes.
 - Large tool outputs keep model-facing text and structured metadata separated.
 - Public API changes need tests in the closest `tests/*.rs` module.
+
+`read_file` scans native Local, Memory, S3,
+and discovery-filtered backends in chunks. SHA-256, UTF-8 validation, line
+statistics, and page output derive from the same byte stream; no page or
+baseline is published before full-source validation finishes. This bounds
+extra memory for native backends while retaining full-source I/O on each page.
+Custom backends retain their existing `read_bytes` behavior. No new public
+workspace capability or cursor wire is introduced.
+Rust artifact compaction still loads the validated text to preserve its
+existing excerpt and recovery-envelope semantics.

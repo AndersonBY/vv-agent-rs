@@ -121,6 +121,30 @@ impl S3WorkspaceBackend {
     }
 }
 
+impl S3WorkspaceBackend {
+    pub(crate) fn read_chunks(
+        &self,
+        path: &str,
+        consume: &mut dyn FnMut(&[u8]) -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        let key = ObjectPath::from(self.object_key(path));
+        self.runtime.block_on(async {
+            let mut stream = self
+                .store
+                .get(&key)
+                .await
+                .map_err(object_store_error_to_io)?
+                .into_stream();
+            while let Some(bytes) = stream.try_next().await.map_err(object_store_error_to_io)? {
+                for chunk in bytes.chunks(65_536) {
+                    consume(chunk)?;
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
 impl WorkspaceBackend for S3WorkspaceBackend {
     fn as_any(&self) -> &dyn Any {
         self

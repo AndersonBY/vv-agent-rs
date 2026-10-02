@@ -4,6 +4,7 @@ mod discovery_filter;
 pub mod local;
 pub mod memory;
 pub mod s3;
+pub(crate) mod streaming;
 
 use std::collections::BTreeSet;
 use std::io::{Error, ErrorKind};

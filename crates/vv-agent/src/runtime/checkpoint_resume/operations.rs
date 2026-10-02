@@ -377,6 +377,9 @@ impl CheckpointResumeController {
             dispatch.backend,
             dispatch.model,
         )?;
+        if let Err(error) = dispatch.accounting.check_admission(dispatch.cycle_index) {
+            return Ok(ModelOperationOutcome::Error(error));
+        }
         self.renew_claim_before_dispatch()?;
         let started_event = dispatch
             .accounting

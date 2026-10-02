@@ -183,6 +183,26 @@ fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+impl LocalWorkspaceBackend {
+    pub(crate) fn read_chunks(
+        &self,
+        path: &str,
+        consume: &mut dyn FnMut(&[u8]) -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        use std::io::Read;
+        let (path, _) = self.resolve_read_path(path)?;
+        let mut source = std::fs::File::open(path)?;
+        let mut buffer = [0; 65_536];
+        loop {
+            let size = source.read(&mut buffer)?;
+            if size == 0 {
+                return Ok(());
+            }
+            consume(&buffer[..size])?;
+        }
+    }
+}
+
 impl WorkspaceBackend for LocalWorkspaceBackend {
     fn as_any(&self) -> &dyn Any {
         self

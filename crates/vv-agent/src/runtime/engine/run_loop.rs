@@ -2,8 +2,9 @@ use super::approval::{
     approval_error_result, approval_provider_result, PendingToolApprovalCapture,
 };
 use super::budget::{
-    budget_snapshot, enforce_cycle_start, lock_budget, observe_tool_batch_completion,
-    preflight_tool_batch, project_model_call_completion, PreparedRunBudget,
+    budget_failure_result, budget_snapshot, enforce_cycle_start, lock_budget,
+    observe_tool_batch_completion, preflight_tool_batch, project_model_call_completion,
+    PreparedRunBudget,
 };
 use super::checkpoint::{CheckpointModelCompletion, CheckpointToolPlan, DeferredBatchCollector};
 use super::controls::{CheckpointRuntimeControl, RuntimeRunControls};
@@ -423,12 +424,32 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             }
                         }
                         Err(error) => {
-                            let message = error.to_string();
+                            if controls_cancelled(&controls) {
+                                return Some(cancelled_agent_result(
+                                    messages.clone(),
+                                    cycles.clone(),
+                                    shared_state.clone(),
+                                    task_token_usage(&controls),
+                                ));
+                            }
+                            if let Some(controller) = budget_controller.as_ref() {
+                                let controller = lock_budget(controller);
+                                if let Some(exhaustion) = controller.exhaustion() {
+                                    return Some(budget_failure_result(
+                                        messages.clone(),
+                                        cycles.clone(),
+                                        shared_state.clone(),
+                                        &controller,
+                                        exhaustion.clone(),
+                                        task_token_usage(&controls),
+                                    ));
+                                }
+                            }
                             return Some(failed_agent_result(
                                 messages.clone(),
                                 cycles.clone(),
                                 shared_state.clone(),
-                                message,
+                                error.to_string(),
                                 task_token_usage(&controls),
                             ));
                         }

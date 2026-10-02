@@ -91,3 +91,9 @@ cargo test -p vv-agent --test app_server_contract_parity
 
 The normative cross-language behavior is pinned by `contract.lock.json` and
 the vendored `run_budget.json` and `budget_events.jsonl` fixtures.
+
+Model admission is checked before every new internal or primary request,
+including a primary request immediately following compaction in the same cycle.
+This uses the existing `cycle_start` admission boundary without incrementing
+the started-cycle count. Completed checkpoint model receipts replay without
+another admission check or usage charge.
