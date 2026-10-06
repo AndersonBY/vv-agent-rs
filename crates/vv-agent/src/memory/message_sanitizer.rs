@@ -15,6 +15,10 @@ pub fn filter_empty_assistant_messages(messages: &[Message]) -> Vec<Message> {
             message.role != MessageRole::Assistant
                 || !message.content.trim().is_empty()
                 || !message.tool_calls.is_empty()
+                || message
+                    .image_url
+                    .as_ref()
+                    .is_some_and(|url| !url.is_empty())
                 || has_thinking_content(message)
         })
         .cloned()

@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use vv_agent::{
     memory::{token_utils::compute_compaction_threshold, TOOL_RESULT_COMPACT_MARKER},
-    LocalWorkspaceBackend, MemoryManager, MemoryManagerConfig, Message, MicrocompactionPolicy,
-    SessionMemory, SessionMemoryConfig, SessionMemoryEntry, ToolCall, WorkspaceBackend,
+    MemoryManager, MemoryManagerConfig, Message, MicrocompactionPolicy, SessionMemory,
+    SessionMemoryConfig, SessionMemoryEntry, ToolCall,
 };
 
 #[path = "memory_tools/compaction.rs"]

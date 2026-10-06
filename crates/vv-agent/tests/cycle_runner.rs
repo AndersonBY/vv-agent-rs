@@ -104,7 +104,7 @@ fn cycle_runner_microcompacts_before_full_compaction_when_previous_prompt_tokens
                 .to_string(),
             )
         })),
-        tool_result_compact_threshold: 10_000,
+        keep_recent_messages: 1,
         microcompaction_policy: MicrocompactionPolicy::new(0.2, 0.1, 0, 200).expect("policy"),
         ..MemoryManagerConfig::default()
     })
@@ -282,7 +282,7 @@ fn cycle_runner_retries_prompt_too_long_then_accepts_second_retry() {
     let captured = captured_requests.lock().expect("captured");
     let final_request = captured.first().expect("final request");
     assert!(
-        final_request.len() <= 2,
+        final_request.len() == 3,
         "second retry should use compacted messages: {final_request:#?}"
     );
 }
@@ -373,7 +373,7 @@ fn prompt_too_long_step(message: &'static str) -> ScriptStep {
 fn prompt_retry_memory_manager() -> MemoryManager {
     MemoryManager::new(MemoryManagerConfig {
         model: "demo".to_string(),
-        model_context_window: 60,
+        model_context_window: 10_000,
         reserved_output_tokens: 10,
         autocompact_buffer_tokens: 10,
         summary_callback: Some(Arc::new(|_, _, _| {
@@ -396,8 +396,34 @@ fn prompt_retry_memory_manager() -> MemoryManager {
 fn retry_fixture_messages() -> Vec<Message> {
     vec![
         Message::system("system"),
-        Message::user("u".repeat(40)),
-        Message::assistant("a".repeat(40)),
+        Message::user("u ".repeat(1_000)),
+        Message::assistant("a ".repeat(1_000)),
         Message::user("c".repeat(40)),
     ]
+}
+
+#[test]
+fn summary_evidence_requires_recovery_tool_after_before_llm() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/parity/memory_local.json")).unwrap();
+    let messages: Vec<Message> = serde_json::from_value(
+        fixture["summary_compaction"]["cases"][0]["expected"]["messages"].clone(),
+    )
+    .unwrap();
+    let runner = CycleRunner::new(ScriptedLlmClient::new(vec![]), build_default_registry())
+        .with_hook_manager(RuntimeHookManager::new(vec![Arc::new(RemoveReadFileHook)]));
+    let task = vv_agent::types::AgentTask::new(
+        "summary-recovery",
+        "demo",
+        vv_agent::PromptBundle::from_instruction_text("system").unwrap(),
+        "continue",
+    );
+    let mut manager =
+        MemoryManager::new(MemoryManagerConfig::default()).with_recovery_tool_available(true);
+    let error = runner
+        .run_cycle(CycleRunRequest::new(&task, messages, 1, &mut manager))
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("microcompaction_recovery_unavailable"));
 }

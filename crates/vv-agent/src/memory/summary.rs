@@ -9,6 +9,7 @@ mod text;
 
 use events::{build_progress_events, collect_errors, current_work_state};
 use files::collect_file_actions;
+pub(crate) use files::collect_prefix_file_actions;
 use original::collect_original_user_messages;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

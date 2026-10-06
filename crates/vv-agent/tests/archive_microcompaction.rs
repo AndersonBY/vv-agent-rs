@@ -379,7 +379,6 @@ fn manager_for(messages: &[Message]) -> MemoryManager {
         model_context_window: usage + 100,
         reserved_output_tokens: 0,
         autocompact_buffer_tokens: 0,
-        tool_result_compact_threshold: usize::MAX,
         tool_result_excerpt_head: 20,
         tool_result_excerpt_tail: 20,
         microcompaction_policy: MicrocompactionPolicy::new(0.75, 0.60, 0, 100).expect("policy"),

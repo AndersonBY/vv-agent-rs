@@ -10,9 +10,13 @@ Think step by step about what information is critical to preserve, especially th
 the current work state, file operations, and any errors that were resolved.
 </analysis>
 
-<Conversation History>
-{messages}
-</Conversation History>
+<Previous Summary>
+{previous_summary_jcs}
+</Previous Summary>
+
+<Conversation Prefix>
+{conversation_prefix_jcs}
+</Conversation Prefix>
 
 Please compress the conversation into a structured JSON "Task Status Summary".
 This summary should allow the Agent to quickly resume the task
@@ -50,9 +54,13 @@ const COMPRESS_MEMORY_PROMPT_ZH: &str = r#"你正在总结一段用户与 AI 编
 请逐步思考: 哪些信息必须保留, 哪些用户原话不能丢, 哪些文件/错误/当前状态会影响后续继续执行。
 </analysis>
 
-<Conversation History>
-{messages}
-</Conversation History>
+<Previous Summary>
+{previous_summary_jcs}
+</Previous Summary>
+
+<Conversation Prefix>
+{conversation_prefix_jcs}
+</Conversation Prefix>
 
 请将以上对话压缩为结构化 JSON「Task Status Summary」, 让 Agent 能快速恢复任务, 并保留用户约束、关键决策、文件操作与当前工作状态。
 
@@ -97,6 +105,7 @@ pub(super) fn memory_warning_text(language: &str, warning_threshold_percentage: 
 pub(super) fn build_compress_memory_prompt(
     language: &str,
     summary_event_limit: usize,
+    previous: &[Message],
     messages: &[Message],
 ) -> String {
     let template = if language == "zh-CN" {
@@ -104,14 +113,52 @@ pub(super) fn build_compress_memory_prompt(
     } else {
         COMPRESS_MEMORY_PROMPT_EN
     };
-    let serialized_messages = messages
-        .iter()
-        .map(|message| message.to_openai_message(true))
-        .collect::<Vec<_>>();
-    template
-        .replace(
-            "{messages}",
-            &serde_json::to_string(&serialized_messages).unwrap_or_default(),
-        )
-        .replace("{event_limit}", &summary_event_limit.max(1).to_string())
+    fn project(messages: &[Message]) -> String {
+        let values: Vec<_> = messages
+            .iter()
+            .map(|message| {
+                let mut value = message.to_dict();
+                let object = value.as_object_mut().unwrap();
+                object.remove("artifact_ref");
+                if object.remove("image_url").is_some() {
+                    let label = if message.content.is_empty() {
+                        "image"
+                    } else {
+                        &message.content
+                    };
+                    object.insert(
+                        "content".into(),
+                        serde_json::json!(format!("[image omitted from summary input: {label}]")),
+                    );
+                }
+                if let Some(metadata) = object
+                    .get_mut("metadata")
+                    .and_then(serde_json::Value::as_object_mut)
+                {
+                    metadata.remove(crate::types::COMPACTION_METADATA_KEY);
+                    if metadata.is_empty() {
+                        object.remove("metadata");
+                    }
+                }
+                value
+            })
+            .collect();
+        super::compaction::jcs(&serde_json::json!(values))
+    }
+    let previous = project(previous);
+    let prefix = project(messages);
+    let limit = summary_event_limit.max(1).to_string();
+    let pattern =
+        regex::Regex::new(r"\{(previous_summary_jcs|conversation_prefix_jcs|event_limit)\}")
+            .unwrap();
+    pattern
+        .replace_all(template, |captures: &regex::Captures<'_>| {
+            match &captures[1] {
+                "previous_summary_jcs" => previous.as_str(),
+                "conversation_prefix_jcs" => prefix.as_str(),
+                _ => limit.as_str(),
+            }
+            .to_owned()
+        })
+        .into_owned()
 }

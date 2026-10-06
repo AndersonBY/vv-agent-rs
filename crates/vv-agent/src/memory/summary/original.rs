@@ -6,7 +6,7 @@ use super::text::extract_between;
 
 pub(super) fn collect_original_user_messages(messages: &[Message]) -> Vec<String> {
     let mut collected = Vec::new();
-    for message in messages.iter().skip(1) {
+    for message in messages {
         if message.role != MessageRole::User {
             continue;
         }
@@ -14,10 +14,12 @@ pub(super) fn collect_original_user_messages(messages: &[Message]) -> Vec<String
         if content.is_empty() {
             continue;
         }
-        if let Some(original) = extract_original_user_request(content) {
-            push_unique_original(&mut collected, original.to_string());
-        }
         let compressed_originals = extract_compressed_original_user_messages(content);
+        if compressed_originals.is_empty() {
+            if let Some(original) = extract_original_user_request(content) {
+                push_unique_original(&mut collected, original.to_string());
+            }
+        }
         for original in compressed_originals {
             push_unique_original(&mut collected, original);
         }

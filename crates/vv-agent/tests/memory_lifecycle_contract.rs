@@ -56,6 +56,7 @@ async fn runner_journal_emits_typed_memory_capacity_and_completion_observation()
         .instructions("Finish.")
         .model(ModelRef::named("capacity-model"))
         .metadata("model_context_window", json!(0))
+        .metadata("memory_keep_recent_messages", json!(1))
         .build()
         .expect("agent");
 
@@ -68,7 +69,7 @@ async fn runner_journal_emits_typed_memory_capacity_and_completion_observation()
                 .no_tool_policy(NoToolPolicy::Finish)
                 .initial_messages(vec![
                     Message::system("system"),
-                    Message::user("token ".repeat(30_000)),
+                    Message::user("token ".repeat(12_000)),
                     Message::assistant("working"),
                 ])
                 .memory_provider(Arc::new(memory_provider.clone()))
@@ -244,8 +245,16 @@ struct ReusableRecordingLlm {
 
 impl LlmClient for ReusableRecordingLlm {
     fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        let is_summary = request.messages.len() == 1
+            && request.messages[0]
+                .content
+                .contains("<Conversation Prefix>");
         self.requests.lock().expect("runner requests").push(request);
-        Ok(LLMResponse::new("done"))
+        Ok(LLMResponse::new(if is_summary {
+            summary_payload()
+        } else {
+            "done".into()
+        }))
     }
 }
 
@@ -367,8 +376,8 @@ fn runtime_routes_summary_through_configured_backend_model_pair() {
     );
     task.initial_messages = vec![
         Message::system("system"),
-        Message::user("u".repeat(160)),
-        Message::assistant("a".repeat(160)),
+        Message::user("u ".repeat(1_000)),
+        Message::assistant("a ".repeat(1_000)),
         Message::user("c".repeat(160)),
     ];
     task.max_cycles = 1;
@@ -381,7 +390,9 @@ fn runtime_routes_summary_through_configured_backend_model_pair() {
     task.metadata
         .insert("memory_summary_model".to_string(), route["model"].clone());
     task.metadata
-        .insert("model_context_window".to_string(), json!(60));
+        .insert("model_context_window".to_string(), json!(20_000));
+    task.metadata
+        .insert("memory_keep_recent_messages".into(), json!(1));
     task.metadata
         .insert("reserved_output_tokens".to_string(), json!(10));
     task.metadata
@@ -447,6 +458,8 @@ fn runtime_routes_session_extraction_through_its_own_backend_model_pair_and_free
     task.max_cycles = 1;
     task.no_tool_policy = NoToolPolicy::Finish;
     task.memory_compact_threshold = 10_000;
+    task.metadata
+        .insert("memory_keep_recent_messages".into(), json!(1));
     task.metadata
         .insert("session_memory_enabled".to_string(), json!(true));
     task.metadata
@@ -657,11 +670,13 @@ fn ptl_task() -> AgentTask {
     );
     task.initial_messages = vec![
         Message::system("system"),
-        Message::user("first"),
+        Message::user("first ".repeat(1_000)),
         Message::assistant("working"),
     ];
     task.no_tool_policy = NoToolPolicy::Finish;
     task.memory_compact_threshold = 10_000;
+    task.metadata
+        .insert("memory_keep_recent_messages".into(), json!(1));
     task.metadata
         .insert("model_context_window".to_string(), json!(20_000));
     task.metadata
@@ -882,7 +897,9 @@ fn session_memory_compaction_does_not_refresh_the_current_prompt() {
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         compact_threshold: 40,
         model: "main-model".to_string(),
-        model_context_window: 60,
+        keep_recent_messages: 1,
+        summary_callback: Some(Arc::new(|_, _, _| Some(summary_payload()))),
+        model_context_window: 20_000,
         reserved_output_tokens: 10,
         autocompact_buffer_tokens: 10,
         session_memory: Some(session_memory),
@@ -890,8 +907,8 @@ fn session_memory_compaction_does_not_refresh_the_current_prompt() {
     });
     let messages = vec![
         Message::system("system"),
-        Message::user("u".repeat(120)),
-        Message::assistant("a".repeat(120)),
+        Message::user("u ".repeat(1_000)),
+        Message::assistant("a ".repeat(1_000)),
         Message::user("c".repeat(120)),
     ];
     manager
@@ -918,4 +935,161 @@ fn session_memory_compaction_does_not_refresh_the_current_prompt() {
     assert!(!compacted[0]
         .content
         .contains(expected["fresh_fact"].as_str().unwrap()));
+}
+
+#[derive(Clone, Default)]
+struct ResummaryLlm {
+    main: Arc<Mutex<usize>>,
+    summaries: Arc<Mutex<Vec<String>>>,
+}
+impl LlmClient for ResummaryLlm {
+    fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        if request.messages.len() == 1
+            && request.messages[0]
+                .content
+                .contains("<Conversation Prefix>")
+        {
+            self.summaries
+                .lock()
+                .unwrap()
+                .push(request.messages[0].content.clone());
+            let mut response = LLMResponse::new("{\"progress\":[\"working\"]}");
+            response.raw.insert(
+                "usage".into(),
+                json!({"prompt_tokens":1000,"completion_tokens":120,"total_tokens":1120}),
+            );
+            return Ok(response);
+        }
+        let mut main = self.main.lock().unwrap();
+        *main += 1;
+        if *main <= 2 {
+            return Err(LlmError::Request("prompt_too_long".into()));
+        }
+        Ok(LLMResponse::new("done"))
+    }
+}
+fn resummary_transcript() -> Vec<Message> {
+    vec![
+        Message::system("system"),
+        Message::user("historical evidence ".repeat(1000)),
+        Message::assistant("old analysis ".repeat(1000)),
+        Message::user("recent request ".repeat(1000)),
+        Message::assistant("recent analysis ".repeat(1000)),
+        Message::user("latest"),
+        Message::assistant("continuing"),
+    ]
+}
+#[test]
+fn runtime_emergency_resummarizes_and_accounts_separately() {
+    let client = ResummaryLlm::default();
+    let capture = client.summaries.clone();
+    let mut task = ptl_task();
+    task.initial_messages = resummary_transcript();
+    task.memory_compact_threshold = 1_000_000;
+    task.metadata
+        .insert("model_context_window".into(), json!(2_000_000));
+    task.metadata
+        .insert("memory_keep_recent_messages".into(), json!(4));
+    let result = AgentRuntime::new(client).run(task).unwrap();
+    assert_eq!(result.status, AgentStatus::Completed);
+    let prompts = capture.lock().unwrap();
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[1].contains("memory_summary"));
+    assert!(prompts[1].contains("recent analysis"));
+    let calls = &result.token_usage.model_calls;
+    let summaries: Vec<_> = calls
+        .iter()
+        .filter(|r| r.operation == vv_agent::ModelCallOperation::MemoryCompaction)
+        .collect();
+    assert_eq!(summaries.len(), 2);
+    assert_ne!(summaries[0].operation_id, summaries[1].operation_id);
+    assert_eq!(
+        summaries
+            .iter()
+            .map(|r| r.usage.total_tokens.unwrap())
+            .sum::<u64>(),
+        2240
+    );
+    assert_eq!(result.messages[1].name.as_deref(), Some("memory_summary"));
+}
+
+#[test]
+fn cycle_runner_emergency_uses_same_summary_pipeline() {
+    let capture = Arc::new(Mutex::new(Vec::new()));
+    let prompts = capture.clone();
+    let mut manager = MemoryManager::new(MemoryManagerConfig {
+        keep_recent_messages: 4,
+        summary_callback: Some(Arc::new(move |prompt, _, _| {
+            prompts.lock().unwrap().push(prompt.to_owned());
+            Some("{\"progress\":[\"working\"]}".into())
+        })),
+        ..Default::default()
+    });
+    let task = ptl_task();
+    let runner =
+        vv_agent::CycleRunner::new(ResummaryLlm::default(), vv_agent::build_default_registry());
+    let (output, _) = runner
+        .run_cycle(vv_agent::CycleRunRequest::new(
+            &task,
+            resummary_transcript(),
+            1,
+            &mut manager,
+        ))
+        .unwrap();
+    let prompts = capture.lock().unwrap();
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[1].contains("memory_summary"));
+    assert!(prompts[1].contains("recent request"));
+    assert_eq!(output.len(), 5);
+    assert_eq!(output[1].name.as_deref(), Some("memory_summary"));
+}
+
+#[derive(Clone)]
+struct SmallSummaryProvider {
+    client: SummaryLlm,
+}
+impl ModelProvider for SmallSummaryProvider {
+    fn resolve(&self, model: &ModelRef) -> Result<ResolvedModelConfig, ModelError> {
+        Ok(
+            ResolvedModelConfig::new("test", model.model(), model.model(), model.model(), vec![])
+                .with_token_limits(Some(10), None),
+        )
+    }
+    fn client(&self, _: &ResolvedModelConfig) -> Result<Arc<dyn LlmClient>, ModelError> {
+        Ok(Arc::new(self.client.clone()))
+    }
+}
+#[test]
+fn summary_input_window_rejects_without_dispatch_or_history_loss() {
+    let provider = SmallSummaryProvider {
+        client: SummaryLlm::default(),
+    };
+    let capture = provider.client.requests.clone();
+    let mut task = ptl_task();
+    task.initial_messages = resummary_transcript();
+    task.memory_compact_threshold = 10;
+    task.metadata
+        .insert("memory_keep_recent_messages".into(), json!(2));
+    task.metadata
+        .insert("memory_summary_backend".into(), json!("test"));
+    task.metadata
+        .insert("memory_summary_model".into(), json!("small-summary"));
+    let original = task.initial_messages.clone();
+    let result = AgentRuntime::new(OneShotLlm)
+        .run_with_controls(
+            task,
+            RuntimeRunControls {
+                model_provider: Some(Arc::new(provider)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(capture.lock().unwrap().is_empty());
+    assert_eq!(result.messages[1..original.len()], original[1..]);
+    assert_eq!(result.messages[0].content, original[0].content);
+    assert!(!result
+        .token_usage
+        .model_calls
+        .iter()
+        .any(|c| c.operation == vv_agent::ModelCallOperation::MemoryCompaction));
 }

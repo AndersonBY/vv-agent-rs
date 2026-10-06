@@ -369,10 +369,14 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                                 compaction_mode = outcome.mode;
                                 outcome.messages
                             } else {
-                                let emergency = memory_manager.emergency_compact(
+                                let emergency = match memory_manager.emergency_compact_observed(
                                     &compacted_messages,
                                     (0.2 * prompt_too_long_retries as f64).min(0.95),
-                                );
+                                    Some(cycle_index),
+                                ) {
+                                    Ok(messages) => messages,
+                                    Err(error) => return Some(memory_inference_failure_result(error, &checkpoint, &budget_controller, &controls, messages, cycles, shared_state)),
+                                };
                                 compaction_mode = if emergency == compacted_messages {
                                     crate::events::MemoryCompactMode::None
                                 } else {
@@ -883,6 +887,7 @@ impl<C: LlmClient + Clone + 'static> AgentRuntime<C> {
                             messages.push(skipped.to_message());
                             cycle.tool_results.push(skipped);
                         }
+                        messages.append(&mut image_notifications);
                         for prompt in &steering_prompts {
                             messages.push(crate::types::Message::user(prompt.clone()));
                         }

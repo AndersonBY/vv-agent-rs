@@ -8,7 +8,7 @@ for model-driven automation.
 
 ## Install
 
-Repository `HEAD` targets crate `0.21.0` and Contract `22.0.0`.
+Repository `HEAD` targets crate `0.21.2` and Contract `23.0.0` (draft adoption).
 To install the latest published crate:
 
 ```bash
@@ -531,7 +531,7 @@ runtime version with event logging.
 | Runtime | Multi-cycle model execution, explicit terminal states, live `RunHandle`, cancellation, typed events, event replay, and max-cycle handling. |
 | Tools | Built-in tools plus a `ToolOrchestrator` path for policy, approval, dispatch, timeout, and telemetry. |
 | SDK | `Agent`, `Runner`, `RunConfig`, `ModelSettings`, `PromptBundle`, `PromptSection`, `ToolExecutionResult`, `ToolArtifactRef`, `ToolResultCursor`, typed tools, `Agent::as_tool()`, `RunEvent`, providers, and `Session`. |
-| Memory | Token budgeting, prompt-too-long retries, micro and full compaction, artifact-backed large tool results, image trimming, session memory, and external provider hooks. |
+| Memory | Token budgeting, prompt-too-long retries, micro and full compaction, artifact-backed large tool results, accepted summaries with unchanged raw tails, session memory, and external provider hooks. |
 | Hooks | Rust `RuntimeHook` implementations can inspect or patch LLM calls, tool calls, memory compaction, and run lifecycle behavior. |
 | Sub-agents | Runtime-backed sub-task creation, batch submission, background status queries with wait-for-completion support, continuation, steering, and inherited streaming callbacks. |
 | Skills | Skill directory discovery, frontmatter parsing, validation, prompt rendering with budget limits, activation, and activation history. |

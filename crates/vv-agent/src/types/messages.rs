@@ -63,6 +63,7 @@ impl Serialize for Message {
     where
         S: Serializer,
     {
+        super::validate_compaction_metadata(&self.metadata).map_err(serde::ser::Error::custom)?;
         self.to_dict().serialize(serializer)
     }
 }

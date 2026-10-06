@@ -6,10 +6,10 @@ use std::sync::Arc;
 mod compaction;
 mod config;
 mod emergency;
+mod evidence;
 mod helpers;
 mod limits;
 mod microcompact;
-mod normalization;
 mod prompts;
 mod session_context;
 mod warnings;
@@ -24,8 +24,6 @@ use crate::types::{Message, MessageRole};
 use crate::workspace::WorkspaceBackend;
 
 pub use config::{MemoryManagerConfig, SummaryCallback};
-
-use helpers::compact_processed_image_messages;
 
 const MEMORY_SUMMARY_NAME: &str = "memory_summary";
 
@@ -247,8 +245,16 @@ impl MemoryManager {
             ));
         }
 
-        let cleaned = self.remove_previous_summary(messages);
-        let sanitized = filter_empty_assistant_messages(&cleaned);
+        if compaction::summary_parts(messages, self.config.keep_recent_messages).is_none() {
+            return Ok(MemoryCompactionOutcome::new(
+                messages,
+                messages.to_vec(),
+                MemoryCompactMode::None,
+                false,
+                microcompact::MicrocompactionApplication::default(),
+            ));
+        }
+        let sanitized = messages.to_vec();
         let changed_by_sanitize = sanitized != messages;
         let mut changed = changed_by_sanitize;
         let mut mode = if changed_by_sanitize {
@@ -304,8 +310,10 @@ impl MemoryManager {
             }
         }
         if !force && message_length <= self.autocompact_threshold() {
+            let sanitized = filter_empty_assistant_messages(&working_messages);
+            changed |= sanitized != working_messages;
             let (warned, warning_inserted) =
-                self.maybe_append_memory_warning(&working_messages, message_length);
+                self.maybe_append_memory_warning(&sanitized, message_length);
             if warning_inserted {
                 mode = mode.max(MemoryCompactMode::Structural);
                 changed = true;
@@ -318,40 +326,9 @@ impl MemoryManager {
                 microcompaction,
             ));
         }
-        let mut summary_source = working_messages;
-        if !force {
-            let before_structural_tokens =
-                count_messages_tokens(&summary_source, &self.config.model);
-            let (image_compacted, image_changed) =
-                compact_processed_image_messages(&summary_source);
-            let (artifact_compacted, artifact_changed) =
-                self.compact_large_tool_results(&image_compacted, artifact_cycle_index);
-            let after_structural_tokens =
-                count_messages_tokens(&artifact_compacted, &self.config.model);
-            message_length = if after_structural_tokens >= before_structural_tokens {
-                message_length.saturating_add(
-                    after_structural_tokens.saturating_sub(before_structural_tokens),
-                )
-            } else {
-                message_length.saturating_sub(
-                    before_structural_tokens.saturating_sub(after_structural_tokens),
-                )
-            };
-            if (image_changed || artifact_changed) && message_length <= self.autocompact_threshold()
-            {
-                return Ok(MemoryCompactionOutcome::new(
-                    messages,
-                    artifact_compacted,
-                    mode.max(MemoryCompactMode::Structural),
-                    true,
-                    microcompaction,
-                ));
-            }
-            if image_changed || artifact_changed {
-                mode = mode.max(MemoryCompactMode::Structural);
-                summary_source = artifact_compacted;
-            }
-        }
+        let sanitized = filter_empty_assistant_messages(&working_messages);
+        changed |= sanitized != working_messages;
+        let summary_source = sanitized;
         let (compacted, summary_changed) = self.compress_memory(
             &summary_source,
             artifact_cycle_index,
@@ -371,17 +348,6 @@ impl MemoryManager {
             changed || summary_changed,
             microcompaction,
         ))
-    }
-
-    fn remove_previous_summary(&self, messages: &[Message]) -> Vec<Message> {
-        messages
-            .iter()
-            .filter(|message| {
-                !(message.role == MessageRole::System
-                    && message.name.as_deref() == Some(MEMORY_SUMMARY_NAME))
-            })
-            .cloned()
-            .collect()
     }
 }
 
@@ -415,3 +381,6 @@ impl MemoryCompactionOutcome {
         (self.messages, self.changed)
     }
 }
+
+#[cfg(test)]
+mod contract_tests;

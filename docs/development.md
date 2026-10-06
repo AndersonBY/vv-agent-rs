@@ -103,7 +103,7 @@ Common environment variables:
 | Execution backends and checkpoint stores | `tests/runtime_backends.rs`, `tests/checkpoint_core.rs` |
 | Tools and schemas | `tests/tool_metadata_contract.rs`, `tests/tools_dispatcher.rs`, `tests/tool_schema_contract.rs`, `tests/tool_planner.rs` |
 | Workspace tools/backends | `tests/workspace_tools.rs`, `tests/search_tools.rs`, `tests/live_edit_file.rs` |
-| Memory and compaction | `tests/archive_microcompaction.rs`, `tests/memory_tools.rs`, `tests/memory_lifecycle_contract.rs`, `tests/post_compact_restore.rs` |
+| Memory and compaction | `tests/archive_microcompaction.rs`, `tests/memory_tools.rs`, `tests/memory_lifecycle_contract.rs` |
 | External memory provider contract | `tests/memory_provider.rs` |
 | Run events and replay | `tests/run_events_contract.rs`, `tests/event_store.rs`, `tests/session_graph_events.rs` |
 | Live run handle and streaming | `tests/run_handle.rs`, `tests/public_sdk_redesign.rs`, `tests/sdk_smoke.rs` |

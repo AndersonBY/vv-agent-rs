@@ -432,7 +432,7 @@ impl CheckpointResumeController {
         &mut self,
         entry: &OperationJournalEntry,
     ) -> CheckpointResult<()> {
-        let event = self.checkpoint_event(
+        let mut event = self.checkpoint_event(
             u32::try_from(entry.cycle_index).unwrap_or(u32::MAX),
             RunEventPayload::OperationReplayed {
                 checkpoint_key: self.checkpoint_key()?.to_string(),
@@ -445,6 +445,8 @@ impl CheckpointResumeController {
                 &[&entry.operation_id, &entry.attempt.to_string()],
             )?,
         )?;
+        // Checkpoint replay observations have no agent attribution in the shared producer.
+        event.agent_name = None;
         self.emit_durable(event)
     }
 

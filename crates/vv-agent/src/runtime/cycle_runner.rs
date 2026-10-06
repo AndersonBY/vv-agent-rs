@@ -115,14 +115,19 @@ impl<C: LlmClient> CycleRunner<C> {
             request.messages,
             shared_state,
         );
-        let (mut compacted_messages, mut memory_compacted) =
-            request.memory_manager.compact_for_cycle_with_usage(
+        let outcome = request
+            .memory_manager
+            .compact_for_cycle_with_usage_observed(
                 &pre_compact_messages,
                 request.cycle_index,
                 false,
                 request.previous_prompt_tokens,
                 request.recent_tool_call_ids,
-            );
+                None,
+            )
+            .map_err(memory_callback_error)?;
+        let mut compacted_messages = outcome.messages;
+        let mut memory_compacted = outcome.changed;
 
         let mut prompt_too_long_retries = 0;
         let coordinator = request
@@ -213,19 +218,27 @@ impl<C: LlmClient> CycleRunner<C> {
                         ));
                     }
                     if prompt_too_long_retries == 1 {
-                        (compacted_messages, _) =
-                            request.memory_manager.compact_for_cycle_with_usage(
+                        compacted_messages = request
+                            .memory_manager
+                            .compact_for_cycle_with_usage_observed(
                                 &compacted_messages,
                                 request.cycle_index,
                                 true,
                                 None,
                                 request.recent_tool_call_ids,
-                            );
+                                None,
+                            )
+                            .map_err(memory_callback_error)?
+                            .messages;
                     } else {
-                        compacted_messages = request.memory_manager.emergency_compact(
-                            &compacted_messages,
-                            (0.2 * f64::from(prompt_too_long_retries)).min(0.95),
-                        );
+                        compacted_messages = request
+                            .memory_manager
+                            .emergency_compact_observed(
+                                &compacted_messages,
+                                (0.2 * f64::from(prompt_too_long_retries)).min(0.95),
+                                Some(request.cycle_index),
+                            )
+                            .map_err(memory_callback_error)?;
                     }
                     memory_compacted = true;
                 }
@@ -256,4 +269,11 @@ fn check_context_cancelled(context: &ExecutionContext) -> Result<(), LlmError> {
     context
         .check_cancelled()
         .map_err(|error| LlmError::Request(error.to_string()))
+}
+
+fn memory_callback_error(error: crate::memory::RuntimeMemoryCallbackError) -> LlmError {
+    match error.downcast::<LlmError>() {
+        Ok(error) => error,
+        Err(error) => LlmError::Request(format!("memory inference control flow: {error:?}")),
+    }
 }

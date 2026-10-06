@@ -252,3 +252,68 @@ fn sqlite_rejects_newer_schema_without_mutating_it() {
     assert_eq!(columns, ["session_id", "item_index", "payload"]);
     assert_eq!(rows.len(), 4);
 }
+
+#[tokio::test]
+async fn summary_tail_sqlite_roundtrip_and_reserved_metadata_projection() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("fixtures/parity/checkpoint_resume.json")).unwrap();
+    let expected = &fixture["summary_receipt_replay"]["expected"]["messages"];
+    let messages: Vec<Message> = serde_json::from_value(expected.clone()).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("summary.sqlite3");
+    let store = SqliteSessionStore::open(&path).unwrap();
+    let session = store.session("summary-tail");
+    session
+        .add_items(
+            messages
+                .iter()
+                .map(|m| SessionItem::from_message(m).unwrap())
+                .collect(),
+        )
+        .await
+        .unwrap();
+    let reopened = SqliteSessionStore::open(&path).unwrap();
+    let items = reopened
+        .session("summary-tail")
+        .get_items(None)
+        .await
+        .unwrap();
+    let restored: Vec<Message> = items.iter().map(SessionItem::to_message).collect();
+    assert_eq!(restored, messages);
+    for message in restored {
+        assert!(message.to_openai_message(true).get("metadata").is_none());
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires paired summary session SQLite via FIX2_SESSION_DB"]
+async fn cross_runtime_summary_session_exchange() {
+    let path = std::env::var("FIX2_SESSION_DB").unwrap();
+    let fixture: Value =
+        serde_json::from_str(include_str!("fixtures/parity/checkpoint_resume.json")).unwrap();
+    let messages: Vec<Message> =
+        serde_json::from_value(fixture["summary_receipt_replay"]["expected"]["messages"].clone())
+            .unwrap();
+    let store = SqliteSessionStore::open(path).unwrap();
+    let session = store.session("summary-tail");
+    let mut items = session.get_items(None).await.unwrap();
+    if items.is_empty() {
+        session
+            .add_items(
+                messages
+                    .iter()
+                    .map(|m| SessionItem::from_message(m).unwrap())
+                    .collect(),
+            )
+            .await
+            .unwrap();
+        items = session.get_items(None).await.unwrap();
+    }
+    assert_eq!(
+        items
+            .iter()
+            .map(SessionItem::to_message)
+            .collect::<Vec<_>>(),
+        messages
+    );
+}

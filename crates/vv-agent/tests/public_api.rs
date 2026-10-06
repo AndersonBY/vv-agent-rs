@@ -452,8 +452,6 @@ fn memory_submodules_match_agent_import_paths() {
         vv_agent::memory::errors::CompactionExhaustedError::new(2, Some("last".to_string()));
     let _manager_config = vv_agent::memory::manager::MemoryManagerConfig::default();
     let _microcompaction_policy = vv_agent::memory::MicrocompactionPolicy::default();
-    let _restore_config =
-        vv_agent::memory::post_compact_restore::PostCompactRestoreConfig::default();
     let _session_config = vv_agent::memory::session_memory::SessionMemoryConfig::default();
     let _session_state = vv_agent::memory::session_memory::SessionMemoryState::default();
     let sanitized = vv_agent::memory::message_sanitizer::sanitize_for_resume(&[]);

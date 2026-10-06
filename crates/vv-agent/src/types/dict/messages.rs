@@ -125,6 +125,8 @@ impl Message {
                 Ok(artifact)
             })
             .transpose()?;
+        let metadata = read_metadata(object, "metadata")?;
+        crate::types::validate_compaction_metadata(&metadata)?;
         Ok(Self {
             role,
             content,
@@ -133,7 +135,7 @@ impl Message {
             tool_calls,
             reasoning_content: read_optional_string(object, "reasoning_content"),
             image_url: read_optional_string(object, "image_url"),
-            metadata: read_metadata(object, "metadata")?,
+            metadata,
             artifact_ref,
         })
     }

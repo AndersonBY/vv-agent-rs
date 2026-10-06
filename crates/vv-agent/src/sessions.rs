@@ -225,6 +225,7 @@ impl SessionMessageInput {
         if let Some(artifact_ref) = &self.artifact_ref {
             artifact_ref.validate()?;
         }
+        crate::types::validate_compaction_metadata(&self.metadata)?;
         Ok(Message {
             role,
             content: self.content,
@@ -317,6 +318,8 @@ impl Serialize for SessionMessageWire<'_> {
         S: Serializer,
     {
         let message = self.0;
+        crate::types::validate_compaction_metadata(&message.metadata)
+            .map_err(serde::ser::Error::custom)?;
         let mut field_count = 2;
         field_count += usize::from(message.name.is_some());
         field_count += usize::from(message.tool_call_id.is_some());

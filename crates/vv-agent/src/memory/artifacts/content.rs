@@ -1,5 +1,3 @@
-use crate::types::{Message, MessageRole};
-
 use super::{ToolResultArtifactConfig, TOOL_RESULT_COMPACT_MARKER};
 
 pub(crate) fn is_compacted_tool_content(content: &str) -> bool {
@@ -16,31 +14,6 @@ pub(crate) fn has_recovery_envelope(content: &str) -> bool {
         .is_some()
 }
 
-pub(super) fn kept_tool_message_indices(messages: &[Message], keep_last: usize) -> Vec<usize> {
-    if keep_last == 0 {
-        return Vec::new();
-    }
-    messages
-        .iter()
-        .enumerate()
-        .filter_map(|(index, message)| (message.role == MessageRole::Tool).then_some(index))
-        .rev()
-        .take(keep_last)
-        .collect()
-}
-
-pub(super) fn should_compact_tool_message(
-    message: &Message,
-    index: usize,
-    keep_indices: &[usize],
-    compact_threshold: usize,
-) -> bool {
-    message.role == MessageRole::Tool
-        && !keep_indices.contains(&index)
-        && message.content.len() > compact_threshold
-        && !is_compacted_tool_content(&message.content)
-}
-
 pub(crate) fn build_compacted_tool_content(
     content: &str,
     artifact_path: &str,
@@ -49,12 +22,16 @@ pub(crate) fn build_compacted_tool_content(
 ) -> String {
     let excerpt_source = content_without_recovery_envelope(content);
     let head = take_chars(excerpt_source, config.excerpt_head);
-    let tail = take_tail_chars(excerpt_source, config.excerpt_tail);
+    let tail = if excerpt_source.chars().count() > config.excerpt_head {
+        take_tail_chars(excerpt_source, config.excerpt_tail)
+    } else {
+        String::new()
+    };
     let mut excerpt_parts = Vec::new();
     if !head.is_empty() {
         excerpt_parts.push(head.clone());
     }
-    if !tail.is_empty() && tail != head {
+    if !tail.is_empty() {
         if !excerpt_parts.is_empty() {
             excerpt_parts.push("...<snip>...".to_string());
         }
@@ -107,7 +84,6 @@ mod tests {
             &ToolResultArtifactConfig {
                 excerpt_head: 200,
                 excerpt_tail: 200,
-                ..ToolResultArtifactConfig::default()
             },
         );
 
