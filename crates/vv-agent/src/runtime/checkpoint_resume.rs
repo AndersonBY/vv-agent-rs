@@ -456,3 +456,6 @@ mod tests {
         assert_eq!(error.code(), "event_identity_conflict");
     }
 }
+
+#[cfg(test)]
+mod summary_tests;

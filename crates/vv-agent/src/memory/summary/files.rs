@@ -7,6 +7,14 @@ use crate::types::{Message, MessageRole, ToolArguments};
 use super::FileAction;
 
 pub(super) fn collect_file_actions(messages: &[Message]) -> Vec<FileAction> {
+    collect_actions(messages, false)
+}
+
+pub(crate) fn collect_prefix_file_actions(messages: &[Message]) -> Vec<FileAction> {
+    collect_actions(messages, true)
+}
+
+fn collect_actions(messages: &[Message], first_path_wins: bool) -> Vec<FileAction> {
     let mut actions_by_path = BTreeMap::<String, FileAction>::new();
     let mut ordered_paths = Vec::<String>::new();
     for message in messages {
@@ -17,11 +25,21 @@ pub(super) fn collect_file_actions(messages: &[Message]) -> Vec<FileAction> {
             let Some(action) = tool_action(&tool_call.name) else {
                 continue;
             };
-            let Some(path) = extract_file_path_from_arguments(&tool_call.arguments) else {
+            let Some(path) = (if first_path_wins {
+                tool_call
+                    .arguments
+                    .get("path")
+                    .and_then(value_to_trimmed_string)
+            } else {
+                extract_file_path_from_arguments(&tool_call.arguments)
+            }) else {
                 continue;
             };
             let summary = summarize_file_action(&tool_call.name, &path);
             if let Some(existing) = actions_by_path.get_mut(&path) {
+                if first_path_wins {
+                    continue;
+                }
                 if action_priority(action) < action_priority(&existing.action) {
                     existing.action = action.to_string();
                 }

@@ -35,7 +35,7 @@ async fn full_compaction_rechecks_model_admission() {
     for dimension in ["total", "uncached", "host"] {
         for summary_usage in [9, 10, 11] {
             let workspace = tempfile::tempdir().unwrap();
-            let mut summary = LLMResponse::new("{}");
+            let mut summary = LLMResponse::new(r#"{"progress":["done"]}"#);
             summary.token_usage = usage(summary_usage, Some(summary_usage));
             let mut primary = LLMResponse::new("done");
             primary.token_usage = usage(1, Some(1));
@@ -54,7 +54,7 @@ async fn full_compaction_rechecks_model_admission() {
                             ScriptStep::response(primary),
                         ],
                     )
-                    .with_token_limits(Some(1000), Some(0)),
+                    .with_token_limits(Some(10_000), Some(0)),
                 )
                 .build()
                 .unwrap();
@@ -77,6 +77,8 @@ async fn full_compaction_rechecks_model_admission() {
                 .workspace(workspace.path())
                 .max_cycles(2)
                 .budget_limits(limits)
+                .metadata("memory_keep_recent_messages", serde_json::json!(1))
+                .metadata("model_context_window", serde_json::json!(1000))
                 .metadata("reserved_output_tokens", serde_json::json!(0))
                 .metadata("autocompact_buffer_tokens", serde_json::json!(0))
                 .initial_messages(vec![

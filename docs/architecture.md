@@ -77,7 +77,7 @@ totals do not prove cache-accounting availability.
 | `crates/vv-agent/src/runtime/` | Agent runtime, cycle execution, hooks, cancellation, shell runtime, background sessions, sub-agents, state stores, and execution backends. |
 | `crates/vv-agent/src/tools/` | Tool registry, public `Tool`/`FunctionTool` APIs, executor/orchestrator contracts, schemas, dispatcher, shared parsing helpers, and built-in handlers. |
 | `crates/vv-agent/src/constants/` | Stable tool names and model-visible schema constants. |
-| `crates/vv-agent/src/memory/` | Token counting, compaction, external memory provider hooks, artifact storage, session memory, micro-compaction, prompt-too-long handling, and file-context restoration. |
+| `crates/vv-agent/src/memory/` | Token counting, compaction, external memory provider hooks, artifact storage, session memory, micro-compaction, prompt-too-long handling, and history-preserving summaries. |
 | `crates/vv-agent/src/prompt/` | System prompt sections, prompt-cache break tracking, available skills, and prompt hashes. |
 | `crates/vv-agent/src/agent.rs`, `runner.rs`, `run_config.rs`, `sessions.rs` | Public `Agent` + `Runner`, run configuration, and session storage. |
 | `crates/vv-agent/src/workspace/` | Local, memory, and S3-compatible workspace backends. |
@@ -402,3 +402,20 @@ Custom backends retain their existing `read_bytes` behavior. No new public
 workspace capability or cursor wire is introduced.
 Rust artifact compaction still loads the validated text to preserve its
 existing excerpt and recovery-envelope semantics.
+
+
+### Accepted summaries and raw history
+
+Normal and emergency compaction retain every content-bearing message until a
+valid model summary covering its prefix has been accepted. They keep original
+system messages, one named user summary, and an unchanged atomic raw tail.
+The only lossy body replacement before summarization is verified, replayable
+microcompaction with a recoverable artifact. There is no local-summary fallback
+that can authorize deleting history.
+
+Summary prompts contain complete previous-summary and prefix JCS sections;
+images use text placeholders solely in the summary request. Complete tool results are followed by image notifications, then queued
+steering messages on both runtime paths. A final
+incomplete tool block remains available for completion. Evidence metadata
+survives repeated summaries, sessions and checkpoints, while file recovery uses
+normal explicit workspace tools. No summary automatically reads referenced files.

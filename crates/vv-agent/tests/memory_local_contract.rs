@@ -1,15 +1,15 @@
 use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 use vv_agent::{
     memory::{
         token_utils::{count_messages_tokens, count_tokens},
         LocalSummary, TOOL_RESULT_COMPACT_MARKER,
     },
-    LocalWorkspaceBackend, MemoryManager, MemoryManagerConfig, MemoryWorkspaceBackend, Message,
-    MessageRole, MicrocompactionPolicy, SessionMemory, SessionMemoryConfig, ToolArtifactRef,
-    ToolCall, ToolResultRetention, WorkspaceBackend,
+    MemoryManager, MemoryManagerConfig, MemoryWorkspaceBackend, Message, MessageRole,
+    MicrocompactionPolicy, SessionMemory, SessionMemoryConfig, ToolArtifactRef, ToolCall,
+    ToolResultRetention, WorkspaceBackend,
 };
 
 const FIXTURE_TEXT: &str = include_str!("fixtures/parity/memory_local.json");
@@ -26,7 +26,6 @@ struct MemoryLocalFixture {
     recompression_originals: RecompressionFixture,
     unicode_excerpt: UnicodeExcerptFixture,
     session_extraction: SessionExtractionFixture,
-    summary_parse: SummaryParseFixture,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,12 +138,6 @@ struct SessionExtractionFixture {
     expected: Value,
 }
 
-#[derive(Debug, Deserialize)]
-struct SummaryParseFixture {
-    raw: String,
-    expected: Value,
-}
-
 fn fixture() -> MemoryLocalFixture {
     serde_json::from_str(FIXTURE_TEXT).expect("memory local fixture")
 }
@@ -171,18 +164,6 @@ fn fixture_messages(messages: &[FixtureMessage]) -> Vec<Message> {
             message
         })
         .collect()
-}
-
-fn extract_first_object(raw: &str) -> Option<Value> {
-    raw.char_indices()
-        .filter(|(_, character)| *character == '{')
-        .find_map(|(index, _)| {
-            serde_json::Deserializer::from_str(&raw[index..])
-                .into_iter::<Value>()
-                .next()
-                .and_then(Result::ok)
-                .filter(Value::is_object)
-        })
 }
 
 #[test]
@@ -462,86 +443,78 @@ fn session_parser_keeps_right_brackets_inside_strings() {
 }
 
 #[test]
-fn memory_manager_scans_prefixed_summary_json_for_restore() {
-    let fixture = fixture().summary_parse;
-    assert_eq!(
-        extract_first_object(&fixture.raw),
-        Some(fixture.expected.clone())
-    );
-
-    let workspace = tempfile::tempdir().expect("workspace");
-    std::fs::write(workspace.path().join("demo.py"), "print('restored')\n").expect("fixture file");
-    let mut summary = fixture.expected;
-    summary["files_examined_or_modified"] = json!([{
-        "path": "demo.py",
-        "action": "modified",
-        "summary": "Modified demo.py"
-    }]);
-    let start = fixture.raw.find('{').expect("json object start");
-    let end = fixture.raw.rfind('}').expect("json object end");
-    let wrapped = format!(
-        "{}{}{}",
-        &fixture.raw[..start],
-        serde_json::to_string(&summary).expect("summary json"),
-        &fixture.raw[end + 1..]
-    );
-    let mut manager = MemoryManager::new(MemoryManagerConfig {
-        workspace: Some(workspace.path().to_path_buf()),
-        summary_callback: Some(Arc::new(move |_, _, _| Some(wrapped.clone()))),
-        ..MemoryManagerConfig::default()
-    });
-    let (compacted, changed) = manager.compact(
-        &[
-            Message::system("system"),
-            Message::user("restore demo.py"),
-            Message::assistant("done"),
-        ],
-        true,
-    );
-
-    assert!(changed);
-    assert!(compacted[1]
-        .content
-        .contains("<Post-Compaction File Context>"));
-    assert!(compacted[1].content.contains("print('restored')"));
+fn complete_prefix_prompt_matches_both_language_goldens() {
+    let fixture: Value = serde_json::from_str(FIXTURE_TEXT).unwrap();
+    let case = &fixture["summary_compaction"]["cases"][0];
+    let messages: Vec<Message> = serde_json::from_value(case["input"]["messages"].clone()).unwrap();
+    for language in ["zh-CN", "en-US"] {
+        let captured = Arc::new(Mutex::new(String::new()));
+        let capture = captured.clone();
+        let mut manager = MemoryManager::new(MemoryManagerConfig {
+            keep_recent_messages: 2,
+            language: language.into(),
+            summary_event_limit: 10,
+            summary_callback: Some(Arc::new(move |prompt, _, _| {
+                *capture.lock().unwrap() = prompt.into();
+                None
+            })),
+            ..MemoryManagerConfig::default()
+        });
+        assert_eq!(manager.compact(&messages, true), (messages.clone(), false));
+        assert_eq!(
+            *captured.lock().unwrap(),
+            fixture["summary_compaction"]["prompt_cases"][0]["expected_prompts"][language]
+                .as_str()
+                .unwrap()
+        );
+    }
 }
 
 #[test]
-fn memory_manager_local_summary_keeps_artifact_facts() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let backend = Arc::new(LocalWorkspaceBackend::new(workspace.path()));
-    let mut manager = MemoryManager::new(MemoryManagerConfig {
-        workspace: Some(workspace.path().to_path_buf()),
-        tool_result_compact_threshold: 10,
-        tool_result_keep_last: 0,
-        ..MemoryManagerConfig::default()
-    })
-    .with_workspace_backend(backend)
-    .with_recovery_tool_available(true);
-    let messages = vec![
-        Message::system("system"),
-        Message::user("read data.txt"),
-        Message {
+fn reviewer_image_transcripts_keep_raw_tail_and_failed_summary_keeps_payload() {
+    let mut original = vec![Message::system("system"), Message::user("Inspect image")];
+    original[1].image_url = Some("data:image/png;base64,AA==".into());
+    for i in 0..4 {
+        original.push(Message {
             tool_calls: vec![ToolCall::new(
-                "call_artifact",
-                "read_file",
-                [("path".to_string(), json!("data.txt"))]
-                    .into_iter()
-                    .collect(),
+                format!("c{i}"),
+                "read_image",
+                Default::default(),
             )],
-            ..Message::assistant("reading")
-        },
-        Message::tool("large result ".repeat(20), "call_artifact"),
-        Message::assistant("done"),
-    ];
-
-    let (compacted, changed) = manager.compact_for_cycle(&messages, 3, true);
-    assert!(changed);
-    let summary = extract_first_object(&compacted[1].content).expect("local summary");
-    let facts = summary["key_facts"].as_array().expect("key facts");
-    assert!(facts.iter().any(|fact| {
-        fact.as_str().is_some_and(|fact| {
-            fact.contains(".vv-agent/artifacts/") && fact.ends_with("(tool=read_file)")
-        })
-    }));
+            ..Message::assistant("")
+        });
+        original.push(Message::tool(
+            "observed image evidence ".repeat(300),
+            format!("c{i}"),
+        ));
+    }
+    original.push(Message::user("continue"));
+    assert_eq!(original.len(), 11);
+    for accepted in [true, false] {
+        let capture = Arc::new(Mutex::new(String::new()));
+        let captured = capture.clone();
+        let mut manager = MemoryManager::new(MemoryManagerConfig {
+            keep_recent_messages: 2,
+            summary_callback: Some(Arc::new(move |prompt, _, _| {
+                *captured.lock().unwrap() = prompt.into();
+                accepted.then(|| "{\"progress\":[\"image inspected\"]}".into())
+            })),
+            ..MemoryManagerConfig::default()
+        });
+        // A read_image notification is an independent user message after its complete batch.
+        let mut input = original.clone();
+        input[8] = Message::assistant("image inspected");
+        input[9] = Message::user("next action");
+        let (output, changed) = manager.compact(&input, true);
+        assert_eq!(changed, accepted);
+        if accepted {
+            assert_eq!(output.len(), 4);
+            assert_eq!(output[2..], input[9..]);
+        } else {
+            assert_eq!(output, input);
+        }
+        let prompt = capture.lock().unwrap();
+        assert!(prompt.contains("[image omitted from summary input: Inspect image]"));
+        assert!(!prompt.contains("data:image"));
+    }
 }

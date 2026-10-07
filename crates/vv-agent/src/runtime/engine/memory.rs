@@ -165,12 +165,6 @@ pub(super) fn build_memory_manager(
         summary_backend: summary_backend.clone(),
         summary_model: Some(summary_model.clone()),
         summary_callback: None,
-        tool_result_compact_threshold: read_usize_metadata(
-            &task.metadata,
-            "tool_result_compact_threshold",
-            2_000,
-        ),
-        tool_result_keep_last: read_usize_metadata(&task.metadata, "tool_result_keep_last", 3),
         tool_result_excerpt_head: read_usize_metadata(
             &task.metadata,
             "tool_result_excerpt_head",
@@ -181,14 +175,7 @@ pub(super) fn build_memory_manager(
             "tool_result_excerpt_tail",
             200,
         ),
-        tool_calls_keep_last: read_usize_metadata(&task.metadata, "tool_calls_keep_last", 3),
-        assistant_no_tool_keep_last: read_usize_metadata(
-            &task.metadata,
-            "assistant_no_tool_keep_last",
-            1,
-        ),
         microcompaction_policy: task.microcompaction_policy,
-        workspace: workspace.clone(),
         session_memory,
     })
     .with_workspace_backend(workspace_backend)

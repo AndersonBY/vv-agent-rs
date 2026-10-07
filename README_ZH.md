@@ -7,7 +7,7 @@
 
 ## 安装
 
-仓库 `HEAD` 对应 crate `0.21.0` 和 Contract `22.0.0`。
+仓库 `HEAD` 对应 crate `0.21.2` 和 Contract `23.0.0`（草稿采用）。
 安装最新已发布 crate：
 
 ```bash
@@ -475,7 +475,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | Runtime | 多轮模型执行、显式终态、live `RunHandle`、取消、typed event、event replay 和 max-cycle 控制。 |
 | Tools | 内置工具，以及统一处理 policy、approval、dispatch、timeout、telemetry 的 `ToolOrchestrator` 路径。 |
 | SDK | `Agent`、`Runner`、`RunConfig`、`ModelSettings`、`PromptBundle`、`PromptSection`、`ToolExecutionResult`、`ToolArtifactRef`、`ToolResultCursor`、typed tool、`Agent::as_tool()`、`RunEvent`、provider 和 `Session`。 |
-| Memory | Token 预算、prompt-too-long 重试、micro/full compaction、大型工具结果 artifact、图片裁剪、session memory 和外部 provider hook。 |
+| Memory | Token 预算、prompt-too-long 重试、micro/full compaction、大型工具结果 artifact、摘要接纳后替换前缀并保留原始尾部、session memory 和外部 provider hook。 |
 | Hooks | 使用 Rust `RuntimeHook` 检查或修改 LLM 调用、工具调用、memory compaction 和运行生命周期。 |
 | Sub-agents | 基于 runtime 的子任务创建、批量提交、后台状态轮询、续跑、steering 和父级 streaming callback 继承。 |
 | Skills | Skill 目录发现、frontmatter 解析、校验、带预算的 prompt 渲染、激活和激活历史。 |

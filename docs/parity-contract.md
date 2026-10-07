@@ -441,7 +441,7 @@ process-local metadata and does not add a capability ref.
 The runtime plans eligible old `result_retention=archive` tool results oldest
 first and applies that single plan once per cycle before evaluating an optional
 warning against recalculated usage. Built-in and custom tools both default to
-archive; `preserve` excludes only proactive microcompaction. Complete text is
+archive; `preserve` excludes pruning and permits accepted summarization. Complete text is
 written through the effective workspace backend to `.vv-agent/artifacts/`
 before replacement. An existing typed `Message.artifact_ref` is reused only
 after its complete UTF-8 bytes pass `size_bytes` and SHA-256 validation.
@@ -454,7 +454,7 @@ original message while the same application pass continues to later
 candidates. The compact marker exposes only `tool_name`, `artifact_path`, the
 fixed `use read_file` retrieval hint, and an excerpt.
 When `read_file` is absent from the task's actual model-visible tool plan,
-proactive microcompaction and full-compaction pre-archiving do not create that
+microcompaction does not create that
 unusable marker.
 
 Application stops at the target using each actual replacement token
@@ -577,3 +577,39 @@ attributes `deny_unknown_fields` and `deserialize_with =
 generation; the runtime serde readers still enforce the strict v11 wire. The
 attributes must remain on the Rust readers until ts-rs supports them rather
 than being removed to silence the warning.
+
+
+## Contract 23 adoption
+
+The lock adopts the published contract `v23.0.0` at revision
+`ad2d4974545f987e237aed421cc4f65680e9a8dc`; fixture manifest
+`0e4c98ac3d22c959e2b1dd5969f55b56491c0b2eab1dbacaf38f68298bcf7d98`.
+Central verification is recorded in the contract support matrix.
+
+Compaction validates ordered tool blocks and counts the raw tail using
+`keep_recent_messages` (default 10). Parallel blocks cannot be split. An ordered
+incomplete final block remains in the tail; malformed middle blocks abort.
+Microcompaction is the only pruner and protects the selected tail when a summary
+is planned. Age is relative to the current transcript, independent of runtime cycle.
+
+The complete prefix and previous summaries enter the localized prompt as separate
+JCS sections. Placeholder replacement is single-pass. Prefix images become text
+placeholders in this request only; retained tail images remain unchanged.
+An accepted, normalized summary replaces the prefix only when the candidate
+actually shrinks and fits the context. Failure preserves history; control errors
+propagate. Emergency retries re-summarize with a smaller atomic tail.
+Rust's emergency method requires a mutable receiver to update the Session Memory
+baseline after successful replacement, like ordinary compaction.
+
+The closed `_vv_agent_compaction` metadata carries all artifact and cursor evidence.
+The framework merges references deterministically, deduplicates full JCS records,
+and renders only model-visible path/argument information. Message, session and
+checkpoint readers validate this reserved object. The final recovery-tool check
+includes summary references. File paths never trigger automatic file restoration.
+
+Exact fixture producers with injected fixture token totals are unit tests in
+`memory/manager/contract_tests.rs`; the override is compiled only under `cfg(test)`.
+`memory_local_contract.rs` also compares both complete prompt golden strings.
+Checkpoint receipt replay and accounting producers live in
+`runtime/checkpoint_resume/summary_tests.rs`; integration tests exercise actual
+runtime batches, session persistence and provider routing.

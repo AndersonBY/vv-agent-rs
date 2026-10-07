@@ -8,6 +8,10 @@ use super::*;
 
 pub fn validate_checkpoint(checkpoint: &Checkpoint) -> CheckpointResult<()> {
     checkpoint.history.validate()?;
+    for message in &checkpoint.messages {
+        crate::types::validate_compaction_metadata(&message.metadata)
+            .map_err(|error| CheckpointError::new("checkpoint_messages_invalid", error))?;
+    }
     if checkpoint.cycles.iter().any(|cycle| {
         cycle.index == 0 || u64::from(cycle.index) > checkpoint.cycle_index.saturating_add(1)
     }) || checkpoint

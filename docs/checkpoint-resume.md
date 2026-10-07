@@ -297,3 +297,23 @@ corruption leaves the original message intact. A recovered model slot with a
 changed request fails with `checkpoint_journal_integrity_mismatch` before claim
 or external model execution. These are corrections to contract 22's stable
 receipt and request-integrity requirements; no wire discriminator changes.
+
+
+## Summary receipt replay (contract 23)
+
+Summary calls use the existing `MemoryCompaction` operation journal and accounting
+path. A crash after the receipt but before transcript replacement reuses the same
+request digest, receipt and ledger entry. It reconstructs summary, raw tail and
+reserved evidence without a second dispatch or budget charge. A changed request
+fails with `checkpoint_journal_integrity_mismatch`; it cannot allocate a replacement
+identity to bypass the retained operation. Persisted accepted transcripts do not
+summarize an already-replaced prefix again. No old-checkpoint decoder is added.
+
+The test `summary_receipt_replay_is_identical_and_does_not_charge_twice` exercises
+memory and SQLite controllers. The opt-in `cross_runtime_summary_receipt_exchange`
+uses `FIX2_EXCHANGE_DB` and `FIX2_EXCHANGE_KEY` to consume or produce the same
+summary SQLite checkpoint for the paired implementation.
+
+The shared `operation_replayed` observation omits `agent_name`, matching the
+Python producer. This keeps the stable event identity and retained payload
+compatible when a summary receipt crosses runtimes.

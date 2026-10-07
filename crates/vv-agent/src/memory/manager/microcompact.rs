@@ -57,14 +57,21 @@ impl MemoryManager {
         messages: &[Message],
         tool_schemas: &[serde_json::Value],
     ) -> Result<(), String> {
+        for message in messages {
+            crate::types::validate_compaction_metadata(&message.metadata)?;
+        }
         let recovery_tool_available = tool_schemas.iter().any(|schema| {
             schema["function"]["name"].as_str() == Some(crate::constants::READ_FILE_TOOL_NAME)
         });
         self.recovery_tool_available = recovery_tool_available;
         if !recovery_tool_available
-            && messages
-                .iter()
-                .any(|message| is_compacted_tool_content(&message.content))
+            && messages.iter().any(|message| {
+                is_compacted_tool_content(&message.content)
+                    || message
+                        .metadata
+                        .get(crate::types::COMPACTION_METADATA_KEY)
+                        .is_some_and(super::evidence::has_references)
+            })
         {
             return Err(
                 "microcompaction_recovery_unavailable: compacted tool results require \
@@ -81,15 +88,13 @@ impl MemoryManager {
         current_cycle: u32,
         current_usage: u64,
     ) -> MicrocompactionPlan {
-        let cleaned = self.remove_previous_summary(messages);
-        let sanitized = crate::memory::message_sanitizer::filter_empty_assistant_messages(&cleaned);
-        self.plan_microcompaction(&sanitized, current_cycle, current_usage)
+        self.plan_microcompaction(messages, current_cycle, current_usage)
     }
 
     pub(crate) fn plan_microcompaction(
         &self,
         messages: &[Message],
-        current_cycle: u32,
+        _current_cycle: u32,
         current_usage: u64,
     ) -> MicrocompactionPlan {
         if !self.recovery_tool_available
@@ -103,8 +108,18 @@ impl MemoryManager {
         let tool_call_names = build_tool_call_name_map(messages);
         let inferred_cycles = infer_message_cycles(messages);
         let max_inferred_cycle = inferred_cycles.last().copied().unwrap_or_default();
-        let effective_current_cycle = current_cycle.max(max_inferred_cycle.saturating_add(1));
+        let effective_current_cycle = max_inferred_cycle.saturating_add(1);
         let protected_cycle = effective_current_cycle.saturating_sub(policy.keep_recent_cycles);
+        let protected_tail = if current_usage > self.autocompact_threshold() {
+            let Some(parts) =
+                super::compaction::summary_parts(messages, self.config.keep_recent_messages)
+            else {
+                return MicrocompactionPlan::empty();
+            };
+            parts.cut
+        } else {
+            messages.len()
+        };
         let target = self.microcompact_target_threshold();
         let marker_config = self.marker_config();
         let mut candidates = Vec::new();
@@ -113,6 +128,9 @@ impl MemoryManager {
         for (message_index, (message, inferred_cycle)) in
             messages.iter().zip(inferred_cycles).enumerate()
         {
+            if message_index >= protected_tail {
+                continue;
+            }
             let Some(tool_name) = eligible_tool_name(
                 message,
                 inferred_cycle,
@@ -267,9 +285,6 @@ impl MemoryManager {
 
     fn marker_config(&self) -> ToolResultArtifactConfig {
         ToolResultArtifactConfig {
-            artifact_namespace: self.artifact_namespace.clone(),
-            compact_threshold: self.config.tool_result_compact_threshold,
-            keep_last: self.config.tool_result_keep_last,
             excerpt_head: self.config.tool_result_excerpt_head,
             excerpt_tail: self.config.tool_result_excerpt_tail,
         }
@@ -316,7 +331,9 @@ fn infer_message_cycles(messages: &[Message]) -> Vec<u32> {
     let mut current_cycle = 0;
     let mut inferred = Vec::with_capacity(messages.len());
     for message in messages {
-        if message.role == MessageRole::Assistant {
+        if message.role == MessageRole::Assistant
+            && message.name.as_deref() != Some(super::MEMORY_SUMMARY_NAME)
+        {
             current_cycle += 1;
         }
         inferred.push(current_cycle);

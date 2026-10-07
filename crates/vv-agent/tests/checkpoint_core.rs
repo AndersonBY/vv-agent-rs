@@ -959,3 +959,34 @@ fn exercise_current_store_contract(store: &dyn CheckpointStore, prefix: &str) {
         Some("evt-terminal")
     );
 }
+
+#[test]
+fn summary_evidence_is_validated_by_checkpoint_reader_and_writer() {
+    let codec: Value =
+        serde_json::from_str(include_str!("fixtures/parity/session_codec.json")).unwrap();
+    for case in codec["invalid_cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["name"].as_str().unwrap().starts_with("summary_evidence_"))
+    {
+        let mut checkpoint = minimal_checkpoint("invalid-summary-evidence");
+        let input = &case["input"];
+        let message = input.get("message").unwrap_or(input);
+        let mut summary = Message::user("summary");
+        summary.metadata = serde_json::from_value(message["metadata"].clone()).unwrap();
+        checkpoint.messages.push(summary);
+        assert!(
+            checkpoint_to_value(&checkpoint, 262144).is_err(),
+            "{}",
+            case["name"]
+        );
+        let mut wire = codec_case("minimal_running");
+        wire["messages"] = json!([message]);
+        assert!(
+            checkpoint_from_value(&wire, 262144).is_err(),
+            "{}",
+            case["name"]
+        );
+    }
+}

@@ -1,5 +1,4 @@
 use std::fmt;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::memory::session::SessionMemory;
@@ -23,14 +22,9 @@ pub struct MemoryManagerConfig {
     pub summary_backend: Option<String>,
     pub summary_model: Option<String>,
     pub summary_callback: Option<SummaryCallback>,
-    pub tool_result_compact_threshold: usize,
-    pub tool_result_keep_last: usize,
     pub tool_result_excerpt_head: usize,
     pub tool_result_excerpt_tail: usize,
-    pub tool_calls_keep_last: usize,
-    pub assistant_no_tool_keep_last: usize,
     pub microcompaction_policy: MicrocompactionPolicy,
-    pub workspace: Option<PathBuf>,
     pub session_memory: Option<SessionMemory>,
 }
 
@@ -57,20 +51,9 @@ impl fmt::Debug for MemoryManagerConfig {
                 "summary_callback",
                 &self.summary_callback.as_ref().map(|_| "<callback>"),
             )
-            .field(
-                "tool_result_compact_threshold",
-                &self.tool_result_compact_threshold,
-            )
-            .field("tool_result_keep_last", &self.tool_result_keep_last)
             .field("tool_result_excerpt_head", &self.tool_result_excerpt_head)
             .field("tool_result_excerpt_tail", &self.tool_result_excerpt_tail)
-            .field("tool_calls_keep_last", &self.tool_calls_keep_last)
-            .field(
-                "assistant_no_tool_keep_last",
-                &self.assistant_no_tool_keep_last,
-            )
             .field("microcompaction_policy", &self.microcompaction_policy)
-            .field("workspace", &self.workspace)
             .field("session_memory", &self.session_memory)
             .finish()
     }
@@ -92,14 +75,9 @@ impl Default for MemoryManagerConfig {
             summary_backend: None,
             summary_model: None,
             summary_callback: None,
-            tool_result_compact_threshold: 2_000,
-            tool_result_keep_last: 3,
             tool_result_excerpt_head: 200,
             tool_result_excerpt_tail: 200,
-            tool_calls_keep_last: 3,
-            assistant_no_tool_keep_last: 1,
             microcompaction_policy: MicrocompactionPolicy::default(),
-            workspace: None,
             session_memory: None,
         }
     }

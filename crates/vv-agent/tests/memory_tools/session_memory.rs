@@ -258,25 +258,26 @@ fn memory_manager_preserves_session_memory_across_compaction() {
     });
     let mut manager = MemoryManager::new(MemoryManagerConfig {
         compact_threshold: 10,
-        model_context_window: 70,
+        model_context_window: 20_000,
         reserved_output_tokens: 10,
         autocompact_buffer_tokens: 0,
-        keep_recent_messages: 2,
+        keep_recent_messages: 1,
         model: "demo".to_string(),
         session_memory: Some(session_memory),
+        summary_callback: Some(Arc::new(|_, _, _| Some("{\"progress\":[\"done\"]}".into()))),
         ..MemoryManagerConfig::default()
     });
     let messages = vec![
         Message::system("sys"),
-        Message::user("u".repeat(40)),
-        Message::assistant("a".repeat(40)),
+        Message::user("u ".repeat(1000)),
+        Message::assistant("a ".repeat(1000)),
         Message::user("c".repeat(40)),
     ];
 
     let (compacted, changed) = manager.compact(&messages, false);
 
     assert!(changed);
-    assert_eq!(compacted.len(), 2);
+    assert_eq!(compacted.len(), 3);
     let session_memory = manager.session_memory().expect("session memory");
     assert!(!session_memory.state.entries.is_empty());
     assert_eq!(session_memory.state.last_extracted_message_index, -1);

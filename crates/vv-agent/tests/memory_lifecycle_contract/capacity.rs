@@ -298,6 +298,7 @@ fn warning_is_evaluated_from_post_microcompact_usage_on_both_threshold_paths() {
     for initial_usage in [3_800, 4_200] {
         let expected_warning = initial_usage == 4_200;
         let mut manager = MemoryManager::new(MemoryManagerConfig {
+            keep_recent_messages: 1,
             compact_threshold: 4_000,
             model_context_window: 4_000,
             reserved_output_tokens: 0,

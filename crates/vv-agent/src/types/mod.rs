@@ -1,3 +1,5 @@
+mod compaction;
+pub(crate) use compaction::{validate_compaction_metadata, COMPACTION_METADATA_KEY};
 mod dict;
 mod messages;
 mod metadata;

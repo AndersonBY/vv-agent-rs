@@ -653,3 +653,103 @@ impl LlmClient for MessageOrderInspectingLlmClient {
             .ok_or(LlmError::ScriptExhausted)
     }
 }
+
+#[test]
+fn multimodal_runtime_batch_and_steering_can_be_summarized() {
+    let mut registry = vv_agent::build_default_registry();
+    registry
+        .register_tool(
+            "_image_probe",
+            "image",
+            Arc::new(|_, _| {
+                let mut result = ToolExecutionResult::success("", "observed UI state ".repeat(600));
+                result.image_url = Some("data:image/png;base64,AAAA".into());
+                result
+            }),
+        )
+        .unwrap();
+    registry
+        .register_tool(
+            "_text_probe",
+            "text",
+            Arc::new(|_, _| ToolExecutionResult::success("", "checked state ".repeat(600))),
+        )
+        .unwrap();
+    let mut responses = Vec::new();
+    for i in 0..2 {
+        responses.push(LLMResponse::with_tool_calls(
+            "inspect",
+            vec![
+                ToolCall::new(format!("img{i}"), "_image_probe", Default::default()),
+                ToolCall::new(format!("txt{i}"), "_text_probe", Default::default()),
+            ],
+        ));
+    }
+    responses.push(LLMResponse::new("done"));
+    let runtime = AgentRuntime::new(ScriptedLlmClient::new(responses)).with_tool_registry(registry);
+    let mut task = AgentTask::new(
+        "multimodal-summary",
+        "test-model",
+        vv_agent::PromptBundle::from_instruction_text("system").unwrap(),
+        "go",
+    );
+    task.native_multimodal = true;
+    task.max_cycles = 3;
+    task.no_tool_policy = vv_agent::NoToolPolicy::Finish;
+    task.extra_tool_names = vec!["_image_probe".into(), "_text_probe".into()];
+    task.memory_compact_threshold = 1_000_000;
+    task.metadata
+        .insert("model_context_window".into(), json!(2_000_000));
+    let polls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let result = runtime
+        .run_with_controls(
+            task,
+            RuntimeRunControls {
+                interruption_messages: Some(Arc::new(move || {
+                    if polls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+                        vec![Message::user("Also inspect the second screenshot")]
+                    } else {
+                        vec![]
+                    }
+                })),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(result.status, AgentStatus::Completed);
+    let original = result.messages;
+    for (i, m) in original.iter().enumerate() {
+        if !m.tool_calls.is_empty() {
+            assert_eq!(
+                original[i + 1].tool_call_id.as_deref(),
+                Some(m.tool_calls[0].id.as_str())
+            );
+            assert_eq!(
+                original[i + 2].tool_call_id.as_deref(),
+                Some(m.tool_calls[1].id.as_str())
+            );
+            assert!(original[i + 3].image_url.is_some());
+        }
+    }
+    assert!(original
+        .iter()
+        .any(|m| m.content == "Also inspect the second screenshot"));
+    let captured = Arc::new(Mutex::new(String::new()));
+    let capture = captured.clone();
+    let mut manager = vv_agent::MemoryManager::new(vv_agent::MemoryManagerConfig {
+        keep_recent_messages: 2,
+        summary_callback: Some(Arc::new(move |prompt, _, _| {
+            *capture.lock().unwrap() = prompt.into();
+            Some("{\"current_work_state\":\"Screenshots checked.\"}".into())
+        })),
+        ..Default::default()
+    });
+    let (output, changed) = manager.compact(&original, true);
+    assert!(changed);
+    assert_eq!(output.len(), 4);
+    assert_eq!(output[2..], original[original.len() - 2..]);
+    let prompt = captured.lock().unwrap();
+    assert!(prompt.contains("[image omitted from summary input: image]"));
+    assert!(!prompt.contains("data:image/"));
+    assert!(prompt.contains("Also inspect the second screenshot"));
+}

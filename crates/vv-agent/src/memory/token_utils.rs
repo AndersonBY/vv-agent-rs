@@ -51,6 +51,10 @@ pub fn compute_compaction_threshold(
 }
 
 pub fn count_messages_tokens(messages: &[Message], model: &str) -> u64 {
+    #[cfg(test)]
+    if let Some(tokens) = test_estimator::estimate(messages) {
+        return tokens;
+    }
     if messages.is_empty() {
         return 0;
     }
@@ -138,4 +142,47 @@ fn is_cjk(ch: char) -> bool {
         ch as u32,
         0x4E00..=0x9FFF | 0x3000..=0x303F | 0xFF00..=0xFFEF
     )
+}
+
+#[cfg(test)]
+pub(crate) mod test_estimator {
+    use super::*;
+    use std::cell::RefCell;
+    type Estimate = (Vec<Message>, u64, u64, Option<(u64, u64)>);
+    thread_local! { static ESTIMATE: RefCell<Option<Estimate>> = const { RefCell::new(None) }; }
+    pub struct Guard;
+    pub fn install(messages: &[Message], before: u64, after: u64) -> Guard {
+        ESTIMATE.with(|slot| *slot.borrow_mut() = Some((messages.to_vec(), before, after, None)));
+        Guard
+    }
+    pub fn install_result_counts(old: u64, replacement: u64) {
+        ESTIMATE.with(|slot| slot.borrow_mut().as_mut().unwrap().3 = Some((old, replacement)));
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            ESTIMATE.with(|slot| *slot.borrow_mut() = None);
+        }
+    }
+    pub fn estimate(messages: &[Message]) -> Option<u64> {
+        ESTIMATE.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .map(|(original, before, after, results)| {
+                    if let Some((old, replacement)) = results {
+                        if messages.len() == 1 {
+                            return if messages[0].content.starts_with("<Tool Result Compact>") {
+                                *replacement
+                            } else {
+                                *old
+                            };
+                        }
+                    }
+                    if messages == original {
+                        *before
+                    } else {
+                        *after
+                    }
+                })
+        })
+    }
 }

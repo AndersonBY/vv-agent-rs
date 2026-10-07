@@ -32,6 +32,7 @@ pub(crate) enum MemoryInferenceControl {
 struct RoutedClient {
     client: Arc<dyn LlmClient>,
     request_model: String,
+    context_length: Option<u64>,
     backend: String,
     model: String,
 }
@@ -72,6 +73,14 @@ impl MemoryModelRouter {
             && requested_backend.is_none_or(|backend| backend == self.default_backend);
         let routed = match (uses_default_route, self.provider.as_ref()) {
             (true, _) => RoutedClient {
+                context_length: self
+                    .provider
+                    .as_ref()
+                    .and_then(|p| {
+                        p.resolve(&ModelRef::backend(&self.default_backend, requested_model))
+                            .ok()
+                    })
+                    .and_then(|r| r.context_length),
                 client: self.direct_client.clone(),
                 request_model: requested_model.to_string(),
                 backend: self.default_backend.clone(),
@@ -84,6 +93,7 @@ impl MemoryModelRouter {
                 };
                 let resolved = provider.resolve(&model_ref).ok()?;
                 RoutedClient {
+                    context_length: resolved.context_length,
                     client: provider.client(&resolved).ok()?,
                     request_model: resolved.selected_model.clone(),
                     backend: resolved.backend.clone(),
@@ -91,6 +101,14 @@ impl MemoryModelRouter {
                 }
             }
             (false, None) if requested_backend.is_none() => RoutedClient {
+                context_length: self
+                    .provider
+                    .as_ref()
+                    .and_then(|p| {
+                        p.resolve(&ModelRef::backend(&self.default_backend, requested_model))
+                            .ok()
+                    })
+                    .and_then(|r| r.context_length),
                 client: self.direct_client.clone(),
                 request_model: requested_model.to_string(),
                 backend: self.default_backend.clone(),
@@ -233,6 +251,17 @@ fn build_runtime_memory_callback(
             vec![Message::user(prompt)],
             prompt_bundle.clone(),
         );
+        if operation == ModelCallOperation::MemoryCompaction
+            && routed.context_length.is_some_and(|limit| {
+                limit > 0
+                    && crate::memory::token_utils::count_messages_tokens(
+                        &request.messages,
+                        &routed.model,
+                    ) >= limit
+            })
+        {
+            return Ok(None);
+        }
         let client = routed.client.clone();
         let dispatch = checkpoint.dispatch_model(
             ModelCallDispatchRequest {

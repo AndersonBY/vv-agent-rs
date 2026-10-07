@@ -3,7 +3,6 @@ pub mod errors;
 pub mod manager;
 pub mod message_sanitizer;
 mod microcompact;
-pub mod post_compact_restore;
 pub mod provider;
 mod runtime_callbacks;
 mod session;
@@ -11,7 +10,7 @@ pub mod session_memory;
 mod summary;
 pub mod token_utils;
 
-pub use artifacts::{PersistedArtifact, ToolResultArtifactConfig, TOOL_RESULT_COMPACT_MARKER};
+pub use artifacts::{ToolResultArtifactConfig, TOOL_RESULT_COMPACT_MARKER};
 pub use errors::CompactionExhaustedError;
 pub use manager::{MemoryManager, MemoryManagerConfig, SummaryCallback};
 pub use message_sanitizer::{
@@ -19,7 +18,6 @@ pub use message_sanitizer::{
     filter_unresolved_tool_uses, sanitize_for_resume,
 };
 pub use microcompact::{MicrocompactionPolicy, MicrocompactionPolicyError};
-pub use post_compact_restore::{restore_key_files, PostCompactRestoreConfig};
 pub use provider::{
     MemoryError, MemoryFuture, MemoryProvider, MemoryProviderResult, MemorySaveRequest,
     MemorySaveResult, MemorySearchRequest, MemorySearchResult,

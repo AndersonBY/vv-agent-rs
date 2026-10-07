@@ -289,11 +289,13 @@ fn runtime_uses_main_client_for_default_memory_extraction_without_rewriting_the_
         "session_memory_extract_task",
         "demo",
         vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
-        "inspect memory",
+        "inspect memory ".repeat(1000),
     );
     task.memory_compact_threshold = 20;
     task.metadata
-        .insert("model_context_window".to_string(), json!(120));
+        .insert("memory_keep_recent_messages".into(), json!(1));
+    task.metadata
+        .insert("model_context_window".to_string(), json!(20_000));
     task.metadata
         .insert("reserved_output_tokens".to_string(), json!(10));
     task.metadata
@@ -597,7 +599,7 @@ impl LlmClient for SessionMemoryExtractingLlmClient {
             && request.messages.len() == 1
             && request.messages[0]
                 .content
-                .contains("<Conversation History>")
+                .contains("<Conversation Prefix>")
         {
             return Ok(LLMResponse::new(
                 json!({

@@ -1,184 +1,280 @@
+use std::collections::BTreeSet;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use crate::memory::artifacts::{
-    compact_tool_results, render_persisted_artifacts_section, ToolResultArtifactConfig,
-};
-use crate::memory::post_compact_restore::{restore_key_files, PostCompactRestoreConfig};
-use crate::memory::summary::LocalSummary;
+use super::helpers::normalize_summary_output;
+use super::{MemoryManager, MEMORY_SUMMARY_NAME};
+use crate::memory::message_sanitizer::filter_empty_assistant_messages;
+use crate::memory::token_utils::count_messages_tokens;
 use crate::memory::{RuntimeMemoryCallback, RuntimeMemoryCallbackError};
 use crate::types::{Message, MessageRole};
+use serde_json::{json, Value};
 
-use super::helpers::{extract_original_user_request, normalize_summary_output};
-use super::normalization;
-use super::prompts;
-use super::MemoryManager;
+pub(super) struct SummaryParts {
+    pub systems: Vec<Message>,
+    pub previous: Vec<Message>,
+    pub prefix: Vec<Message>,
+    pub tail: Vec<Message>,
+    pub cut: usize,
+}
+
+pub(super) fn summary_parts(messages: &[Message], keep: usize) -> Option<SummaryParts> {
+    let mut blocks = Vec::new();
+    let mut index = 0;
+    while index < messages.len() {
+        let message = &messages[index];
+        if message.role == MessageRole::Tool {
+            return None;
+        }
+        let mut end = index + 1;
+        if !message.tool_calls.is_empty() {
+            if message.role != MessageRole::Assistant {
+                return None;
+            }
+            let mut ids = BTreeSet::new();
+            for (offset, call) in message.tool_calls.iter().enumerate() {
+                if call.id.is_empty() || !ids.insert(&call.id) {
+                    return None;
+                }
+                if let Some(result) = messages.get(index + 1 + offset) {
+                    if result.role != MessageRole::Tool
+                        || result.tool_call_id.as_deref() != Some(&call.id)
+                    {
+                        return None;
+                    }
+                }
+            }
+            end += message.tool_calls.len();
+        }
+        blocks.push((index, end));
+        index = end;
+    }
+    let raw: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(i, m)| {
+            (m.role != MessageRole::System
+                && m.name.as_deref() != Some(MEMORY_SUMMARY_NAME)
+                && !filter_empty_assistant_messages(std::slice::from_ref(m)).is_empty())
+            .then_some(i)
+        })
+        .collect();
+    let mut cut = raw
+        .get(raw.len().saturating_sub(keep.max(1)))
+        .copied()
+        .unwrap_or(0);
+    for (start, end) in blocks {
+        if start < cut && cut < end {
+            cut = start;
+        }
+    }
+    Some(SummaryParts {
+        systems: messages
+            .iter()
+            .filter(|m| {
+                m.role == MessageRole::System && m.name.as_deref() != Some(MEMORY_SUMMARY_NAME)
+            })
+            .cloned()
+            .collect(),
+        previous: messages
+            .iter()
+            .filter(|m| m.name.as_deref() == Some(MEMORY_SUMMARY_NAME))
+            .cloned()
+            .collect(),
+        prefix: raw
+            .iter()
+            .filter(|i| **i < cut)
+            .map(|i| messages[*i].clone())
+            .collect(),
+        tail: raw
+            .iter()
+            .filter(|i| **i >= cut)
+            .map(|i| messages[*i].clone())
+            .collect(),
+        cut,
+    })
+}
 
 impl MemoryManager {
-    pub(super) fn compact_large_tool_results(
-        &self,
-        messages: &[Message],
-        _cycle_index: Option<u32>,
-    ) -> (Vec<Message>, bool) {
-        let (compacted, _artifacts, changed) = compact_tool_results(
-            messages,
-            &ToolResultArtifactConfig {
-                artifact_namespace: self.artifact_namespace.clone(),
-                compact_threshold: self.config.tool_result_compact_threshold,
-                keep_last: self.config.tool_result_keep_last,
-                excerpt_head: self.config.tool_result_excerpt_head,
-                excerpt_tail: self.config.tool_result_excerpt_tail,
-            },
-            self.recovery_tool_available
-                .then_some(self.workspace_backend.as_ref())
-                .flatten(),
-        );
-        (compacted, changed)
-    }
-
     pub(super) fn compress_memory(
         &self,
         messages: &[Message],
-        cycle_index: Option<u32>,
-        runtime_callback: Option<&RuntimeMemoryCallback>,
+        cycle: Option<u32>,
+        callback: Option<&RuntimeMemoryCallback>,
     ) -> Result<(Vec<Message>, bool), RuntimeMemoryCallbackError> {
-        if messages.len() <= 2 {
-            return Ok((messages.to_vec(), false));
-        }
-        let system_message = messages
-            .iter()
-            .find(|message| message.role == MessageRole::System)
-            .cloned();
-        let (messages_for_summary, _normalized) = self.normalize_compaction_messages(messages);
-        let (messages_for_summary, artifacts, _compacted_tools) = compact_tool_results(
-            &messages_for_summary,
-            &ToolResultArtifactConfig {
-                artifact_namespace: self.artifact_namespace.clone(),
-                compact_threshold: self.config.tool_result_compact_threshold,
-                keep_last: self.config.tool_result_keep_last,
-                excerpt_head: self.config.tool_result_excerpt_head,
-                excerpt_tail: self.config.tool_result_excerpt_tail,
-            },
-            self.recovery_tool_available
-                .then_some(self.workspace_backend.as_ref())
-                .flatten(),
-        );
-        let original_request = extract_original_user_request(messages).unwrap_or_default();
-        let summary_prompt = self.build_compress_memory_prompt(&messages_for_summary);
-        let artifact_facts = artifacts
-            .iter()
-            .filter(|artifact| !artifact.path.is_empty())
-            .map(|artifact| {
-                format!(
-                    "{} (tool={})",
-                    artifact.path,
-                    artifact.tool_name.as_deref().unwrap_or("unknown")
-                )
-            })
-            .collect::<Vec<_>>();
-        let mut compressed_memory = self.generate_summary(
-            &summary_prompt,
-            &messages_for_summary,
-            artifact_facts,
-            cycle_index,
-            runtime_callback,
-        )?;
-        if let Some(summary_data) = parse_first_json_object(&compressed_memory) {
-            let restored_context = restore_key_files(
-                &summary_data,
-                self.config.workspace.as_deref(),
-                &PostCompactRestoreConfig {
-                    token_model: self.config.model.clone(),
-                    ..PostCompactRestoreConfig::default()
-                },
-            );
-            if !restored_context.is_empty() {
-                compressed_memory.push_str("\n\n");
-                compressed_memory.push_str(&restored_context);
-            }
-        }
-        if let Some(artifact_section) = render_persisted_artifacts_section(&artifacts) {
-            compressed_memory.push_str("\n\n");
-            compressed_memory.push_str(&artifact_section);
-        }
-
-        let mut compacted = Vec::new();
-        if let Some(system_message) = system_message {
-            compacted.push(system_message);
-        }
-        compacted.push(Message::user(format!(
-            "<Original User Request>\n{original_request}\n</Original User Request>\n\n<Compressed Agent Memory>\n{compressed_memory}\n</Compressed Agent Memory>"
-        )));
-        Ok((compacted, true))
+        self.summarize_prefix(messages, self.config.keep_recent_messages, cycle, callback)
     }
 
-    fn build_compress_memory_prompt(&self, messages: &[Message]) -> String {
-        prompts::build_compress_memory_prompt(
+    pub(super) fn summarize_prefix(
+        &self,
+        messages: &[Message],
+        keep: usize,
+        cycle: Option<u32>,
+        callback: Option<&RuntimeMemoryCallback>,
+    ) -> Result<(Vec<Message>, bool), RuntimeMemoryCallbackError> {
+        let unchanged = || (messages.to_vec(), false);
+        let Some(parts) = summary_parts(messages, keep) else {
+            return Ok(unchanged());
+        };
+        if parts.prefix.is_empty() || (callback.is_none() && self.config.summary_callback.is_none())
+        {
+            return Ok(unchanged());
+        }
+        let prompt = super::prompts::build_compress_memory_prompt(
             &self.config.language,
             self.config.summary_event_limit,
-            messages,
-        )
-    }
-
-    fn generate_summary(
-        &self,
-        prompt: &str,
-        messages: &[Message],
-        key_facts: Vec<String>,
-        cycle_index: Option<u32>,
-        runtime_callback: Option<&RuntimeMemoryCallback>,
-    ) -> Result<String, RuntimeMemoryCallbackError> {
-        if let (Some(callback), Some(cycle_index)) = (runtime_callback, cycle_index) {
-            if let Some(summary) = callback(
-                prompt,
+            &parts.previous,
+            &parts.prefix,
+        );
+        let raw = if let (Some(callback), Some(cycle)) = (callback, cycle) {
+            callback(
+                &prompt,
                 self.config.summary_backend.as_deref(),
                 self.config.summary_model.as_deref(),
-                cycle_index,
+                cycle,
             )?
-            .filter(|summary| !summary.trim().is_empty())
-            {
-                return Ok(normalize_summary_output(&summary));
-            }
-        }
-        if let Some(callback) = &self.config.summary_callback {
-            let callback_result = catch_unwind(AssertUnwindSafe(|| {
+        } else if let Some(callback) = &self.config.summary_callback {
+            catch_unwind(AssertUnwindSafe(|| {
                 callback(
-                    prompt,
+                    &prompt,
                     self.config.summary_backend.as_deref(),
                     self.config.summary_model.as_deref(),
                 )
-            }));
-            if let Ok(Some(summary)) = callback_result {
-                let normalized = normalize_summary_output(&summary);
-                if !normalized.trim().is_empty() {
-                    return Ok(normalized);
+            }))
+            .ok()
+            .flatten()
+        } else {
+            None
+        };
+        let mut summary = normalize_summary(
+            &parse_first_json_object(&normalize_summary_output(&raw.unwrap_or_default()))
+                .unwrap_or(Value::Null),
+        );
+        if !summary.as_object().unwrap().iter().any(|(k, v)| {
+            k != "summary_version"
+                && k != "user_constraints"
+                && (v.as_str().is_some_and(|s| !s.is_empty())
+                    || v.as_array().is_some_and(|a| !a.is_empty()))
+        }) {
+            return Ok(unchanged());
+        }
+        let Ok(evidence) = super::evidence::collect(&parts.previous, &parts.prefix) else {
+            return Ok(unchanged());
+        };
+        if super::evidence::has_references(&evidence) && !self.recovery_tool_available {
+            return Ok(unchanged());
+        }
+        let paths = summary["files_examined_or_modified"]
+            .as_array_mut()
+            .unwrap();
+        let mut seen: BTreeSet<String> = paths
+            .iter()
+            .map(|p| p["path"].as_str().unwrap().to_owned())
+            .collect();
+        for previous in &parts.previous {
+            if let Some((_, rest)) = previous.content.split_once("<Compressed Agent Memory>") {
+                if let Some((body, _)) = rest.split_once("</Compressed Agent Memory>") {
+                    let prior =
+                        normalize_summary(&parse_first_json_object(body).unwrap_or(Value::Null));
+                    for path in prior["files_examined_or_modified"].as_array().unwrap() {
+                        if seen.insert(path["path"].as_str().unwrap().to_owned()) {
+                            paths.push(path.clone());
+                        }
+                    }
                 }
             }
         }
-        Ok(LocalSummary::from_messages_with_key_facts(
-            messages,
-            self.config.summary_event_limit,
-            key_facts,
-        )
-        .to_json_string())
-    }
-
-    fn normalize_compaction_messages(&self, messages: &[Message]) -> (Vec<Message>, bool) {
-        normalization::normalize_compaction_messages(
-            messages,
-            self.config.tool_calls_keep_last,
-            self.config.assistant_no_tool_keep_last,
-        )
+        for path in crate::memory::summary::collect_prefix_file_actions(&parts.prefix) {
+            if seen.insert(path.path.clone()) {
+                paths.push(serde_json::to_value(path).unwrap());
+            }
+        }
+        let originals = summary["original_user_messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let content=format!("<Original User Request>\n{originals}\n</Original User Request>\n\n<Compressed Agent Memory>\n{}\n</Compressed Agent Memory>\n\n{}",jcs(&summary),super::evidence::render(&evidence));
+        let mut summary_message = Message::user(content);
+        summary_message.name = Some(MEMORY_SUMMARY_NAME.into());
+        summary_message
+            .metadata
+            .insert(crate::types::COMPACTION_METADATA_KEY.into(), evidence);
+        let mut candidate = parts.systems;
+        candidate.push(summary_message);
+        candidate.extend(parts.tail);
+        let tokens = count_messages_tokens(&candidate, &self.config.model);
+        if tokens >= count_messages_tokens(messages, &self.config.model)
+            || tokens > self.effective_context_window()
+        {
+            return Ok(unchanged());
+        }
+        Ok((candidate, true))
     }
 }
 
-fn parse_first_json_object(raw: &str) -> Option<serde_json::Value> {
+pub(super) fn jcs(value: &Value) -> String {
+    serde_json_canonicalizer::to_string(value).expect("valid JSON value")
+}
+
+fn parse_first_json_object(raw: &str) -> Option<Value> {
     raw.char_indices()
-        .filter(|(_, character)| *character == '{')
-        .find_map(|(index, _)| {
-            serde_json::Deserializer::from_str(&raw[index..])
-                .into_iter::<serde_json::Value>()
+        .filter(|(_, c)| *c == '{')
+        .find_map(|(i, _)| {
+            serde_json::Deserializer::from_str(&raw[i..])
+                .into_iter::<Value>()
                 .next()
                 .and_then(Result::ok)
-                .filter(serde_json::Value::is_object)
+                .filter(Value::is_object)
         })
+}
+fn normalize_summary(payload: &Value) -> Value {
+    let mut result = json!({"summary_version":"2.0"});
+    for key in [
+        "original_user_messages",
+        "user_constraints",
+        "decisions",
+        "progress",
+        "key_facts",
+        "open_issues",
+        "next_steps",
+    ] {
+        result[key] = payload[key]
+            .as_array()
+            .filter(|v| v.iter().all(Value::is_string))
+            .map(|v| Value::Array(v.clone()))
+            .unwrap_or(json!([]));
+    }
+    result["current_work_state"] = json!(payload["current_work_state"].as_str().unwrap_or(""));
+    for (key, fields) in [
+        ("files_examined_or_modified", ["path", "action", "summary"]),
+        ("errors_and_fixes", ["error", "fix", "file"]),
+    ] {
+        let mut records = Vec::new();
+        for item in payload[key].as_array().into_iter().flatten() {
+            if !item.is_object() {
+                continue;
+            }
+            if key == "files_examined_or_modified" {
+                if item["path"].as_str().is_none_or(|s| s.trim().is_empty())
+                    || !matches!(
+                        item["action"].as_str(),
+                        Some("read" | "created" | "modified" | "deleted")
+                    )
+                {
+                    continue;
+                }
+            } else if !item["error"].is_string() {
+                continue;
+            }
+            let mut record = json!({});
+            for field in fields {
+                record[field] = json!(item[field].as_str().unwrap_or(""));
+            }
+            records.push(record);
+        }
+        result[key] = Value::Array(records);
+    }
+    result
 }

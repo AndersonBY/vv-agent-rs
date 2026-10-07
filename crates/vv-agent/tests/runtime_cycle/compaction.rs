@@ -15,11 +15,13 @@ fn runtime_compacts_memory_before_large_follow_up_cycle() {
         "memory_task",
         "demo",
         vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
-        "inspect memory",
+        "inspect memory ".repeat(1000),
     );
     task.memory_compact_threshold = 20;
     task.metadata
-        .insert("model_context_window".to_string(), json!(120));
+        .insert("model_context_window".to_string(), json!(20_000));
+    task.metadata
+        .insert("memory_keep_recent_messages".into(), json!(1));
     task.metadata
         .insert("reserved_output_tokens".to_string(), json!(10));
     task.metadata
@@ -37,8 +39,8 @@ fn runtime_compacts_memory_before_large_follow_up_cycle() {
         "second request did not contain compressed memory: {second_request:#?}"
     );
     assert!(
-        second_request.len() <= 3,
-        "compacted request should keep system, summary, and latest continuation at most"
+        second_request.len() <= 4,
+        "compacted request should keep system, summary, and an atomic recent tail"
     );
 }
 
@@ -51,11 +53,14 @@ fn runtime_uses_previous_prompt_tokens_for_memory_compaction() {
         "usage_memory_task",
         "demo",
         vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
-        "short request",
+        "short request ".repeat(1000),
     );
     task.max_cycles = 2;
+    task.memory_compact_threshold = 15_000;
     task.metadata
-        .insert("model_context_window".to_string(), json!(120));
+        .insert("model_context_window".to_string(), json!(20_000));
+    task.metadata
+        .insert("memory_keep_recent_messages".into(), json!(1));
     task.metadata
         .insert("reserved_output_tokens".to_string(), json!(10));
     task.metadata
@@ -90,11 +95,13 @@ fn runtime_hooks_can_patch_messages_before_memory_compaction() {
         "pre_compact_hook_task",
         "demo",
         vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
-        "inspect memory",
+        "inspect memory ".repeat(1000),
     );
     task.memory_compact_threshold = 20;
     task.metadata
-        .insert("model_context_window".to_string(), json!(120));
+        .insert("model_context_window".to_string(), json!(20_000));
+    task.metadata
+        .insert("memory_keep_recent_messages".into(), json!(1));
     task.metadata
         .insert("reserved_output_tokens".to_string(), json!(10));
     task.metadata
@@ -128,11 +135,13 @@ fn runtime_preserves_session_memory_loaded_at_run_start_through_compaction() {
         "session_memory_task",
         "demo",
         vv_agent::prompt::PromptBundle::from_instruction_text("system").expect("prompt bundle"),
-        "inspect memory",
+        "inspect memory ".repeat(1000),
     );
     task.memory_compact_threshold = 20;
     task.metadata
-        .insert("model_context_window".to_string(), json!(120));
+        .insert("model_context_window".to_string(), json!(20_000));
+    task.metadata
+        .insert("memory_keep_recent_messages".into(), json!(1));
     task.metadata
         .insert("reserved_output_tokens".to_string(), json!(10));
     task.metadata
@@ -236,7 +245,7 @@ impl LlmClient for MemoryCompactionInspectingLlmClient {
             && request.messages.len() == 1
             && request.messages[0]
                 .content
-                .contains("<Conversation History>")
+                .contains("<Conversation Prefix>")
         {
             let marker = if request.messages[0]
                 .content
@@ -296,6 +305,13 @@ impl PromptTokenCompactionInspectingLlmClient {
 
 impl LlmClient for PromptTokenCompactionInspectingLlmClient {
     fn complete(&self, request: LlmRequest) -> Result<LLMResponse, LlmError> {
+        if request.messages.len() == 1
+            && request.messages[0]
+                .content
+                .contains("<Conversation Prefix>")
+        {
+            return Ok(LLMResponse::new("{\"progress\":[\"done\"]}"));
+        }
         let mut responses_seen = self
             .responses_seen
             .lock()
@@ -311,8 +327,8 @@ impl LlmClient for PromptTokenCompactionInspectingLlmClient {
                 )],
             );
             response.token_usage = TokenUsage {
-                input_tokens: Some(101),
-                total_tokens: Some(120),
+                input_tokens: Some(18_000),
+                total_tokens: Some(18_020),
                 ..TokenUsage::default()
             };
             return Ok(response);
