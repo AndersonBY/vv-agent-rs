@@ -482,12 +482,12 @@ impl ToolOrchestrator {
                 Ok(result) => result?,
                 Err(_) => {
                     let result = crate::tools::ToolOutput::error(format!(
-                        "Tool {} timed out after {} seconds.",
+                        "Tool {} did not finish within {} seconds and may still be running. Its outcome and side effects are unknown; verify the current state before calling it again.",
                         call.name,
                         timeout.as_secs_f64()
                     ))
                     .with_code("tool_timeout")
-                    .retryable(true)
+                    .retryable(false)
                     .to_result(&call.id);
                     return Ok(DeferredToolExecution::with_lifecycle(
                         call,

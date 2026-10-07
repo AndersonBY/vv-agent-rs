@@ -963,3 +963,113 @@ async fn microcompacted_deferred_resume_replays_model_and_tool_once() {
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(handles.lock().unwrap().len(), 1);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checkpointed_function_tool_timeout_remains_ambiguous_without_failed_receipt() {
+    struct CaptureResult(Arc<Mutex<Vec<ToolExecutionResult>>>);
+    impl vv_agent::RuntimeHook for CaptureResult {
+        fn after_tool_call(
+            &self,
+            event: vv_agent::AfterToolCallEvent<'_>,
+        ) -> Option<ToolExecutionResult> {
+            self.0.lock().unwrap().push(event.result.clone());
+            None
+        }
+    }
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let store = InMemoryCheckpointStore::new();
+    let handler_store = store.clone();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+    let release_rx = Mutex::new(Some(release_rx));
+    let started = Arc::new(AtomicBool::new(false));
+    let handler_started = started.clone();
+    let tool = FunctionTool::builder("slow")
+        .timeout(Duration::from_millis(10))
+        .handler(move |_context, _arguments: Value| {
+            let checkpoint = handler_store
+                .load_checkpoint("timeout-after-started")
+                .unwrap()
+                .unwrap();
+            assert_eq!(checkpoint.tool_journal[0].state, OperationState::Started);
+            handler_started.store(true, Ordering::SeqCst);
+            let release = release_rx.lock().unwrap().take().unwrap();
+            async move {
+                let _ = release.await;
+                Ok(ToolOutput::text("late"))
+            }
+        })
+        .build()
+        .expect("slow tool");
+    let workspace = tempfile::tempdir().expect("workspace");
+    let runner = Runner::builder()
+        .model_provider(ScriptedModelProvider::new(
+            "scripted",
+            "timeout-model",
+            vec![LLMResponse::with_tool_calls(
+                "run slow",
+                vec![ToolCall::new("slow-call", "slow", BTreeMap::new())],
+            )],
+        ))
+        .workspace(workspace.path())
+        .build()
+        .expect("runner");
+    let agent = Agent::builder("timeout-agent")
+        .instructions("Run slow.")
+        .model(ModelRef::named("timeout-model"))
+        .tool(tool)
+        .build()
+        .expect("agent");
+    let mut config = checkpoint_config(store.clone(), "timeout-after-started");
+    config.capability_refs.insert(
+        "runtime_hook:0".to_string(),
+        CapabilityRef::new("capture-timeout", "1").unwrap(),
+    );
+    let result = runner
+        .run_with_config(
+            &agent,
+            "run",
+            RunConfig::builder()
+                .hook(Arc::new(CaptureResult(observed.clone())))
+                .max_cycles(1)
+                .no_tool_policy(NoToolPolicy::Finish)
+                .checkpoint_config(config)
+                .build(),
+        )
+        .await
+        .expect("timeout run");
+    let _ = release_tx.send(());
+    assert!(started.load(Ordering::SeqCst));
+    assert_eq!(result.status(), AgentStatus::ReconciliationRequired);
+    let checkpoint = store
+        .load_checkpoint("timeout-after-started")
+        .unwrap()
+        .unwrap();
+    assert_eq!(checkpoint.tool_journal.len(), 1);
+    let entry = &checkpoint.tool_journal[0];
+    assert_eq!(entry.state, OperationState::Ambiguous);
+    assert!(entry.result.is_none() && entry.error.is_none() && entry.result_digest.is_none());
+    assert!(result
+        .events()
+        .iter()
+        .any(|event| matches!(event.payload(), RunEventPayload::ToolCallStarted { .. })));
+    assert!(!result
+        .events()
+        .iter()
+        .any(|event| matches!(event.payload(), RunEventPayload::ToolCallCompleted { .. })));
+    let observed = observed.lock().unwrap();
+    assert_eq!(observed.len(), 1);
+    assert_eq!(
+        observed[0].error_code.as_deref(),
+        Some("tool_timeout"),
+        "{}",
+        observed[0].content
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&observed[0].content).unwrap()["retryable"],
+        json!(false)
+    );
+    assert_eq!(
+        observed[0].metadata,
+        serde_json::from_value(json!({"output_type": "error", "retryable": false})).unwrap()
+    );
+}

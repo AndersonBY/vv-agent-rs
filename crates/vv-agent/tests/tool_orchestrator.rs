@@ -1,10 +1,11 @@
-use std::sync::Arc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Value};
 use vv_agent::{
     FunctionTool, StaticTool, Tool, ToolCall, ToolContext, ToolExposure, ToolOrchestrator,
-    ToolOutput, ToolRegistry, ToolResultStatus, ToolRunOptions, ToolSpecContext,
+    ToolOutput, ToolRegistry, ToolResultStatus, ToolRunOptions, ToolSpec, ToolSpecContext,
+    ToolSpecExecutor,
 };
 
 #[tokio::test]
@@ -154,7 +155,7 @@ fn function_tool_strictness_and_hidden_exposure_are_enforced_by_the_registry() {
 }
 
 #[tokio::test]
-async fn function_tool_timeout_returns_the_shared_retryable_error_contract() {
+async fn function_tool_timeout_returns_the_shared_unknown_nonretryable_error_contract() {
     let tool = FunctionTool::builder("slow")
         .description("Slow tool.")
         .timeout(Duration::from_millis(10))
@@ -179,10 +180,81 @@ async fn function_tool_timeout_returns_the_shared_retryable_error_contract() {
     assert_eq!(result.status, ToolResultStatus::Error);
     assert_eq!(result.error_code.as_deref(), Some("tool_timeout"));
     assert_eq!(result.metadata["output_type"], json!("error"));
-    assert_eq!(result.metadata["retryable"], json!(true));
     assert_eq!(
-        serde_json::from_str::<Value>(&result.content).unwrap()["retryable"],
-        json!(true)
+        result.metadata,
+        serde_json::from_value(json!({"output_type": "error", "retryable": false})).unwrap()
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&result.content).unwrap(),
+        json!({
+            "ok": false,
+            "error": "Tool slow did not finish within 0.01 seconds and may still be running. Its outcome and side effects are unknown; verify the current state before calling it again.",
+            "error_code": "tool_timeout",
+            "retryable": false
+        })
+    );
+}
+
+#[tokio::test]
+async fn blocking_tool_side_effect_occurs_after_timeout_result() {
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let (started_tx, started_rx) = mpsc::channel();
+    let (effect_tx, effect_rx) = mpsc::channel();
+    let mut spec = ToolSpec::new(
+        "slow",
+        "Blocking tool.",
+        Arc::new(move |_context, _args| {
+            started_tx.send(()).expect("started");
+            if release_rx
+                .lock()
+                .expect("release lock")
+                .recv_timeout(Duration::from_millis(500))
+                .is_ok()
+            {
+                effect_tx.send("side effect").expect("side effect");
+            }
+            vv_agent::ToolExecutionResult::success("", "late")
+        }),
+    );
+    spec.timeout = Some(Duration::from_millis(10));
+    let orchestrator = ToolOrchestrator::from_tools(vec![Arc::new(ToolSpecExecutor::new(spec))]);
+    let mut context = ToolContext::new("./workspace");
+    let result = orchestrator
+        .run_one(
+            ToolCall::from_raw_arguments("call_slow", "slow", json!({})),
+            &mut context,
+            ToolRunOptions::default(),
+        )
+        .await
+        .expect("timeout result");
+    started_rx
+        .try_recv()
+        .expect("handler started before timeout");
+    assert!(matches!(
+        effect_rx.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    release_tx.send(()).expect("release after timeout result");
+    assert_eq!(
+        effect_rx
+            .recv_timeout(Duration::from_millis(500))
+            .expect("late side effect"),
+        "side effect"
+    );
+    assert_eq!(result.error_code.as_deref(), Some("tool_timeout"));
+    assert_eq!(
+        result.metadata,
+        serde_json::from_value(json!({"output_type": "error", "retryable": false})).unwrap()
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&result.content).unwrap(),
+        json!({
+            "ok": false,
+            "error": "Tool slow did not finish within 0.01 seconds and may still be running. Its outcome and side effects are unknown; verify the current state before calling it again.",
+            "error_code": "tool_timeout",
+            "retryable": false
+        })
     );
 }
 

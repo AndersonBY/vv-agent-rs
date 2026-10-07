@@ -46,6 +46,14 @@ exception. The checkpoint v12 operation journal remains authoritative for
 whether an operation is planned, started, committed, replayable, or ambiguous;
 neither `duration_ms` nor a lifecycle observer provides exactly-once effects.
 
+A tool timeout returns `tool_timeout` with `retryable=false` in both content
+and metadata. Its message warns that work may still be running and requires
+checking the current state before another call. The result does not set
+`definitive_outcome=true`: after `tool_started`, the checkpoint journal remains
+ambiguous without a failed receipt. `tool_outcome_unknown` remains reserved for
+the journal's `surface_to_model` projection. A waiting runtime returning does
+not prove that a timed-out thread or process stopped its side effects.
+
 The typed `RunEvent` envelope uses the strict current `v5` discriminator.
 Readers require every current field, reject unknown fields, and never dispatch
 to an older decoder. Checkpoint outbox entries must contain a canonical current
