@@ -579,15 +579,12 @@ attributes must remain on the Rust readers until ts-rs supports them rather
 than being removed to silence the warning.
 
 
-## Contract 23 draft adoption
+## Contract 23 adoption
 
-The local lock adopts contract `23.0.0` at revision
-`0370f88a008b7cf649d737a5124201e02141fee3`, using the deterministic local
-artifact recorded in the lock. Its fixture manifest is
+The lock adopts the published contract `v23.0.0` at revision
+`ad2d4974545f987e237aed421cc4f65680e9a8dc`; fixture manifest
 `0e4c98ac3d22c959e2b1dd5969f55b56491c0b2eab1dbacaf38f68298bcf7d98`.
-This is a draft adoption, not a published release or centrally verified pair.
-Python reference revision: `7e06438dcbcdae96ab548a819ff686e08643fa32`.
-Central cross-repository CI and committed implementation revisions remain required.
+Central verification is recorded in the contract support matrix.
 
 Compaction validates ordered tool blocks and counts the raw tail using
 `keep_recent_messages` (default 10). Parallel blocks cannot be split. An ordered
