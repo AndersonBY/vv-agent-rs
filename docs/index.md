@@ -1,5 +1,8 @@
 # vv-agent-rs Documentation Index
 
+> **Frozen at vv-agent-contract 23.0.0 / 0.21.x — maintenance only (security, data integrity, v23 correctness fixes, dependency/build upkeep). No new kernel, wire or public behavior.**
+> See the [approved plan §3 and reviewer decision](../../../docs/vv-agent-session-kernel-replacement-plan-2026-10.md). Reactivation requires a new Maker decision and full adoption of the then-current contract, including producer tests, full gates and central adoption evidence.
+
 This directory is the source of truth for maintainer- and agent-facing project
 knowledge. `AGENTS.md` is intentionally short and points here instead of
 duplicating the details.

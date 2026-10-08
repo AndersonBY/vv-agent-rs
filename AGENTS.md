@@ -1,5 +1,8 @@
 # AGENTS.md
 
+> **Frozen at vv-agent-contract 23.0.0 / 0.21.x — maintenance only (security, data integrity, v23 correctness fixes, dependency/build upkeep). No new kernel, wire or public behavior.**
+> See the [approved plan §3 and reviewer decision](../../docs/vv-agent-session-kernel-replacement-plan-2026-10.md). Reactivation requires a new Maker decision and full adoption of the then-current contract, including producer tests, full gates and central adoption evidence.
+
 This file is a short map for coding agents. Keep durable project knowledge in
 `docs/` and keep this file focused on where to look and what to verify.
 
@@ -34,39 +37,25 @@ This file is a short map for coding agents. Keep durable project knowledge in
 - Update `docs/` after significant behavior or workflow changes; keep this file
   as a pointer rather than a long manual.
 
-## Cross-Language Parity
+## Frozen Contract Maintenance
 
-- Canonical shared behavior lives in sibling `../vv-agent-contract/` and its
-  versioned GitHub releases. This repository and `../vv-agent/` are two
-  implementations, not independent contract sources.
-- `contract.lock.json` pins the exact version, Git revision, release artifact,
-  and fixture digest. Read it before parity work.
-- `crates/vv-agent/tests/fixtures/parity/` is a generated vendored snapshot.
-  Never edit it directly; update `vv-agent-contract/` first and run
-  `scripts/contract_snapshot.py sync`.
-- Follow `vv-agent-contract/docs/change-workflow.md` for classification,
-  paired adoption, status transitions, and cross-repository gates.
-- Model-visible prompts and built-in tools, public defaults, errors, side
-  effects, cancellation, persistence, events, App Server protocol, and wire
-  fixtures require paired implementation and behavior tests.
-- Language-idiomatic API spelling is allowed only when both sides can express
-  the same input, observe the same output, and enforce the same safety boundary;
-  record the shared rule centrally and the Rust mapping in
-  `docs/parity-contract.md`.
-- Do not mark a version `verified` until both locks select the same contract,
-  both real producer suites and full gates pass, and central cross-repository CI
-  records both implementation revisions.
-- If the sibling repository cannot be updated in the same change, record an
-  explicit open parity gap and do not report the shared feature complete.
-- Keep `HEAD` forward-only. Maintain one current public and wire shape, and
-  delete superseded readers, aliases, shims, migrations, fixtures, tests, and
-  documentation in the same paired change. Git tags provide old runtimes.
-- Backward compatibility is not a design or acceptance requirement. Prefer a
-  breaking replacement when it improves the current architecture, update active
-  callers in the same change, and leave old behavior only in pinned releases.
-- Schema and protocol versions are strict rejection boundaries, not decoder
-  selectors. Reject missing, stale, unknown, and malformed versions, and reject
-  unknown fields unless the central contract defines a typed extension map.
+- `contract.lock.json` and the generated vendored fixtures remain pinned to
+  vv-agent-contract 23.0.0. Read the normative docs at that locked revision;
+  sibling contract HEAD may target a newer Python-only contract.
+- Never edit vendored fixtures or follow automatic latest-contract adoption.
+  `scripts/contract_snapshot.py check` verifies the locked release artifact
+  and its SHA-256, not sibling contract HEAD.
+- See `docs/parity-contract.md` for v23 producer mappings. Maintenance fixes
+  must preserve v23 public behavior and pass producer tests and full gates.
+- Central schema 2 records Rust as `frozen` with its own version, 0.21.x package
+  series and verified baseline revision. Later Python adoption cannot advance
+  that record or establish Rust support for a newer contract.
+- Release only 0.21.x maintenance versions. A new Maker decision and full
+  adoption of the then-current contract are required to reactivate Rust.
+- Keep one v23 public and wire shape. Do not add aliases, migrations or
+  historical decoders. Versions are strict rejection boundaries; reject
+  missing, stale, unknown and malformed versions and unknown fields unless
+  the locked contract defines an extension map.
 
 ## Common Commands
 

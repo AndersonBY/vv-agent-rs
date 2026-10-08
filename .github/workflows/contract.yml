@@ -11,6 +11,16 @@ permissions:
 jobs:
   conformance:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       VV_AGENT_RUN_LIVE_TESTS: "0"
       CARGO_BUILD_JOBS: "1"
@@ -25,6 +35,8 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt, clippy
 
       - name: Install test tools
         run: sudo apt-get update && sudo apt-get install -y ripgrep
@@ -32,12 +44,14 @@ jobs:
       - name: Verify vendored contract snapshot
         run: python3 scripts/contract_snapshot.py check
 
-      - name: Rebuild canonical producer evidence
+      - name: Verify freeze tooling
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+      - name: Run maintenance full gate
+        env:
+          VV_AGENT_TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}/15
         run: |
-          cargo test -p vv-agent \
-            --test parity_evidence_manifests \
-            --test tool_schema_contract \
-            --test tool_metadata_contract \
-            --test checkpoint_core \
-            --test app_server_contract_parity \
-            --test runner_producer_parity
+          cargo fmt --all -- --check
+          cargo test -p vv-agent -- --test-threads=1
+          cargo test -p vv-agent --features apalis --test apalis_backend
+          cargo clippy --all-targets --all-features -- -D warnings

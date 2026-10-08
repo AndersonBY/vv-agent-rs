@@ -56,10 +56,14 @@ jobs:
             exit 1
           fi
           version="$(python3 - <<'PY'
+          import re
           import tomllib
           from pathlib import Path
 
-          print(tomllib.loads(Path("crates/vv-agent/Cargo.toml").read_text(encoding="utf-8"))["package"]["version"])
+          version = tomllib.loads(Path("crates/vv-agent/Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
+          if re.fullmatch(r"0\.21\.(0|[1-9]\d*)", version) is None:
+              raise SystemExit("Frozen Rust releases must remain in package series 0.21.x")
+          print(version)
           PY
           )"
           if [ -z "$version" ] || [ "${RELEASE_TAG#v}" != "$version" ]; then
@@ -81,11 +85,14 @@ jobs:
       - name: Verify locked contract snapshot
         run: python3 scripts/contract_snapshot.py check
 
-      - name: Require centrally verified contract adoption
+      - name: Verify frozen contract baseline ancestry
         run: python3 scripts/contract_snapshot.py adoption --implementation rust --revision "$(git rev-parse HEAD)"
 
+      - name: Verify freeze tooling
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
       - name: Format check
-        run: cargo fmt --check
+        run: cargo fmt --all -- --check
 
       - name: Test
         run: cargo test -p vv-agent -- --test-threads=1
