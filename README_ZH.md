@@ -1,5 +1,8 @@
 # vv-agent-rs
 
+> **Frozen at vv-agent-contract 23.0.0 / 0.21.x — maintenance only (security, data integrity, v23 correctness fixes, dependency/build upkeep). No new kernel, wire or public behavior.**
+> See the [approved plan §3 and reviewer decision](../../docs/vv-agent-session-kernel-replacement-plan-2026-10.md). Reactivation requires a new Maker decision and full adoption of the then-current contract, including producer tests, full gates and central adoption evidence.
+
 [English](README.md)
 
 `vv-agent-rs` 是 `vv-agent` crate 的 Rust 工作空间，提供可嵌入的 Agent
@@ -7,7 +10,7 @@
 
 ## 安装
 
-仓库 `HEAD` 对应 crate `0.21.2` 和 Contract `23.0.0`（草稿采用）。
+仓库 `HEAD` 对应 crate `0.21.2` 和 Contract `23.0.0`（已验证的冻结基线）。
 安装最新已发布 crate：
 
 ```bash

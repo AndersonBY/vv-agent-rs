@@ -6,10 +6,11 @@ The repository vendors an immutable snapshot of the shared Python/Rust
 contract. Verify it before changing or releasing shared behavior:
 
 ```bash
-python3 scripts/contract_snapshot.py check --source ../vv-agent-contract
+python3 scripts/contract_snapshot.py check
 ```
 
-Canonical fixtures live in `../vv-agent-contract/`; never edit
+Verification downloads the immutable artifact pinned in `contract.lock.json`,
+not sibling contract HEAD. Canonical fixtures belong to that locked release; never edit
 `crates/vv-agent/tests/fixtures/parity/` directly.
 
 ## Setup

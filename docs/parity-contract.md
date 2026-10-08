@@ -18,47 +18,37 @@ The normative behavior and change workflow no longer live in this repository.
 committed for offline and reproducible tests, but it is not an editable source
 of truth.
 
-The current adoption state is not duplicated in this document. Treat
-[`vv-agent-contract/support-matrix.json`](https://github.com/AndersonBY/vv-agent-contract/blob/main/support-matrix.json)
-as the machine-readable source for the current verified Python and Rust
-revisions, verification timestamp, and cross-repository run URL.
+Rust is frozen at contract 23.0.0 / package series 0.21.x. The central schema 2
+support matrix records this baseline as `frozen`; its top-level version and
+verification run describe required implementations and may advance independently.
+They do not establish Rust support for a newer contract. See the
+[approved freeze decision](../../../docs/vv-agent-session-kernel-replacement-plan-2026-10.md).
+Reactivation requires a new Maker decision and full adoption of the then-current
+contract, including real producers, full gates and central verification.
 
 ## Required Reading
 
-For shared public, model-visible, runtime, persistence, or wire changes, read:
-
-1. `contract.lock.json` in this repository;
-2. `../vv-agent-contract/AGENTS.md`;
-3. `../vv-agent-contract/docs/parity-contract.md`;
-4. `../vv-agent-contract/docs/change-workflow.md`;
-5. sibling `../vv-agent/docs/parity-contract.md`.
-
-If the sibling checkout is unavailable, use the exact repository and revision
-from the lock. Do not infer the current contract from a floating `main` branch.
+Read `contract.lock.json` and the canonical `AGENTS.md`, `docs/parity-contract.md`
+and `docs/change-workflow.md` at the exact locked revision. Use the lock's
+repository and revision, not a floating sibling checkout or `main` branch.
+Maintenance must preserve v23 behavior; no new kernel, wire or public behavior.
 
 ## Snapshot Commands
 
-Offline verification of the committed snapshot:
+Verify the committed snapshot against the locked immutable artifact and digest:
 
 ```bash
 python3 scripts/contract_snapshot.py check
 ```
 
-Stronger verification against the sibling canonical checkout:
+For a previously downloaded copy of that same artifact:
 
 ```bash
-python3 scripts/contract_snapshot.py check --source ../vv-agent-contract
+python3 scripts/contract_snapshot.py check --artifact /path/to/vv-agent-contract-23.0.0.zip
 ```
 
-Synchronization is allowed only after the canonical version is committed and
-its deterministic release zip exists:
-
-```bash
-python3 scripts/contract_snapshot.py sync \
-  --source ../vv-agent-contract \
-  --artifact /path/to/vv-agent-contract-<version>.zip \
-  --artifact-url https://github.com/AndersonBY/vv-agent-contract/releases/download/v<version>/vv-agent-contract-<version>.zip
-```
+Do not sync to latest releases or compare against sibling contract HEAD. The
+lock and vendored v23 fixtures remain unchanged during maintenance.
 
 Never repair a contract failure by editing a file under
 `crates/vv-agent/tests/fixtures/parity/` or changing only a digest.
@@ -81,9 +71,9 @@ storage representations with real writers, readers, and recovery controllers.
 Their evidence covers the named operations and failure windows, not arbitrary
 mixed-language takeover of a running deployment. A full mixed-runtime failure
 campaign requires a deployment that actually switches language within one run;
-it is not a prerequisite for a single-language host integration. Both existing
-exchange probes and the complete public conformance gates remain required by
-the central cross-repository workflow.
+it is not a prerequisite for a single-language host integration. The frozen repository retains v23 producer tests and full gates. The active
+central workflow runs required implementations only and no longer exchanges
+checkpoints with Rust.
 
 ## Rust Producer Map
 
@@ -559,17 +549,17 @@ safety, persistence, cancellation, and lifecycle semantics.
 ## Completion Gate
 
 ```bash
-python3 scripts/contract_snapshot.py check --source ../vv-agent-contract
+python3 scripts/contract_snapshot.py check
 cargo fmt --all -- --check
 cargo test -p vv-agent -- --test-threads=1
 cargo check --examples
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Then run the Python gate and the central
-`vv-agent-contract/.github/workflows/cross-repository.yml` workflow with exact
-contract, Python, and Rust refs. If either implementation is incomplete, keep
-the central support matrix at `pending-adoption` or `in-progress`.
+Maintenance releases verify the locked artifact and frozen baseline ancestry.
+Do not advance the Rust matrix record when Python adopts a newer contract.
+Central cross-repository adoption is required again only after a new Maker
+decision reactivates Rust.
 
 The current Rust gate may emit ts-rs warnings that it cannot parse the serde
 attributes `deny_unknown_fields` and `deserialize_with =
