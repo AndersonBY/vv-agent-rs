@@ -22,7 +22,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      VV_AGENT_TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}/15
       VV_AGENT_RUN_LIVE_TESTS: "0"
       CARGO_BUILD_JOBS: "1"
     steps:
@@ -49,6 +48,8 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Run maintenance full gate
+        env:
+          VV_AGENT_TEST_REDIS_URL: redis://127.0.0.1:${{ job.services.redis.ports['6379'] }}/15
         run: |
           cargo fmt --all -- --check
           cargo test -p vv-agent -- --test-threads=1
