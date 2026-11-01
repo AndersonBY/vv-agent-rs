@@ -206,6 +206,254 @@ fn moonshot_stream_normalizes_omitted_cache_usage_as_observed_zero() {
 }
 
 #[test]
+fn moonshot_stream_routes_interleaved_tool_arguments_by_provider_index() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind completion server");
+    let api_base = format!("http://{}", listener.local_addr().expect("server address"));
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().expect("accept completion request");
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set read timeout");
+        let request = read_http_request(&mut socket);
+        let body = request.split("\r\n\r\n").nth(1).expect("request body");
+        let payload: serde_json::Value = serde_json::from_str(body).expect("request JSON");
+
+        assert!(request.starts_with("POST /chat/completions "));
+        assert_eq!(payload["stream"], true);
+        assert_eq!(
+            payload["stream_options"],
+            serde_json::json!({"include_usage": true})
+        );
+
+        let tool_deltas = [
+            serde_json::json!({"index": 0, "id": "call_a", "type": "function", "function": {"name": "lookup", "arguments": "{\"city\":\""}}),
+            serde_json::json!({"index": 3, "id": "call_b", "type": "function", "function": {"name": "lookup", "arguments": "{\"city\":\""}}),
+            serde_json::json!({"index": 0, "function": {"arguments": "Paris\"}"}}),
+            // Malformed nameless fragments cannot claim a known or unknown index.
+            serde_json::json!({"index": 3, "id": "unknown", "function": {"arguments": "poison"}}),
+            serde_json::json!({"index": 99, "function": {"arguments": "poison"}}),
+            // Known ID wins, but a contradictory index must not steal B's mapping.
+            serde_json::json!({"index": 3, "id": "call_a", "function": {"arguments": ""}}),
+            serde_json::json!({"index": 3, "function": {"arguments": "Tokyo\"}"}}),
+        ];
+        let mut body = String::new();
+        for delta in tool_deltas {
+            let chunk = serde_json::json!({
+                "id": "chatcmpl-agent-stream", "object": "chat.completion.chunk",
+                "created": 0, "model": "kimi-k3",
+                "choices": [{"index": 0, "delta": {"tool_calls": [delta]}, "finish_reason": null}]
+            });
+            body.push_str(&format!("data: {chunk}\n\n"));
+        }
+        body.push_str("data: [DONE]\n\n");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        socket
+            .write_all(response.as_bytes())
+            .expect("write completion response");
+    });
+
+    let mut settings_file = tempfile::Builder::new()
+        .suffix(".json")
+        .tempfile()
+        .expect("settings file");
+    serde_json::to_writer(
+        &mut settings_file,
+        &serde_json::json!({
+            "VERSION": "2",
+            "endpoints": [{
+                "id": "moonshot-default",
+                "api_base": api_base,
+                "api_key": "sk-test"
+            }],
+            "backends": {
+                "moonshot": {
+                    "models": {
+                        "kimi-k3": {
+                            "id": "kimi-k3",
+                            "endpoints": [{
+                                "endpoint_id": "moonshot-default",
+                                "model_id": "kimi-k3"
+                            }]
+                        }
+                    }
+                }
+            },
+            "embedding_backends": {},
+            "rerank_backends": {}
+        }),
+    )
+    .expect("write settings");
+    settings_file.flush().expect("flush settings");
+
+    let (client, _) =
+        build_vv_llm_from_local_settings(settings_file.path(), "moonshot", "kimi-k3", 5.0)
+            .expect("build llm");
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = events.clone();
+    let response = client
+        .complete_with_stream(
+            LlmRequest::new(
+                "kimi-k3",
+                vec![Message::user("hello")],
+                PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+            ),
+            Some(std::sync::Arc::new(move |event| {
+                observed.lock().unwrap().push(event.clone());
+            })),
+        )
+        .expect("stream completion");
+    server.join().expect("completion server");
+
+    assert_eq!(response.tool_calls.len(), 2);
+    assert_eq!(response.tool_calls[0].id, "call_a");
+    assert_eq!(response.tool_calls[0].arguments["city"], "Paris");
+    assert_eq!(response.tool_calls[1].id, "call_b");
+    assert_eq!(response.tool_calls[1].arguments["city"], "Tokyo");
+    let events = events.lock().unwrap();
+    let progress = events
+        .iter()
+        .filter(|event| {
+            event.get("event").and_then(serde_json::Value::as_str) == Some("tool_call_progress")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(progress.len(), 4);
+    for (event, (id, index)) in
+        progress
+            .iter()
+            .zip([("call_a", 0), ("call_b", 3), ("call_a", 0), ("call_b", 3)])
+    {
+        assert_eq!(event["tool_call_id"], id);
+        assert_eq!(event["tool_call_index"], index);
+    }
+}
+
+#[test]
+fn moonshot_stream_drops_ambiguous_reused_index_fragments() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind completion server");
+    let api_base = format!("http://{}", listener.local_addr().expect("server address"));
+    let server = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().expect("accept completion request");
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set read timeout");
+        let request = read_http_request(&mut socket);
+        let body = request.split("\r\n\r\n").nth(1).expect("request body");
+        let payload: serde_json::Value = serde_json::from_str(body).expect("request JSON");
+
+        assert!(request.starts_with("POST /chat/completions "));
+        assert_eq!(payload["stream"], true);
+        assert_eq!(
+            payload["stream_options"],
+            serde_json::json!({"include_usage": true})
+        );
+
+        // Duplicate provider indices are ambiguous even after a known-ID fragment.
+        let tool_deltas = [
+            serde_json::json!({"index": 0, "id": "call_a", "type": "function", "function": {"name": "lookup", "arguments": "{\"city\":\"Paris\"}"}}),
+            serde_json::json!({"index": 0, "id": "call_b", "type": "function", "function": {"name": "lookup", "arguments": "{\"city\":\""}}),
+            serde_json::json!({"index": 0, "function": {"arguments": "poison"}}),
+            serde_json::json!({"index": 0, "id": "call_b", "function": {"arguments": "Tokyo\"}"}}),
+            serde_json::json!({"index": 0, "function": {"arguments": "poison"}}),
+        ];
+        let mut body = String::new();
+        for delta in tool_deltas {
+            let chunk = serde_json::json!({
+                "id": "chatcmpl-agent-stream", "object": "chat.completion.chunk",
+                "created": 0, "model": "kimi-k3",
+                "choices": [{"index": 0, "delta": {"tool_calls": [delta]}, "finish_reason": null}]
+            });
+            body.push_str(&format!("data: {chunk}\n\n"));
+        }
+        body.push_str("data: [DONE]\n\n");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        socket
+            .write_all(response.as_bytes())
+            .expect("write completion response");
+    });
+
+    let mut settings_file = tempfile::Builder::new()
+        .suffix(".json")
+        .tempfile()
+        .expect("settings file");
+    serde_json::to_writer(
+        &mut settings_file,
+        &serde_json::json!({
+            "VERSION": "2",
+            "endpoints": [{
+                "id": "moonshot-default",
+                "api_base": api_base,
+                "api_key": "sk-test"
+            }],
+            "backends": {
+                "moonshot": {
+                    "models": {
+                        "kimi-k3": {
+                            "id": "kimi-k3",
+                            "endpoints": [{
+                                "endpoint_id": "moonshot-default",
+                                "model_id": "kimi-k3"
+                            }]
+                        }
+                    }
+                }
+            },
+            "embedding_backends": {},
+            "rerank_backends": {}
+        }),
+    )
+    .expect("write settings");
+    settings_file.flush().expect("flush settings");
+
+    let (client, _) =
+        build_vv_llm_from_local_settings(settings_file.path(), "moonshot", "kimi-k3", 5.0)
+            .expect("build llm");
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = events.clone();
+    let response = client
+        .complete_with_stream(
+            LlmRequest::new(
+                "kimi-k3",
+                vec![Message::user("hello")],
+                PromptBundle::from_instruction_text("system").expect("prompt bundle"),
+            ),
+            Some(std::sync::Arc::new(move |event| {
+                observed.lock().unwrap().push(event.clone());
+            })),
+        )
+        .expect("stream completion");
+    server.join().expect("completion server");
+
+    assert_eq!(response.tool_calls.len(), 2);
+    assert_eq!(response.tool_calls[0].id, "call_a");
+    assert_eq!(response.tool_calls[0].arguments["city"], "Paris");
+    assert_eq!(response.tool_calls[1].id, "call_b");
+    assert_eq!(response.tool_calls[1].arguments["city"], "Tokyo");
+    let events = events.lock().unwrap();
+    let progress = events
+        .iter()
+        .filter(|event| {
+            event.get("event").and_then(serde_json::Value::as_str) == Some("tool_call_progress")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(progress.len(), 3);
+    for (event, (id, index)) in progress
+        .iter()
+        .zip([("call_a", 0), ("call_b", 0), ("call_b", 0)])
+    {
+        assert_eq!(event["tool_call_id"], id);
+        assert_eq!(event["tool_call_index"], index);
+    }
+}
+
+#[test]
 fn vv_agent_does_not_embed_provider_protocol_clients() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");

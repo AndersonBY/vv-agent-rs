@@ -38,7 +38,6 @@ pub(super) async fn collect_vv_llm_stream(
     let mut usage = None;
     let mut tool_order = Vec::<String>::new();
     let mut tool_calls = BTreeMap::<String, StreamingToolCallParts>::new();
-    let mut active_tool_call_key = None::<String>;
 
     while let Some(delta) = stream.next().await {
         let delta = delta.map_err(EndpointAttemptError::from_provider)?;
@@ -59,13 +58,12 @@ pub(super) async fn collect_vv_llm_stream(
             emit_assistant_delta_event(&stream_callback, delta.content, content_chars);
         }
         for (tool_call_index, tool_call_delta) in delta.tool_calls.into_iter().enumerate() {
-            let key = resolve_stream_tool_call_key(
-                &tool_call_delta,
-                tool_call_index,
-                active_tool_call_key.as_deref(),
-            );
-            active_tool_call_key = Some(key.clone());
-            if !tool_calls.contains_key(&key) {
+            let Some(key) = resolve_stream_tool_call_key(&tool_call_delta, &tool_calls) else {
+                // An unidentified fragment cannot safely target one of several calls.
+                continue;
+            };
+            let is_new = !tool_calls.contains_key(&key);
+            if is_new {
                 tool_order.push(key.clone());
                 tool_calls.insert(
                     key.clone(),
@@ -75,19 +73,27 @@ pub(super) async fn collect_vv_llm_stream(
                         } else {
                             tool_call_delta.id.clone()
                         },
+                        has_provider_id: !tool_call_delta.id.is_empty(),
                         index: tool_call_delta.index,
                         ..StreamingToolCallParts::default()
                     },
                 );
             }
+            let unclaimed_index = tool_call_delta.index.filter(|index| {
+                !tool_calls
+                    .iter()
+                    .any(|(other_key, slot)| other_key != &key && slot.index == Some(*index))
+            });
             let Some(slot) = tool_calls.get_mut(&key) else {
                 continue;
             };
             if !tool_call_delta.id.is_empty() {
                 slot.id = tool_call_delta.id.clone();
+                slot.has_provider_id = true;
             }
-            if tool_call_delta.index.is_some() {
-                slot.index = tool_call_delta.index;
+            // An ID-bearing continuation cannot steal another call's index.
+            if slot.index.is_none() {
+                slot.index = unclaimed_index;
             }
             let had_name = !slot.name.is_empty();
             if !tool_call_delta.name.is_empty() {

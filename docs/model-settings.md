@@ -206,3 +206,24 @@ README, examples, live-test docs, tests, and
 - Use `VV_AGENT_LIVE_SETTINGS_JSON` only when a live test needs a non-default
   settings path.
 - Live tests must stay opt-in through `VV_AGENT_RUN_LIVE_TESTS=1`.
+
+## Streaming Tool Identity (v23 maintenance)
+
+The `vv-llm` bridge retains provider tool-call identity across stream chunks.
+An explicit call ID takes precedence; ID-less continuations use the provider's
+stable tool index, not their position in the current chunk or the last call seen.
+A late ID may identify an index-only slot. A fragment with neither ID nor index
+can continue a sole known call, but is ignored when several calls are possible:
+the bridge cannot reconstruct identity that the provider did not supply.
+When distinct provider IDs reuse one index, that index stays ambiguous; ID-less
+continuations are dropped rather than guessed, while explicit IDs remain usable.
+This conservative malformed-stream policy deliberately differs from Python's
+sequential-provider newest-owner workaround; it does not claim recovery for
+index-less or reused-index interleaving. A known-ID continuation cannot steal
+another call's established index merely by reporting a contradictory value.
+
+
+`vv_llm_integration::moonshot_stream_routes_interleaved_tool_arguments_by_provider_index`
+checks the real local HTTP-to-provider-to-agent path, final arguments, and raw
+progress attribution. This is a data-integrity repair within the frozen v23
+shape, not contract reactivation; the contract and dependency pins stay unchanged.
