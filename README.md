@@ -11,7 +11,7 @@ for model-driven automation.
 
 ## Install
 
-Repository `HEAD` targets crate `0.21.2` and Contract `23.0.0` (verified frozen baseline).
+Repository `HEAD` targets crate `0.21.3` and Contract `23.0.0` (maintenance update on the verified frozen baseline).
 To install the latest published crate:
 
 ```bash
